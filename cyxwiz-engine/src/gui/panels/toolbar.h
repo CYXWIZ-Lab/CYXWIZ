@@ -777,12 +777,6 @@ private:
     std::function<void(int)> export_model_callback_;  // int = format index (0=CyxModel, 1=Safetensors, 2=ONNX, 3=GGUF)
     std::function<void()> import_model_callback_;
 
-    // General preferences
-    bool general_restore_last_session_ = true;
-    bool general_check_updates_ = true;
-    int general_recent_files_limit_ = 10;
-    bool general_confirm_on_exit_ = true;
-
     // Appearance preferences
 
     // Minimap visibility pointers

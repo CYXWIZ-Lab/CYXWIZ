@@ -311,6 +311,7 @@ set(ENGINE_SOURCES
     src/core/rl_playback_presentation.cpp
     src/core/rl_device_presentation.cpp
     src/core/rl_dashboard_presentation.cpp
+    src/core/project_session.cpp
     src/gui/panels/policy_playback_panel.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
@@ -7919,6 +7920,16 @@ if(WIN32)
     target_compile_definitions(test_rl_dashboard_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
 add_test(NAME rl_dashboard_presentation COMMAND test_rl_dashboard_presentation)
+
+# ===== Test: reopening the last project (TOFIX129 B9-3) =====
+add_executable(test_project_session
+    tests/test_project_session.cpp
+    src/core/project_session.cpp
+)
+if(WIN32)
+    target_compile_definitions(test_project_session PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME project_session COMMAND test_project_session)
 
 # ===== Test: metric learning (pairs, triplets) vs PyTorch (TOFIX140 A5) =====
 set(CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE

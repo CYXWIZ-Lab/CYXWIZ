@@ -8,6 +8,7 @@
 #include "../../core/compute_runtime_config.h"
 #include "../../core/compute_runtime_paths.h"
 #include "../../core/engine_config.h"
+#include "../../core/project_manager.h"
 #include "../../core/utilities_presentation.h"
 #include "../../core/data_budget.h"
 #include "../../core/async_task_manager.h"
@@ -121,27 +122,61 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     preferences_tab_ = 0;
                     ImGui::Spacing();
 
-                    ImGui::Text("Startup");
+                    ImGui::Text("Starting");
                     ImGui::Separator();
                     ImGui::Spacing();
-
-                    ImGui::Checkbox("Restore last session on startup", &general_restore_last_session_);
-                    ImGui::Checkbox("Check for updates on startup", &general_check_updates_);
+                    {
+                        // Engine-wide, saved at once (TOFIX129 B9-3, B9-5)
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        static const char* const kStart[] = {"Show the start page", "Reopen the last project"};
+                        int start = engine_config.StartWithLastProject() ? 1 : 0;
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("When the Engine starts");
+                        if (ui::SegmentedControl("##general_start", kStart, 2, &start)) {
+                            engine_config.SetStartWithLastProject(start == 1);
+                            engine_config.Save();
+                        }
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled("Reopen: the last project with its scripts and the graph that was open. If "
+                                            "its folder is gone, the start page. A project named on the command line "
+                                            "always wins.");
+                        ImGui::PopTextWrapPos();
+                        ImGui::Spacing();
+                        int kept = engine_config.RecentProjectsKept();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Recent projects kept");
+                        ImGui::SameLine();
+                        if (ui::NumberField("##recent_projects", &kept, cyxwiz::core::EngineConfig::kMinRecentProjects,
+                                            cyxwiz::core::EngineConfig::kMaxRecentProjects, 1, 60.0f,
+                                            "File > Open Recent and the start page")) {
+                            engine_config.SetRecentProjectsKept(kept);
+                            engine_config.Save();
+                            cyxwiz::ProjectManager::Instance().SetRecentProjectsLimit(
+                                static_cast<size_t>(engine_config.RecentProjectsKept()));
+                        }
+                    }
 
                     ImGui::Spacing();
-                    ImGui::Text("Recent Files Limit:");
-                    ImGui::SetNextItemWidth(100);
-                    ImGui::InputInt("##recent_limit", &general_recent_files_limit_);
-                    if (general_recent_files_limit_ < 1) general_recent_files_limit_ = 1;
-                    if (general_recent_files_limit_ > 50) general_recent_files_limit_ = 50;
-
                     ImGui::Spacing();
-                    ImGui::Spacing();
-                    ImGui::Text("Exit Behavior");
+                    ImGui::Text("Closing");
                     ImGui::Separator();
                     ImGui::Spacing();
-
-                    ImGui::Checkbox("Confirm before exit with unsaved changes", &general_confirm_on_exit_);
+                    {
+                        // TOFIX129 B9-6: losing work always asks; Always asks every time
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        static const char* const kAsk[] = {"When something would be lost", "Always"};
+                        int ask = engine_config.AskBeforeClosingAlways() ? 1 : 0;
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Ask before closing");
+                        if (ui::SegmentedControl("##general_ask_close", kAsk, 2, &ask)) {
+                            engine_config.SetAskBeforeClosingAlways(ask == 1);
+                            engine_config.Save();
+                        }
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled("Unsaved scripts or graph, a running script or data in memory always ask; "
+                                            "Always asks every time.");
+                        ImGui::PopTextWrapPos();
+                    }
 
                     ImGui::Spacing();
                     ImGui::Spacing();

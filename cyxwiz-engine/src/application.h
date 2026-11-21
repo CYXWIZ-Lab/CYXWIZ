@@ -83,6 +83,8 @@ private:
     void HandleCloseRequest();
     bool ShouldPreventClose();
     bool HasUnsavedWork();
+    // Preferences > General > When the Engine starts: the last project
+    bool reopening_last_project_ = false;
     bool HasLoadedData();
 
     // Fonts

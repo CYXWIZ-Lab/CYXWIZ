@@ -124,6 +124,7 @@
 #include "../core/pipeline_execution_task.h"
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
+#include "../core/project_session.h"
 #include "../core/cache_prune.h"
 #include "../core/data_budget.h"
 #include "../core/data_registry.h"
@@ -2897,6 +2898,10 @@ void MainWindow::SaveAllFiles() {
 
 void MainWindow::PrepareForShutdown() {
     spdlog::info("MainWindow: Preparing for shutdown...");
+
+    // The project remembers what was open (scripts, the graph) for the next
+    // time it opens, also when the Engine reopens it at start
+    if (cyxwiz::ProjectManager::Instance().HasActiveProject()) SaveProjectSettings();
 
     // Stop any running script first (this can take time to interrupt Python)
     if (scripting_engine_ && scripting_engine_->IsScriptRunning()) {
@@ -6220,6 +6225,11 @@ void MainWindow::SaveProjectSettings() {
             pm.GetConfig().open_scripts.push_back(path);
         }
         pm.GetConfig().active_script_index = script_editor_->GetActiveTabIndex();
+    }
+    // The graph on the canvas, reopened with the project (Preferences > General)
+    if (node_editor_) {
+        pm.GetConfig().open_graph =
+            cyxwiz::project_session::StoredGraph(node_editor_->GetCurrentFilePath(), pm.GetProjectRoot());
     }
 
     // Save application-wide settings

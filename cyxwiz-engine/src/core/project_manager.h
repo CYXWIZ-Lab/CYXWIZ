@@ -44,7 +44,6 @@ struct ProjectConfig {
     std::string version;
     std::time_t created;
     std::string description;
-    std::vector<std::string> recent_files;
     // Filter definitions (custom filters can be added)
     std::map<std::string, std::vector<std::string>> filters; // filter_name -> extensions
 
@@ -54,6 +53,9 @@ struct ProjectConfig {
     // Open files in Script Editor (to restore on project load)
     std::vector<std::string> open_scripts;
     int active_script_index = 0;
+    // The graph open on the canvas when the project was last saved or closed
+    // (core/project_session StoredGraph: relative inside the project)
+    std::string open_graph;
 
     // JSON serialization
     static ProjectConfig FromJson(const nlohmann::json& j);
@@ -163,7 +165,10 @@ public:
     void ClearRecentProjects();
     // Start page > Actions > Remove from this list. The project itself is untouched.
     void RemoveRecentProject(const std::string& path);
-    static constexpr size_t MAX_RECENT_PROJECTS = 10;
+    // How many recent projects are kept (Preferences > General); a smaller
+    // limit trims the list at once
+    void SetRecentProjectsLimit(size_t limit);
+    size_t RecentProjectsLimit() const { return recent_limit_; }
 
 private:
     ProjectManager();
@@ -193,6 +198,7 @@ private:
 
     // Recent projects
     std::vector<RecentProject> recent_projects_;
+    size_t recent_limit_ = 10;
 
     // Callbacks
     ProjectCallback on_opened_;

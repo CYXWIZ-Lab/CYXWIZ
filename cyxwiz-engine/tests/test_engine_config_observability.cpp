@@ -92,6 +92,24 @@ int main() {
     config.SetWatchTraining(0, 20);
     Check(config.Load(path), "the watch default should reload");
     Check(config.WatchTrainingMode() == 1 && config.WatchTrainingEvery() == 25, "the watch default survives a round trip");
+    // Preferences > General (TOFIX129 B9): how the Engine starts and closes
+    Check(!config.StartWithLastProject() && config.RecentProjectsKept() == EngineConfig::kDefaultRecentProjects &&
+              !config.AskBeforeClosingAlways(),
+          "the general defaults: start page, 10 recent projects, ask when something would be lost");
+    config.SetRecentProjectsKept(500);
+    Check(config.RecentProjectsKept() == EngineConfig::kMaxRecentProjects, "at most 50 recent projects");
+    config.SetRecentProjectsKept(0);
+    Check(config.RecentProjectsKept() == EngineConfig::kMinRecentProjects, "at least 1 recent project");
+    config.SetStartWithLastProject(true);
+    config.SetRecentProjectsKept(25);
+    config.SetAskBeforeClosingAlways(true);
+    Check(config.Save(path), "the general settings should persist");
+    config.SetStartWithLastProject(false);
+    config.SetRecentProjectsKept(10);
+    config.SetAskBeforeClosingAlways(false);
+    Check(config.Load(path), "the general settings should reload");
+    Check(config.StartWithLastProject() && config.RecentProjectsKept() == 25 && config.AskBeforeClosingAlways(),
+          "the general settings survive a round trip");
 
     std::error_code error;
     std::filesystem::remove(path, error);

@@ -399,13 +399,21 @@ public:
     MonitorConfig GetMonitor() const;
     void SetMonitor(const MonitorConfig& monitor);
 
-    // ===== Recent Projects =====
+    // ===== General (Preferences > General, TOFIX129 B9) =====
 
-    // Get list of recent projects (up to 10)
-    std::vector<std::string> GetRecentProjects() const;
-
-    // Add a project to recent projects list
-    void AddRecentProject(const std::string& project_path);
+    // When the Engine starts: the start page, or the last project (its
+    // scripts and the graph that was open come back with it)
+    bool StartWithLastProject() const;
+    void SetStartWithLastProject(bool last_project);
+    // How many recent projects File > Open Recent and the start page keep
+    static constexpr int kMinRecentProjects = 1;
+    static constexpr int kMaxRecentProjects = 50;
+    static constexpr int kDefaultRecentProjects = 10;
+    int RecentProjectsKept() const;
+    void SetRecentProjectsKept(int kept);
+    // Closing asks every time, not only when something would be lost
+    bool AskBeforeClosingAlways() const;
+    void SetAskBeforeClosingAlways(bool always);
 
     // Check if configuration has been modified
     bool IsModified() const { return modified_; }
@@ -480,7 +488,9 @@ private:
     MonitorConfig monitor_;
 
     // Recent projects
-    std::vector<std::string> recent_projects_;  // Recent project paths (max 10)
+    bool start_with_last_project_ = false;
+    int recent_projects_kept_ = kDefaultRecentProjects;
+    bool ask_before_closing_always_ = false;
 };
 
 } // namespace cyxwiz::core

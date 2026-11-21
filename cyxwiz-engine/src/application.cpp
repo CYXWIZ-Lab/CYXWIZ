@@ -33,6 +33,7 @@
 #include "core/training_manager.h"
 #include "plugin/engine_plugin_context.h"
 #include "core/engine_config.h"
+#include "core/project_session.h"
 #include "core/python_detector.h"
 #include "core/texture_manager.h"
 
@@ -268,6 +269,14 @@ void CyxWizApp::OpenStartupProjectIfRequested() {
     if (pm.OpenProject(startup_project_path_)) {
         if (startup_project_from_command_line_)
             spdlog::debug("Opened project from the command line: {}", startup_project_path_);
+        // The last project brings back the graph that was open (a graph
+        // named on the command line wins)
+        if (reopening_last_project_ && startup_graph_path_.empty()) {
+            const std::string graph =
+                cyxwiz::project_session::ResolvedGraph(pm.GetConfig().open_graph, pm.GetProjectRoot());
+            std::error_code ec;
+            if (!graph.empty() && std::filesystem::is_regular_file(graph, ec)) startup_graph_path_ = graph;
+        }
     } else {
         spdlog::error("Failed to open project {}", startup_project_path_);
     }
@@ -282,11 +291,14 @@ void CyxWizApp::OpenStartupGraphIfRequested() {
         // A starter is a copy to work on: Save asks for a name instead of
         // overwriting the example next to the Engine, and its data paths keep
         // working wherever it is saved. A graph named on the command line is
-        // the user's own file.
-        if (!startup_graph_from_command_line_) {
+        // the user's own file, and so is the last project's graph.
+        if (!startup_graph_from_command_line_ && !reopening_last_project_) {
             if (auto* editor = main_window_->GetNodeEditor()) editor->DetachFromExample();
         }
-        spdlog::info("Opened {} graph: {}", startup_graph_from_command_line_ ? "command-line" : "starter",
+        spdlog::info("Opened {} graph: {}",
+                     startup_graph_from_command_line_ ? "command-line"
+                     : reopening_last_project_        ? "the last project's"
+                                                      : "starter",
                      startup_graph_path_);
     } else {
         spdlog::error("Failed to open graph: {}", startup_graph_path_);
@@ -496,9 +508,27 @@ bool CyxWizApp::Initialize() {
     python_configured_ = true;
     spdlog::info("Python scripting support is disabled in this build; skipping interpreter setup");
 #endif
-    // A project named on the command line opens straight away; the start
-    // page is for choosing one (its "Continue without project" used to drop
-    // the command-line project).
+    // Preferences > General: how many recent projects are kept, and whether
+    // the last one opens instead of the start page (a command-line project
+    // wins; a project whose folder is gone is skipped).
+    {
+        const auto& general = cyxwiz::core::EngineConfig::Instance();
+        auto& pm = cyxwiz::ProjectManager::Instance();
+        pm.SetRecentProjectsLimit(static_cast<size_t>(general.RecentProjectsKept()));
+        if (startup_project_path_.empty() && general.StartWithLastProject()) {
+            std::vector<std::string> paths;
+            for (const auto& recent : pm.GetRecentProjects()) paths.push_back(recent.path);
+            startup_project_path_ = cyxwiz::project_session::FirstExisting(paths, [](const std::string& path) {
+                std::error_code ec;
+                return std::filesystem::exists(path, ec);
+            });
+            reopening_last_project_ = !startup_project_path_.empty();
+            if (reopening_last_project_) spdlog::info("Reopening the last project: {}", startup_project_path_);
+        }
+    }
+    // A project named on the command line (or the last one) opens straight
+    // away; the start page is for choosing one (its "Continue without
+    // project" used to drop the command-line project).
     if (!startup_project_path_.empty()) {
         project_selected_ = true;
     } else {
@@ -520,7 +550,9 @@ int CyxWizApp::Run() {
 
             // Anything still open (running script, unsaved scripts, loaded
             // data) is listed in one dialog; otherwise close at once.
-            if (ShouldPreventClose() || HasUnsavedWork() || HasLoadedData()) {
+            // Something would be lost, or Preferences > General asks every time
+            if (ShouldPreventClose() || HasUnsavedWork() || HasLoadedData() ||
+                cyxwiz::core::EngineConfig::Instance().AskBeforeClosingAlways()) {
                 glfwSetWindowShouldClose(window_, GLFW_FALSE);
                 show_close_dialog_ = true;
             } else {
@@ -593,7 +625,8 @@ void CyxWizApp::HandleCloseRequest() {
     const std::vector<std::string> datasets = registry.GetDatasetNames();
 
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 600.0f);
-    ImGui::TextUnformatted("Some work is still open. Choose what happens to it.");
+    const bool nothing_open = unsaved.empty() && !script_running && datasets.empty();
+    ImGui::TextUnformatted(nothing_open ? "Nothing is unsaved." : "Some work is still open. Choose what happens to it.");
     ImGui::Spacing();
 
     auto section = [&](const char* title, const std::vector<std::string>& lines, const char* note) {

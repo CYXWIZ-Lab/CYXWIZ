@@ -369,12 +369,6 @@ ProjectConfig ProjectConfig::FromJson(const nlohmann::json& j) {
     config.created = j.value("created", std::time(nullptr));
     config.description = j.value("description", "");
 
-    if (j.contains("recent_files") && j["recent_files"].is_array()) {
-        for (const auto& file : j["recent_files"]) {
-            config.recent_files.push_back(file.get<std::string>());
-        }
-    }
-
     if (j.contains("filters") && j["filters"].is_object()) {
         for (auto& [key, value] : j["filters"].items()) {
             std::vector<std::string> extensions;
@@ -397,6 +391,7 @@ ProjectConfig ProjectConfig::FromJson(const nlohmann::json& j) {
         }
     }
     config.active_script_index = j.value("active_script_index", 0);
+    config.open_graph = j.value("open_graph", std::string());
 
     return config;
 }
@@ -407,11 +402,11 @@ nlohmann::json ProjectConfig::ToJson() const {
     j["version"] = version;
     j["created"] = created;
     j["description"] = description;
-    j["recent_files"] = recent_files;
     j["filters"] = filters;
     j["editor_settings"] = editor_settings.ToJson();
     j["open_scripts"] = open_scripts;
     j["active_script_index"] = active_script_index;
+    if (!open_graph.empty()) j["open_graph"] = open_graph;
     return j;
 }
 
@@ -910,8 +905,8 @@ void ProjectManager::AddToRecentProjects(const std::string& name, const std::str
     recent_projects_.insert(recent_projects_.begin(), rp);
 
     // Trim to max size
-    if (recent_projects_.size() > MAX_RECENT_PROJECTS) {
-        recent_projects_.resize(MAX_RECENT_PROJECTS);
+    if (recent_projects_.size() > recent_limit_) {
+        recent_projects_.resize(recent_limit_);
     }
 
     // Save to disk
@@ -950,6 +945,14 @@ std::string ProjectManager::GetRecentProjectsFilePath() const {
     }
     return "recent_projects.json";
 #endif
+}
+
+void ProjectManager::SetRecentProjectsLimit(size_t limit) {
+    recent_limit_ = std::clamp<size_t>(limit, 1, 50);
+    if (recent_projects_.size() > recent_limit_) {
+        recent_projects_.resize(recent_limit_);
+        SaveRecentProjects();
+    }
 }
 
 void ProjectManager::LoadRecentProjects() {

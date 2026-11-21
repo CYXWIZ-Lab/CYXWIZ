@@ -15,6 +15,15 @@ private Data Studio tickets (`tofix*/track*`).
   Apply. A folder of sounds says it has no table to plot. A table loaded
   disk-backed (a large file) also counts as loaded now; the plot used to
   read it again in a run of its own.
+- **Preferences > General does what it says.** Restore last session, Check
+  for updates, Recent Files Limit and Confirm before exit were switches
+  nothing read. Now: **When the Engine starts** (show the start page, or
+  reopen the last project with its scripts and the graph that was open),
+  **Recent projects kept** (1 to 50; File > Open Recent and the start page),
+  and **Ask before closing** (when something would be lost, or always).
+  Check for updates is gone until the Engine has an update check (the
+  installer has one). A project now remembers its open graph, and its open
+  scripts and graph are kept when the Engine closes.
 - **Closing the Engine asks about an unsaved graph.** The close dialog
   listed unsaved scripts only, so a changed graph on the canvas closed
   without a word. It is listed under **Unsaved work** now, and **Save and

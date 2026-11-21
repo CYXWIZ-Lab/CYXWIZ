@@ -273,7 +273,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             defaults["debug"] = {
                 {"require_debug_before_train", require_debug_before_train_}
             };
-            defaults["recent_projects"] = recent_projects_;
 
             json config = defaults;
 
@@ -338,7 +337,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                 template_config["debug"] = {
                     {"require_debug_before_train", require_debug_before_train_}
                 };
-                template_config["recent_projects"] = recent_projects_;
 
                 std::ofstream tmpl(template_path);
                 if (tmpl.is_open()) {
@@ -654,9 +652,16 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
-        // Recent projects
-        if (config.contains("recent_projects")) {
-            recent_projects_ = config["recent_projects"].get<std::vector<std::string>>();
+        // General: how the Engine starts and closes
+        start_with_last_project_ = false;
+        recent_projects_kept_ = kDefaultRecentProjects;
+        ask_before_closing_always_ = false;
+        if (config.contains("general") && config["general"].is_object()) {
+            const auto& general = config["general"];
+            start_with_last_project_ = general.value("start", std::string("start_page")) == "last_project";
+            recent_projects_kept_ =
+                std::clamp(general.value("recent_projects", kDefaultRecentProjects), kMinRecentProjects, kMaxRecentProjects);
+            ask_before_closing_always_ = general.value("ask_before_closing", std::string("when_lost")) == "always";
         }
 
         config_path_ = config_path;
@@ -863,8 +868,9 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"train_best", architecture_search_defaults_.train_best}
         };
 
-        // Recent projects
-        config["recent_projects"] = recent_projects_;
+        config["general"] = {{"start", start_with_last_project_ ? "last_project" : "start_page"},
+                             {"recent_projects", recent_projects_kept_},
+                             {"ask_before_closing", ask_before_closing_always_ ? "always" : "when_lost"}};
 
         std::ofstream file(config_path);
         if (!file.is_open()) {
@@ -1475,29 +1481,44 @@ void EngineConfig::SetRuntimeLogSavedFilters(
     }
 }
 
-std::vector<std::string> EngineConfig::GetRecentProjects() const {
+bool EngineConfig::StartWithLastProject() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return recent_projects_;
+    return start_with_last_project_;
 }
 
-void EngineConfig::AddRecentProject(const std::string& project_path) {
+void EngineConfig::SetStartWithLastProject(bool last_project) {
     std::lock_guard<std::mutex> lock(mutex_);
-
-    // Remove if already exists
-    auto it = std::find(recent_projects_.begin(), recent_projects_.end(), project_path);
-    if (it != recent_projects_.end()) {
-        recent_projects_.erase(it);
+    if (start_with_last_project_ != last_project) {
+        start_with_last_project_ = last_project;
+        modified_ = true;
     }
+}
 
-    // Add to front
-    recent_projects_.insert(recent_projects_.begin(), project_path);
+int EngineConfig::RecentProjectsKept() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return recent_projects_kept_;
+}
 
-    // Limit to 10 recent projects
-    if (recent_projects_.size() > 10) {
-        recent_projects_.resize(10);
+void EngineConfig::SetRecentProjectsKept(int kept) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    kept = std::clamp(kept, kMinRecentProjects, kMaxRecentProjects);
+    if (recent_projects_kept_ != kept) {
+        recent_projects_kept_ = kept;
+        modified_ = true;
     }
+}
 
-    modified_ = true;
+bool EngineConfig::AskBeforeClosingAlways() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return ask_before_closing_always_;
+}
+
+void EngineConfig::SetAskBeforeClosingAlways(bool always) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (ask_before_closing_always_ != always) {
+        ask_before_closing_always_ = always;
+        modified_ = true;
+    }
 }
 
 } // namespace cyxwiz::core
