@@ -6,12 +6,13 @@
 // and the exact steps each action adds. Pure data in and out (no ImGui, no
 // registry), so both screens say the same words and add the same steps.
 //
-// - Feature columns: Fill (numbers with the mean, median or 0; text with its
-//   most frequent value), or Drop the rows; a column more than half empty
-//   can also be left out of the features (M-7).
-// - The label: rows without one are dropped, never filled (M-5).
-// - A supplied Validation / Test input offers Drop only (M-6): its fill would
-//   need the Train rows' values.
+// - Feature columns (training reads number columns only): Fill with the
+//   mean, median or 0, or Drop the rows; a column more than half empty can
+//   also be left out of the features (M-7).
+// - The label, and a regression target's further columns: rows without one
+//   are dropped, never filled (M-5).
+// - A supplied Validation / Test input is read from its own Data Input, so a
+//   step does not reach it: its card says to fix the file (M-6).
 
 #include "graph_model.h"
 #include "missing_columns.h"
@@ -32,7 +33,7 @@ const char* NumberFillWord(NumberFill fill);
 enum class Done { No, Filled, Dropped };
 
 struct Input {
-    std::vector<MissingColumn> columns;  // the refusal's columns (those with a missing cell)
+    std::vector<MissingColumn> columns;  // the refusal's columns (those with a missing cell; labels marked)
     int64_t total_rows = -1;             // the rows they are out of; -1 when not known
     std::string input_name;              // the Data Input the data comes from ("Patients CSV")
     bool supplied_role = false;          // a supplied Validation / Test input (M-6)
@@ -47,9 +48,15 @@ struct Input {
     std::vector<std::string> left_out;   // feature columns the user left out (M-7)
 };
 
+// The input for a refusal's columns: a supplied Validation / Test
+// (`supplied_role` "Validation" / "Test") offers no step, only its file.
+Input MakeInput(const std::vector<MissingColumn>& columns, int64_t total_rows, const std::string& input_name,
+                const std::string& supplied_role = "");
+
 // A step the fix adds after the step that feeds the Data Split.
 struct Step {
     gui::NodeType type = gui::NodeType::FillMissingValues;  // or FilterRows
+    bool label = false;  // the label group's step (dropping the rows without a label)
     std::string name;
     std::map<std::string, std::string> params;
 };
@@ -58,7 +65,7 @@ struct Row {
     std::string column;
     std::string type;     // "number" or "text"
     std::string missing;  // "37 empty", "9 empty, 3 NaN", "at least 3 NaN"
-    std::string fix;      // "mean of Train", "most frequent of Train", "rows dropped"
+    std::string fix;      // "mean of Train", "drop the rows", "rows dropped"
     bool mostly_missing = false;  // more than half of the rows: can be left out (M-7)
 };
 
@@ -79,6 +86,8 @@ struct Group {
 };
 
 struct Card {
+    std::string input_name;     // the Data Input ("Patients CSV")
+    size_t open_columns = 0;    // the columns whose missing values are not fixed yet
     std::string verdict;        // "Training did not start: 4 columns have missing values"
     std::string subtitle;
     bool resolved = false;
@@ -93,7 +102,7 @@ struct Card {
 
 Card BuildCard(const Input& input);
 
-// "1,200".
-std::string Thousands(int64_t value);
+// The groups a card shows (features, label): what the report's Findings tab counts.
+size_t GroupCount(const Card& card);
 
 }  // namespace cyxwiz::missing_values_fix

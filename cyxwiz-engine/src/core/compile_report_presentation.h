@@ -145,6 +145,7 @@ struct Report {
     // Missing values: the cards, in the Findings tab before the findings;
     // "Fix and train" while any is open, "Train" once every one is fixed.
     std::vector<missing_values_fix::Card> missing_values;
+    size_t missing_value_groups = 0;  // their groups, counted in the Findings tab
     bool offer_fix_and_train = false;
     std::string fix_and_train_blocked;  // why "Fix and train" cannot fix them all (empty when it can)
     std::string copy_text;

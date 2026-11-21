@@ -5137,7 +5137,7 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                         !scalar_result.ValueOrDie()->is_valid) {
                         ReportError(
                             "FillMissing: column '" + column +
-                            "' has no non-null training values, so " +
+                            "' has no training values (every Train cell is empty or NaN), so " +
                             strategy +
                             " cannot be fitted. Remove the column or use a "
                             "constant fill value.");

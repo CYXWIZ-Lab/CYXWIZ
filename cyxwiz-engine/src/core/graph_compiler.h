@@ -753,6 +753,27 @@ inline bool UsesContinuousTargetMetrics(
            config.loss_type == gui::NodeType::HuberLoss;
 }
 
+// How many target columns a continuous target has (0 for a class target):
+// the label, then <label>_1 ... <label>_{width-1}, as the batchers read them.
+inline size_t RegressionTargetWidth(const TrainingConfiguration& config) {
+    if (!UsesContinuousTargetMetrics(config)) return 0;
+    return config.target.width > 0 ? config.target.width
+                                   : (config.is_time_series ? config.time_series_target_width
+                                                            : std::max<size_t>(1, config.output_size));
+}
+
+// The target columns a batcher reads for `label_column`: the label itself,
+// and for a continuous target of width > 1 the ordered <label>_1 ... columns.
+inline std::vector<std::string> TrainingTargetColumns(const TrainingConfiguration& config,
+                                                      const std::string& label_column) {
+    std::vector<std::string> columns;
+    if (label_column.empty()) return columns;
+    columns.push_back(label_column);
+    for (size_t target = 1; target < RegressionTargetWidth(config); ++target)
+        columns.push_back(label_column + "_" + std::to_string(target));
+    return columns;
+}
+
 /**
  * GraphCompiler - Compiles visual node graph into executable training configuration
  *

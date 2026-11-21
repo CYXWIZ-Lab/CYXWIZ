@@ -80,22 +80,21 @@ inline MissingColumn CountMissingColumn(const std::string& name, const arrow::Ch
     return c;
 }
 
-
-// Throws the refusal when any column has missing cells.
 // The missing cells training would refuse in a table, counted as the table
-// batchers count them: the label, and every number column that is a feature
-// (not the label, not a "__" column, not one a Data Input role keeps out).
-// Only columns with a missing cell are returned. Used before training starts,
-// so the fix is offered before a run (decision M-1).
-inline std::vector<MissingColumn> CountMissingTrainingColumns(const arrow::Table& table, const std::string& label,
+// batchers count them: the target columns (`labels`: the label, and a
+// regression target's <label>_1 ... columns), and every number column that
+// is a feature (not a target, not a "__" column, not one a Data Input role
+// keeps out). Only columns with a missing cell are returned. Used before
+// training starts, so the fix is offered before a run (decision M-1).
+inline std::vector<MissingColumn> CountMissingTrainingColumns(const arrow::Table& table,
+                                                              const std::vector<std::string>& labels,
                                                               const std::vector<std::string>& excluded) {
     std::vector<MissingColumn> out;
     const auto& schema = *table.schema();
-    const int label_index = label.empty() ? -1 : schema.GetFieldIndex(label);
     for (int i = 0; i < schema.num_fields(); ++i) {
         const auto& field = schema.field(i);
         const std::string& name = field->name();
-        const bool is_label = i == label_index;
+        const bool is_label = std::find(labels.begin(), labels.end(), name) != labels.end();
         if (!is_label) {
             if (name.rfind("__", 0) == 0 || !IsNumericBatchFeatureType(field->type())) continue;
             if (std::find(excluded.begin(), excluded.end(), name) != excluded.end()) continue;
@@ -103,12 +102,13 @@ inline std::vector<MissingColumn> CountMissingTrainingColumns(const arrow::Table
         MissingColumn c = CountMissingColumn(name, *table.column(i), is_label);
         if (c.rows > 0) out.push_back(std::move(c));
     }
-    // The label last, as the refusal lists it.
+    // The labels last, as the refusal lists them.
     std::stable_partition(out.begin(), out.end(), [](const MissingColumn& c) { return !c.label; });
     return out;
 }
 
-// `total_rows`: the rows the counts are out of (-1 when not known).
+// Throws the refusal when any column has missing cells. `total_rows`: the
+// rows the counts are out of (-1 when not known).
 inline void ThrowIfMissingValues(const char* batcher, const std::vector<MissingColumn>& columns,
                                  int64_t total_rows = -1) {
     std::string features, labels;

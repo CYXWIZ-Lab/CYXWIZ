@@ -336,21 +336,21 @@ void SetBlockedStatus(GraphTrainingLaunchResult& result,
 // as the batches are read).
 std::optional<MissingValuesBlock> CountMissingTrainingValues(cyxwiz::DataRegistry& registry,
                                                              const std::string& dataset_name,
-                                                             const std::string& label_column,
+                                                             const std::vector<std::string>& labels,
                                                              const std::vector<std::string>& excluded) {
     MissingValuesBlock block;
     block.dataset_name = dataset_name;
     if (const auto memory = registry.GetArrowDataset(dataset_name)) {
         const auto table = memory->GetArrowTable();
         if (!table) return std::nullopt;
-        block.columns = cyxwiz::CountMissingTrainingColumns(*table, label_column, excluded);
+        block.columns = cyxwiz::CountMissingTrainingColumns(*table, labels, excluded);
         block.total_rows = table->num_rows();
     } else if (const auto disk = registry.GetParquetBackedDataset(dataset_name)) {
         const auto schema = disk->GetSchema();
         if (!schema) return std::nullopt;
         for (int i = 0; i < schema->num_fields(); ++i) {
             const auto& field = schema->field(i);
-            const bool label = field->name() == label_column;
+            const bool label = std::find(labels.begin(), labels.end(), field->name()) != labels.end();
             if (!label && (field->name().rfind("__", 0) == 0 || !cyxwiz::IsNumericBatchFeatureType(field->type()) ||
                            std::find(excluded.begin(), excluded.end(), field->name()) != excluded.end()))
                 continue;
@@ -672,7 +672,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             const std::string requested =
                 !config.target.primary_column.empty() ? config.target.primary_column : label_column;
             const std::string label = ResolveRuntimeArrowLabelColumn(registry, train_table, requested);
-            if (auto block = CountMissingTrainingValues(registry, train_table, label, config.excluded_feature_columns)) {
+            if (auto block = CountMissingTrainingValues(registry, train_table, cyxwiz::TrainingTargetColumns(config, label),
+                                                        config.excluded_feature_columns)) {
                 block->role = "Train";
                 block->source_node_id = config.data_source_node_id;
                 result.missing_values.push_back(std::move(*block));
@@ -680,7 +681,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         }
         const auto supplied = [&](const cyxwiz::ResolvedDatasetRole& role, const char* name) {
             if (!role.IsSupplied() || role.joined_to_training) return;
-            if (auto block = CountMissingTrainingValues(registry, role.dataset_name, role.label_column,
+            if (auto block = CountMissingTrainingValues(registry, role.dataset_name,
+                                                        cyxwiz::TrainingTargetColumns(config, role.label_column),
                                                         config.excluded_feature_columns)) {
                 block->role = name;
                 block->supplied = true;

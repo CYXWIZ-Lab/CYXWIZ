@@ -208,7 +208,7 @@ int main() {
             {Doubles({1, nan, nan, 4}, false), Doubles({1, 2, 3, 4}, true),
              std::make_shared<arrow::ChunkedArray>(label_array), Doubles({nan, 1, 2, 3}, true),
              Doubles({nan, 0, 0, 0}, true), Strings({"a", "b", "c", "d"})});
-        const auto counted = cyxwiz::CountMissingTrainingColumns(*wider, "label", {"kept_out"});
+        const auto counted = cyxwiz::CountMissingTrainingColumns(*wider, {"label"}, {"kept_out"});
         Check(counted.size() == 2 && counted[0].name == "x" && counted[0].rows == 2 && counted[0].nan_rows == 2 &&
                   counted[1].name == "label" && counted[1].label && counted[1].rows == 1,
               "the check before training counts the batcher's columns (" + std::to_string(counted.size()) + ")");
@@ -217,10 +217,20 @@ int main() {
         auto text_label = arrow::Table::Make(arrow::schema({arrow::field("x", arrow::float64()),
                                                             arrow::field("label", arrow::utf8())}),
                                              {Doubles({1, 2, 3, 4}, true), Strings({"a", "", " ", "b"})});
-        const auto text_counted = cyxwiz::CountMissingTrainingColumns(*text_label, "label", {});
+        const auto text_counted = cyxwiz::CountMissingTrainingColumns(*text_label, {"label"}, {});
         Check(text_counted.size() == 1 && text_counted[0].name == "label" && text_counted[0].rows == 1 &&
                   text_counted[0].text,
               "an empty text label is counted as missing before training");
+        // A regression target of width 2 (y, y_1): NaN in y_1 is a missing
+        // target, never a feature the fix would fill.
+        auto targets = arrow::Table::Make(arrow::schema({arrow::field("x", arrow::float64()),
+                                                         arrow::field("y", arrow::float64()),
+                                                         arrow::field("y_1", arrow::float64())}),
+                                          {Doubles({1, 2, 3, 4}, true), Doubles({1, 2, 3, 4}, true),
+                                           Doubles({1, nan, 3, 4}, false)});
+        const auto target_counted = cyxwiz::CountMissingTrainingColumns(*targets, {"y", "y_1"}, {});
+        Check(target_counted.size() == 1 && target_counted[0].name == "y_1" && target_counted[0].label,
+              "a regression target's further column is counted as a label");
     }
     {
         // The only empty cell is in a column the model does not use (a role

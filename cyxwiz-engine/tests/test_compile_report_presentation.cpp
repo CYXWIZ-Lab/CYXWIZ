@@ -335,6 +335,16 @@ void CheckMissingValues() {
     Check(r.verdict == "Fixed: 2 steps added after Patients CSV" && r.verdict_tone == Tone::Ok && r.offer_train &&
               !r.offer_fix_and_train && r.errors == 0,
           "fixed: " + r.verdict);
+    Check(r.missing_value_groups == 2, "the Findings tab counts the card's two groups");
+
+    // A supplied Test input with only empty labels: no step reaches it, and
+    // Fix and train says which input to fix (not an empty name).
+    mv::Input supplied = mv::MakeInput({label}, 50, "Patients test CSV", "Test");
+    in.missing_values = {mv::BuildCard(supplied)};
+    r = BuildReport(in);
+    Check(r.fix_and_train_blocked ==
+              "The missing values of Patients test CSV cannot be fixed with a step here: fix them in its file.",
+          "blocked: " + r.fix_and_train_blocked);
 }
 
 int main() {

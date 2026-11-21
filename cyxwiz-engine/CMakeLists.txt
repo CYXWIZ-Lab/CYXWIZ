@@ -4211,6 +4211,7 @@ add_executable(test_graph_training_sequence_preflight
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
     src/core/missing_values_presentation.cpp
+    src/core/data_input_presentation.cpp  # FormatCount
     src/gui/missing_values_view.cpp
     src/core/filter_condition.cpp
     src/core/rl_device_presentation.cpp
@@ -4361,6 +4362,7 @@ add_executable(test_text_gui_training_launch
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
     src/core/missing_values_presentation.cpp
+    src/core/data_input_presentation.cpp  # FormatCount
     src/gui/missing_values_view.cpp
     src/core/filter_condition.cpp
     src/core/rl_device_presentation.cpp
@@ -5112,6 +5114,7 @@ endif()
 add_executable(test_missing_values_presentation
     tests/test_missing_values_presentation.cpp
     src/core/missing_values_presentation.cpp
+    src/core/data_input_presentation.cpp  # FormatCount
     src/core/filter_condition.cpp
 )
 target_include_directories(test_missing_values_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -5137,6 +5140,7 @@ add_executable(test_compile_report_presentation
     tests/test_compile_report_presentation.cpp
     src/core/compile_report_presentation.cpp
     src/core/missing_values_presentation.cpp
+    src/core/data_input_presentation.cpp  # FormatCount
     src/core/filter_condition.cpp
     src/core/compiled_node_presentation.cpp
     src/core/data_registry_core.cpp
@@ -5985,6 +5989,7 @@ add_executable(test_training_manager_session
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
     src/core/missing_values_presentation.cpp
+    src/core/data_input_presentation.cpp  # FormatCount
     src/gui/missing_values_view.cpp
     src/core/filter_condition.cpp
     src/core/rl_device_presentation.cpp
@@ -9052,6 +9057,7 @@ set(CYXWIZ_TRAIN_PATH_TEST_SOURCES
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
     src/core/missing_values_presentation.cpp
+    src/core/data_input_presentation.cpp  # FormatCount
     src/gui/missing_values_view.cpp
     src/core/filter_condition.cpp
     src/core/rl_device_presentation.cpp

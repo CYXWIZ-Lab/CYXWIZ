@@ -388,12 +388,13 @@ Report BuildReport(const Input& in) {
         bool resolved = true;
         size_t columns = 0, open_cards = 0;
         for (const auto& card : r.missing_values) {
-            columns += card.features.rows.size() + (card.label.present ? 1 : 0);
+            columns += card.open_columns;
+            r.missing_value_groups += missing_values_fix::GroupCount(card);
             if (card.resolved) continue;
             resolved = false;
             ++open_cards;
             if (card.fix_all_steps.empty())
-                r.fix_and_train_blocked = "The missing values of " + card.features.subtitle +
+                r.fix_and_train_blocked = "The missing values of " + card.input_name +
                                           " cannot be fixed with a step here: fix them in its file.";
         }
         r.errors += open_cards;

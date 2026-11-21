@@ -1,7 +1,8 @@
 // The one-click fix for missing values (TOFIX223 0.3, mockup approved
 // 2026-11-21): the card both screens show and the steps each action adds.
-// The main scenario is the mockup's: Patients CSV, 1,200 rows; age 37 empty,
-// cholesterol 9 empty and 3 NaN, smoker (text) 5 empty; label diagnosis 4 empty.
+// The main scenario is the mockup's (training reads number features only, so
+// the mockup's text column is a number here): Patients CSV, 1,200 rows; age 37
+// empty, cholesterol 9 empty and 3 NaN, bmi 5 empty; label diagnosis 4 empty.
 
 #include "core/missing_values_presentation.h"
 
@@ -37,7 +38,7 @@ Input Patients() {
     in.input_name = "Patients CSV";
     in.total_rows = 1200;
     in.columns = {Column("age", 37, 0, false, false), Column("cholesterol", 12, 3, false, false),
-                  Column("smoker", 5, 0, true, false), Column("diagnosis", 4, 0, true, true)};
+                  Column("bmi", 5, 0, false, false), Column("diagnosis", 4, 0, true, true)};
     return in;
 }
 
@@ -54,7 +55,8 @@ int main() {
     {
         const Card card = BuildCard(Patients());
         Check(card.verdict == "Training did not start: 4 columns have missing values", "verdict: " + card.verdict);
-        Check(!card.resolved, "not resolved before a fix");
+        Check(!card.resolved && card.open_columns == 4 && card.input_name == "Patients CSV", "not resolved before a fix");
+        Check(GroupCount(card) == 2, "two groups");
         const Group& f = card.features;
         Check(f.present && f.title == "3 feature columns have missing values", "feature title: " + f.title);
         Check(f.subtitle == "Patients CSV · 1,200 rows", "feature subtitle: " + f.subtitle);
@@ -63,25 +65,22 @@ int main() {
                   f.rows[0].type == "number" && f.rows[0].fix == "mean of Train",
               "age row");
         Check(f.rows.size() == 3 && f.rows[1].missing == "9 empty, 3 NaN", "cholesterol counts empty and NaN apart");
-        Check(f.rows.size() == 3 && f.rows[2].type == "text" && f.rows[2].fix == "most frequent of Train",
-              "a text column fills with its most frequent value");
         Check(f.can_fill && f.can_drop && f.can_leave_out.empty(), "Fill and Drop; nothing mostly empty");
 
-        // Fill: one step for the numbers, one for the text; the label is never filled.
-        Check(f.fill_steps.size() == 2, "two Missing Value steps");
-        const Step* numbers = Find(f.fill_steps, "Fill age, cholesterol (mean)");
-        const Step* texts = Find(f.fill_steps, "Fill smoker (most frequent)");
-        Check(numbers && numbers->type == gui::NodeType::FillMissingValues && numbers->params.at("columns") == "age,cholesterol" &&
-                  numbers->params.at("strategy") == "mean" && numbers->params.at("label_col") == "diagnosis",
-              "the numbers' step: columns, mean, the label kept out");
-        Check(texts && texts->params.at("columns") == "smoker" && texts->params.at("strategy") == "mode",
-              "the text step: most frequent");
+        // Fill: one Missing Value step over the number columns; the label is never filled.
+        Check(f.fill_steps.size() == 1, "one Missing Value step");
+        const Step* numbers = Find(f.fill_steps, "Fill age, cholesterol, bmi (mean)");
+        Check(numbers && numbers->type == gui::NodeType::FillMissingValues &&
+                  numbers->params.at("columns") == "age,cholesterol,bmi" && numbers->params.at("strategy") == "mean" &&
+                  numbers->params.at("label_col") == "diagnosis",
+              "the fill step: columns, mean, the label kept out");
+        Check(f.note.find("most frequent") == std::string::npos, "no text fill is promised: " + f.note);
 
         // Drop: one Row Filter over the three columns.
         Check(f.drop_steps.size() == 1 && f.drop_steps[0].type == gui::NodeType::FilterRows &&
-                  f.drop_steps[0].name == "Keep rows with age, cholesterol and smoker" &&
+                  f.drop_steps[0].name == "Keep rows with age, cholesterol and bmi" &&
                   f.drop_steps[0].params.at("condition") ==
-                      "\"age\" IS NOT EMPTY AND \"cholesterol\" IS NOT EMPTY AND \"smoker\" IS NOT EMPTY",
+                      "\"age\" IS NOT EMPTY AND \"cholesterol\" IS NOT EMPTY AND \"bmi\" IS NOT EMPTY",
               "drop: " + (f.drop_steps.empty() ? std::string("none") : f.drop_steps[0].params.at("condition")));
 
         const Group& l = card.label;
@@ -91,11 +90,13 @@ int main() {
                   l.drop_steps[0].params.at("condition") == "\"diagnosis\" IS NOT EMPTY",
               "the label's Row Filter");
 
-        // Fix and train: fill the features, drop the rows without a label.
-        Check(card.fix_all_steps.size() == 3 && card.fix_all_steps[0].name == "Fill age, cholesterol (mean)" &&
-                  card.fix_all_steps[2].name == "Keep rows with a diagnosis",
-              "Fix and train adds the two fills and the label's filter");
-        Check(card.fix_all_hint.find("drops the rows without a label") != std::string::npos, card.fix_all_hint);
+        // Fix and train: fill the features, then drop the rows without a label (the card's order).
+        Check(card.fix_all_steps.size() == 2 && card.fix_all_steps[0].name == "Fill age, cholesterol, bmi (mean)" &&
+                  card.fix_all_steps[1].name == "Keep rows with a diagnosis",
+              "Fix and train adds the fill, then the label's filter");
+        Check(card.fix_all_hint == "Fills the feature columns with the chosen value and drops the rows without a "
+                                   "label, then trains.",
+              card.fix_all_hint);
     }
 
     // The numbers' value: median and 0.
@@ -103,30 +104,33 @@ int main() {
         Input in = Patients();
         in.number_fill = NumberFill::Median;
         const Card median = BuildCard(in);
-        const Step* step = Find(median.features.fill_steps, "Fill age, cholesterol (median)");
+        const Step* step = Find(median.features.fill_steps, "Fill age, cholesterol, bmi (median)");
         Check(step && step->params.at("strategy") == "median" && median.features.rows[0].fix == "median of Train",
               "median");
         in.number_fill = NumberFill::Zero;
         const Card zero = BuildCard(in);
-        step = Find(zero.features.fill_steps, "Fill age, cholesterol (0)");
+        step = Find(zero.features.fill_steps, "Fill age, cholesterol, bmi (0)");
         Check(step && step->params.at("strategy") == "constant" && step->params.at("value") == "0" &&
                   zero.features.rows[0].fix == "0",
               "0 is a constant fill");
     }
 
-    // After the actions: the done texts and the resolved verdict.
+    // After the actions: the done texts, the resolved verdict, and Fix and
+    // train adds only what is still open.
     {
         Input in = Patients();
         in.features = Done::Filled;
         Card card = BuildCard(in);
-        Check(card.features.resolved && !card.label.resolved && !card.resolved, "features filled, label still open");
+        Check(card.features.resolved && !card.label.resolved && !card.resolved && card.open_columns == 1,
+              "features filled, label still open");
         Check(card.features.fix_header == "Now", "header after a fix");
-        Check(card.features.done_text ==
-                  "Added \"Fill age, cholesterol (mean)\" and \"Fill smoker (most frequent)\" (Missing Value steps).",
+        Check(card.features.done_text == "Added \"Fill age, cholesterol, bmi (mean)\" (Missing Value step).",
               "fill done: " + card.features.done_text);
+        Check(card.fix_all_steps.size() == 1 && card.fix_all_steps[0].name == "Keep rows with a diagnosis",
+              "Fix and train adds the open group's step only");
         in.label = Done::Dropped;
         card = BuildCard(in);
-        Check(card.resolved && card.resolved_verdict == "Fixed: 3 steps added after Patients CSV",
+        Check(card.resolved && card.resolved_verdict == "Fixed: 2 steps added after Patients CSV",
               "resolved: " + card.resolved_verdict);
         Check(card.label.done_text == "Added \"Keep rows with a diagnosis\" (Row Filter: \"diagnosis\" IS NOT EMPTY).",
               "label done: " + card.label.done_text);
@@ -135,42 +139,31 @@ int main() {
         Check(card.resolved_verdict == "Fixed: 2 steps added after Patients CSV" &&
                   card.features.rows[0].fix == "rows dropped" &&
                   card.features.done_text ==
-                      "Added \"Keep rows with age, cholesterol and smoker\" (Row Filter: each IS NOT EMPTY).",
+                      "Added \"Keep rows with age, cholesterol and bmi\" (Row Filter: each IS NOT EMPTY).",
               "drop done: " + card.features.done_text);
     }
 
-    // A supplied Validation input: Drop only (M-6).
+    // A supplied Validation / Test input is read from its own Data Input: no
+    // step, only the file (M-6, owner 2026-11-21), and nothing to leave out there.
     {
-        Input in = Patients();
-        in.supplied_role = true;
-        in.role_name = "Validation";
-        in.input_name = "Patients validation CSV";
-        const Card card = BuildCard(in);
-        Check(!card.features.can_fill && card.features.can_drop, "a supplied input offers Drop only");
-        Check(card.features.note.find("Fill is not offered here") != std::string::npos, card.features.note);
-        Check(card.fix_all_steps.size() == 2 && card.fix_all_steps[0].type == gui::NodeType::FilterRows,
-              "Fix and train drops on a supplied input");
-    }
-
-    // A supplied input training reads from its own file: a step after it would
-    // not apply, so the card offers no step, only the file.
-    {
-        Input in = Patients();
-        in.supplied_role = true;
-        in.role_name = "Test";
-        in.input_name = "Patients test CSV";
-        in.steps_reach_input = false;
+        Input in = MakeInput(Patients().columns, 100, "Patients test CSV", "Test");
+        Check(in.supplied_role && in.role_name == "Test" && !in.steps_reach_input, "a supplied input reaches no step");
+        in.columns.push_back(Column("mostly", 80, 0, false, false));
         const Card card = BuildCard(in);
         Check(!card.features.can_fill && !card.features.can_drop && !card.label.can_drop,
               "no step is offered where a step would not reach training");
         Check(card.fix_all_steps.empty(), "Fix and train has nothing to add there");
+        Check(card.features.can_leave_out.empty(), "no Leave out on a supplied input");
         Check(card.features.note.find("in the file") != std::string::npos &&
-                  card.label.note.find("in the file") != std::string::npos,
+                  card.label.note.find("in the file") != std::string::npos && card.features.rows[0].fix == "fix the file",
               "the notes say to fix the file: " + card.features.note);
+        const Input train = MakeInput(Patients().columns, 100, "");
+        Check(!train.supplied_role && train.steps_reach_input && train.input_name == "the training data",
+              "the Train input reaches its steps");
     }
 
     // A column more than half empty can be left out (M-7); once left out it is
-    // not filled or dropped.
+    // not filled or dropped; with every missing column left out the card is fixed.
     {
         Input in;
         in.input_name = "Sensors";
@@ -191,6 +184,55 @@ int main() {
                   card.features.rows[0].missing == "2 NaN",
               "left out: only temp remains");
         Check(card.fix_all_hint.rfind("Fills", 0) == 0 && card.fix_all_steps.size() == 1, card.fix_all_hint);
+
+        in.columns = {Column("pressure", 70, 0, false, false)};
+        card = BuildCard(in);
+        Check(card.resolved && !card.features.present && card.open_columns == 0,
+              "every missing column left out: fixed, not open forever");
+        Check(card.resolved_verdict == "Fixed: pressure is left out of the features", card.resolved_verdict);
+    }
+
+    // A regression target of width 2: every target column is a label, never
+    // filled; one Row Filter drops the rows missing any of them.
+    {
+        Input in;
+        in.input_name = "Forecast";
+        in.total_rows = 500;
+        in.columns = {Column("load", 3, 0, false, false), Column("y", 2, 0, false, true),
+                      Column("y_1", 4, 4, false, true)};
+        const Card card = BuildCard(in);
+        Check(card.features.rows.size() == 1 && card.features.rows[0].column == "load", "y_1 is not a feature");
+        Check(card.features.fill_steps.size() == 1 && card.features.fill_steps[0].params.at("columns") == "load",
+              "the fill never names a target");
+        Check(card.label.present && card.label.title == "2 target columns have missing values" &&
+                  card.label.rows.size() == 2 && card.label.rows[1].column == "y_1" &&
+                  card.label.rows[1].missing == "4 NaN",
+              "the targets' group: " + card.label.title);
+        Check(card.label.drop_steps.size() == 1 && card.label.drop_steps[0].name == "Keep rows with y and y_1" &&
+                  card.label.drop_steps[0].params.at("condition") == "\"y\" IS NOT EMPTY AND \"y_1\" IS NOT EMPTY",
+              "one Row Filter over every target");
+        Check(card.verdict == "Training did not start: 3 columns have missing values", card.verdict);
+        Check(card.fix_all_steps.size() == 2 && card.fix_all_steps[1].name == "Keep rows with y and y_1",
+              "Fix and train drops the rows without every target");
+    }
+
+    // A column name the Missing Value step's comma list cannot carry: Drop only.
+    {
+        Input in;
+        in.input_name = "Odd";
+        in.total_rows = 10;
+        in.columns = {Column("x, y", 2, 0, false, false), Column(" age", 1, 0, false, false)};
+        const Card card = BuildCard(in);
+        Check(!card.features.can_fill && card.features.can_drop && card.features.fill_steps.empty(),
+              "no Fill for names with a comma or edge spaces");
+        Check(card.features.note.find("Fill is not offered") != std::string::npos &&
+                  card.features.note.find("'x, y'") != std::string::npos,
+              card.features.note);
+        Check(card.features.drop_steps[0].params.at("condition") == "\"x, y\" IS NOT EMPTY AND \" age\" IS NOT EMPTY",
+              "the Row Filter quotes the names: " + card.features.drop_steps[0].params.at("condition"));
+        Check(card.fix_all_steps.size() == 1 && card.fix_all_steps[0].type == gui::NodeType::FilterRows &&
+                  card.fix_all_hint.rfind("Drops the rows with an empty feature cell", 0) == 0,
+              "Fix and train drops instead");
     }
 
     // Only the label; and counts read with thousands.
@@ -205,8 +247,7 @@ int main() {
         Check(!card.features.present && card.features.resolved && card.label.present, "label only");
         Check(card.label.title == "At least 1 row has no label", card.label.title);
         Check(card.fix_all_hint == "Drops the rows without a label, then trains.", card.fix_all_hint);
-        Check(Thousands(2500000) == "2,500,000" && Thousands(1200) == "1,200" && Thousands(999) == "999",
-              "thousands");
+        Check(card.copy_lines.size() == 3, "copy lines: verdict, the label, the fix");
     }
 
     if (failures == 0) std::cout << "test_missing_values_presentation: all checks passed\n";
