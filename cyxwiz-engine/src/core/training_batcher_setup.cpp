@@ -89,7 +89,11 @@ bool RequiresClassIndexTargets(const TrainingConfiguration& config) {
     const auto weights = config.loss_params.find("class_weights");
     const bool has_weights = weights != config.loss_params.end() &&
                              !TrimAscii(weights->second).empty();
-    return has_weights || config.loss_params.contains("ignore_index");
+    // Balanced weights are resolved only after the batchers exist, so the
+    // request itself picks class-index targets: a weighted loss over them is
+    // PyTorch's weighted mean (sum w_y l / sum w_y), over one-hot rows it is a
+    // plain mean.
+    return has_weights || IsBalancedClassWeightRequest(config) || config.loss_params.contains("ignore_index");
 }
 
 // The target form and normalization of one role's batcher: the split's train,
@@ -641,17 +645,20 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
         result.batchers.test = result.batchers.parquet_test.get();
     }
 
-    // A supplied table gets the same target form as Train.
+    // A supplied table gets the same target form as Train. A role joined to
+    // the Training table is a slice of the split, transformed with Train's
+    // label already: transforming it again with the role's own label column
+    // looked for targets that table does not have.
     const auto apply_role_transforms = [&](const std::unique_ptr<ArrowDatasetBatcher>& arrow,
                                            const std::unique_ptr<ParquetArrowBatcher>& parquet,
                                            const std::string& label_column) {
         if (arrow) ApplyRoleTargetTransform(config, label_column, *arrow);
         else if (parquet) ApplyRoleTargetTransform(config, label_column, *parquet);
     };
-    if (partitions.dev.IsSupplied() && result.batchers.val) {
+    if (external_dev && result.batchers.val) {
         apply_role_transforms(result.batchers.arrow_val, result.batchers.parquet_val, partitions.dev.label_column);
     }
-    if (partitions.test.IsSupplied() && result.batchers.test) {
+    if (external_test && result.batchers.test) {
         apply_role_transforms(result.batchers.arrow_test, result.batchers.parquet_test, partitions.test.label_column);
     }
 

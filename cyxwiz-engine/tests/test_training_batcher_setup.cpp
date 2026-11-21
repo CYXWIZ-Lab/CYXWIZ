@@ -1259,6 +1259,15 @@ int main(int argc, char** argv) {
           "balanced class_weight should be resolved to manual weights");
     Check(balanced_loss_config.loss_params["class_weights"] == "[0.5625, 4.5]",
           "balanced class_weights should use n_samples / (n_classes * class_count)");
+    // The request picks class-index targets before the weights exist, as
+    // manual weights do: the weighted loss is then PyTorch's weighted mean
+    // (sum w_y l / sum w_y), not a mean over one-hot rows.
+    {
+        auto balanced_batch = balanced_loss_batchers.train->GetNextBatch();
+        Check(balanced_batch.labels.GetDataType() == cyxwiz::DataType::Int32 &&
+                  balanced_batch.labels.Shape() == std::vector<size_t>({balanced_batch.size}),
+              "balanced class weights read class-index targets in memory");
+    }
 
     auto stratified_loss_config = MakeConfig();
     stratified_loss_config.has_data_split = true;
@@ -1324,6 +1333,17 @@ int main(int argc, char** argv) {
           "train pointer should target Parquet train owner");
     auto parquet_batch = parquet_batchers.train->GetNextBatch();
     CheckFeatureAndLabelShapes(parquet_batch, 2, 2, 2, "tabular Parquet");
+    {
+        auto balanced_parquet_config = MakeConfig();
+        balanced_parquet_config.loss_type = gui::NodeType::CrossEntropyLoss;
+        balanced_parquet_config.loss_params["class_weight"] = "balanced";
+        auto balanced_parquet =
+            cyxwiz::BuildParquetTrainingBatchers(balanced_parquet_config, parquet_dataset, "label", /*batch_size=*/2);
+        auto balanced_batch = balanced_parquet.train->GetNextBatch();
+        Check(balanced_batch.labels.GetDataType() == cyxwiz::DataType::Int32 &&
+                  balanced_batch.labels.Shape() == std::vector<size_t>({balanced_batch.size}),
+              "balanced class weights read class-index targets from Parquet");
+    }
 
     // Validation 0 with a Test share on disk, as in memory.
     auto parquet_test_only_config = MakeConfig();
@@ -1514,6 +1534,41 @@ int main(int argc, char** argv) {
               "regression supplied Validation role reads the label values, as Train does");
         Check(targets_of(regression_build.batchers.test) == expected,
               "regression supplied Test role (Parquet) reads the label values, as Train does");
+    }
+
+    // A supplied Validation joined to the Training table before the split is
+    // a slice of the split: it already reads Train's targets ("y", "y_1",
+    // "y_2" of a time-series window). It was transformed again with the
+    // role's own label column and asked for "temp_1", which the table does not
+    // have, so the build threw.
+    {
+        auto joined_config = MakeMultiStepTimeSeriesConfig();
+        joined_config.dataset_roles.train = {"joined_train", "temp", 40, true};
+        joined_config.dataset_roles.dev = {"joined_dev", "temp", 41, true};
+        joined_config.dataset_roles.dev.joined_to_training = true;
+        joined_config.dataset_roles.policy.train_ratio = 0.75f;
+        joined_config.dataset_roles.policy.dev_ratio = 0.25f;
+        joined_config.dataset_roles.policy.test_ratio = 0.0f;
+        cyxwiz::ResolvedTabularDatasets joined_datasets;
+        joined_datasets.train_arrow = MakeMultiStepTimeSeriesDataset();
+        std::string error;
+        try {
+            auto joined_build =
+                cyxwiz::BuildResolvedTabularTrainingBatchers(joined_config, joined_datasets, /*batch_size=*/2);
+            if (!joined_build.ok()) error = joined_build.error_message;
+            else if (!joined_build.batchers.val || joined_build.batchers.val->GetNumSamples() != 1)
+                error = "the joined Validation slice holds the partition-1 row";
+            else {
+                joined_build.batchers.val->Reset();
+                const auto joined_batch = joined_build.batchers.val->GetNextBatch();
+                if (joined_batch.labels.Shape() != std::vector<size_t>({1, 3}) ||
+                    joined_batch.labels.ReadData<float>()[2] != 6.5f)
+                    error = "the joined Validation slice reads Train's three targets";
+            }
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
+        Check(error.empty(), "a joined supplied Validation keeps Train's targets: " + error);
     }
 
     auto sparse_config = MakeConfig();

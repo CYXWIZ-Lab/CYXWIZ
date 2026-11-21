@@ -24,7 +24,9 @@ bool RequiresClassIndexTargetsForSparse(
     const auto weights = config.loss_params.find("class_weights");
     const bool has_weights = weights != config.loss_params.end() &&
                              !weights->second.empty();
-    return has_weights || config.loss_params.contains("ignore_index");
+    // Balanced weights are resolved after the batchers exist (see
+    // RequiresClassIndexTargets in training_batcher_setup.cpp).
+    return has_weights || IsBalancedClassWeightRequest(config) || config.loss_params.contains("ignore_index");
 }
 
 void ValidateSparseTrainingContract(
