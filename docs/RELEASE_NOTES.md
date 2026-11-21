@@ -7,6 +7,14 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **A Plot or Dashboard on an image Data Input reads its images.** It said
+  "Data Input has no data yet: open it, choose a file and Apply" even with
+  the images loaded (it looked for a file, and an image folder has a
+  folder). Loaded, it reads the folder's list of images (file, class, width,
+  height, channels, size); before that it says to open the Data Input and
+  Apply. A folder of sounds says it has no table to plot. A table loaded
+  disk-backed (a large file) also counts as loaded now; the plot used to
+  read it again in a run of its own.
 - **Closing the Engine asks about an unsaved graph.** The close dialog
   listed unsaved scripts only, so a changed graph on the canvas closed
   without a word. It is listed under **Unsaved work** now, and **Save and
