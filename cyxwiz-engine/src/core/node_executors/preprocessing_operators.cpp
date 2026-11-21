@@ -1307,8 +1307,19 @@ TargetEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         if (skipped > 0)
             spdlog::warn("{}: {} row(s) with a missing or infinite target '{}' are left out of the fit",
                          GetName(), skipped, target_col_);
-        if (rows == 0)
-            return arrow::Status::Invalid(GetName() + ": no row has a usable target '" + target_col_ + "' to learn from");
+        if (rows == 0) {
+            size_t train_rows = 0;
+            for (size_t i = 0; i < target.size(); ++i)
+                if (fit_row.empty() || (i < fit_row.size() && fit_row[i])) ++train_rows;
+            if (train_rows == 0)
+                return arrow::Status::Invalid(
+                    GetName() + ": no Train rows reach this step, so there is nothing to learn the encoding from. "
+                                "Check the Data Split: the step needs rows of the Train part");
+            return arrow::Status::Invalid(GetName() + ": every one of the " + std::to_string(train_rows) +
+                                          " Train rows has a missing or infinite target '" + target_col_ +
+                                          "'. Fill or drop the missing targets before this step, or check that '" +
+                                          target_col_ + "' is the right target column");
+        }
     }
 
     auto out = input;
