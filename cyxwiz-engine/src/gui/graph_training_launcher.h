@@ -133,7 +133,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     // The launch task first counts the empty cells and NaN training would
     // refuse (off the UI thread). When there are some, training does not
     // start: this runs on the main thread with them, and neither the
-    // Dashboard nor `node_editor_callback(false)` is called.
+    // Dashboard nor `node_editor_callback(false)` is called. Without it the
+    // task fails instead (its completion releases the canvas).
     std::function<void(std::vector<MissingValuesBlock>)> on_missing_values = {});
 
 // True while a graph's training data is being prepared (before the run

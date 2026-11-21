@@ -4289,11 +4289,23 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         // Training would refuse missing values: the launch task finds them
         // off the UI thread and the report offers the fix. Nothing started:
         // the canvas is free again for the fix's steps (its pins unchanged).
-        auto on_missing_values = [this, nodes, source_dataset, held = static_cast<bool>(node_editor_callback),
+        // The report is for this graph only: one opened or cleared during
+        // the check gets no card for these columns and node ids.
+        const uint64_t launch_graph = node_editor_ ? node_editor_->GraphGeneration() : 0;
+        auto on_missing_values = [this, nodes, source_dataset, launch_graph, held = static_cast<bool>(node_editor_callback),
                                   not_started = marked ? marked->not_started : nullptr](
                                      std::vector<MissingValuesBlock> blocks) {
+            const std::string why = "Not started: the data has missing values (the report says where).";
             if (held && node_editor_) node_editor_->SetTrainingActive(false);
-            if (not_started) not_started("Not started: the data has missing values (the report says where).");
+            if (not_started) not_started(why);
+            // Loading the data or running its steps first left the Dashboard
+            // preparing (its last run was cleared then): end that here.
+            if (training_plot_panel_ && training_plot_panel_->IsPreparing())
+                training_plot_panel_->SetPreparationFailed(why);
+            if (!node_editor_ || node_editor_->GraphGeneration() != launch_graph) {
+                spdlog::info("Missing values: the graph changed during the check; no report");
+                return;
+            }
             ShowMissingValuesReport(blocks, nodes, source_dataset);
         };
 

@@ -725,7 +725,9 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
 
     auto materialization_cache_config =
         DefaultMaterializationCacheConfig(project_root);
-    if (g_materialization_rebuild_requested.exchange(false)) {
+    // Taken for this run; given back when the check below refuses it.
+    const bool rebuild_requested = g_materialization_rebuild_requested.exchange(false);
+    if (rebuild_requested) {
         materialization_cache_config.mode =
             cyxwiz::MaterializationCacheMode::Rebuild;
         spdlog::info("Graph materialization cache: rebuild requested for this run");
@@ -761,6 +763,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
          epochs,
          batch_size,
          cache_config = materialization_cache_config,
+         rebuild_requested,
          materialization_memory_policy,
          materialization_preflight_evidence =
              std::move(materialization_preflight_evidence),
@@ -782,22 +785,39 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             };
             std::string prepared_dataset = canvas_dataset;
             std::string prepared_origin = "Prepared by the canvas run";
+            bool loaded_here = false;  // registered by this task, so released by it when the run does not start
             if (!loaded(prepared_dataset) && cyxwiz::ProbePreparedData(cache_config, prepared_key)) {
                 const std::string name = "prepared_" + prepared_key.key.substr(0, 16);
-                task.ReportProgress(0.02f, "Loading the prepared data from disk...");
-                std::string error;
-                if (const auto registered =
-                        cyxwiz::LoadPreparedData(cache_config, prepared_key, registry, name, &error)) {
-                    prepared_dataset = *registered;
+                if (loaded(name)) {
+                    // The same prepared data, already loaded by another user of
+                    // the cache (a Plot lane, Run Test, the debugger): shared.
+                    prepared_dataset = name;
                     prepared_origin = "Loaded from the prepared data cache";
-                    spdlog::info("StartTrainingFromGraph: training reads '{}', prepared in an earlier session; "
-                                 "the data steps do not run", *registered);
+                    spdlog::info("StartTrainingFromGraph: training reads '{}', already loaded from the prepared "
+                                 "data cache; the data steps do not run", name);
                 } else {
-                    spdlog::warn("StartTrainingFromGraph: the prepared data on disk could not be used ({}); "
-                                 "preparing it again", error);
+                    task.ReportProgress(0.02f, "Loading the prepared data from disk...");
+                    std::string error;
+                    if (const auto registered =
+                            cyxwiz::LoadPreparedData(cache_config, prepared_key, registry, name, &error)) {
+                        prepared_dataset = *registered;
+                        prepared_origin = "Loaded from the prepared data cache";
+                        loaded_here = true;
+                        spdlog::info("StartTrainingFromGraph: training reads '{}', prepared in an earlier session; "
+                                     "the data steps do not run", *registered);
+                    } else {
+                        spdlog::warn("StartTrainingFromGraph: the prepared data on disk could not be used ({}); "
+                                     "preparing it again", error);
+                    }
                 }
             }
             const bool use_canvas = loaded(prepared_dataset);
+            // The run does not start: release what this task loaded and give
+            // back a rebuild request, which belongs to the next Train.
+            const auto not_started = [&] {
+                if (loaded_here) registry.UnregisterTabularDataset(prepared_dataset);
+                if (rebuild_requested) g_materialization_rebuild_requested.store(true);
+            };
 
             // Missing values training would refuse, found before the run so the
             // report offers the fix: on the table the batchers read (the canvas
@@ -808,7 +828,10 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                                                 : !config.training_data_needs_pipeline_run ? dataset_name
                                                                                             : std::string();
                 auto blocks = FindMissingTrainingValues(registry, config, train_table, label_column);
-                if (task.ShouldStop()) return;
+                if (task.ShouldStop()) {
+                    not_started();
+                    return;
+                }
                 if (!blocks.empty()) {
                     size_t columns = 0;
                     for (const auto& block : blocks) columns += block.columns.size();
@@ -819,14 +842,17 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                     // A table loaded from disk for this run is not kept (the
                     // fix changes the steps, so its key); the report reads only
                     // the counts.
-                    if (use_canvas && prepared_dataset != canvas_dataset)
-                        registry.UnregisterTabularDataset(prepared_dataset);
-                    if (on_missing_values) {
-                        cyxwiz::AsyncTaskManager::Instance().PostToMainThread(
-                            [on_missing_values, blocks = std::move(blocks)]() mutable {
-                                on_missing_values(std::move(blocks));
-                            });
+                    not_started();
+                    if (!on_missing_values) {
+                        // No one to show the report: a failed task, whose
+                        // completion releases the canvas.
+                        task.MarkFailed("Not started: " + detail);
+                        return;
                     }
+                    cyxwiz::AsyncTaskManager::Instance().PostToMainThread(
+                        [on_missing_values, blocks = std::move(blocks)]() mutable {
+                            on_missing_values(std::move(blocks));
+                        });
                     task.MarkCompleted("Not started: " + detail, "not_started");
                     return;
                 }

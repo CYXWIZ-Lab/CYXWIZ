@@ -316,9 +316,11 @@ reads (after the steps before it ran, or as kept on disk from an earlier
 session) and in each supplied Validation / Test input. The count runs in the
 background (Task Progress: *Prepare graph training*, "Checking the data for
 missing values..."), so the Engine stays responsive on a large table; the
-Training Dashboard keeps the last run until the check passes. When there are
-some, *Cannot start training* says how many columns have them and shows a
-card per group:
+Training Dashboard keeps the last run until the check passes (when Train first
+had to load the data or run its steps, the Dashboard says the run did not
+start). When there are some, *Cannot start training* says how many columns
+have them and shows a card per group (not when another graph was opened
+during the check: Train it again to see its own):
 
 - **Feature columns** (training reads number columns): a row per column
   (how many cells are empty and how many are NaN, what Fill would use).

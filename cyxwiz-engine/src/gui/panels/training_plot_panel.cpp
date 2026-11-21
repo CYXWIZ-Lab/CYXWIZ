@@ -1233,6 +1233,11 @@ void TrainingPlotPanel::SetPreparationState(bool is_preparing,
     }
 }
 
+bool TrainingPlotPanel::IsPreparing() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    return is_preparing_;
+}
+
 void TrainingPlotPanel::SetPreparationFailed(
     const std::string& error_message) {
     std::lock_guard<std::mutex> lock(data_mutex_);

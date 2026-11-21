@@ -124,6 +124,7 @@ public:
                              const std::string& status_message = "",
                              float progress = 0.0f);
     void SetPreparationFailed(const std::string& error_message);
+    bool IsPreparing() const;
     void RecordMaterializationProgress(const std::string& stage,
                                        const std::string& message,
                                        float progress,

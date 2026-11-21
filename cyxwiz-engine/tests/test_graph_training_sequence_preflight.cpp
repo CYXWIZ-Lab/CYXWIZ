@@ -424,14 +424,35 @@ void CheckMissingValuesFoundByTheLaunchTask(cyxwiz::DataRegistry& registry) {
           "sensor_a has one NaN");
     Check(WaitFor([] { return !HasActiveTaskNamed("Prepare graph training"); }, std::chrono::seconds(2)),
           "the launch task ends");
+    // Its completion callback, delivered on the main thread, would be the one
+    // to tell the canvas: give it the time to arrive.
+    WaitFor([&] { return ended.load(); }, std::chrono::milliseconds(500));
     Check(!dispatched.load() && !ended.load(), "nothing is dispatched, and the canvas is not told a run ended");
-    bool not_started = false;
-    for (const auto& task : cyxwiz::AsyncTaskManager::Instance().GetRecentTasks(10))
-        if (task.name == "Prepare graph training") {
-            not_started = task.state == cyxwiz::TaskState::Completed;
-            break;
-        }
-    Check(not_started, "the launch task completes (not failed): training did not start");
+    const auto last_launch_state = [] {
+        for (const auto& task : cyxwiz::AsyncTaskManager::Instance().GetRecentTasks(10))
+            if (task.name == "Prepare graph training") return task.state;
+        return cyxwiz::TaskState::Pending;
+    };
+    Check(last_launch_state() == cyxwiz::TaskState::Completed,
+          "the launch task completes (not failed): training did not start");
+
+    // Without a receiver for the report the task fails, so its completion
+    // releases the canvas (which it held for the check).
+    std::atomic<bool> released{false};
+    auto bare_config = MakeRoleConfig(train, "");
+    bare_config.dataset_roles.test = {};
+    auto bare = gui::StartGraphTrainingFromCompiledConfig(
+        nodes, {}, std::move(bare_config), registry, {}, [&](bool active) { if (!active) released.store(true); },
+        [&](cyxwiz::TrainingConfiguration, const std::string&, const std::string&, int, int,
+            std::weak_ptr<cyxwiz::TrainingPlotPanel>, std::function<void(bool)>) {
+            dispatched.store(true);
+            return true;
+        });
+    Check(bare.started, "queued without a report receiver: " + bare.error_message);
+    Check(WaitFor([&] { return released.load(); }, std::chrono::seconds(5)),
+          "without a report receiver the canvas is released");
+    Check(!dispatched.load() && last_launch_state() == cyxwiz::TaskState::Failed,
+          "without a report receiver nothing is dispatched and the task fails");
     registry.UnregisterTabularDataset(train);
     std::cout << "Missing values found by the launch task passed\n";
 }
