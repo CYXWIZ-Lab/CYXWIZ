@@ -24,7 +24,6 @@
 #include "../preprocessing/preprocessing_config.h"
 
 // Dataset implementations
-#include "datasets/kaggle_dataset.h"
 #include "datasets/image_csv_dataset.h"
 #include "datasets/streaming_dataset.h"
 #include "datasets/mnist_dataset.h"
@@ -34,7 +33,6 @@
 #include "datasets/json_dataset.h"
 #include "datasets/txt_dataset.h"
 #include "datasets/image_folder_dataset.h"
-#include "datasets/huggingface_dataset.h"
 #include "datasets/custom_dataset.h"
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -327,113 +325,6 @@ DatasetHandle DataRegistry::LoadImageCSV(const std::string& image_folder, const 
 
     } catch (const std::exception& e) {
         spdlog::error("Failed to load ImageCSV dataset: {}", e.what());
-        return DatasetHandle();
-    }
-}
-
-DatasetHandle DataRegistry::LoadHuggingFace(const HuggingFaceConfig& config, const std::string& name) {
-    std::string base_name = name.empty() ? config.dataset_name : name;
-    std::string unique_name = GenerateUniqueName(base_name);
-
-    try {
-        auto dataset = std::make_shared<HuggingFaceDataset>(config);
-        if (dataset->Size() == 0) {
-            spdlog::warn("HuggingFace dataset '{}' loaded with 0 samples", config.dataset_name);
-            return DatasetHandle();
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            InvalidateTabularPublicationUnlocked(unique_name);
-            datasets_[unique_name] = dataset;
-        }
-
-        auto handle = DatasetHandle(dataset, unique_name);
-
-        if (auto callback = GetDatasetLoadedCallback()) {
-            callback(unique_name, handle.GetInfo());
-        }
-
-        spdlog::info("Registered HuggingFace dataset '{}' as '{}'", config.dataset_name, unique_name);
-        return handle;
-
-    } catch (const std::exception& e) {
-        spdlog::error("Failed to load HuggingFace dataset '{}': {}", config.dataset_name, e.what());
-        return DatasetHandle();
-    }
-}
-
-DatasetHandle DataRegistry::LoadStreamingDataset(const std::string& path, const StreamingConfig& config, const std::string& name) {
-    std::string base_name = name.empty() ? fs::path(path).stem().string() : name;
-    std::string unique_name = GenerateUniqueName(base_name);
-
-    try {
-        auto dataset = std::make_shared<StreamingDataset>(path, config);
-        if (dataset->Size() == 0) {
-            spdlog::warn("Streaming dataset '{}' has estimated 0 samples", path);
-            return DatasetHandle();
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            InvalidateTabularPublicationUnlocked(unique_name);
-            datasets_[unique_name] = dataset;
-        }
-
-        auto handle = DatasetHandle(dataset, unique_name);
-
-        if (auto callback = GetDatasetLoadedCallback()) {
-            callback(unique_name, handle.GetInfo());
-        }
-
-        spdlog::info("Registered streaming dataset as '{}' ({} estimated samples)",
-                    unique_name, dataset->Size());
-        return handle;
-
-    } catch (const std::exception& e) {
-        spdlog::error("Failed to load streaming dataset '{}': {}", path, e.what());
-        return DatasetHandle();
-    }
-}
-
-DatasetHandle DataRegistry::LoadKaggle(const KaggleConfig& config, const std::string& name) {
-    std::string base_name = name;
-    if (base_name.empty()) {
-        // Extract name from dataset_slug or competition
-        if (!config.dataset_slug.empty()) {
-            size_t pos = config.dataset_slug.find_last_of('/');
-            base_name = (pos != std::string::npos) ? config.dataset_slug.substr(pos + 1) : config.dataset_slug;
-        } else {
-            base_name = config.competition;
-        }
-    }
-    std::string unique_name = GenerateUniqueName(base_name);
-
-    try {
-        auto dataset = std::make_shared<KaggleDataset>(config);
-        if (dataset->Size() == 0) {
-            spdlog::warn("Kaggle dataset loaded with 0 samples");
-            return DatasetHandle();
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            InvalidateTabularPublicationUnlocked(unique_name);
-            datasets_[unique_name] = dataset;
-        }
-
-        auto handle = DatasetHandle(dataset, unique_name);
-
-        if (auto callback = GetDatasetLoadedCallback()) {
-            callback(unique_name, handle.GetInfo());
-        }
-
-        spdlog::info("Registered Kaggle dataset as '{}' ({} samples)",
-                    unique_name, dataset->Size());
-        return handle;
-
-    } catch (const std::exception& e) {
-        spdlog::error("Failed to load Kaggle dataset: {}", e.what());
         return DatasetHandle();
     }
 }

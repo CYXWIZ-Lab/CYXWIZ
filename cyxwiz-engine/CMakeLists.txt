@@ -201,7 +201,6 @@ set(ENGINE_SOURCES
     src/core/ml_readiness.cpp
     src/core/data_convert_service.cpp
     src/core/data_preview_service.cpp
-    src/core/datasets/kaggle_dataset.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/datasets/streaming_dataset.cpp
     src/core/datasets/mnist_dataset.cpp
@@ -211,7 +210,6 @@ set(ENGINE_SOURCES
     src/core/datasets/json_dataset.cpp
     src/core/datasets/txt_dataset.cpp
     src/core/datasets/image_folder_dataset.cpp
-    src/core/datasets/huggingface_dataset.cpp
     src/core/datasets/custom_dataset.cpp
     src/core/sparse_feature_dataset_cache.cpp
     src/core/image_batchers.cpp
@@ -3350,7 +3348,6 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
     src/core/datasets/image_csv_dataset.cpp
-    src/core/datasets/kaggle_dataset.cpp
     src/core/datasets/streaming_dataset.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
