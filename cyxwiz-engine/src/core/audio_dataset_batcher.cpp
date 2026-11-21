@@ -151,7 +151,18 @@ std::optional<Batch> AudioDatasetBatcher::GetSourceSamples(const std::vector<siz
         if (index >= dataset_->Size())
             throw std::out_of_range("clip " + std::to_string(index) + " is outside the " +
                                     std::to_string(dataset_->Size()) + " clips");
-    return AssembleBatch(indices.data(), indices.size(), false);
+    // Items by number come back all, in order, or not at all: a batch that
+    // left out an unreadable clip would pair the next clips' rows with the
+    // names and numbers the caller asked for.
+    Batch batch = AssembleBatch(indices.data(), indices.size(), false);
+    if (batch.size != indices.size()) {
+        for (const size_t index : indices)
+            if (std::find(batch.row_ids.begin(), batch.row_ids.end(), static_cast<int64_t>(index)) ==
+                batch.row_ids.end())
+                throw std::runtime_error("clip " + std::to_string(index) + " ('" + SourceSampleName(index) +
+                                         "') could not be read (see the log)");
+    }
+    return batch;
 }
 
 std::optional<BatcherPhase> AudioDatasetBatcher::SourceSamplePart(size_t index) const {

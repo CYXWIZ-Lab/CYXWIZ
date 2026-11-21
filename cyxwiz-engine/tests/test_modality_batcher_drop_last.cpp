@@ -447,6 +447,28 @@ void TestAudioUnreadableClips(const fs::path& root) {
         Check(batch.labels.Shape() == std::vector<size_t>({3, 2}) && batch.data.Shape().front() == 3,
               "workers " + std::to_string(workers) + ": data and labels hold the three readable clips");
     }
+
+    // Items by number (Local Debug, layer snapshots) come back all or not at
+    // all: a batch without the corrupt clip would show the next clips under
+    // the names asked for.
+    cyxwiz::AudioDatasetBatcher by_number(mixed, preprocessing, 4, all_train, false, 0, 19);
+    size_t corrupt = by_number.SourceSampleCount();
+    for (size_t i = 0; i < by_number.SourceSampleCount(); ++i)
+        if (by_number.SourceSampleName(i) == "b0.wav") corrupt = i;
+    Check(corrupt < by_number.SourceSampleCount(), "the corrupt clip has a number");
+    std::vector<size_t> all;
+    for (size_t i = 0; i < by_number.SourceSampleCount(); ++i) all.push_back(i);
+    std::string refusal;
+    try {
+        (void)by_number.GetSourceSamples(all);
+    } catch (const std::exception& e) {
+        refusal = e.what();
+    }
+    Check(refusal.find("b0.wav") != std::string::npos,
+          "items by number that include an unreadable clip are refused, naming it (got '" + refusal + "')");
+    const size_t good = corrupt == 0 ? 1 : 0;
+    const auto one = by_number.GetSourceSamples({good});
+    Check(one && one->size == 1, "a readable clip by number still comes back");
 }
 
 void TestAudioBatcher(const fs::path& root) {
