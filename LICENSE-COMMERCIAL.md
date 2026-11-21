@@ -17,4 +17,4 @@ A commercial licence covers the code CYXWIZ owns. Third-party components keep th
 some of them (for example FFTW, licensed under the GNU GPL) cannot be included in a product licensed
 on closed terms without a separate licence from their authors.
 
-Enquiries: https://web-psi-drab.vercel.app/
+Enquiries: https://cyxwiz.ai
