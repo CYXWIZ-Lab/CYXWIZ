@@ -339,7 +339,8 @@ private:
     void RenderSearchDialogs();
     void RenderAccountDialogs();
     void RenderPreferencesDialog();
-    bool CommitPreferences();  // OK: commit, save, close (false: stays open with the reason)
+    bool CommitDeviceSelection();  // Use this device (false: the reason and alternatives show)
+    void RenderPreferencesRail(float footer_height);
     // Preferences > Storage (TOFIX160 P7, toolbar_preferences_storage.cpp):
     // the prepared-data caches, measured off the UI thread, with Clear.
     void RenderStorageTab();
@@ -560,7 +561,8 @@ private:
     std::future<cyxwiz::protocol::ServerReach> server_probe_;
     cyxwiz::protocol::ServerReach server_reach_;
     std::string server_probed_;  // what the last probe asked about
-    int preferences_tab_ = 0;  // 0 = Python/Scripting, 1 = Keyboard Shortcuts
+    std::string preferences_page_ = "General";  // the page shown (rail)
+    std::string preferences_search_;            // the rail's search
 
     // Preferences > Python
     gui::PythonSettingsPanel python_settings_panel_;

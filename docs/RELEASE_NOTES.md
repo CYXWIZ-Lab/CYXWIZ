@@ -7,6 +7,12 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Preferences: pages in a rail, with a search, and Close.** The 14 tabs
+  scrolled (Storage and Servers were hidden behind arrows); the pages are
+  now in a rail in four groups with **Search settings**. Settings were
+  already saved at once, so OK / Cancel (Cancel undid only a device pick)
+  are replaced by **Close**; a compute device is taken with **Use this
+  device** on the Devices page.
 - **Preferences: defaults for choices that had none.** A new **Studio** page
   sets whether Auto Save is on and the canvas minimap shows when the Engine
   starts, and whether Train requires a passing Local Debug run (saved

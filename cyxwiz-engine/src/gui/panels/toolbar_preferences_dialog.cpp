@@ -27,7 +27,9 @@
 #include "../ui_widgets.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
+#include <imgui_stdlib.h>
 #include <exception>
 #include <filesystem>
 #include <stdexcept>
@@ -75,7 +77,79 @@ const char* ArrayFireBackendDisplayName(DeviceType type) {
     }
 }
 
+// The pages of Preferences, in the rail's groups; `keys` are what the
+// search matches besides the name.
+struct PreferencePage {
+    const char* id;
+    const char* icon;
+    const char* group;
+    const char* keys;
+};
+constexpr PreferencePage kPreferencePages[] = {
+    {"General", ICON_FA_GEAR, "ENGINE", "start startup reopen last project recent closing ask exit logs debug windows data budget memory"},
+    {"Appearance", ICON_FA_PALETTE, "ENGINE", "theme colours colors font text size code sidebar node icons scale"},
+    {"Shortcuts", ICON_FA_KEYBOARD, "ENGINE", "keyboard keys bindings hotkeys"},
+    {"Storage", ICON_FA_HARD_DRIVE, "ENGINE", "cache caches disk space clear folders"},
+    {"Servers", ICON_FA_SERVER, "ENGINE", "server address central gateway sign in account deployment node p2p port"},
+    {"Studio", ICON_FA_DIAGRAM_PROJECT, "STUDIO", "auto save minimap canvas local debug before train"},
+    {"Script Editor", ICON_FA_PEN, "STUDIO", "editor tab size whitespace syntax colours minimap word wrap indent line endings trim newline utf-8 files"},
+    {"Python", ICON_FA_CODE, "STUDIO", "interpreter venv virtual environment packages pip startup script numpy pycyxwiz console commands"},
+    {"Nodes panel", ICON_FA_CUBES, "STUDIO", "nodes grid list recent"},
+    {"Training", ICON_FA_GRADUATION_CAP, "TRAINING", "batchnorm frozen fine-tuning dashboard charts auto scale smooth log loss follow epochs"},
+    {"Search", ICON_FA_SLIDERS, "TRAINING", "hyperparameter search nas neural architecture trials grid random bayesian"},
+    {"Studio Debugger", ICON_FA_BUG, "TRAINING", "debugger layer capture views"},
+    {"Simulation", ICON_FA_WAVE_SQUARE, "TRAINING", "mujoco simulation viewport watch ppo policy stress test"},
+    {"Devices", ICON_FA_MICROCHIP, "TRAINING", "gpu cpu cuda opencl oneapi device arrayfire backend packs execution policy"},
+};
+
+std::string Lower(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+bool PageMatches(const PreferencePage& page, const std::string& query) {
+    if (query.empty()) return true;
+    const std::string words = Lower(std::string(page.id) + " " + page.keys);
+    // Every word typed is found (in any order)
+    size_t start = 0;
+    const std::string q = Lower(query);
+    while (start < q.size()) {
+        const size_t end = q.find(' ', start);
+        const std::string word = q.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        if (!word.empty() && words.find(word) == std::string::npos) return false;
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return true;
+}
+
 } // namespace
+
+void ToolbarPanel::RenderPreferencesRail(float footer_height) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const float width = (std::max)(180.0f, ImGui::CalcTextSize("Studio Debugger").x + ImGui::GetFontSize() * 4.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
+    ImGui::BeginChild("##preferences_rail", ImVec2(width, -footer_height), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##preferences_search", ICON_FA_MAGNIFYING_GLASS " Search settings", &preferences_search_);
+    const char* group = nullptr;
+    bool any = false;
+    for (const auto& page : kPreferencePages) {
+        if (!PageMatches(page, preferences_search_)) continue;
+        if (!group || std::strcmp(group, page.group) != 0) {
+            group = page.group;
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", page.group);
+        }
+        any = true;
+        const std::string label = std::string(page.icon) + "  " + page.id;
+        if (ImGui::Selectable(label.c_str(), preferences_page_ == page.id)) preferences_page_ = page.id;
+    }
+    if (!any) ImGui::TextDisabled("No page matches.");
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
 
 void ToolbarPanel::RenderPreferencesDialog() {
     const ui::Tokens& t = ui::CurrentTokens();
@@ -92,36 +166,33 @@ void ToolbarPanel::RenderPreferencesDialog() {
         // clipped the OK / Cancel footer.
         const ImVec2 viewport = ImGui::GetMainViewport()->WorkSize;
         const ImVec2 limit(viewport.x * 0.92f, viewport.y * 0.92f);
-        // Wide enough for every tab's whole name when the Engine window allows
-        // it; narrower, the tabs scroll and the list button names them all.
-        static const char* const kTabLabels[] = {
-            ICON_FA_GEAR " General", ICON_FA_DIAGRAM_PROJECT " Studio", ICON_FA_PEN " Script Editor", ICON_FA_PALETTE " Appearance",
-            ICON_FA_CODE " Python", ICON_FA_WAVE_SQUARE " Simulation", ICON_FA_KEYBOARD " Shortcuts", ICON_FA_MICROCHIP " Devices",
-            ICON_FA_BUG " Studio Debugger", ICON_FA_GRADUATION_CAP " Training", ICON_FA_CUBES " Nodes panel",
-            ICON_FA_SLIDERS " Search", ICON_FA_HARD_DRIVE " Storage", ICON_FA_SERVER " Servers"};
-        const ImGuiStyle& style = ImGui::GetStyle();
-        float tabs_width = style.WindowPadding.x * 2.0f + ImGui::GetFrameHeight() * 2.0f;
-        for (const char* label : kTabLabels)
-            tabs_width += ImGui::CalcTextSize(label).x + style.FramePadding.x * 2.0f + style.ItemInnerSpacing.x;
-        ImGui::SetNextWindowSize(
-            ImVec2((std::min)((std::max)(1000.0f, tabs_width), limit.x), (std::min)(760.0f, limit.y)),
-            ImGuiCond_Appearing);
+        ImGui::SetNextWindowSize(ImVec2((std::min)(1000.0f, limit.x), (std::min)(760.0f, limit.y)),
+                                 ImGuiCond_Appearing);
         ImGui::SetNextWindowSizeConstraints(
             ImVec2((std::min)(560.0f, limit.x), (std::min)(360.0f, limit.y)), limit);
 
         if (ImGui::BeginPopupModal("Preferences", &show_preferences_dialog_)) {
-            // Tabs scroll inside their own region so OK / Cancel stay visible
-            // at the bottom however long a tab is.
-            const float footer_height = ImGui::GetTextLineHeight() + 16.0f +
-                ImGui::GetStyle().ItemSpacing.y * 4.0f + 6.0f;
-            ImGui::BeginChild("PreferencesBody", ImVec2(0.0f, -footer_height));
-            // Tab bar for different preference sections
-            if (ImGui::BeginTabBar("PreferenceTabs",
-                                   ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_TabListPopupButton)) {
+            // Pages in a rail on the left, in four groups, with a search over
+            // them (TOFIX129 B9-1). Every change applies and is saved at once,
+            // so the footer has Close only (B9-2).
+            if (!preferences_select_tab_.empty()) {
+                preferences_page_ = preferences_select_tab_;
+                preferences_select_tab_.clear();
+            }
+            if (preferences_open_appearance_) {
+                preferences_page_ = "Appearance";
+                preferences_open_appearance_ = false;
+            }
+            const float footer_height = ImGui::GetFrameHeight() * 2.0f + ImGui::GetStyle().ItemSpacing.y * 3.0f;
+            RenderPreferencesRail(footer_height);
+            ImGui::SameLine();
+            ImGui::BeginChild("PreferencesBody", ImVec2(0.0f, -footer_height), ImGuiChildFlags_AlwaysUseWindowPadding);
+            const std::string page = preferences_page_;
+            ImGui::TextColored(t.text_bright, "%s", page.c_str());
+            {
 
                 // ========== General Tab ==========
-                if (ImGui::BeginTabItem(ICON_FA_GEAR " General")) {
-                    preferences_tab_ = 0;
+                if (page == "General") {
                     ImGui::Spacing();
 
                     ImGui::Text("Starting");
@@ -393,18 +464,15 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     }
 
                     RenderPluginPreferences("General");
-                    ImGui::EndTabItem();
                 }
 
                 // ========== Studio (TOFIX129 B9-10) ==========
-                if (ImGui::BeginTabItem(ICON_FA_DIAGRAM_PROJECT " Studio")) {
+                if (page == "Studio") {
                     RenderStudioPreferences();
-                    ImGui::EndTabItem();
                 }
 
                 // ========== Script Editor (Editor + Files, TOFIX129 B9-7, B9-8) ==========
-                if (ImGui::BeginTabItem(ICON_FA_PEN " Script Editor")) {
-                    preferences_tab_ = 1;
+                if (page == "Script Editor") {
                     ImGui::Spacing();
                     // Engine-wide, saved at once; the editor's View menu edits the same values
                     auto& engine_config = cyxwiz::core::EngineConfig::Instance();
@@ -474,34 +542,25 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                     RenderPluginPreferences("Editor");
                     RenderPluginPreferences("Files");
-                    ImGui::EndTabItem();
                 }
 
                 // ========== Appearance Tab ==========
-                const ImGuiTabItemFlags appearance_flags =
-                    preferences_open_appearance_ ? ImGuiTabItemFlags_SetSelected
-                                                 : ImGuiTabItemFlags_None;
-                preferences_open_appearance_ = false;
-                if (ImGui::BeginTabItem(ICON_FA_PALETTE " Appearance", nullptr, appearance_flags)) {
-                    preferences_tab_ = 2;
+                if (page == "Appearance") {
                     ImGui::Spacing();
                     RenderAppearancePreferences();
-                    ImGui::EndTabItem();
                 }
 
                 // ========== Python/Scripting Tab ==========
-                if (ImGui::BeginTabItem(ICON_FA_CODE " Python")) {
-                    preferences_tab_ = 4;
+                if (page == "Python") {
                     ImGui::Spacing();
 
                     python_settings_panel_.Render(python_diagnostics_callback_);
 
                     RenderPluginPreferences("Python");
-                    ImGui::EndTabItem();
                 }
 
                 // ========== Simulation Tab (graph runs) ==========
-                if (ImGui::BeginTabItem(ICON_FA_WAVE_SQUARE " Simulation")) {
+                if (page == "Simulation") {
                     ImGui::Spacing();
                     ImGui::TextDisabled("Defaults for graph runs (Run Sim). They apply to the next run.");
                     ImGui::Spacing();
@@ -629,23 +688,15 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::EndTable();
                     }
                     RenderPluginPreferences("Simulation");
-                    ImGui::EndTabItem();
                 }
 
                 // ========== Keyboard Shortcuts Tab ==========
-                const ImGuiTabItemFlags shortcuts_flags =
-                    preferences_select_tab_ == "Shortcuts" ? ImGuiTabItemFlags_SetSelected
-                                                           : ImGuiTabItemFlags_None;
-                if (ImGui::BeginTabItem(ICON_FA_KEYBOARD " Shortcuts", nullptr, shortcuts_flags)) {
-                    preferences_tab_ = 5;
-                    preferences_select_tab_.clear();
+                if (page == "Shortcuts") {
                     RenderShortcutsPreferences();
-                    ImGui::EndTabItem();
                 }
 
                 // ========== Devices Tab ==========
-                if (ImGui::BeginTabItem(ICON_FA_MICROCHIP " Devices")) {
-                    preferences_tab_ = 6;
+                if (page == "Devices") {
                     ImGui::Spacing();
 
                     bool backend_manager_verify_requested = false;
@@ -880,15 +931,30 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Separator();
                     ImGui::Spacing();
                     ImGui::TextDisabled(
-                        "Choose a candidate ArrayFire route. OK validates and commits it.");
+                        "Choose a candidate ArrayFire route, then Use this device: it is checked, then used.");
                     if (training_active) {
                         ImGui::TextColored(
                             t.warning,
                             "%s The device is in use (a training run or a playing policy); device changes are disabled until it ends.",
                             ICON_FA_TRIANGLE_EXCLAMATION);
-                    } else {
-                        ImGui::TextDisabled(
-                            "The candidate remains local until you click OK.");
+                    } else if (device_selection_dirty_ && selected_device_index_ >= 0 &&
+                               selected_device_index_ < static_cast<int>(cached_devices_.size())) {
+                        const auto& candidate = cached_devices_[static_cast<size_t>(selected_device_index_)];
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::Text("Candidate: %s / %s",
+                                    ArrayFireBackendDisplayName(static_cast<cyxwiz::DeviceType>(candidate.type)),
+                                    candidate.name.c_str());
+                        ImGui::SameLine();
+                        if (ui::PrimaryButton("Use this device", true, nullptr, ui::ButtonSize::Small)) {
+                            CommitDeviceSelection();
+                        }
+                        ImGui::SameLine();
+                        if (ui::LinkButton("Keep the current one##device")) {
+                            device_selection_dirty_ = false;
+                            selected_device_index_ = -1;
+                            selected_backend_type_ = -1;
+                            pending_oneapi_device_index_ = -1;
+                        }
                     }
                     ImGui::Spacing();
 
@@ -1565,70 +1631,52 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Separator();
                     ImGui::Spacing();
 
-                    ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_BUG " Studio Debugger")) {
+                if (page == "Studio Debugger") {
                     RenderStudioDebuggerPreferences();
-                    ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_GRADUATION_CAP " Training")) {
+                if (page == "Training") {
                     RenderTrainingPreferences();
-                    ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_CUBES " Nodes panel")) {
+                if (page == "Nodes panel") {
                     RenderNodesPanelPreferences();
-                    ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_SLIDERS " Search")) {
+                if (page == "Search") {
                     RenderSearchPreferences();
-                    ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_HARD_DRIVE " Storage")) {
+                if (page == "Storage") {
                     RenderStorageTab();
-                    ImGui::EndTabItem();
                 } else {
                     storage_stale_ = true;  // measured again when it opens
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_SERVER " Servers", nullptr,
-                                        preferences_select_tab_ == "Servers" ? ImGuiTabItemFlags_SetSelected
-                                                                             : ImGuiTabItemFlags_None)) {
-                    preferences_select_tab_.clear();
+                if (page == "Servers") {
                     RenderServersTab();
-                    ImGui::EndTabItem();
                 } else {
                     servers_loaded_ = false;  // read from the config again when it opens
                 }
 
-                ImGui::EndTabBar();
             }
             ImGui::EndChild();
 
-            ImGui::Separator();
+            // Every change is already saved: Close only
             ImGui::Spacing();
-
-            // Dialog buttons
-            float button_width = 100.0f;
-            float total_width = button_width * 2 + ImGui::GetStyle().ItemSpacing.x;
-            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - total_width) * 0.5f);
-
-            if (ui::PrimaryButton("OK", true, nullptr, ui::ButtonSize::Regular, button_width)) {
-                CommitPreferences();
-            }
-            ImGui::SameLine();
-            if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular, button_width)) {
-                device_selection_dirty_ = false;
-                devices_initialized_ = false;
-                selected_device_index_ = -1;
-                selected_backend_type_ = -1;
-                pending_oneapi_device_index_ = -1;
-                device_selection_recommendation_indices_.clear();
+            const char* close_label = "Close";
+            const float close_width = ui::ButtonWidth(close_label, ui::ButtonSize::Regular);
+            ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x - close_width - ImGui::GetStyle().ItemSpacing.x * 2.0f);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Changes apply at once and are saved. The device choice and the Python interpreter have "
+                                "their own Use buttons.");
+            ImGui::PopTextWrapPos();
+            ImGui::SameLine(ImGui::GetContentRegionMax().x - close_width);
+            if (ui::SecondaryButton(close_label, true, nullptr, ui::ButtonSize::Regular)) {
                 show_preferences_dialog_ = false;
+                ImGui::CloseCurrentPopup();
             }
 
             if (show_device_selection_error_) {
@@ -1682,7 +1730,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         device_selection_recommendation_indices_.clear();
                     }
                     ImGui::TextDisabled(
-                        "The alternative remains a candidate until OK is clicked.");
+                        "The alternative remains a candidate until Use this device.");
                 }
                 ImGui::Spacing();
                 if (ui::SecondaryButton("Close", true, nullptr, ui::ButtonSize::Regular)) {
@@ -1705,10 +1753,9 @@ void ToolbarPanel::RenderPreferencesDialog() {
 }
 
 
-// OK: commits what Preferences does not apply at once (a compute device
-// switch), saves and closes. False when the commit failed: the dialog stays
-// open with the reason. The Theme Editor link closes Preferences this way too.
-bool ToolbarPanel::CommitPreferences() {
+// Use this device: checks and switches to the candidate compute device.
+// False when it failed: the reason and the passing alternatives show.
+bool ToolbarPanel::CommitDeviceSelection() {
     bool selection_committed = true;
     if (device_selection_dirty_) {
         if (selected_device_index_ < 0 ||
@@ -1752,14 +1799,10 @@ bool ToolbarPanel::CommitPreferences() {
         }
     }
     if (selection_committed) {
-        if (save_project_settings_callback_) {
-            save_project_settings_callback_();
-        }
         device_selection_dirty_ = false;
         device_selection_recommendation_indices_.clear();
-        devices_initialized_ = false;
-        show_preferences_dialog_ = false;
-        spdlog::info("Preferences saved");
+        devices_initialized_ = false;  // the list shows the device in use
+        spdlog::info("Compute device switched");
     } else {
         device_selection_recommendation_indices_.clear();
         if (selected_device_index_ >= 0 &&

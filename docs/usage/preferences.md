@@ -1,7 +1,16 @@
 # Preferences
 
 **File > Preferences...** (Ctrl+,). Every setting here is Engine-wide and is
-saved the moment you change it.
+saved the moment you change it, so the dialog has only **Close**. Two choices
+are taken with their own button because they are checked first: **Use this
+device** (Devices) and **Use this Python** (Python).
+
+The pages are in a rail on the left, in four groups: **Engine** (General,
+Appearance, Shortcuts, Storage, Servers), **Studio** (Studio, Script Editor,
+Python, Nodes panel), **Training** (Training, Search, Studio Debugger,
+Simulation, Devices) and **Tools**. **Search settings** at the top of the
+rail keeps the pages whose settings match every word typed (for example
+`minimap` leaves Studio and Script Editor).
 
 ## General
 

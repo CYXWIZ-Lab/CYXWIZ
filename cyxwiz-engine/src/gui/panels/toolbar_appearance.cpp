@@ -185,9 +185,12 @@ void ToolbarPanel::RenderAppearancePreferences() {
     if (right > ImGui::GetCursorPosX())
         ImGui::SetCursorPosX(right);
     // The Theme Editor is a window of the Engine; Preferences is modal and kept
-    // it behind and out of reach. Close Preferences as OK does, then open it.
-    if (ui::LinkButton(editor_label) && open_theme_editor_callback_ && CommitPreferences())
+    // it behind and out of reach. Close Preferences (everything is saved), then open it.
+    if (ui::LinkButton(editor_label) && open_theme_editor_callback_) {
+        show_preferences_dialog_ = false;
+        ImGui::CloseCurrentPopup();
         open_theme_editor_callback_();
+    }
     ImGui::Spacing();
     RenderThemeGrid();
 
