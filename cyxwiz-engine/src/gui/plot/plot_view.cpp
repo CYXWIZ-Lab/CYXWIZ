@@ -11,6 +11,7 @@
 #include "../separate_windows.h"
 
 #include <implot.h>
+#include <implot_internal.h>
 
 #include <algorithm>
 #include <cfloat>
@@ -31,6 +32,17 @@ ViewHooks& HookStore() {
 
 ImVec4 SeriesColour(size_t i) {
     return ui::CurrentTokens().series[i % ui::Tokens::kSeriesCount];
+}
+
+// The legend shows each item's own colour. ImPlot gives an item that names
+// no colour the colormap's next one when the item is first seen, counting
+// every item the plot ever had, so after a change of kind or columns the
+// legend was a place or more off the Colour list. Scatter items name theirs
+// as the marker outline (weight 0, not drawn); pie slices and grouped bars
+// cannot name one, so their items are given it before and after drawing
+// (after: the legend of the frame that first sees them).
+void HoldItemColour(const char* label, const ImVec4& colour) {
+    if (ImPlotItem* item = ImPlot::GetItem(label)) item->Color = ImGui::ColorConvertFloat4ToU32(colour);
 }
 
 std::string Value(double v) {
@@ -650,7 +662,7 @@ void PlotView::DrawPairPlot(ImVec2 size) {
                         ys.push_back(p.multi_values[static_cast<size_t>(i)][r]);
                     }
                     const std::string label = g < p.multi_groups.size() && !p.multi_groups[g].empty() ? p.multi_groups[g] : std::string("rows");
-                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 1.8f, ui::WithAlpha(SeriesColour(g), 0.7f), 0.0f);
+                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 1.8f, ui::WithAlpha(SeriesColour(g), 0.7f), 0.0f, SeriesColour(g));
                     ImPlot::PlotScatter(label.c_str(), xs.data(), ys.data(), static_cast<int>(xs.size()));
                 }
                 if (ImPlot::IsPlotHovered()) {
@@ -990,7 +1002,7 @@ void PlotView::DrawPlot(ImVec2 size) {
                     ImPlot::PopPlotClipRect();
                     continue;
                 }
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(ColourOf((i)), 0.7f), 0.0f);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(ColourOf(i), 0.7f), 0.0f, ColourOf(i));
                 ImPlot::PlotScatter(LegendLabel(p, i, s.label).c_str(), s.x.data(), s.y.data(), n(s.x));
             }
             break;
@@ -1044,11 +1056,11 @@ void PlotView::DrawPlot(ImVec2 size) {
                     labels.push_back(s.label.c_str());
                     values.insert(values.end(), s.y.begin(), s.y.end());
                 }
-                ImPlot::PushColormap(SeriesColormap());
+                for (size_t i = 0; i < labels.size(); ++i) HoldItemColour(labels[i], ColourOf(i));
                 ImPlot::PlotBarGroups(labels.data(), values.data(), static_cast<int>(p.series.size()),
                                       static_cast<int>(p.categories.size()), 0.67, 0.0,
                                       p.spec.bar_layout == PlotSpec::BarLayout::Grouped ? 0 : ImPlotBarGroupsFlags_Stacked);
-                ImPlot::PopColormap();
+                for (size_t i = 0; i < labels.size(); ++i) HoldItemColour(labels[i], ColourOf(i));
             } else if (!p.series.empty()) {
                 const auto& s = p.series[0];
                 // One set of bars: positions and heights, turned for horizontal bars.
@@ -1094,7 +1106,7 @@ void PlotView::DrawPlot(ImVec2 size) {
                 const auto& s = p.series[0];
                 ImPlot::SetNextErrorBarStyle(ColourOf((0)), 1.5f, 6.0f);
                 ImPlot::PlotErrorBars(s.label.c_str(), s.x.data(), s.y.data(), s.low.data(), s.high.data(), n(s.x));
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4.0f, ColourOf((0)), 0.0f);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4.0f, ColourOf(0), 0.0f, ColourOf(0));
                 ImPlot::PlotScatter(s.label.c_str(), s.x.data(), s.y.data(), n(s.x));
             }
             break;
@@ -1102,8 +1114,10 @@ void PlotView::DrawPlot(ImVec2 size) {
             if (!p.series.empty() && !p.categories.empty()) {
                 std::vector<const char*> labels;
                 for (const auto& c : p.categories) labels.push_back(c.c_str());
+                for (size_t i = 0; i < labels.size(); ++i) HoldItemColour(labels[i], ColourOf(i));
                 ImPlot::PlotPieChart(labels.data(), p.series[0].y.data(), static_cast<int>(labels.size()), 0.5, 0.5, 0.4,
                                      p.spec.donut ? nullptr : "%.0f", 90);
+                for (size_t i = 0; i < labels.size(); ++i) HoldItemColour(labels[i], ColourOf(i));
                 if (p.spec.donut) {
                     double total = 0;
                     for (double v : p.series[0].y) total += std::max(0.0, v);
@@ -1277,7 +1291,7 @@ void PlotView::DrawPlot(ImVec2 size) {
                 }
                 const ImVec4 c = ColourOf(i);
                 if (p.spec.polar_points) {
-                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.8f, ui::WithAlpha(c, 0.85f), 0.0f);
+                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.8f, ui::WithAlpha(c, 0.85f), 0.0f, c);
                     ImPlot::PlotScatter(LegendLabel(p, i, s.label).c_str(), xs.data(), ys.data(), n(xs));
                 } else {
                     ImPlot::SetNextLineStyle(c, 1.8f);
@@ -1447,7 +1461,7 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Residuals:
             if (!p.series.empty()) {
                 const auto& sr = p.series[0];
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(ColourOf(0), 0.6f), 0.0f);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(ColourOf(0), 0.6f), 0.0f, ColourOf(0));
                 ImPlot::PlotScatter(sr.label.c_str(), sr.x.data(), sr.y.data(), n(sr.x));
                 const double zero = 0.0;
                 ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.9f), 1.4f);
@@ -1499,7 +1513,8 @@ void PlotView::DrawPlot(ImVec2 size) {
                 const ImVec4 c = ColourOf(i);
                 // A small marker per point keeps the fit and the legend; the
                 // sized and coloured circles are drawn over it.
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 1.0f, p.colour_scale ? ui::WithAlpha(t.text, 0.0f) : c, 0.0f);
+                const ImVec4 marker = p.colour_scale ? ui::WithAlpha(t.text, 0.0f) : c;
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 1.0f, marker, 0.0f, marker);
                 ImPlot::PlotScatter((p.series.size() > 1 ? LegendLabel(p, i, sr.label) : std::string("##points")).c_str(), sr.x.data(), sr.y.data(), n(sr.x));
                 ImPlot::PushPlotClipRect();
                 for (size_t k = 0; k < sr.x.size(); ++k) {
