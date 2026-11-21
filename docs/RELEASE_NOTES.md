@@ -29,10 +29,16 @@ private Data Studio tickets (`tofix*/track*`).
   the two imports and the console limit were not even saved. Now a new
   project gets an environment only when the switch is on, with the listed
   packages installed before Python starts in it; each Python session runs
-  the chosen imports and startup script; the Python console keeps the chosen
+  the chosen imports and startup scripts; the Python console keeps the chosen
   number of commands. The interpreter is taken with **Use this Python**
   (no separate Apply / Revert), and checking or finding interpreters no
   longer freezes the window.
+- **Startup scripts are set in Preferences > Python.** The list of scripts
+  each Python session runs first is set there (Add a script..., order,
+  remove) and saved with the Engine settings. The old `startup_scripts.txt`
+  next to the Engine is no longer read: add its scripts in Preferences.
+  They run in each session (after Restart too), not once on the window's
+  thread at start.
 - **Preferences > Script Editor: one place for the editor's settings, for
   every project.** Tab size, whitespace, syntax colours, minimap, word wrap
   and auto indent were saved into the open project only, on OK, and were
@@ -803,6 +809,23 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- **Arabic text is drawn.** The interface fonts had no Arabic, so Arabic
+  data (dashboard cards, tables, plot labels, legends and hover) showed as
+  "???". Noto Sans Arabic is now part of the interface fonts, and the
+  dashboard and plots draw Arabic with its letters joined and right to left
+  (numbers inside stay left to right). Other windows show the letters but do
+  not join them yet.
+- **Plot legend colours match the Colour list.** After changing the plot's
+  kind or columns, scatter, pie and grouped-bar legends could be one colour
+  (or more) off the swatches in the Plot window's Colour list; they now
+  always show the colour each series is drawn in, also a colour you picked.
+- **The decoder example graph compiles.** `examples/cyxgraph/text` (and
+  `task50_gpt_generation_controls`) `causal_lm_decoder_generation_experiment`
+  still used the old split Data/Labels pins with its label links removed, so
+  it opened with compile errors (and a data path from another machine). It
+  is rebuilt on the current graph: a text corpus, a Tokenizer making causal
+  windows, Split, Loader, two decoder blocks, a per-position token head, the
+  loss and Adam.
 - The node icon pack you choose is kept: View > Node Icon Pack and the new
   Node icons row of Preferences > Appearance set it, the next launch starts
   with it, and Reset appearance goes back to Font Awesome.
