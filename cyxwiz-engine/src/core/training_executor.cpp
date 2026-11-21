@@ -3497,7 +3497,9 @@ void TrainingExecutor::RunTrainingEpochArrow(
         // the sequence loop does (TOFIX223 0.6). The classification loss is
         // summed on the device and read on the report interval (always on an
         // epoch's last batch), so it is checked there: no extra device sync.
-        if (regression_metrics || should_report) {
+        // A learning rate range test ends on a non-finite loss itself (its
+        // Record, after the step): that is its result, not a failure.
+        if (!range_test_ && (regression_metrics || should_report)) {
             const float checked_loss = regression_metrics ? batch_loss : current_loss;
             if (!std::isfinite(checked_loss)) {
                 throw std::runtime_error("the training loss became " +
