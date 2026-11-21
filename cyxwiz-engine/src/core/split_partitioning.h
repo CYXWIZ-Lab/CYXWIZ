@@ -9,12 +9,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <numeric>
 #include <random>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -58,9 +60,11 @@ inline NormalizedSplit Normalize(float train, float val, float test) {
 // 400 / 0 / 100 at 0.8 / 0.1 / 0.1 instead of 400 / 50 / 50). One class (an
 // unstratified split) is the largest-remainder split of its rows. Train gets
 // at least one row when it has a share; a 0 / 0 / 1 split keeps every row in
-// its part.
+// its part. Leftover rows with equal fractions (classes of the same size) go
+// in an order drawn from `seed`, so which classes have no Validation or Test
+// row follows the seed, not the classes' order in the labels.
 inline std::vector<std::array<uint64_t, 3>> CountsPerClass(const std::vector<uint64_t>& class_rows,
-                                                           const NormalizedSplit& split) {
+                                                           const NormalizedSplit& split, uint32_t seed = 0) {
     const double share[3] = {split.train, split.val, split.test};
     uint64_t total = 0;
     for (const uint64_t rows : class_rows) total += rows;
@@ -110,8 +114,18 @@ inline std::vector<std::array<uint64_t, 3>> CountsPerClass(const std::vector<uin
         }
         left[c] = class_rows[c] - floors;
     }
-    std::stable_sort(remainders.begin(), remainders.end(),
-                     [](const Remainder& a, const Remainder& b) { return a.fraction > b.fraction; });
+    // A portable seeded order of the classes (SplitMix64), for ties.
+    const auto tie_key = [seed](size_t cls) {
+        uint64_t z = (static_cast<uint64_t>(seed) << 32) + static_cast<uint64_t>(cls) + 0x9E3779B97F4A7C15ull;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        return z ^ (z >> 31);
+    };
+    std::stable_sort(remainders.begin(), remainders.end(), [&](const Remainder& a, const Remainder& b) {
+        if (a.fraction != b.fraction) return a.fraction > b.fraction;
+        if (a.cls != b.cls) return tie_key(a.cls) < tie_key(b.cls);
+        return false;
+    });
     for (const auto& r : remainders) {
         if (left[r.cls] > 0 && need[r.part] > 0) {
             ++counts[r.cls][r.part];
@@ -129,6 +143,28 @@ inline std::vector<std::array<uint64_t, 3>> CountsPerClass(const std::vector<uin
             --need[p];
         }
     }
+    // Train with a share and no row (a handful of rows with a small Train
+    // share, where the class floors outweighed the Train total): one row of
+    // the class with the most Validation or Test rows moves to Train.
+    if (total > 0 && share[0] > 0.0) {
+        uint64_t train_rows = 0;
+        for (const auto& c : counts) train_rows += c[0];
+        if (train_rows == 0) {
+            size_t best_cls = 0, best_part = 0;
+            uint64_t best = 0;
+            for (size_t c = 0; c < counts.size(); ++c)
+                for (size_t p = 1; p < 3; ++p)
+                    if (counts[c][p] > best) {
+                        best = counts[c][p];
+                        best_cls = c;
+                        best_part = p;
+                    }
+            if (best > 0) {
+                --counts[best_cls][best_part];
+                ++counts[best_cls][0];
+            }
+        }
+    }
     return counts;
 }
 
@@ -141,7 +177,16 @@ arrow::Status AppendNumericLabels(const std::shared_ptr<arrow::Array>& chunk,
             return arrow::Status::Invalid(
                 "stratified split requires non-null labels");
         }
-        labels.push_back(static_cast<int64_t>(typed->Value(i)));
+        using Value = std::decay_t<decltype(typed->Value(i))>;
+        if constexpr (std::is_floating_point_v<Value>) {
+            // A NaN has no class; casting it is undefined.
+            if (std::isnan(typed->Value(i)))
+                return arrow::Status::Invalid("stratified split requires labels that are numbers, not NaN");
+            const double value = static_cast<double>(typed->Value(i));
+            labels.push_back(value >= -9.2e18 && value <= 9.2e18 ? static_cast<int64_t>(value) : -1);
+        } else {
+            labels.push_back(static_cast<int64_t>(typed->Value(i)));
+        }
     }
     return arrow::Status::OK();
 }
@@ -205,6 +250,10 @@ inline arrow::Result<std::vector<int64_t>> ReadLabels(
                 ARROW_RETURN_NOT_OK(
                     AppendNumericLabels<arrow::DoubleArray>(chunk, labels));
                 break;
+            case arrow::Type::BOOL:
+                ARROW_RETURN_NOT_OK(
+                    AppendNumericLabels<arrow::BooleanArray>(chunk, labels));
+                break;
             default:
                 return arrow::Status::Invalid(
                     "stratified split label column '" + label_column +
@@ -258,7 +307,7 @@ public:
                   bool shuffle, uint32_t seed)
         : shuffle_(shuffle), rng_(seed) {
         remaining_ = split_partition_detail::CountsPerClass(
-            class_rows, split_partition_detail::Normalize(train, val, test));
+            class_rows, split_partition_detail::Normalize(train, val, test), seed);
     }
 
     // The partition (0 train, 1 validation, 2 test) of the next row, which

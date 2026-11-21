@@ -931,6 +931,37 @@ void TestSplitCountsAcrossClasses() {
           "a 0 / 0 / 1 split keeps every row in Test");
     Check(tally(cyxwiz::AssignSplitPartitions(2, {}, 0.1f, 0.45f, 0.45f, false, 1))[0] == 1,
           "Train gets at least one row when it has a share");
+    // One class of 4 rows at 1/16 / 3/16 / 3/4 (exact in float): the class's
+    // Test floor (3) outweighed the Train total, so the leftover row went to
+    // Validation and Train was empty (0 / 1 / 3).
+    {
+        const std::vector<uint32_t> one_class(4, 0);
+        const auto small = tally(cyxwiz::AssignSplitPartitions(4, one_class, 0.0625f, 0.1875f, 0.75f, false, 1));
+        Check(small[0] >= 1 && small[0] + small[1] + small[2] == 4,
+              "a small Train share still gets a row (got " + std::to_string(small[0]) + " / " +
+                  std::to_string(small[1]) + " / " + std::to_string(small[2]) + ")");
+    }
+    // Which classes get the Validation row and which the Test row (equal
+    // remainders) follows the seed, not the label order: it once was always
+    // classes 0-49 to Validation and 50-99 to Test.
+    {
+        std::vector<uint32_t> classes;
+        for (uint32_t c = 0; c < 100; ++c)
+            for (int i = 0; i < 5; ++i) classes.push_back(c);
+        const auto val_classes = [&](uint32_t seed) {
+            const auto parts = cyxwiz::AssignSplitPartitions(classes.size(), classes, 0.8f, 0.1f, 0.1f, false, seed);
+            std::vector<uint32_t> out;
+            for (size_t row = 0; row < parts.size(); ++row)
+                if (parts[row] == 1) out.push_back(classes[row]);
+            return out;
+        };
+        const auto first = val_classes(7);
+        std::vector<uint32_t> low_half;
+        for (uint32_t c = 0; c < 50; ++c) low_half.push_back(c);
+        Check(first.size() == 50 && first != low_half, "the Validation classes are not simply the first 50");
+        Check(val_classes(7) == first, "the same seed picks the same Validation classes");
+        Check(val_classes(8) != first, "another seed picks other Validation classes");
+    }
 }
 
 void TestLabelClassCount() {
