@@ -212,6 +212,15 @@ int main() {
         Check(counted.size() == 2 && counted[0].name == "x" && counted[0].rows == 2 && counted[0].nan_rows == 2 &&
                   counted[1].name == "label" && counted[1].label && counted[1].rows == 1,
               "the check before training counts the batcher's columns (" + std::to_string(counted.size()) + ")");
+        // An empty text label counts as missing before training too (as IS NOT
+        // EMPTY drops it); a text of spaces does not.
+        auto text_label = arrow::Table::Make(arrow::schema({arrow::field("x", arrow::float64()),
+                                                            arrow::field("label", arrow::utf8())}),
+                                             {Doubles({1, 2, 3, 4}, true), Strings({"a", "", " ", "b"})});
+        const auto text_counted = cyxwiz::CountMissingTrainingColumns(*text_label, "label", {});
+        Check(text_counted.size() == 1 && text_counted[0].name == "label" && text_counted[0].rows == 1 &&
+                  text_counted[0].text,
+              "an empty text label is counted as missing before training");
     }
     {
         // The only empty cell is in a column the model does not use (a role

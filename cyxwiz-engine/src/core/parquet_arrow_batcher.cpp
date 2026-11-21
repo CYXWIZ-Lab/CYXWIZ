@@ -925,6 +925,7 @@ void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* loca
             starts.push_back(start);
             start += chunk->length();
         }
+        int64_t missing_labels = 0;  // empty cells and empty texts: missing labels, refused below
         for (size_t b = 0; b < n; ++b) {
             const int64_t row = rows[b];
             if (row < 0 || row >= num_rows) continue;
@@ -932,10 +933,18 @@ void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* loca
                 static_cast<size_t>(std::upper_bound(starts.begin(), starts.end(), row) - starts.begin()) - 1;
             const auto& chunk = *label.chunk(static_cast<int>(c));
             const int64_t local = row - starts[c];
+            if (chunk.IsNull(local)) {
+                ++missing_labels;
+                continue;
+            }
             const std::string value =
                 label_type == arrow::Type::STRING
                     ? std::string(static_cast<const arrow::StringArray&>(chunk).GetView(local))
                     : std::string(static_cast<const arrow::LargeStringArray&>(chunk).GetView(local));
+            if (value.empty()) {
+                ++missing_labels;
+                continue;
+            }
             const int32_t index = label_vocabulary_ ? label_vocabulary_->IndexOf(value) : -1;
             if (index < 0) {
                 throw std::runtime_error("ParquetArrowBatcher: label '" + value + "' in column '" +
@@ -944,6 +953,8 @@ void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* loca
             }
             batch_labels[dst + b] = index;
         }
+        if (missing_labels > 0)
+            nan_columns.push_back({table.schema()->field(label_col_idx_)->name(), missing_labels, true, true, 0, true});
     } else {
         RequireNumberColumns("ParquetArrowBatcher", table, {label_col_idx_}, "label", /*allow_bool=*/true);
         std::vector<float> values(n, 0.0f);
@@ -1076,6 +1087,7 @@ std::optional<std::vector<size_t>> ParquetArrowBatcher::TrainClassCounts() const
     std::vector<size_t> counts;
     std::vector<int64_t> classes;
     std::vector<int8_t> parts;
+    int64_t missing = 0;
     for (const int g : assigned_row_groups_) {
         const auto labels = dataset_->ReadRowGroupColumn(g, label_name);
         if (!labels) return std::nullopt;
@@ -1097,8 +1109,16 @@ std::optional<std::vector<size_t>> ParquetArrowBatcher::TrainClassCounts() const
         for (size_t i = 0; i < classes.size(); ++i) {
             if (row_split_ && (offset + i >= row_split_->bucket.size() || row_split_->bucket[offset + i] != 0)) continue;
             if (!parts.empty() && parts[i] != 0) continue;
-            CountClass(counts, classes[i]);
+            if (!CountClass(counts, classes[i])) ++missing;
         }
+    }
+    // A Train row without a class (an empty cell or an empty text) is a
+    // missing label: the same refusal as at the first batch, not a class
+    // count that leaves it out.
+    if (missing > 0) {
+        const auto type = dataset_->GetSchema()->field(label_col_idx_)->type()->id();
+        ThrowIfMissingValues("ParquetArrowBatcher",
+                             {{label_name, missing, true, false, 0, IsTextArrowType(type)}}, dataset_->GetNumRows());
     }
     return counts;
 }

@@ -50,12 +50,31 @@ inline bool IsTextArrowType(arrow::Type::type id) {
            id == arrow::Type::DICTIONARY;
 }
 
-// One column's missing cells as a refusal names them.
+// Empty texts ('') of a text column: missing, as the Row Filter's IS NOT
+// EMPTY reads them (a text of spaces is a value there, and here).
+inline int64_t EmptyTextCells(const arrow::ChunkedArray& column) {
+    int64_t empty = 0;
+    for (const auto& chunk : column.chunks()) {
+        if (chunk->type_id() == arrow::Type::STRING) {
+            const auto& texts = static_cast<const arrow::StringArray&>(*chunk);
+            for (int64_t i = 0; i < texts.length(); ++i)
+                if (texts.IsValid(i) && texts.GetView(i).empty()) ++empty;
+        } else if (chunk->type_id() == arrow::Type::LARGE_STRING) {
+            const auto& texts = static_cast<const arrow::LargeStringArray&>(*chunk);
+            for (int64_t i = 0; i < texts.length(); ++i)
+                if (texts.IsValid(i) && texts.GetView(i).empty()) ++empty;
+        }
+    }
+    return empty;
+}
+
+// One column's missing cells as a refusal names them: empty cells, NaN in a
+// number column, and empty texts in a text column.
 inline MissingColumn CountMissingColumn(const std::string& name, const arrow::ChunkedArray& column, bool label) {
     MissingColumn c;
     c.name = name;
     c.nan_rows = NanCells(column);
-    c.rows = column.null_count() + c.nan_rows;
+    c.rows = column.null_count() + c.nan_rows + EmptyTextCells(column);
     c.label = label;
     c.text = IsTextArrowType(column.type()->id());
     return c;

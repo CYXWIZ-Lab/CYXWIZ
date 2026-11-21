@@ -620,6 +620,57 @@ void TestMissingValuesRefusalKeepsColumns(const std::filesystem::path& work_dir)
         Check(cyxwiz::ClassifyTrainingFailure(metrics.terminal_reason) == cyxwiz::TrainingFailureKind::DataError,
               name + ": a remote run reports it as a data error");
     }
+
+    // An empty text label is a missing label (owner, 2026-11-21), as the Row
+    // Filter's IS NOT EMPTY reads it: refused in memory, from a Parquet file
+    // and when balanced weights count the classes. It was the class "" (sorted
+    // first, so class 0) and trained.
+    {
+        auto text_schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("x1", arrow::float32()),
+                                          arrow::field("label", arrow::utf8())});
+        arrow::StringBuilder texts;
+        (void)texts.AppendValues(std::vector<std::string>{"cat", "dog", "", "dog", "cat", "dog"});
+        std::shared_ptr<arrow::Array> text_labels;
+        (void)texts.Finish(&text_labels);
+        auto text_table = arrow::Table::Make(text_schema,
+                                             {FinishFloatArray({0.0f, 0.1f, 0.9f, 1.0f, 0.2f, 0.8f}),
+                                              FinishFloatArray({0.0f, 0.2f, 0.5f, 0.7f, 0.1f, 0.9f}), text_labels},
+                                             6);
+        const auto text_dataset = std::make_shared<cyxwiz::ArrowDataset>(text_table, "empty_text_label");
+        const auto parquet_path = work_dir / "empty-text-label.parquet";
+        WriteParquetWithRowGroupSize(*text_dataset, parquet_path.string(), 3);
+        const auto parquet = cyxwiz::ParquetBackedDataset::Open(parquet_path.string(), "empty_text_label_parquet");
+        Check(parquet != nullptr, "the empty-text-label Parquet fixture opens");
+        for (const bool on_disk : {false, true}) {
+            for (const bool balanced : {false, true}) {
+                if (on_disk && !parquet) continue;
+                auto config = MakeConfig(work_dir / ("empty-text-label-" + std::to_string(on_disk) + std::to_string(balanced)));
+                config.train_ratio = 1.0f;
+                config.val_ratio = 0.0f;
+                config.test_ratio = 0.0f;
+                config.has_data_split = true;
+                config.batch_size = 2;
+                config.log_interval = 0;
+                if (balanced) config.loss_params["class_weight"] = "balanced";
+                std::unique_ptr<cyxwiz::TrainingExecutor> executor =
+                    on_disk ? std::make_unique<cyxwiz::TrainingExecutor>(config, parquet, "label")
+                            : std::make_unique<cyxwiz::TrainingExecutor>(config, text_dataset, "label");
+                try {
+                    executor->Train(1, config.batch_size, nullptr, nullptr, nullptr);
+                } catch (const std::exception&) {
+                }
+                const auto metrics = executor->GetMetrics();
+                const std::string name = std::string(on_disk ? "Parquet" : "in memory") +
+                                         (balanced ? ", balanced weights" : "") + ": an empty text label";
+                Check(metrics.terminal_status == "failed" &&
+                          metrics.terminal_reason.find("the data has missing values") != std::string::npos &&
+                          metrics.missing_columns.size() == 1 && metrics.missing_columns[0].name == "label" &&
+                          metrics.missing_columns[0].label && metrics.missing_columns[0].rows == 1,
+                      name + " is a missing label (got '" + metrics.terminal_status + "': '" +
+                          metrics.terminal_reason + "')");
+            }
+        }
+    }
 }
 
 // class_weight=balanced comes from the Train part's class counts on every
