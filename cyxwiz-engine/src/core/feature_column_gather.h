@@ -28,6 +28,15 @@ void GatherTypedColumn(const arrow::ChunkedArray& column, const int64_t* rows, s
                        float* out, size_t stride) {
     using Value = typename ArrowArrayT::TypeClass::c_type;
     const int num_chunks = column.num_chunks();
+    if (num_chunks == 1) {
+        // One chunk (every in-memory CSV load, most row groups): no lookup.
+        const Value* values = static_cast<const ArrowArrayT&>(*column.chunk(0)).raw_values();
+        for (size_t b = 0; b < count; ++b) {
+            const int64_t row = rows[b];
+            if (row >= 0 && row < num_rows) out[b * stride] = static_cast<float>(values[row]);
+        }
+        return;
+    }
     std::vector<const Value*> values(static_cast<size_t>(num_chunks));
     std::vector<int64_t> starts(static_cast<size_t>(num_chunks));
     int64_t start = 0;
@@ -40,18 +49,37 @@ void GatherTypedColumn(const arrow::ChunkedArray& column, const int64_t* rows, s
     for (size_t b = 0; b < count; ++b) {
         const int64_t row = rows[b];
         if (row < 0 || row >= num_rows) continue;
-        size_t c = 0;
-        if (num_chunks > 1) {
-            // The last chunk starting at or before `row` (empty chunks share
-            // their start with the next one, so they are never picked).
-            c = static_cast<size_t>(std::upper_bound(starts.begin(), starts.end(), row) - starts.begin()) - 1;
-        }
+        // The last chunk starting at or before `row` (empty chunks share
+        // their start with the next one, so they are never picked).
+        const size_t c =
+            static_cast<size_t>(std::upper_bound(starts.begin(), starts.end(), row) - starts.begin()) - 1;
         out[b * stride] = static_cast<float>(values[c][row - starts[c]]);
     }
 }
 
-// False for a type IsNumericBatchFeatureType does not take (nothing read):
-// callers check the types first, on their own thread (RequireNumberColumns).
+// A bool column (bit-packed, so no raw values) as 0 / 1: label columns only;
+// IsNumericBatchFeatureType does not take bool features.
+inline void GatherBoolColumn(const arrow::ChunkedArray& column, const int64_t* rows, size_t count, int64_t num_rows,
+                             float* out, size_t stride) {
+    std::vector<int64_t> starts;
+    int64_t start = 0;
+    for (const auto& chunk : column.chunks()) {
+        starts.push_back(start);
+        start += chunk->length();
+    }
+    for (size_t b = 0; b < count; ++b) {
+        const int64_t row = rows[b];
+        if (row < 0 || row >= num_rows || starts.empty()) continue;
+        const size_t c =
+            static_cast<size_t>(std::upper_bound(starts.begin(), starts.end(), row) - starts.begin()) - 1;
+        const auto& values = static_cast<const arrow::BooleanArray&>(*column.chunk(static_cast<int>(c)));
+        out[b * stride] = values.Value(row - starts[c]) ? 1.0f : 0.0f;
+    }
+}
+
+// False for a type IsNumericBatchFeatureType does not take, other than bool
+// (nothing read): callers check the types first, on their own thread
+// (RequireNumberColumns).
 inline bool GatherNumberColumn(const arrow::ChunkedArray& column, const int64_t* rows, size_t count,
                                int64_t num_rows, float* out, size_t stride) {
     switch (column.type()->id()) {
@@ -65,6 +93,7 @@ inline bool GatherNumberColumn(const arrow::ChunkedArray& column, const int64_t*
         case arrow::Type::UINT32: GatherTypedColumn<arrow::UInt32Array>(column, rows, count, num_rows, out, stride); return true;
         case arrow::Type::UINT16: GatherTypedColumn<arrow::UInt16Array>(column, rows, count, num_rows, out, stride); return true;
         case arrow::Type::UINT8: GatherTypedColumn<arrow::UInt8Array>(column, rows, count, num_rows, out, stride); return true;
+        case arrow::Type::BOOL: GatherBoolColumn(column, rows, count, num_rows, out, stride); return true;
         default: return false;
     }
 }
@@ -73,11 +102,11 @@ inline bool GatherNumberColumn(const arrow::ChunkedArray& column, const int64_t*
 // type the gather reads. Call it before starting worker threads: a throw
 // inside a worker ends the process.
 inline void RequireNumberColumns(const char* batcher, const arrow::Table& table, const std::vector<int>& columns,
-                                 const char* role) {
+                                 const char* role, bool allow_bool = false) {
     for (const int col_idx : columns) {
         if (col_idx < 0 || col_idx >= table.num_columns()) continue;
         const auto& field = table.schema()->field(col_idx);
-        if (!IsNumericBatchFeatureType(field->type())) {
+        if (!IsNumericBatchFeatureType(field->type()) && !(allow_bool && field->type()->id() == arrow::Type::BOOL)) {
             throw std::runtime_error(std::string(batcher) + ": " + role + " column '" + field->name() +
                                      "' has type " + field->type()->ToString() +
                                      ", which training cannot read as a number");

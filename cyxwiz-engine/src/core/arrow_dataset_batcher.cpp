@@ -147,57 +147,6 @@ void PopulateBatchInspection(
     }
 }
 
-float ReadNumericChunkedValue(
-    const std::shared_ptr<arrow::ChunkedArray>& column,
-    int64_t global_row_idx) {
-    if (!column || global_row_idx < 0) return 0.0f;
-    int64_t offset = 0;
-    for (int chunk_index = 0; chunk_index < column->num_chunks(); ++chunk_index) {
-        const auto& chunk = column->chunk(chunk_index);
-        const int64_t chunk_length = chunk->length();
-        if (global_row_idx >= offset + chunk_length) {
-            offset += chunk_length;
-            continue;
-        }
-        const int64_t local = global_row_idx - offset;
-        if (chunk->IsNull(local)) return 0.0f;
-        switch (chunk->type_id()) {
-        case arrow::Type::FLOAT:
-            return std::static_pointer_cast<arrow::FloatArray>(chunk)->Value(local);
-        case arrow::Type::DOUBLE:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::DoubleArray>(chunk)->Value(local));
-        case arrow::Type::INT64:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::Int64Array>(chunk)->Value(local));
-        case arrow::Type::INT32:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::Int32Array>(chunk)->Value(local));
-        case arrow::Type::INT16:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::Int16Array>(chunk)->Value(local));
-        case arrow::Type::INT8:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::Int8Array>(chunk)->Value(local));
-        case arrow::Type::UINT64:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::UInt64Array>(chunk)->Value(local));
-        case arrow::Type::UINT32:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::UInt32Array>(chunk)->Value(local));
-        case arrow::Type::UINT16:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::UInt16Array>(chunk)->Value(local));
-        case arrow::Type::UINT8:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::UInt8Array>(chunk)->Value(local));
-        default:
-            return 0.0f;
-        }
-    }
-    return 0.0f;
-}
-
 }  // namespace
 
 // ArrowDatasetBatcher Implementation
@@ -549,6 +498,9 @@ std::optional<std::vector<size_t>> ArrowDatasetBatcher::TrainClassCounts() const
     if (split_phase_ != BatcherPhase::Train || !is_training_ || !dataset_ || label_col_idx_ < 0 ||
         (!partition_column_.empty() && partition_value_ != 0))
         return std::nullopt;
+    // Empty or NaN labels are refused with their own message, not reported as
+    // classes that cannot be counted.
+    if (const auto table = dataset_->GetArrowTable()) RefuseMissingValues(table);
     auto labels = ReadNumericLabelColumn(dataset_->GetArrowTable(), label_column_);
     if (!labels.ok()) return std::nullopt;
     const auto& values = labels.ValueOrDie();
@@ -558,7 +510,7 @@ std::optional<std::vector<size_t>> ArrowDatasetBatcher::TrainClassCounts() const
     return counts;
 }
 
-void ArrowDatasetBatcher::RefuseMissingValues(const std::shared_ptr<arrow::Table>& table) {
+void ArrowDatasetBatcher::RefuseMissingValues(const std::shared_ptr<arrow::Table>& table) const {
     if (missing_values_checked_) return;
     std::vector<MissingColumn> columns;
     for (const int col : feature_cols_) {
@@ -657,134 +609,34 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
             GatherFeatures(table, batch_rows, actual_batch_size, batch_data.data());
         }
 
-        // Extract labels - handles both single-chunk (fast path) and multi-chunk
-        // (correct path) columns. The previous implementation always read chunk(0)
-        // and crashed whenever Arrow's CSV reader split the table into multiple
-        // chunks, which it does for any file >~1 MB block size.
+        // The label and any further regression targets through the one typed
+        // reader the features use: every number type and bool, any chunking
+        // (a uint64 label, or a bool label in scalar mode, was read as 0).
+        // Missing cells were refused before the first batch.
         if (label_col_idx_ >= 0 && label_col_idx_ < num_cols) {
-            auto column = table->column(label_col_idx_);
+            RequireNumberColumns("ArrowDatasetBatcher", *table, {label_col_idx_}, "label", /*allow_bool=*/true);
+            const auto& column = table->column(label_col_idx_);
             if (column && column->num_chunks() > 0) {
-                // Generic per-row read that handles any number of chunks. Slower
-                // than a type-specific raw_values() loop on a single chunk, but
-                // correct regardless of chunking. Labels are small (1 element per
-                // row), so per-batch cost here is trivial.
-                auto read_label = [&](int64_t global_row_idx) -> int {
-                    // Find which chunk holds this row
-                    int64_t offset = 0;
-                    for (int c = 0; c < column->num_chunks(); ++c) {
-                        auto chk = column->chunk(c);
-                        int64_t chk_len = chk->length();
-                        if (global_row_idx < offset + chk_len) {
-                            int64_t local_idx = global_row_idx - offset;
-                            if (chk->IsNull(local_idx)) return 0;
-                            switch (chk->type_id()) {
-                                case arrow::Type::INT64:
-                                    return static_cast<int>(
-                                        std::static_pointer_cast<arrow::Int64Array>(chk)->Value(local_idx));
-                                case arrow::Type::INT32:
-                                    return std::static_pointer_cast<arrow::Int32Array>(chk)->Value(local_idx);
-                                case arrow::Type::INT16:
-                                    return std::static_pointer_cast<arrow::Int16Array>(chk)->Value(local_idx);
-                                case arrow::Type::INT8:
-                                    return std::static_pointer_cast<arrow::Int8Array>(chk)->Value(local_idx);
-                                case arrow::Type::UINT8:
-                                    return std::static_pointer_cast<arrow::UInt8Array>(chk)->Value(local_idx);
-                                case arrow::Type::UINT16:
-                                    return std::static_pointer_cast<arrow::UInt16Array>(chk)->Value(local_idx);
-                                case arrow::Type::UINT32:
-                                    return static_cast<int>(
-                                        std::static_pointer_cast<arrow::UInt32Array>(chk)->Value(local_idx));
-                                case arrow::Type::DOUBLE:
-                                    return static_cast<int>(
-                                        std::static_pointer_cast<arrow::DoubleArray>(chk)->Value(local_idx));
-                                case arrow::Type::FLOAT:
-                                    return static_cast<int>(
-                                        std::static_pointer_cast<arrow::FloatArray>(chk)->Value(local_idx));
-                                case arrow::Type::BOOL:
-                                    return std::static_pointer_cast<arrow::BooleanArray>(chk)->Value(local_idx) ? 1 : 0;
-                                default:
-                                    return 0;  // refused at construction
-                            }
-                        }
-                        offset += chk_len;
-                    }
-                    return 0;  // row not found across any chunk
-                };
-
-                // Scalar-label mode preserves both fractional regression
-                // targets and binary 0/1 targets. The int-cast path above
-                // loses precision on non-integer regression labels.
-                auto read_label_float = [&](int64_t global_row_idx) -> float {
-                    int64_t offset = 0;
-                    for (int c = 0; c < column->num_chunks(); ++c) {
-                        auto chk = column->chunk(c);
-                        int64_t chk_len = chk->length();
-                        if (global_row_idx < offset + chk_len) {
-                            int64_t local_idx = global_row_idx - offset;
-                            if (chk->IsNull(local_idx)) return 0.0f;
-                            switch (chk->type_id()) {
-                                case arrow::Type::FLOAT:
-                                    return std::static_pointer_cast<arrow::FloatArray>(chk)->Value(local_idx);
-                                case arrow::Type::DOUBLE:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::DoubleArray>(chk)->Value(local_idx));
-                                case arrow::Type::INT64:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::Int64Array>(chk)->Value(local_idx));
-                                case arrow::Type::INT32:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::Int32Array>(chk)->Value(local_idx));
-                                case arrow::Type::INT16:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::Int16Array>(chk)->Value(local_idx));
-                                case arrow::Type::INT8:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::Int8Array>(chk)->Value(local_idx));
-                                case arrow::Type::UINT8:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::UInt8Array>(chk)->Value(local_idx));
-                                case arrow::Type::UINT16:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::UInt16Array>(chk)->Value(local_idx));
-                                case arrow::Type::UINT32:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::UInt32Array>(chk)->Value(local_idx));
-                                default:
-                                    return 0.0f;
-                            }
-                        }
-                        offset += chk_len;
-                    }
-                    return 0.0f;
-                };
-
+                std::vector<float> values(actual_batch_size, 0.0f);
+                GatherNumberColumn(*column, batch_rows, actual_batch_size, num_rows, values.data(), 1);
                 for (size_t b = 0; b < actual_batch_size; ++b) {
-                    int64_t row_idx = batch_rows[b];
-                    if (row_idx >= 0 && row_idx < num_rows) {
-                        if (scalar_label_mode_) {
-                            batch_labels_float[b * regression_target_width] =
-                                read_label_float(row_idx);
-                        } else {
-                            batch_labels[b] = read_label(row_idx);
-                        }
+                    if (scalar_label_mode_) {
+                        batch_labels_float[b * regression_target_width] = values[b];
+                    } else {
+                        batch_labels[b] = ClassLabelFromValue(values[b]);
                     }
                 }
             }
         }
 
         if (scalar_label_mode_ && label_col_indices_.size() > 1) {
+            RequireNumberColumns("ArrowDatasetBatcher", *table,
+                                 std::vector<int>(label_col_indices_.begin() + 1, label_col_indices_.end()), "target");
             for (size_t target = 1; target < label_col_indices_.size(); ++target) {
                 const int column_index = label_col_indices_[target];
                 if (column_index < 0 || column_index >= num_cols) continue;
-                const auto& target_column = table->column(column_index);
-                for (size_t b = 0; b < actual_batch_size; ++b) {
-                    const int64_t row_idx = batch_rows[b];
-                    if (row_idx >= 0 && row_idx < num_rows) {
-                        batch_labels_float[
-                            b * regression_target_width + target] =
-                            ReadNumericChunkedValue(target_column, row_idx);
-                    }
-                }
+                GatherNumberColumn(*table->column(column_index), batch_rows, actual_batch_size, num_rows,
+                                   batch_labels_float.data() + target, regression_target_width);
             }
         }
 

@@ -251,6 +251,96 @@ int main() {
         }
     }
 
+    // In memory, every number type and bool reaches the label as it is: a
+    // uint64 class label and a bool label read in scalar mode were 0 for
+    // every row (the label reader had no case for them).
+    {
+        arrow::UInt64Builder wide;
+        (void)wide.AppendValues({0, 1, 1, 0});
+        std::shared_ptr<arrow::Array> wide_array;
+        (void)wide.Finish(&wide_array);
+        auto schema = arrow::schema({arrow::field("x", arrow::float64()), arrow::field("label", arrow::uint64())});
+        auto table = arrow::Table::Make(schema, {Doubles({1, 2, 3, 4}, true),
+                                                 std::make_shared<arrow::ChunkedArray>(wide_array)});
+        auto dataset = std::make_shared<cyxwiz::ArrowDataset>(table, "refusals_uint64_label");
+        cyxwiz::ArrowDatasetBatcher batcher(dataset, "label", 4, false, 1.0f, true);
+        batcher.SetOneHotEncoding(2);
+        batcher.Reset();
+        const cyxwiz::Batch batch = batcher.GetNextBatch();
+        std::string got;
+        if (batch.size == 4 && batch.labels.Shape() == std::vector<size_t>({4, 2})) {
+            const float* labels = batch.labels.ReadData<float>();
+            for (size_t b = 0; b < 4; ++b) got += (b ? "," : "") + std::to_string(labels[b * 2 + 1] > 0.5f ? 1 : 0);
+        }
+        Check(got == "0,1,1,0", "a uint64 class label in memory is read (got '" + got + "')");
+    }
+    {
+        arrow::BooleanBuilder flags;
+        (void)flags.AppendValues(std::vector<bool>{true, false, true, true});
+        std::shared_ptr<arrow::Array> flag_array;
+        (void)flags.Finish(&flag_array);
+        auto schema = arrow::schema({arrow::field("x", arrow::float64()), arrow::field("label", arrow::boolean())});
+        auto table = arrow::Table::Make(schema, {Doubles({1, 2, 3, 4}, true),
+                                                 std::make_shared<arrow::ChunkedArray>(flag_array)});
+        auto dataset = std::make_shared<cyxwiz::ArrowDataset>(table, "refusals_bool_label");
+        cyxwiz::ArrowDatasetBatcher batcher(dataset, "label", 4, false, 1.0f, true);
+        batcher.SetScalarLabelMode(true);
+        batcher.Reset();
+        const cyxwiz::Batch batch = batcher.GetNextBatch();
+        std::string got;
+        if (batch.size == 4 && batch.labels.NumElements() == 4) {
+            const float* labels = batch.labels.ReadData<float>();
+            for (size_t b = 0; b < 4; ++b) got += (b ? "," : "") + std::to_string(static_cast<int>(labels[b]));
+        }
+        Check(got == "1,0,1,1", "a bool label read as a scalar target in memory is 0 / 1 (got '" + got + "')");
+    }
+
+    // class_weight=balanced counts the Train classes before the first batch:
+    // an empty label is refused there with the missing-values message, not as
+    // classes that "cannot be counted".
+    {
+        arrow::Int64Builder labels;
+        (void)labels.AppendValues({0, 1});
+        (void)labels.AppendNull();
+        (void)labels.Append(1);
+        std::shared_ptr<arrow::Array> label_array;
+        (void)labels.Finish(&label_array);
+        auto schema = arrow::schema({arrow::field("x", arrow::float64()), arrow::field("label", arrow::int64())});
+        auto table = arrow::Table::Make(schema, {Doubles({1, 2, 3, 4}, true),
+                                                 std::make_shared<arrow::ChunkedArray>(label_array)});
+        auto dataset = std::make_shared<cyxwiz::ArrowDataset>(table, "refusals_count_missing");
+        cyxwiz::ArrowDatasetBatcher batcher(dataset, "label", 4, false, 1.0f, true);
+        std::string error;
+        try {
+            (void)batcher.TrainClassCounts();
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
+        Check(error.find("label 'label' 1 row") != std::string::npos,
+              "counting the Train classes refuses an empty label with its message (got: '" + error + "')");
+    }
+
+    // From a Parquet file a NaN is a missing value too: the file's statistics
+    // do not count it, so the batch refuses it as it is read (it trained as a
+    // NaN value until the loss became NaN).
+    {
+        auto schema = arrow::schema({arrow::field("x", arrow::float64()), arrow::field("label", arrow::int64())});
+        auto table = arrow::Table::Make(schema, {Doubles({1, nan, 3, 4}, false), Ints({0, 1, 0, 1})});
+        std::shared_ptr<cyxwiz::ParquetBackedDataset> dataset;
+        auto batcher = parquet_batcher_of(table, "cyxwiz_refusals_nan.parquet", nullptr, dataset);
+        if (batcher) {
+            std::string error;
+            try {
+                batcher->Reset();
+                (void)batcher->GetNextBatch();
+            } catch (const std::exception& e) {
+                error = e.what();
+            }
+            Check(error.find("missing values") != std::string::npos && error.find("'x' at least 1 row") != std::string::npos,
+                  "a NaN feature value from Parquet is refused, naming the column (got: '" + error + "')");
+        }
+    }
+
     if (failures == 0) std::cout << "test_batcher_refusals: all checks passed\n";
     return failures == 0 ? 0 : 1;
 }

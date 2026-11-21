@@ -20,6 +20,15 @@ namespace cyxwiz {
                              "; check the label column and the last layer's units)");
 }
 
+// A label read as a number, as a class number: truncated, as the batchers
+// always read float labels; a value outside int's range (or NaN) saturates,
+// so the width check refuses it, instead of an out-of-range cast.
+inline int ClassLabelFromValue(float value) {
+    if (!(value > -2147483648.0f)) return std::numeric_limits<int>::min();
+    if (!(value < 2147483648.0f)) return std::numeric_limits<int>::max();
+    return static_cast<int>(value);
+}
+
 inline void CheckClassLabelInWidth(const char* batcher, int64_t label, size_t num_classes) {
     if (label < 0 || static_cast<uint64_t>(label) >= num_classes) ThrowClassLabelOutsideWidth(batcher, label, num_classes);
 }

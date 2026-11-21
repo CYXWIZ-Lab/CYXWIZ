@@ -13,11 +13,13 @@
 #include <arrow/table.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <numeric>
 #include <unordered_map>
 #include <stdexcept>
 #include <thread>
+#include <type_traits>
 
 namespace cyxwiz {
 
@@ -264,8 +266,17 @@ void AppendClassIds(const arrow::Array& chunk, std::unordered_map<std::string, u
 template <typename ArrayT>
 void AppendIntegerClasses(const arrow::Array& chunk, std::vector<int64_t>& out) {
     const auto& values = static_cast<const ArrayT&>(chunk);
-    for (int64_t i = 0; i < values.length(); ++i)
-        out.push_back(values.IsNull(i) ? -1 : static_cast<int64_t>(values.Value(i)));
+    for (int64_t i = 0; i < values.length(); ++i) {
+        if (values.IsNull(i)) {
+            out.push_back(-1);
+            continue;
+        }
+        // A float label as FillRows reads it (truncated, saturated); NaN is no class.
+        if constexpr (std::is_floating_point_v<typename ArrayT::TypeClass::c_type>)
+            out.push_back(std::isnan(values.Value(i)) ? -1 : ClassLabelFromValue(static_cast<float>(values.Value(i))));
+        else
+            out.push_back(static_cast<int64_t>(values.Value(i)));
+    }
 }
 
 // The class of each label cell as FillRows reads it: a number is its class
@@ -283,6 +294,11 @@ bool AppendLabelClasses(const arrow::Array& chunk, const LabelVocabulary* vocabu
     case arrow::Type::UINT64: AppendIntegerClasses<arrow::UInt64Array>(chunk, out); return true;
     case arrow::Type::FLOAT: AppendIntegerClasses<arrow::FloatArray>(chunk, out); return true;
     case arrow::Type::DOUBLE: AppendIntegerClasses<arrow::DoubleArray>(chunk, out); return true;
+    case arrow::Type::BOOL: {
+        const auto& values = static_cast<const arrow::BooleanArray&>(chunk);
+        for (int64_t i = 0; i < values.length(); ++i) out.push_back(values.IsNull(i) ? -1 : (values.Value(i) ? 1 : 0));
+        return true;
+    }
     case arrow::Type::STRING:
     case arrow::Type::LARGE_STRING:
         for (int64_t i = 0; i < chunk.length(); ++i) {
@@ -748,7 +764,7 @@ void ParquetArrowBatcher::SetOneHotEncoding(size_t num_classes) {
 // Empty feature or label cells refuse the run, as on the in-memory path. The
 // counts come from the file's row-group statistics, so no data is read; NaN
 // in a float column is not in them and shows as a non-finite loss instead.
-void ParquetArrowBatcher::RefuseMissingValues() {
+void ParquetArrowBatcher::RefuseMissingValues() const {
     if (missing_values_checked_ || !dataset_) return;
     const auto schema = dataset_->GetSchema();
     if (!schema) return;
@@ -869,8 +885,28 @@ void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* loca
         process_feature_range(0, feature_cols_.size());
     }
 
+    // NaN in a float column is a missing value, as on the in-memory path. The
+    // file's statistics count no NaN, so the rows are checked as they are
+    // read, here on the calling thread after the workers.
+    std::vector<MissingColumn> nan_columns;
+    const auto count_nan = [&](int col, const float* first, size_t stride, bool label) {
+        if (col < 0 || col >= num_cols_in_table) return;
+        const auto id = table.schema()->field(col)->type()->id();
+        if (id != arrow::Type::FLOAT && id != arrow::Type::DOUBLE) return;
+        int64_t nans = 0;
+        for (size_t b = 0; b < n; ++b)
+            if (std::isnan(first[b * stride])) ++nans;
+        if (nans > 0) nan_columns.push_back({table.schema()->field(col)->name(), nans, label, true});
+    };
+    for (size_t f = 0; f < feature_cols_.size(); ++f)
+        count_nan(feature_cols_[f], batch_data.data() + dst * num_features_ + f, num_features_, false);
+    const auto refuse_nan = [&] { ThrowIfMissingValues("ParquetArrowBatcher", nan_columns); };
+
     // The label of the same rows, then any further regression targets.
-    if (label_col_idx_ < 0 || label_col_idx_ >= num_cols_in_table) return;
+    if (label_col_idx_ < 0 || label_col_idx_ >= num_cols_in_table) {
+        refuse_nan();
+        return;
+    }
     const auto& label = *table.column(label_col_idx_);
     const auto label_type = label.type()->id();
     if (label_type == arrow::Type::STRING || label_type == arrow::Type::LARGE_STRING) {
@@ -902,14 +938,16 @@ void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* loca
             batch_labels[dst + b] = index;
         }
     } else {
-        RequireNumberColumns("ParquetArrowBatcher", table, {label_col_idx_}, "label");
+        RequireNumberColumns("ParquetArrowBatcher", table, {label_col_idx_}, "label", /*allow_bool=*/true);
         std::vector<float> values(n, 0.0f);
         GatherNumberColumn(label, rows.data(), n, num_rows, values.data(), 1);
+        count_nan(label_col_idx_, values.data(), 1, true);
+        refuse_nan();
         for (size_t b = 0; b < n; ++b) {
             if (scalar_label_mode_) {
                 batch_labels_float[(dst + b) * regression_target_width] = values[b];
             } else {
-                batch_labels[dst + b] = static_cast<int>(values[b]);
+                batch_labels[dst + b] = ClassLabelFromValue(values[b]);
             }
         }
     }
@@ -923,8 +961,11 @@ void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* loca
             GatherNumberColumn(*table.column(column_index), rows.data(), n, num_rows,
                                batch_labels_float.data() + dst * regression_target_width + target,
                                regression_target_width);
+            count_nan(column_index, batch_labels_float.data() + dst * regression_target_width + target,
+                      regression_target_width, true);
         }
     }
+    refuse_nan();
 }
 
 // The filled rows as the batch: Normalize, the feature tensor and the label
@@ -1022,6 +1063,8 @@ std::optional<std::vector<size_t>> ParquetArrowBatcher::TrainClassCounts() const
     if (split_phase_ != BatcherPhase::Train || !is_training_ || !dataset_ || label_col_idx_ < 0 ||
         (!partition_column_.empty() && partition_value_ != 0))
         return std::nullopt;
+    // Empty labels are refused with their own message, not counted as no class.
+    RefuseMissingValues();
     const std::string label_name = dataset_->GetSchema()->field(label_col_idx_)->name();
     std::vector<size_t> counts;
     std::vector<int64_t> classes;

@@ -42,6 +42,9 @@ struct MissingColumn {
     std::string name;
     int64_t rows = 0;
     bool label = false;
+    // Counted in the rows read so far, not the whole column (NaN on the
+    // Parquet path, found as a batch is read).
+    bool at_least = false;
 };
 
 // Throws the refusal when any column has missing cells.
@@ -56,7 +59,8 @@ inline void ThrowIfMissingValues(const char* batcher, const std::vector<MissingC
         }
         ++listed;
         std::string& list = c.label ? labels : features;
-        list += (list.empty() ? "" : ", ") + ("'" + c.name + "' " + std::to_string(c.rows) +
+        list += (list.empty() ? "" : ", ") + ("'" + c.name + "' " + (c.at_least ? "at least " : "") +
+                                              std::to_string(c.rows) +
                                               (c.rows == 1 ? " row" : " rows"));
     }
     if (listed == 0) return;
