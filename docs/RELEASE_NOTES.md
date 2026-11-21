@@ -778,6 +778,11 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- **Every Query Console example runs.** "Count nodes by type" stopped with
+  "Expected alias after AS" and "List optimizers" with "Expected clause":
+  CyxQL refused function words (type, count, size...) as an alias, property,
+  label or key, and has no UNION. Function words now work as names, and
+  "List optimizers" lists the optimizer types in one query.
 - **Edit > Undo, Redo, Cut, Copy, Paste, Delete, Select All and Find work on
   the Studio canvas.** The menu said "Editing: Studio canvas" but sent them
   to the Script Editor, so nothing happened on the canvas; only the keys

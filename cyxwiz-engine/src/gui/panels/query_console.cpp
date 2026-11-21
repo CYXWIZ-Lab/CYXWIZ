@@ -1,4 +1,5 @@
 #include "query_console.h"
+#include "../query/cyxql_examples.h"
 #include "../node_editor.h"
 #include "../IconsFontAwesome6.h"
 #include "../ui_tokens.h"
@@ -69,70 +70,6 @@ query::QueryResult ValidateReadOnlyQuery(const std::string& query_text) {
 }
 
 } // namespace
-
-// Example queries for the dropdown
-const std::vector<QueryConsolePanel::ExampleQuery> QueryConsolePanel::example_queries_ = {
-    {
-        "List all nodes",
-        "MATCH (n) RETURN n",
-        "Returns all nodes in the graph"
-    },
-    {
-        "List all Dense layers",
-        "MATCH (n:Dense) RETURN n.name, n.units",
-        "Find all Dense layers and show their names and units"
-    },
-    {
-        "List all Conv2D layers",
-        "MATCH (n:Conv2D) RETURN n.name, n.filters, n.kernel_size",
-        "Find all Conv2D layers with their parameters"
-    },
-    {
-        "Count nodes by type",
-        "MATCH (n) RETURN type(n) AS type, count(n) AS count",
-        "Count how many nodes of each type exist"
-    },
-    {
-        "Find input to output path",
-        "MATCH (a:DataInput)-[*]->(b:Output) RETURN a.name, b.name",
-        "Find paths from DataInput to Output nodes"
-    },
-    {
-        "Find residual connections",
-        "MATCH (a)-[r:ResidualSkip]->(b) RETURN a.name, b.name",
-        "Find all residual/skip connections"
-    },
-    {
-        "Find Conv-BN-ReLU sequences",
-        "MATCH (c:Conv2D)-[:TensorFlow]->(bn:BatchNorm)-[:TensorFlow]->(r:ReLU)\nRETURN c.name, bn.name, r.name",
-        "Find Conv2D -> BatchNorm -> ReLU patterns"
-    },
-    {
-        "Find Dense layers > 256 units",
-        "MATCH (n:Dense) WHERE n.units > 256 RETURN n.name, n.units",
-        "Filter Dense layers by number of units"
-    },
-    {
-        "Find Dropout layers",
-        "MATCH (n:Dropout) RETURN n.name, n.rate",
-        "List all Dropout layers with their rates"
-    },
-    {
-        "Find attention layers",
-        "MATCH (n:MultiHeadAttention) RETURN n.name, n.d_model, n.num_heads",
-        "Find all Multi-Head Attention layers"
-    },
-    {
-        "Get node properties",
-        "MATCH (n) WHERE n.name CONTAINS \"Dense\" RETURN n.name, properties(n)",
-        "Get all properties of nodes with 'Dense' in the name"
-    },
-    {
-        "List optimizers",
-        "MATCH (n:Adam) RETURN n.name, n.learning_rate\nUNION MATCH (n:SGD) RETURN n.name, n.learning_rate",
-        "Find all optimizer nodes"
-    }
-};
 
 QueryConsolePanel::QueryConsolePanel()
     : Panel("Query Console", false)  // Hidden by default
@@ -428,7 +365,7 @@ void QueryConsolePanel::RenderExamples() {
         ImGui::TextWrapped("Click an example to load it into the query editor.");
         ImGui::Separator();
 
-        for (const auto& example : example_queries_) {
+        for (const auto& example : query::Examples()) {
             ImGui::PushID(example.name);
 
             // Collapsing header for each example

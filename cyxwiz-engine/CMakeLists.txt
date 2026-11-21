@@ -772,6 +772,7 @@ set(ENGINE_SOURCES
     src/gui/query/cyxql_lexer.cpp
     src/gui/query/cyxql_parser.cpp
     src/gui/query/cyxql_executor.cpp
+    src/gui/query/cyxql_examples.cpp
     src/data/data_table.cpp
     src/data/arrow_data_table.cpp
     src/data/table_text_export.cpp
@@ -1057,6 +1058,7 @@ set(ENGINE_HEADERS
     src/gui/query/cyxql_lexer.h
     src/gui/query/cyxql_parser.h
     src/gui/query/cyxql_executor.h
+    src/gui/query/cyxql_examples.h
     src/data/data_table.h
     src/scripting/python_engine.h
     src/scripting/script_manager.h
@@ -3661,6 +3663,24 @@ set_target_properties(test_pipeline_run_release PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME pipeline_run_release COMMAND test_pipeline_run_release)
+
+# ===== Test: CyxQL parser =====
+# Every example query the Query Console offers parses, and function words
+# (type, count, size...) work as aliases and property names.
+add_executable(test_cyxql_parser
+    tests/test_cyxql_parser.cpp
+    src/gui/query/cyxql_types.cpp
+    src/gui/query/cyxql_lexer.cpp
+    src/gui/query/cyxql_parser.cpp
+    src/gui/query/cyxql_examples.cpp
+)
+target_include_directories(test_cyxql_parser PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+set_target_properties(test_cyxql_parser PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME cyxql_parser COMMAND test_cyxql_parser)
 
 # ===== Test: Pattern Template Guard =====
 add_executable(test_pattern_template_guard

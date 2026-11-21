@@ -75,15 +75,6 @@ private:
     bool show_examples_ = false;
     bool show_history_ = false;
     int selected_row_ = -1;
-
-    // Example queries
-    struct ExampleQuery {
-        const char* name;
-        const char* query;
-        const char* description;
-    };
-
-    static const std::vector<ExampleQuery> example_queries_;
 };
 
 } // namespace cyxwiz
