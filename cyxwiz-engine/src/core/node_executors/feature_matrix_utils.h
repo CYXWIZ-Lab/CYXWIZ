@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ts_column_utils.h"
+#include "../column_list.h"
 
 #include <arrow/api.h>
 #include <functional>
@@ -129,23 +130,11 @@ inline arrow::Status ReadFeatureMatrix(
     return arrow::Status::OK();
 }
 
-// Parse a comma-separated list of column names. Trims whitespace,
-// skips empties. Used for `feature_cols` params across operators.
+// Parse a comma-separated list of column names (trimmed, empties skipped,
+// quoted names as core/column_list.h). Used for `columns` / `feature_cols`
+// params across operators.
 inline void ParseCommaList(const std::string& s, std::vector<std::string>& out) {
-    out.clear();
-    if (s.empty()) return;
-    size_t pos = 0;
-    while (pos <= s.size()) {
-        size_t next = s.find(',', pos);
-        if (next == std::string::npos) next = s.size();
-        size_t start = s.find_first_not_of(" \t", pos);
-        size_t end = s.find_last_not_of(" \t", next - 1);
-        if (start != std::string::npos && start < next && end != std::string::npos && end >= start) {
-            out.push_back(s.substr(start, end - start + 1));
-        }
-        pos = next + 1;
-        if (next == s.size()) break;
-    }
+    out = ParseColumnList(s);
 }
 
 } // namespace cyxwiz

@@ -1,4 +1,5 @@
 #include "pipeline_executor.h"
+#include "column_list.h"
 #include "dataset_lineage.h"
 #include "sha256_digest.h"
 #include "hashing_output_stream.h"
@@ -243,15 +244,9 @@ std::string ToUpperAscii(std::string value) {
     return value;
 }
 
+// Appends the names in a column list (quoted names: core/column_list.h).
 void ParseCommaList(const std::string& value, std::vector<std::string>& out) {
-    std::stringstream parts(value);
-    std::string part;
-    while (std::getline(parts, part, ',')) {
-        const std::string trimmed = TrimString(part);
-        if (!trimmed.empty()) {
-            out.push_back(trimmed);
-        }
-    }
+    for (auto& name : cyxwiz::ParseColumnList(value)) out.push_back(std::move(name));
 }
 
 std::map<std::string, std::string> ParseRenameMapping(const std::string& mapping) {
@@ -574,17 +569,9 @@ bool BuildUnitConverterExpression(const std::string& category,
     return true;
 }
 
+// A step's column list; a name with a comma or edge spaces is quoted.
 std::vector<std::string> ParseCommaSeparatedNames(const std::string& value) {
-    std::vector<std::string> result;
-    std::stringstream stream(value);
-    std::string name;
-    while (std::getline(stream, name, ',')) {
-        name = TrimString(name);
-        if (!name.empty()) {
-            result.push_back(name);
-        }
-    }
-    return result;
+    return cyxwiz::ParseColumnList(value);
 }
 
 bool ResolveDataInputColumnProjection(

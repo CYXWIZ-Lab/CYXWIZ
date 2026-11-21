@@ -322,9 +322,11 @@ have them and shows a card per group:
   Missing Value step. The value is learned from the Train rows only. **Drop
   these rows** adds a Row Filter that keeps the rows where each of these
   columns IS NOT EMPTY. A column more than half empty can be left out of the
-  features instead (**Actions**: its Data Input role becomes Ignore). Fill is
-  not offered when a column's name has a comma or spaces at its ends (the
-  Missing Value step lists its columns separated by commas); Drop is.
+  features instead (**Actions**: its Data Input role becomes Ignore). A
+  column whose name has a comma, spaces at its ends or a leading `"` is
+  written in double quotes in the step's **Feature columns** list
+  (`age, "income, net"`, a quote inside doubled), the way every step reads
+  its column list.
 - **The label**: **Drop rows without a label** adds a Row Filter
   (`"<label>" IS NOT EMPTY`). A label is never filled in. A regression target
   of several columns (`y`, `y_1`, ...) is a label in each of them: one Row

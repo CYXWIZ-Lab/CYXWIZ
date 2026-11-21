@@ -1,10 +1,10 @@
 #include "missing_values_presentation.h"
 
+#include "column_list.h"
 #include "data_input_presentation.h"
 #include "filter_condition.h"
 
 #include <algorithm>
-#include <cctype>
 
 namespace cyxwiz::missing_values_fix {
 
@@ -34,20 +34,6 @@ std::string CommaNames(const std::vector<std::string>& names, size_t shown = 3) 
     for (size_t i = 0; i < names.size() && i < shown; ++i) out += (i ? ", " : "") + names[i];
     if (names.size() > shown) out += " and " + std::to_string(names.size() - shown) + " more";
     return out;
-}
-
-// The comma list the Missing Value step reads (its `columns`).
-std::string CommaList(const std::vector<std::string>& names) {
-    std::string out;
-    for (const auto& n : names) out += (out.empty() ? "" : ",") + n;
-    return out;
-}
-
-// A name that list cannot carry: it splits on commas and trims each name.
-bool FitsCommaList(const std::string& name) {
-    return !name.empty() && name.find(',') == std::string::npos &&
-           !std::isspace(static_cast<unsigned char>(name.front())) &&
-           !std::isspace(static_cast<unsigned char>(name.back()));
 }
 
 std::string Plural(int64_t n, const char* one, const char* many) {
@@ -143,14 +129,11 @@ Card BuildCard(const Input& in) {
         f.title = std::to_string(n) + (n == 1 ? " feature column has" : " feature columns have") + " missing values";
         f.subtitle = in.input_name + (in.total_rows >= 0 ? " · " + Plural(in.total_rows, "row", "rows") : "");
         if (in.supplied_role) f.subtitle += " · supplied " + in.role_name;
-        std::vector<std::string> names, unlisted;
+        std::vector<std::string> names;
         int64_t most = 0;
-        for (const auto* c : features) {
-            names.push_back(c->name);
-            if (!FitsCommaList(c->name)) unlisted.push_back("'" + c->name + "'");
-        }
+        for (const auto* c : features) names.push_back(c->name);
         f.can_drop = in.steps_reach_input;
-        f.can_fill = in.steps_reach_input && unlisted.empty();
+        f.can_fill = in.steps_reach_input;
         f.fix_header = in.features != Done::No ? "Now" : f.can_fill ? "Fill would use" : "Fix";
         for (const auto* c : features) {
             Row row;
@@ -161,7 +144,6 @@ Card BuildCard(const Input& in) {
             if (row.mostly_missing && !in.supplied_role) f.can_leave_out.push_back(c->name);
             if (in.features == Done::Dropped) row.fix = "rows dropped";
             else if (!in.steps_reach_input) row.fix = "fix the file";
-            else if (!f.can_fill) row.fix = "drop the rows";
             else row.fix = in.number_fill == NumberFill::Zero ? "0" : std::string(NumberFillWord(in.number_fill)) + " of Train";
             f.rows.push_back(std::move(row));
             most += c->rows;
@@ -170,7 +152,7 @@ Card BuildCard(const Input& in) {
         Step fill;
         fill.type = gui::NodeType::FillMissingValues;
         fill.name = "Fill " + CommaNames(names) + " (" + fill_word + ")";
-        fill.params["columns"] = CommaList(names);
+        fill.params["columns"] = FormatColumnList(names);
         fill.params["strategy"] = in.number_fill == NumberFill::Zero ? "constant" : fill_word;
         if (in.number_fill == NumberFill::Zero) fill.params["value"] = "0";
         if (!label_names.empty()) fill.params["label_col"] = label_names.front();
@@ -179,11 +161,6 @@ Card BuildCard(const Input& in) {
         if (!in.steps_reach_input) {
             f.note = "Training reads " + where + " as its file holds it, so a step here would not apply: fill or "
                      "remove these cells in the file, then Apply its Data Input again.";
-        } else if (!f.can_fill) {
-            f.note = "Fill is not offered: the Missing Value step lists its columns separated by commas, and " +
-                     NameList(unlisted) + (unlisted.size() == 1 ? " has" : " have") +
-                     " a comma or spaces at the ends of the name. Drop removes every row with an empty cell or NaN "
-                     "in these columns (at most " + FormatCount(most) + "), or rename the column in the file.";
         } else {
             f.note = "Fill learns its values from the Train rows only. Drop removes every row with an empty cell or "
                      "NaN in these columns (at most " + FormatCount(most) + ").";

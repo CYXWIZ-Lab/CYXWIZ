@@ -6673,6 +6673,58 @@ int main(int argc, char** argv) {
         fs::remove(nan_parquet, ec);
     }
 
+    // Column names with a comma or edge spaces, quoted in Missing Value's
+    // column list (the one-click fix writes them so): both are filled, the
+    // unlisted column is left as it is.
+    {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const fs::path odd_parquet = fs::temp_directory_path() / "cyxwiz_odd_names_missing.parquet";
+        {
+            arrow::DoubleBuilder income, pad, other;
+            (void)income.AppendValues({2.0, nan, 4.0});
+            (void)pad.AppendValues({10.0, 20.0});
+            (void)pad.AppendNull();
+            (void)other.AppendValues({1.0, nan, 1.0});
+            arrow::Int64Builder label;
+            (void)label.AppendValues({0, 1, 0});
+            std::shared_ptr<arrow::Array> income_array, pad_array, other_array, label_array;
+            (void)income.Finish(&income_array);
+            (void)pad.Finish(&pad_array);
+            (void)other.Finish(&other_array);
+            (void)label.Finish(&label_array);
+            auto table = arrow::Table::Make(
+                arrow::schema({arrow::field("income, net", arrow::float64()), arrow::field(" pad", arrow::float64()),
+                               arrow::field("other", arrow::float64()), arrow::field("label", arrow::int64())}),
+                {income_array, pad_array, other_array, label_array});
+            cyxwiz::ArrowDataset source(table, "odd_names_missing_source");
+            Check(source.ExportParquet(odd_parquet.string()), "the odd-names Parquet fixture is written");
+        }
+        nlohmann::json graph = {
+            {"nodes", nlohmann::json::array(
+                          {{{"id", 93131}, {"type", "DataInput"}, {"name", "Input"},
+                            {"parameters", {{"source_type", "file"}, {"file_path", odd_parquet.string()},
+                                            {"type", "parquet"}}}},
+                           {{"id", 93132}, {"type", "FillMissing"}, {"name", "Fill"},
+                            {"parameters", {{"strategy", "mean"},
+                                            {"columns", "\"income, net\", \" pad\""},
+                                            {"label_col", "label"}}}}})},
+            {"links", nlohmann::json::array({{{"start_node", 93131}, {"end_node", 93132}}})}};
+        cyxwiz::PipelineExecutor executor;
+        Check(executor.ExecutePipeline(graph.dump()),
+              "Missing Value reads quoted column names: " + executor.GetLastError());
+        auto out = registry.GetArrowDataset("ds_fillmissing_93132");
+        const auto filled = out ? out->GetArrowTable() : nullptr;
+        Check(filled && filled->num_rows() == 3, "the filled table keeps its 3 rows");
+        if (filled) {
+            Check(std::fabs(ReadNumericValue(filled, "income, net", 1) - 3.0) < 1e-9,
+                  "'income, net' is filled with its mean (3)");
+            Check(std::fabs(ReadNumericValue(filled, " pad", 2) - 15.0) < 1e-9, "' pad' is filled with its mean (15)");
+            Check(std::isnan(ReadNumericValue(filled, "other", 1)), "a column not listed keeps its NaN");
+        }
+        std::error_code ec;
+        fs::remove(odd_parquet, ec);
+    }
+
     // A time series Data Input keeps its rows in the order of its time column.
     {
         const fs::path series_csv = fs::temp_directory_path() / "cyxwiz_time_series_order.csv";

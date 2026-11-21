@@ -4,11 +4,13 @@
 // the mockup's text column is a number here): Patients CSV, 1,200 rows; age 37
 // empty, cholesterol 9 empty and 3 NaN, bmi 5 empty; label diagnosis 4 empty.
 
+#include "core/column_list.h"
 #include "core/missing_values_presentation.h"
 
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -216,23 +218,46 @@ int main() {
               "Fix and train drops the rows without every target");
     }
 
-    // A column name the Missing Value step's comma list cannot carry: Drop only.
+    // Column names with a comma, edge spaces or a leading quote: the Missing
+    // Value step's list quotes them, so Fill is offered as for any name.
     {
         Input in;
         in.input_name = "Odd";
         in.total_rows = 10;
-        in.columns = {Column("x, y", 2, 0, false, false), Column(" age", 1, 0, false, false)};
+        in.columns = {Column("x, y", 2, 0, false, false), Column(" age", 1, 0, false, false),
+                      Column("\"q\"", 1, 0, false, false)};
         const Card card = BuildCard(in);
-        Check(!card.features.can_fill && card.features.can_drop && card.features.fill_steps.empty(),
-              "no Fill for names with a comma or edge spaces");
-        Check(card.features.note.find("Fill is not offered") != std::string::npos &&
-                  card.features.note.find("'x, y'") != std::string::npos,
-              card.features.note);
-        Check(card.features.drop_steps[0].params.at("condition") == "\"x, y\" IS NOT EMPTY AND \" age\" IS NOT EMPTY",
+        Check(card.features.can_fill && card.features.can_drop && card.features.fill_steps.size() == 1,
+              "Fill for names with a comma or edge spaces");
+        const std::string list = card.features.fill_steps[0].params.at("columns");
+        Check(list == "\"x, y\",\" age\",\"\"\"q\"\"\"", "the fill lists the names quoted: " + list);
+        Check(cyxwiz::ParseColumnList(list) == std::vector<std::string>{"x, y", " age", "\"q\""},
+              "the step reads the same names back");
+        Check(card.features.note.rfind("Fill learns its values from the Train rows only", 0) == 0, card.features.note);
+        Check(card.features.rows[0].fix == "mean of Train", card.features.rows[0].fix);
+        Check(card.features.drop_steps[0].params.at("condition") ==
+                  "\"x, y\" IS NOT EMPTY AND \" age\" IS NOT EMPTY AND \"\"\"q\"\"\" IS NOT EMPTY",
               "the Row Filter quotes the names: " + card.features.drop_steps[0].params.at("condition"));
-        Check(card.fix_all_steps.size() == 1 && card.fix_all_steps[0].type == gui::NodeType::FilterRows &&
-                  card.fix_all_hint.rfind("Drops the rows with an empty feature cell", 0) == 0,
-              "Fix and train drops instead");
+        Check(card.fix_all_steps.size() == 1 && card.fix_all_steps[0].type == gui::NodeType::FillMissingValues &&
+                  card.fix_all_hint.rfind("Fills the feature columns", 0) == 0,
+              "Fix and train fills them");
+    }
+
+    // The column list: names read back as written, quoted where needed.
+    {
+        using cyxwiz::FormatColumnList;
+        using cyxwiz::ParseColumnList;
+        using Names = std::vector<std::string>;
+        Check(ParseColumnList(" age , sex,,bmi ") == Names{"age", "sex", "bmi"}, "plain names are trimmed");
+        Check(ParseColumnList("") == Names{} && ParseColumnList(" , ") == Names{}, "an empty list has no names");
+        Check(ParseColumnList("\"a,b\", c") == Names{"a,b", "c"}, "a quoted name keeps its comma");
+        Check(ParseColumnList("\" pad \"") == Names{" pad "}, "a quoted name keeps its spaces");
+        Check(ParseColumnList("\"say \"\"hi\"\"\"") == Names{"say \"hi\""}, "a doubled quote is one quote");
+        Check(ParseColumnList("x\"y, z") == Names{"x\"y", "z"}, "a quote inside a plain name is kept");
+        Check(ParseColumnList("\"open, end") == Names{"open, end"}, "an open quote runs to the end");
+        const Names odd{"age", "a,b", " lead", "trail ", "\"q", "x\"y", "ok name"};
+        Check(ParseColumnList(FormatColumnList(odd)) == odd, "every name comes back: " + FormatColumnList(odd));
+        Check(FormatColumnList({"age", "sex"}) == "age,sex", "plain names are not quoted");
     }
 
     // Only the label; and counts read with thousands.
