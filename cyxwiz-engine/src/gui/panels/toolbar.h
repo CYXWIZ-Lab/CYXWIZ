@@ -361,6 +361,7 @@ private:
     // Preferences > Nodes panel (toolbar_preferences_nodes_panel.cpp)
     void RenderNodesPanelPreferences();
     void RenderTrainingPreferences();
+    void RenderStudioPreferences();  // Preferences > Studio
     // Preferences > Search (toolbar_preferences_search.cpp)
     void RenderSearchPreferences();
     void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
@@ -553,6 +554,7 @@ private:
     char separate_central_buf_[256] = {};
     char separate_gateway_buf_[256] = {};
     char separate_api_buf_[256] = {};
+    char deployment_address_buf_[256] = {};  // Preferences > Servers > Deployment
     bool server_change_confirm_ = false;  // signed in: asked before signing out
     bool show_separate_addresses_ = false;
     std::future<cyxwiz::protocol::ServerReach> server_probe_;

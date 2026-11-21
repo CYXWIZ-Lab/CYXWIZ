@@ -95,7 +95,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
         // Wide enough for every tab's whole name when the Engine window allows
         // it; narrower, the tabs scroll and the list button names them all.
         static const char* const kTabLabels[] = {
-            ICON_FA_GEAR " General", ICON_FA_PEN " Script Editor", ICON_FA_PALETTE " Appearance",
+            ICON_FA_GEAR " General", ICON_FA_DIAGRAM_PROJECT " Studio", ICON_FA_PEN " Script Editor", ICON_FA_PALETTE " Appearance",
             ICON_FA_CODE " Python", ICON_FA_WAVE_SQUARE " Simulation", ICON_FA_KEYBOARD " Shortcuts", ICON_FA_MICROCHIP " Devices",
             ICON_FA_BUG " Studio Debugger", ICON_FA_GRADUATION_CAP " Training", ICON_FA_CUBES " Nodes panel",
             ICON_FA_SLIDERS " Search", ICON_FA_HARD_DRIVE " Storage", ICON_FA_SERVER " Servers"};
@@ -393,6 +393,12 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     }
 
                     RenderPluginPreferences("General");
+                    ImGui::EndTabItem();
+                }
+
+                // ========== Studio (TOFIX129 B9-10) ==========
+                if (ImGui::BeginTabItem(ICON_FA_DIAGRAM_PROJECT " Studio")) {
+                    RenderStudioPreferences();
                     ImGui::EndTabItem();
                 }
 

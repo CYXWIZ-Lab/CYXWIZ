@@ -440,6 +440,25 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
+        studio_ = StudioConfig{};
+        if (config.contains("studio") && config["studio"].is_object()) {
+            const auto& s = config["studio"];
+            studio_.auto_save_at_start = s.value("auto_save_at_start", false);
+            studio_.minimap = s.value("minimap", true);
+        }
+        training_dashboard_ = TrainingDashboardConfig{};
+        if (config.contains("training_dashboard") && config["training_dashboard"].is_object()) {
+            const auto& d = config["training_dashboard"];
+            using TD = TrainingDashboardConfig;
+            training_dashboard_.auto_scale = d.value("auto_scale", true);
+            training_dashboard_.follow_current_epoch = d.value("follow_current_epoch", false);
+            training_dashboard_.epoch_window =
+                std::clamp(d.value("epoch_window", 30), TD::kMinEpochWindow, TD::kMaxEpochWindow);
+            training_dashboard_.log_loss_axis = d.value("log_loss_axis", false);
+            training_dashboard_.smooth = d.value("smooth", false);
+            training_dashboard_.smooth_window =
+                std::clamp(d.value("smooth_window", 5), TD::kMinSmoothWindow, TD::kMaxSmoothWindow);
+        }
         training_defaults_ = TrainingDefaultsConfig{};
         if (config.contains("training_defaults") && config["training_defaults"].is_object()) {
             training_defaults_.frozen_batchnorm_keeps_statistics =
@@ -810,6 +829,13 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
         config["training_defaults"] = {
             {"frozen_batchnorm_keeps_statistics", training_defaults_.frozen_batchnorm_keeps_statistics}
         };
+        config["studio"] = {{"auto_save_at_start", studio_.auto_save_at_start}, {"minimap", studio_.minimap}};
+        config["training_dashboard"] = {{"auto_scale", training_dashboard_.auto_scale},
+                                        {"follow_current_epoch", training_dashboard_.follow_current_epoch},
+                                        {"epoch_window", training_dashboard_.epoch_window},
+                                        {"log_loss_axis", training_dashboard_.log_loss_axis},
+                                        {"smooth", training_dashboard_.smooth},
+                                        {"smooth_window", training_dashboard_.smooth_window}};
 
         config["studio_debugger"] = {
             {"capture_when", studio_debugger_.capture_when == LayerCaptureWhen::LocalDebug ? "local_debug"
@@ -1244,6 +1270,36 @@ void EngineConfig::SetStudioDebugger(const StudioDebuggerConfig& studio_debugger
     std::lock_guard<std::mutex> lock(mutex_);
     if (!(studio_debugger_ == value)) {
         studio_debugger_ = value;
+        modified_ = true;
+    }
+}
+
+StudioConfig EngineConfig::GetStudio() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return studio_;
+}
+
+void EngineConfig::SetStudio(const StudioConfig& studio) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(studio_ == studio)) {
+        studio_ = studio;
+        modified_ = true;
+    }
+}
+
+TrainingDashboardConfig EngineConfig::GetTrainingDashboard() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return training_dashboard_;
+}
+
+void EngineConfig::SetTrainingDashboard(const TrainingDashboardConfig& dashboard) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    using TD = TrainingDashboardConfig;
+    TD d = dashboard;
+    d.epoch_window = std::clamp(d.epoch_window, TD::kMinEpochWindow, TD::kMaxEpochWindow);
+    d.smooth_window = std::clamp(d.smooth_window, TD::kMinSmoothWindow, TD::kMaxSmoothWindow);
+    if (!(training_dashboard_ == d)) {
+        training_dashboard_ = d;
         modified_ = true;
     }
 }

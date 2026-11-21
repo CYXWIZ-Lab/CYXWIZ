@@ -2144,6 +2144,12 @@ MainWindow::MainWindow()
 
     // Set minimap visibility pointers for View -> Minimaps menu
     toolbar_->SetNodeEditorMinimapPtr(node_editor_->GetShowMinimapPtr());
+    // How the Studio starts (Preferences > Studio); the menus change it for the session
+    {
+        const auto studio = cyxwiz::core::EngineConfig::Instance().GetStudio();
+        node_editor_->SetShowMinimap(studio.minimap);
+        toolbar_->SetAutoSaveEnabled(studio.auto_save_at_start);
+    }
 
     // Register callbacks with ProjectManager for project lifecycle events.
     auto& lifecycle_project_manager = cyxwiz::ProjectManager::Instance();

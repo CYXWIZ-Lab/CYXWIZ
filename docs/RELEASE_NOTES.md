@@ -7,6 +7,12 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Preferences: defaults for choices that had none.** A new **Studio** page
+  sets whether Auto Save is on and the canvas minimap shows when the Engine
+  starts, and whether Train requires a passing Local Debug run (saved
+  before only by editing the config file). **Training** sets how the
+  Training Dashboard's charts start (auto scale, follow, log loss axis,
+  smoothing). **Servers** shows the deployment server node and P2P port.
 - **Preferences > Python: the settings that did nothing now work.** The
   venv switch and the packages for new projects were saved but never read
   (every project got an environment, with no packages); the startup script,

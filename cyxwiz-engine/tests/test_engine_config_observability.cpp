@@ -111,6 +111,57 @@ int main() {
     Check(config.StartWithLastProject() && config.RecentProjectsKept() == 25 && config.AskBeforeClosingAlways(),
           "the general settings survive a round trip");
 
+    // Preferences > Script Editor, Python, Studio, Training (TOFIX129 B9)
+    Check(config.GetEditor() == cyxwiz::core::EditorConfig{} && config.GetPythonStart() == cyxwiz::core::PythonStartConfig{} &&
+              config.GetStudio() == cyxwiz::core::StudioConfig{} &&
+              config.GetTrainingDashboard() == cyxwiz::core::TrainingDashboardConfig{},
+          "the editor, Python start, Studio and dashboard defaults");
+    cyxwiz::core::EditorConfig editor;
+    editor.tab_size = 3;  // not offered: 4
+    editor.new_file_line_endings = 9;
+    config.SetEditor(editor);
+    Check(config.GetEditor().tab_size == 4 && config.GetEditor().new_file_line_endings == 2, "editor values kept in range");
+    editor.tab_size = 2;
+    editor.word_wrap = true;
+    editor.minimap = false;
+    editor.new_file_line_endings = 1;
+    editor.trim_trailing_whitespace = true;
+    editor.final_newline = false;
+    config.SetEditor(editor);
+    cyxwiz::core::PythonStartConfig start;
+    start.startup_script = "C:/scripts/start.py";
+    start.import_numpy = false;
+    start.console_commands_kept = 99999;
+    config.SetPythonStart(start);
+    Check(config.GetPythonStart().console_commands_kept == cyxwiz::core::PythonStartConfig::kMaxCommandsKept,
+          "commands kept stays in range");
+    start.console_commands_kept = 2000;
+    config.SetPythonStart(start);
+    cyxwiz::core::StudioConfig studio;
+    studio.auto_save_at_start = true;
+    studio.minimap = false;
+    config.SetStudio(studio);
+    cyxwiz::core::TrainingDashboardConfig view;
+    view.follow_current_epoch = true;
+    view.epoch_window = 1000;
+    view.smooth = true;
+    view.smooth_window = 1;
+    config.SetTrainingDashboard(view);
+    Check(config.GetTrainingDashboard().epoch_window == 50 && config.GetTrainingDashboard().smooth_window == 2,
+          "dashboard windows stay in range");
+    view.epoch_window = 12;
+    view.smooth_window = 9;
+    config.SetTrainingDashboard(view);
+    Check(config.Save(path), "the B9 settings should persist");
+    config.SetEditor({});
+    config.SetPythonStart({});
+    config.SetStudio({});
+    config.SetTrainingDashboard({});
+    Check(config.Load(path), "the B9 settings should reload");
+    Check(config.GetEditor() == editor && config.GetPythonStart() == start && config.GetStudio() == studio &&
+              config.GetTrainingDashboard() == view,
+          "the editor, Python start, Studio and dashboard settings survive a round trip");
+
     std::error_code error;
     std::filesystem::remove(path, error);
     Check(!error, "temporary test config should be removable");

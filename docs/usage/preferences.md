@@ -36,6 +36,19 @@ Save) and when the Engine closes.
 - **Any window can have a window of its own**: see [Windows of their own](windows.md).
 - **Data budget (MB)**: see [Big data](big_data.md).
 
+## Studio
+
+How the Studio starts. The menus change these for the session; here is what
+every start uses.
+
+- **Auto Save on when the Engine starts** (off by default): File > Auto Save
+  then saves open scripts and the graph every minute.
+- **Show the canvas minimap** (on by default): View > Minimaps > Studio
+  Minimap (M) still shows or hides it for the session.
+- **Require a passing Local Debug run before Train** (off by default): off,
+  Train warns when the graph has no passing Local Debug (F6) run or changed
+  since; on, Train refuses to start until it has one.
+
 ## Script Editor
 
 For every project (they used to be saved into the open project only, and
@@ -91,3 +104,21 @@ way.
     short names: `cyx`, `svd`, `eig`, `zeros`...). Both on by default.
 - **Python console > Commands kept**: how many commands, each with its
   output, the Python console keeps (100 to 10,000; 500 by default).
+
+## Training
+
+- **Fine-tuning > A frozen BatchNorm**: what a new BatchNorm node's "When
+  frozen" setting starts as.
+- **Training Dashboard**: how its charts start each time the Engine starts:
+  **Auto scale**, **Follow the latest epoch** (with the epochs shown, 3 to
+  50), **Log loss axis**, **Smooth** (with the points in the moving average,
+  2 to 50). The dashboard's View options change them for the session.
+
+## Servers
+
+Besides the server address, what the Engine connects to and the account:
+
+- **Deployment > Server node**: the address Deploy opens with; each
+  deployment can still change it.
+- **Deployment > P2P port**: used when a server node does not say its own
+  (50052 by default).

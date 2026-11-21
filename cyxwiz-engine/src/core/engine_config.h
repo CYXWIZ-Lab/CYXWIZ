@@ -125,6 +125,30 @@ struct StudioDebuggerConfig {
 };
 
 // The user's defaults for training choices (Preferences > Training).
+// How the Studio starts (Preferences > Studio); the menus change them for
+// the session
+struct StudioConfig {
+    bool auto_save_at_start = false;  // File > Auto Save on when the Engine starts
+    bool minimap = true;              // the canvas minimap
+    bool operator==(const StudioConfig&) const = default;
+};
+
+// How the Training Dashboard's charts start (Preferences > Training); the
+// dashboard's View options change them for the session
+struct TrainingDashboardConfig {
+    static constexpr int kMinEpochWindow = 3;
+    static constexpr int kMaxEpochWindow = 50;
+    static constexpr int kMinSmoothWindow = 2;
+    static constexpr int kMaxSmoothWindow = 50;
+    bool auto_scale = true;
+    bool follow_current_epoch = false;
+    int epoch_window = 30;  // epochs shown while following
+    bool log_loss_axis = false;
+    bool smooth = false;
+    int smooth_window = 5;  // points in the moving average
+    bool operator==(const TrainingDashboardConfig&) const = default;
+};
+
 struct TrainingDefaultsConfig {
     // What a new BatchNorm node does with its running statistics when it is
     // frozen: keep them (true) or keep updating them.
@@ -344,6 +368,10 @@ public:
     void SetStudioDebugger(const StudioDebuggerConfig& studio_debugger);
 
     TrainingDefaultsConfig GetTrainingDefaults() const;
+    StudioConfig GetStudio() const;
+    void SetStudio(const StudioConfig& studio);
+    TrainingDashboardConfig GetTrainingDashboard() const;
+    void SetTrainingDashboard(const TrainingDashboardConfig& dashboard);
     void SetTrainingDefaults(const TrainingDefaultsConfig& training_defaults);
 
     // ===== Runtime Observability =====
@@ -504,6 +532,8 @@ private:
     bool require_debug_before_train_ = false;
     StudioDebuggerConfig studio_debugger_;
     TrainingDefaultsConfig training_defaults_;
+    StudioConfig studio_;
+    TrainingDashboardConfig training_dashboard_;
 
     std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
     bool record_debug_logs_ = true;
