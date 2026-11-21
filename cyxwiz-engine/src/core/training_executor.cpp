@@ -803,6 +803,13 @@ void TrainingExecutor::Train(
         is_paused_.store(false);
         is_training_.store(false);
     };
+    // A missing-values refusal keeps its columns on the run for the fix.
+    auto keep_missing_columns = [&](const MissingValuesError& e) {
+        UpdateMetrics([&](TrainingMetrics& m) {
+            m.missing_columns = e.Columns();
+            m.missing_values_total_rows = e.TotalRows();
+        });
+    };
     // Stopped before the first batch (while waiting for the GPU, while the
     // data was being prepared): cancelled, not failed
     auto cancel_run = [&](const std::string& message) {
@@ -1086,6 +1093,13 @@ void TrainingExecutor::Train(
         try {
             ResolveBalancedClassWeights(config_, active_train_ibatcher);
             loss_ = BuildLossFromConfig(config_);
+        } catch (const MissingValuesError& e) {
+            // Counting the classes met the missing values first: the run
+            // stops with that refusal and its columns, as at the first batch.
+            keep_missing_columns(e);
+            fail_run(errors::FormatError(errors::Training::TrainingExecutionFailed, "Training failed", e.what()));
+            spdlog::error("TrainingExecutor: {}", e.what());
+            return;
         } catch (const std::exception& e) {
             spdlog::error("TrainingExecutor: {}", e.what());
             fail_run(std::string("class_weight_failed: ") + e.what());
@@ -2159,6 +2173,15 @@ void TrainingExecutor::Train(
     }
 
     spdlog::info("TrainingExecutor: Training complete");
+    } catch (const MissingValuesError& e) {
+        keep_missing_columns(e);
+        const std::string coded_error = errors::FormatError(
+            errors::Training::TrainingExecutionFailed,
+            "Training failed",
+            e.what());
+        fail_run(coded_error);
+        spdlog::error("TrainingExecutor: {}", coded_error);
+        throw;
     } catch (const std::exception& e) {
         const std::string coded_error = errors::FormatError(
             errors::Training::TrainingExecutionFailed,

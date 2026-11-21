@@ -515,15 +515,15 @@ void ArrowDatasetBatcher::RefuseMissingValues(const std::shared_ptr<arrow::Table
     std::vector<MissingColumn> columns;
     for (const int col : feature_cols_) {
         if (col < 0 || col >= table->num_columns()) continue;
-        columns.push_back({table->schema()->field(col)->name(), MissingCells(*table->column(col)), false});
+        columns.push_back(CountMissingColumn(table->schema()->field(col)->name(), *table->column(col), false));
     }
     std::vector<int> labels = label_col_indices_;
     if (labels.empty() && label_col_idx_ >= 0) labels.push_back(label_col_idx_);
     for (const int col : labels) {
         if (col < 0 || col >= table->num_columns()) continue;
-        columns.push_back({table->schema()->field(col)->name(), MissingCells(*table->column(col)), true});
+        columns.push_back(CountMissingColumn(table->schema()->field(col)->name(), *table->column(col), true));
     }
-    ThrowIfMissingValues("ArrowDatasetBatcher", columns);
+    ThrowIfMissingValues("ArrowDatasetBatcher", columns, table->num_rows());
     missing_values_checked_ = true;
 }
 

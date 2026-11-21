@@ -67,6 +67,9 @@ inline TrainingFailureKind ClassifyTrainingFailure(const std::string& reason) {
         return TrainingFailureKind::DeviceError;
     }
     if (has("user_cancelled") || has("cancelled")) return TrainingFailureKind::Cancelled;
+    // The data has empty cells or NaN in a column training uses: fix the data,
+    // not the graph or the device.
+    if (has("the data has missing values")) return TrainingFailureKind::DataError;
     return TrainingFailureKind::Internal;
 }
 

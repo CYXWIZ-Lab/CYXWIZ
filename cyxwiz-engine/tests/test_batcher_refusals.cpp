@@ -12,6 +12,7 @@
 
 #include "core/arrow_dataset.h"
 #include "core/dataset_batcher.h"
+#include "core/missing_values.h"
 #include "core/parquet_arrow_batcher.h"
 #include "core/parquet_backed_dataset.h"
 #include "computation_truth/test_device_selection.h"
@@ -159,6 +160,43 @@ int main() {
                                                 std::make_shared<arrow::ChunkedArray>(label_array), {"note"});
         Check(error.find("label 'label' 1 row") != std::string::npos && error.find("IS NOT EMPTY") != std::string::npos,
               "an empty label is refused with the Row Filter hint (got: '" + error + "')");
+    }
+    {
+        // The refusal carries its columns as data, for the fix the Engine
+        // offers: name, count, NaN among them, text or number, label or not,
+        // and the rows they are out of. Columns without a missing cell are
+        // not listed.
+        arrow::Int64Builder labels;
+        (void)labels.AppendValues({0, 1});
+        (void)labels.AppendNull();
+        (void)labels.Append(0);
+        std::shared_ptr<arrow::Array> label_array;
+        (void)labels.Finish(&label_array);
+        auto schema = arrow::schema({arrow::field("x", arrow::float64()), arrow::field("y", arrow::float64()),
+                                     arrow::field("label", arrow::int64())});
+        auto table = arrow::Table::Make(
+            schema, {Doubles({1, nan, nan, 4}, false), Doubles({1, 2, 3, 4}, true),
+                     std::make_shared<arrow::ChunkedArray>(label_array)});
+        auto dataset = std::make_shared<cyxwiz::ArrowDataset>(table, "refusals_typed");
+        bool typed = false;
+        try {
+            cyxwiz::ArrowDatasetBatcher batcher(dataset, "label", 4, false, 1.0f, true);
+            batcher.Reset();
+            (void)batcher.GetNextBatch();
+        } catch (const cyxwiz::MissingValuesError& e) {
+            const auto& c = e.Columns();
+            typed = c.size() == 2 && c[0].name == "x" && c[0].rows == 2 && c[0].nan_rows == 2 && !c[0].label &&
+                    !c[0].text && c[1].name == "label" && c[1].rows == 1 && c[1].nan_rows == 0 && c[1].label &&
+                    !c[1].text && e.TotalRows() == 4 && e.Source() == "ArrowDatasetBatcher";
+            if (!typed)
+                std::cerr << "  columns " << c.size() << ", total " << e.TotalRows() << ", source " << e.Source()
+                          << "\n";
+        } catch (const std::exception& e) {
+            std::cerr << "  untyped: " << e.what() << "\n";
+        }
+        Check(typed, "the refusal is a MissingValuesError holding the columns, counts and kinds");
+        const auto text = cyxwiz::CountMissingColumn("city", *Strings({"a", "b"}), false);
+        Check(text.text && text.rows == 0, "a text column is counted as text");
     }
     {
         // The only empty cell is in a column the model does not use (a role

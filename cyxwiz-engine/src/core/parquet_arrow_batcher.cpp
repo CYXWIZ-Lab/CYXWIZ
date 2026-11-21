@@ -778,11 +778,16 @@ void ParquetArrowBatcher::RefuseMissingValues() const {
                          "are not checked before training", name);
             return;
         }
-        columns.push_back({name, nulls, label});
+        MissingColumn c;
+        c.name = name;
+        c.rows = nulls;
+        c.label = label;
+        c.text = IsTextArrowType(schema->field(col)->type()->id());
+        columns.push_back(std::move(c));
     };
     for (const int col : feature_cols_) add(col, false);
     for (const int col : label_col_indices_) add(col, true);
-    ThrowIfMissingValues("ParquetArrowBatcher", columns);
+    ThrowIfMissingValues("ParquetArrowBatcher", columns, dataset_->GetNumRows());
     missing_values_checked_ = true;
 }
 
@@ -896,11 +901,13 @@ void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* loca
         int64_t nans = 0;
         for (size_t b = 0; b < n; ++b)
             if (std::isnan(first[b * stride])) ++nans;
-        if (nans > 0) nan_columns.push_back({table.schema()->field(col)->name(), nans, label, true});
+        if (nans > 0) nan_columns.push_back({table.schema()->field(col)->name(), nans, label, true, nans, false});
     };
     for (size_t f = 0; f < feature_cols_.size(); ++f)
         count_nan(feature_cols_[f], batch_data.data() + dst * num_features_ + f, num_features_, false);
-    const auto refuse_nan = [&] { ThrowIfMissingValues("ParquetArrowBatcher", nan_columns); };
+    const auto refuse_nan = [&] {
+        ThrowIfMissingValues("ParquetArrowBatcher", nan_columns, dataset_ ? dataset_->GetNumRows() : -1);
+    };
 
     // The label of the same rows, then any further regression targets.
     if (label_col_idx_ < 0 || label_col_idx_ >= num_cols_in_table) {

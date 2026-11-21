@@ -10,6 +10,7 @@
 #include "parquet_arrow_batcher.h"
 #include "parquet_backed_dataset.h"
 #include "data_registry.h"
+#include "missing_columns.h"
 #include "arrow_dataset.h"
 #include "training_scheduler_controller.h"
 #include "training_randomness.h"
@@ -129,6 +130,10 @@ struct TrainingMetrics {
     std::string waiting_for_gpu;  // why, while the run waits for another run's GPU (else empty)
     std::string terminal_status;
     std::string terminal_reason;
+    // A run refused for missing values: the columns and counts, so the
+    // Dashboard can offer the fix (empty otherwise).
+    std::vector<MissingColumn> missing_columns;
+    int64_t missing_values_total_rows = -1;
 
     // History (for plotting)
     std::vector<float> loss_history;
