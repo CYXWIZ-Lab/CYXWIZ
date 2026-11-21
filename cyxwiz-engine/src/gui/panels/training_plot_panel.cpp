@@ -1,7 +1,6 @@
 #include "../ui_tokens.h"
 #include "../../core/series_decimation.h"
 #include "training_plot_panel.h"
-#include "../../core/engine_config.h"
 #include "../../core/training_dashboard_presentation.h"
 #include "../separate_windows.h"
 // Test builds that draw the dashboard without the training system define
@@ -469,18 +468,17 @@ void ApplySeriesColours(Series& train_loss, Series& val_loss, Series& train_accu
 }
 }  // namespace
 
+void TrainingPlotPanel::SetViewDefaults(const core::TrainingDashboardConfig& view) {
+    auto_scale_ = view.auto_scale;
+    follow_current_epoch_ = view.follow_current_epoch;
+    visible_epoch_window_ = view.epoch_window;
+    log_loss_scale_ = view.log_loss_axis;
+    show_smoothed_curves_ = view.smooth;
+    smoothing_window_ = view.smooth_window;
+}
+
 TrainingPlotPanel::TrainingPlotPanel()
     : Panel("Training Dashboard") {
-    // How the charts start (Preferences > Training); View changes them for the session
-    {
-        const auto view = cyxwiz::core::EngineConfig::Instance().GetTrainingDashboard();
-        auto_scale_ = view.auto_scale;
-        follow_current_epoch_ = view.follow_current_epoch;
-        visible_epoch_window_ = view.epoch_window;
-        log_loss_scale_ = view.log_loss_axis;
-        show_smoothed_curves_ = view.smooth;
-        smoothing_window_ = view.smooth_window;
-    }
 
     // Initialize metric series
     // Colours come from the theme each frame (ApplySeriesColours).

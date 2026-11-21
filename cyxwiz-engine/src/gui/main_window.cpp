@@ -563,6 +563,7 @@ MainWindow::MainWindow()
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     training_plot_panel_ = std::make_shared<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
+    training_plot_panel_->SetViewDefaults(cyxwiz::core::EngineConfig::Instance().GetTrainingDashboard());
     // Prepared-data cache actions from the dashboard's Data preparation card.
     training_plot_panel_->SetSavePathCallback([](const std::string& title, const std::string& default_name) {
         const std::string root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
