@@ -4,10 +4,23 @@ This folder groups the CyxGraph example for `done50`.
 
 ## Files
 
-- `causal_lm_decoder_generation_experiment.cyxgraph` - small decoder-only causal-LM graph for controlled generation experiments.
-- `causal_lm_tiny_token_sequences.csv` - tiny token-ID training table used by the graph.
-- `causal_lm_tiny_corpus.csv` - companion tiny text corpus used when rebuilding tokenizer assets.
-- `causal_lm_tiny_vocab.txt` - companion tiny vocabulary.
+- `causal_lm_decoder_generation_experiment.cyxgraph` - a small decoder-only
+  causal language model for controlled generation experiments.
+- `causal_lm_tiny_corpus.csv` - ten short sentences (`document_id`, `split`,
+  `text`) the graph trains on.
+
+## The graph
+
+Tiny text corpus (Data Input, text) -> Word tokenizer (Text Tokenizer, Output
+**Causal document windows**, 8 tokens; the vocabulary is fitted on the train
+rows) -> Split 80/10/10 -> Causal LM loader -> Token embedding 64x32 ->
+Position encoding -> two Transformer decoder blocks -> Token logits 64 per
+position (TimeDistributed) -> Causal LM output -> Next-token cross entropy
+(with the loader's labels) -> Adam.
+
+Open it from the repository root (the data path is relative to it), then
+Compile and Train. It compiles with no errors; the corpus is far too small to
+learn real language: it shows the pieces work.
 
 ## Scope Reminder
 
