@@ -6607,6 +6607,72 @@ int main(int argc, char** argv) {
         fs::remove(empty_csv);
     }
 
+    // NaN in a number column is a missing value, as training counts it: the
+    // Row Filter's IS EMPTY / IS NOT EMPTY see it, and Missing Value fills it
+    // (its mean leaves the NaN out). A Parquet file keeps NaN as NaN.
+    {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const fs::path nan_parquet = fs::temp_directory_path() / "cyxwiz_nan_missing.parquet";
+        {
+            arrow::DoubleBuilder score;
+            (void)score.AppendValues({1.0, nan, 3.0, 5.0});
+            (void)score.AppendNull();
+            arrow::Int64Builder label;
+            (void)label.AppendValues({0, 1, 0, 1, 0});
+            std::shared_ptr<arrow::Array> score_array, label_array;
+            (void)score.Finish(&score_array);
+            (void)label.Finish(&label_array);
+            auto nan_table = arrow::Table::Make(
+                arrow::schema({arrow::field("score", arrow::float64()), arrow::field("label", arrow::int64())}),
+                {score_array, label_array});
+            cyxwiz::ArrowDataset source(nan_table, "nan_missing_source");
+            Check(source.ExportParquet(nan_parquet.string()), "the NaN Parquet fixture is written");
+        }
+        const auto input = [&](int id) {
+            return nlohmann::json{{"id", id}, {"type", "DataInput"}, {"name", "Input"},
+                                  {"parameters", {{"source_type", "file"}, {"file_path", nan_parquet.string()},
+                                                  {"type", "parquet"}}}};
+        };
+        const auto filter = [&](int id, const std::string& condition) -> int64_t {
+            nlohmann::json graph = {
+                {"nodes", nlohmann::json::array({input(id), {{"id", id + 1}, {"type", "FilterRows"}, {"name", "Filter"},
+                                                             {"parameters", {{"condition", condition}}}}})},
+                {"links", nlohmann::json::array({{{"start_node", id}, {"end_node", id + 1}}})}};
+            cyxwiz::PipelineExecutor executor;
+            if (!executor.ExecutePipeline(graph.dump())) {
+                std::cerr << condition << ": " << executor.GetLastError() << "\n";
+                return -1;
+            }
+            auto out = registry.GetArrowDataset("ds_filter_" + std::to_string(id + 1));
+            return out ? out->GetArrowTable()->num_rows() : -1;
+        };
+        Check(filter(93121, "score IS NOT EMPTY") == 3, "a NaN number is empty: IS NOT EMPTY keeps 3 of 5 rows");
+        Check(filter(93123, "score IS EMPTY") == 2, "IS EMPTY finds the empty cell and the NaN");
+        {
+            nlohmann::json graph = {
+                {"nodes", nlohmann::json::array({input(93125), {{"id", 93126}, {"type", "FillMissing"}, {"name", "Fill"},
+                                                                {"parameters", {{"strategy", "mean"},
+                                                                                {"columns", "score"},
+                                                                                {"label_col", "label"}}}}})},
+                {"links", nlohmann::json::array({{{"start_node", 93125}, {"end_node", 93126}}})}};
+            cyxwiz::PipelineExecutor fill_executor;
+            Check(fill_executor.ExecutePipeline(graph.dump()),
+                  "Missing Value runs on a NaN column: " + fill_executor.GetLastError());
+            auto out = registry.GetArrowDataset("ds_fillmissing_93126");
+            const auto filled_nan = out ? out->GetArrowTable() : nullptr;
+            bool filled = filled_nan && filled_nan->num_rows() == 5;
+            for (int64_t r = 0; filled && r < 5; ++r) {
+                const double v = ReadNumericValue(filled_nan, "score", r);
+                const double want = r == 0 ? 1.0 : r == 2 ? 3.0 : r == 3 ? 5.0 : 3.0;  // mean of 1, 3, 5
+                filled = !std::isnan(v) && std::fabs(v - want) < 1e-9;
+                if (!filled) std::cerr << "  row " << r << ": " << v << "\n";
+            }
+            Check(filled, "Missing Value fills the NaN and the empty cell with the mean of the numbers (3)");
+        }
+        std::error_code ec;
+        fs::remove(nan_parquet, ec);
+    }
+
     // A time series Data Input keeps its rows in the order of its time column.
     {
         const fs::path series_csv = fs::temp_directory_path() / "cyxwiz_time_series_order.csv";
