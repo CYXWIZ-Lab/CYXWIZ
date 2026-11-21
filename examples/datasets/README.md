@@ -32,3 +32,6 @@ measure a model: point the graph's Data Input at the full dataset for that.
   blobs for the metric-learning examples.
 - `volume_shapes.csv` (`generate_volume_shapes.py`): generated 3D volumes for
   the Conv3D examples.
+- `patients_missing.csv` (`make_patients_missing.py`): 300 made-up rows with
+  empty cells, NaN and rows without a label, for the missing-values example
+  (`cyxgraph/missing_values_fix.cyxgraph`).

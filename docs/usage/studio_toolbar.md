@@ -308,6 +308,42 @@ Compile (F7) shows what the graph compiles to, in a window titled
 - **Copy report** puts all of it on the clipboard as text for a bug report.
   When the graph is ready, **Train** sits next to **Close**.
 
+### Missing values: the fix in the report
+
+Training never uses an empty cell, or NaN in a number column, as 0 or as
+class 0. Before a run starts, Train counts them in the table the Data Split
+reads (after the steps before it ran) and in each supplied Validation / Test
+input. When there are some, *Cannot start training* says how many columns
+have them and shows a card per group:
+
+- **Feature columns**: a row per column (number or text, how many cells are
+  empty and how many are NaN, what Fill would use). **Fill numbers with**
+  Mean / Median / 0, then **Fill these columns** adds Missing Value steps
+  (text columns take their most frequent value). The value is learned from
+  the Train rows only. **Drop these rows** adds a Row Filter that keeps the
+  rows where each of these columns IS NOT EMPTY. A column more than half
+  empty can be left out of the features instead (**Actions**: its Data Input
+  role becomes Ignore).
+- **The label**: **Drop rows without a label** adds a Row Filter
+  (`"<label>" IS NOT EMPTY`). A label is never filled in.
+
+The steps go after the step that feeds the Data Split, so Train runs them
+first. After an action the card says what was added, with **Undo** (it
+removes those steps; Ctrl+Z on the canvas does too). **Fix and train** fills
+the feature columns and drops the rows without a label, then trains; once
+every group is fixed the button is **Train**. Missing Value and Row Filter
+treat NaN in a number column as an empty cell.
+
+A supplied Validation / Test input is read from its own file, so a step
+after it would not apply: its card says to fix the file and Apply its Data
+Input again.
+
+A table on disk (Parquet) counts its empty cells from the file before the
+run, but NaN only as the rows are read: such a run stops at that batch, and
+the Training Dashboard shows the same card under "Failed: the data has
+missing values the check before training could not see", with **Train
+again** once a step is added. Example: `examples/cyxgraph/missing_values_fix.cyxgraph`.
+
 When the data a step prepares before training may not fit in memory, *Memory
 risk before training* shows the estimate, the free memory and the safe
 budget. **Cancel** is the default; **Continue anyway** is the red text
