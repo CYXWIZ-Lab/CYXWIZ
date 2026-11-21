@@ -254,6 +254,18 @@ private:
     // compile found, or for why Train / Local Debug / a checkpoint load
     // stopped (`stop_reason`, empty when the findings say it).
     void ShowCompileReport(cyxwiz::compile_report::Mode mode, std::string stop_reason = {});
+    // The missing-values fix in that report (TOFIX223 0.3): the cards from
+    // the state below, the steps each action adds and removes, and the
+    // training "Fix and train" starts once its steps are on the canvas.
+    void ShowMissingValuesReport(const std::vector<MissingValuesBlock>& blocks, const std::vector<MLNode>& nodes,
+                                 const std::string& source_dataset);
+    void RefreshMissingValuesReport();
+    void RenderMissingValuesCards();
+    void AddMissingValuesSteps(size_t entry, bool label, const std::vector<cyxwiz::missing_values_fix::Step>& steps);
+    void RemoveMissingValuesSteps(size_t entry, bool label);
+    void LeaveColumnOut(size_t entry, const std::string& column);
+    void TrackMissingValuesSteps();
+    void WireMissingValuesDashboard();
     // User-facing failure for an action that has no result panel of its own
     // (checkpoint load, Run Test refusals): shown on screen, also logged.
     void ShowOperationError(std::string title, std::string message);
@@ -299,6 +311,26 @@ private:
     std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;
     cyxwiz::compile_report::Report compile_report_;
     cyxwiz::compile_report::Mode compile_report_mode_ = cyxwiz::compile_report::Mode::Compile;
+    cyxwiz::compile_report::Input compile_report_input_;  // the report's input, rebuilt as the fix acts
+
+    // Each input training refused for missing values, what was done there and
+    // the steps added for it (their ids once on the canvas, for Undo).
+    struct MissingValuesEntry {
+        MissingValuesBlock block;
+        std::string input_name;
+        std::string source_dataset;  // the Data Input's own dataset (its column roles)
+        cyxwiz::missing_values_fix::Done features = cyxwiz::missing_values_fix::Done::No;
+        cyxwiz::missing_values_fix::Done label = cyxwiz::missing_values_fix::Done::No;
+        std::vector<std::string> left_out;
+        std::vector<int> feature_nodes, label_nodes;
+        // Steps requested, not yet on the canvas: their names, and the
+        // largest node id before the request.
+        std::vector<std::string> awaiting_feature_names, awaiting_label_names;
+        int awaiting_after_id = -1;
+    };
+    std::vector<MissingValuesEntry> missing_values_;
+    cyxwiz::missing_values_fix::NumberFill missing_values_fill_ = cyxwiz::missing_values_fix::NumberFill::Mean;
+    bool train_after_missing_values_fix_ = false;
 
     // Main-thread confirmation state for a warning/risky operator estimate.
     // The worker is not queued until the user accepts this frozen graph copy.

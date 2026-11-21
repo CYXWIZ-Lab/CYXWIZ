@@ -152,6 +152,23 @@ int main() {
               "Fix and train drops on a supplied input");
     }
 
+    // A supplied input training reads from its own file: a step after it would
+    // not apply, so the card offers no step, only the file.
+    {
+        Input in = Patients();
+        in.supplied_role = true;
+        in.role_name = "Test";
+        in.input_name = "Patients test CSV";
+        in.steps_reach_input = false;
+        const Card card = BuildCard(in);
+        Check(!card.features.can_fill && !card.features.can_drop && !card.label.can_drop,
+              "no step is offered where a step would not reach training");
+        Check(card.fix_all_steps.empty(), "Fix and train has nothing to add there");
+        Check(card.features.note.find("in the file") != std::string::npos &&
+                  card.label.note.find("in the file") != std::string::npos,
+              "the notes say to fix the file: " + card.features.note);
+    }
+
     // A column more than half empty can be left out (M-7); once left out it is
     // not filled or dropped.
     {

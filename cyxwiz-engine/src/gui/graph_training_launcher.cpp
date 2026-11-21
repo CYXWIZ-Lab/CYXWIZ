@@ -6,6 +6,7 @@
 #include "../core/async_task_manager.h"
 #include "../core/data_registry.h"
 #include "../core/label_column_resolver.h"
+#include "../core/missing_values.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/prepared_data_cache.h"
 #include "../core/pipeline_runtime_capabilities.h"
@@ -330,6 +331,48 @@ void SetBlockedStatus(GraphTrainingLaunchResult& result,
         : result.status_detail;
 }
 
+// The missing cells training would refuse in a registered table (in memory:
+// empty cells and NaN; on disk: the file's empty-cell counts, NaN is found
+// as the batches are read).
+std::optional<MissingValuesBlock> CountMissingTrainingValues(cyxwiz::DataRegistry& registry,
+                                                             const std::string& dataset_name,
+                                                             const std::string& label_column,
+                                                             const std::vector<std::string>& excluded) {
+    MissingValuesBlock block;
+    block.dataset_name = dataset_name;
+    if (const auto memory = registry.GetArrowDataset(dataset_name)) {
+        const auto table = memory->GetArrowTable();
+        if (!table) return std::nullopt;
+        block.columns = cyxwiz::CountMissingTrainingColumns(*table, label_column, excluded);
+        block.total_rows = table->num_rows();
+    } else if (const auto disk = registry.GetParquetBackedDataset(dataset_name)) {
+        const auto schema = disk->GetSchema();
+        if (!schema) return std::nullopt;
+        for (int i = 0; i < schema->num_fields(); ++i) {
+            const auto& field = schema->field(i);
+            const bool label = field->name() == label_column;
+            if (!label && (field->name().rfind("__", 0) == 0 || !cyxwiz::IsNumericBatchFeatureType(field->type()) ||
+                           std::find(excluded.begin(), excluded.end(), field->name()) != excluded.end()))
+                continue;
+            const int64_t nulls = disk->NullCount(field->name());
+            if (nulls <= 0) continue;
+            cyxwiz::MissingColumn c;
+            c.name = field->name();
+            c.rows = nulls;
+            c.label = label;
+            c.text = cyxwiz::IsTextArrowType(field->type()->id());
+            block.columns.push_back(std::move(c));
+        }
+        std::stable_partition(block.columns.begin(), block.columns.end(),
+                              [](const cyxwiz::MissingColumn& c) { return !c.label; });
+        block.total_rows = disk->GetNumRows();
+    } else {
+        return std::nullopt;
+    }
+    if (block.columns.empty()) return std::nullopt;
+    return block;
+}
+
 } // namespace
 
 std::vector<cyxwiz::ValidationIssue> CheckGraphLaunchReadiness(
@@ -611,6 +654,51 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     }
     if (!ValidateSuppliedRolePreflight(registry, config.dataset_roles, config, result)) {
         return result;
+    }
+
+    // Missing values training would refuse, found before the run so the
+    // report offers the fix (decision M-1): on the table the batchers read
+    // (the canvas run's result, or the source when no step runs first) and on
+    // each supplied Validation / Test table. Sequence and time-series tables
+    // are made inside training: their refusal comes at the first batch.
+    if (!config.sequence_batch.enabled && !config.is_time_series) {
+        std::string train_table;
+        if (!canvas_prepared_dataset.empty() && (registry.GetArrowDataset(canvas_prepared_dataset) ||
+                                                 registry.GetParquetBackedDataset(canvas_prepared_dataset)))
+            train_table = canvas_prepared_dataset;
+        else if (!config.training_data_needs_pipeline_run)
+            train_table = dataset_name;
+        if (!train_table.empty()) {
+            const std::string requested =
+                !config.target.primary_column.empty() ? config.target.primary_column : label_column;
+            const std::string label = ResolveRuntimeArrowLabelColumn(registry, train_table, requested);
+            if (auto block = CountMissingTrainingValues(registry, train_table, label, config.excluded_feature_columns)) {
+                block->role = "Train";
+                block->source_node_id = config.data_source_node_id;
+                result.missing_values.push_back(std::move(*block));
+            }
+        }
+        const auto supplied = [&](const cyxwiz::ResolvedDatasetRole& role, const char* name) {
+            if (!role.IsSupplied() || role.joined_to_training) return;
+            if (auto block = CountMissingTrainingValues(registry, role.dataset_name, role.label_column,
+                                                        config.excluded_feature_columns)) {
+                block->role = name;
+                block->supplied = true;
+                block->source_node_id = role.source_node_id;
+                result.missing_values.push_back(std::move(*block));
+            }
+        };
+        supplied(config.dataset_roles.dev, "Validation");
+        supplied(config.dataset_roles.test, "Test");
+        if (!result.missing_values.empty()) {
+            size_t columns = 0;
+            for (const auto& block : result.missing_values) columns += block.columns.size();
+            SetBlockedStatus(result, "The data has missing values",
+                             std::to_string(columns) + (columns == 1 ? " column has" : " columns have") +
+                                 " empty cells or NaN, which training does not use.");
+            spdlog::warn("StartTrainingFromGraph: not started: {}", result.status_detail);
+            return result;
+        }
     }
 
     if (config.sequence_batch.enabled) {

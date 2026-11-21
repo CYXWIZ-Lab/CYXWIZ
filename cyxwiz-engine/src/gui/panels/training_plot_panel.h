@@ -7,6 +7,7 @@
 #include "../../core/training_progress_estimate.h"
 #include "../../core/word_vector_runs.h"
 #include "../../core/training_dashboard_presentation.h"
+#include "../../core/missing_values_presentation.h"
 #include <chrono>
 #include <functional>
 #include <optional>
@@ -184,6 +185,19 @@ public:
                              int checkpoint_epoch = 0);
     void SetTrainingComplete(float total_time_seconds,
                              const TrainingMetrics& metrics);
+
+    // A run refused for missing values gets the fix under its outcome
+    // (TOFIX223 0.3, mockup board 2); the main window adds the steps.
+    struct MissingValuesActions {
+        // The steps for the run's columns; false when they were not added.
+        std::function<bool(bool label, const std::vector<missing_values_fix::Step>& steps,
+                           const std::vector<MissingColumn>& columns)>
+            add;
+        std::function<void(bool label)> undo;
+        std::function<void()> train_again;
+        std::function<void()> show_input;
+    };
+    void SetMissingValuesActions(MissingValuesActions actions) { missing_values_actions_ = std::move(actions); }
     void SetActiveCheckpointLoaded(const std::string& checkpoint_path,
                                    int checkpoint_epoch,
                                    float validation_loss,
@@ -366,6 +380,15 @@ private:
     float total_training_time_ = 0.0f;
     std::string terminal_status_;
     std::string terminal_reason_;
+    std::vector<MissingColumn> missing_columns_;  // a run refused for missing values
+    int64_t missing_values_total_rows_ = -1;
+    MissingValuesActions missing_values_actions_;
+    missing_values_fix::NumberFill missing_values_fill_ = missing_values_fix::NumberFill::Mean;
+    missing_values_fix::Done missing_features_done_ = missing_values_fix::Done::No;
+    missing_values_fix::Done missing_label_done_ = missing_values_fix::Done::No;
+    void ClearMissingValues();
+    void RenderMissingValuesFix(const std::vector<MissingColumn>& columns, int64_t total_rows,
+                                const std::string& input_name);
     std::string checkpoint_used_;
     bool has_checkpoint_validation_metrics_ = false;
     float checkpoint_val_loss_ = 0.0f;

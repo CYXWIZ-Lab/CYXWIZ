@@ -452,6 +452,8 @@ set(ENGINE_SOURCES
     src/gui/main_window.cpp
     src/gui/main_window_shortcuts.cpp
     src/gui/main_window_compile_report.cpp
+    src/gui/main_window_missing_values.cpp  # missing-values fix in the report (TOFIX223 0.3)
+    src/gui/missing_values_view.cpp
     src/gui/node_editor.cpp
     src/gui/node_editor_plot.cpp
     src/gui/node_editor_toolbar.cpp
@@ -4208,6 +4210,9 @@ add_executable(test_graph_training_sequence_preflight
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
+    src/core/missing_values_presentation.cpp
+    src/gui/missing_values_view.cpp
+    src/core/filter_condition.cpp
     src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
@@ -4355,6 +4360,9 @@ add_executable(test_text_gui_training_launch
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
+    src/core/missing_values_presentation.cpp
+    src/gui/missing_values_view.cpp
+    src/core/filter_condition.cpp
     src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
@@ -5128,6 +5136,8 @@ add_test(NAME filter_condition COMMAND test_filter_condition)
 add_executable(test_compile_report_presentation
     tests/test_compile_report_presentation.cpp
     src/core/compile_report_presentation.cpp
+    src/core/missing_values_presentation.cpp
+    src/core/filter_condition.cpp
     src/core/compiled_node_presentation.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
@@ -5974,6 +5984,9 @@ add_executable(test_training_manager_session
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
+    src/core/missing_values_presentation.cpp
+    src/gui/missing_values_view.cpp
+    src/core/filter_condition.cpp
     src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
@@ -9038,6 +9051,9 @@ set(CYXWIZ_TRAIN_PATH_TEST_SOURCES
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
+    src/core/missing_values_presentation.cpp
+    src/gui/missing_values_view.cpp
+    src/core/filter_condition.cpp
     src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp

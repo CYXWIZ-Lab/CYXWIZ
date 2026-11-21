@@ -145,8 +145,8 @@ Card BuildCard(const Input& in) {
             all.push_back(c->name);
             most += c->rows;
         }
-        f.can_drop = true;
-        f.can_fill = !in.supplied_role;
+        f.can_drop = in.steps_reach_input;
+        f.can_fill = !in.supplied_role && in.steps_reach_input;
         const std::string fill_word = NumberFillWord(in.number_fill);
         if (!numbers.empty()) {
             Step step;
@@ -168,7 +168,10 @@ Card BuildCard(const Input& in) {
             f.fill_steps.push_back(std::move(step));
         }
         f.drop_steps.push_back(KeepRowsWith(all, "Keep rows with " + NameList(all)));
-        if (in.supplied_role) {
+        if (!in.steps_reach_input) {
+            f.note = "Training reads " + where + " as its file holds it, so a step here would not apply: fill or "
+                     "remove these cells in the file, then Apply its Data Input again.";
+        } else if (in.supplied_role) {
             f.note = "Drop removes the rows of " + where + " with an empty cell or NaN in these columns. Fill is "
                      "not offered here: it would need the values learned from the Train rows.";
         } else {
@@ -200,9 +203,12 @@ Card BuildCard(const Input& in) {
         if (label->at_least) l.title = "At least " + l.title;
         l.subtitle = "label column " + label->name + " · " + MissingText(*label);
         if (in.supplied_role) l.subtitle += " · supplied " + in.role_name;
-        l.can_drop = true;
+        l.can_drop = in.steps_reach_input;
         l.can_fill = false;
-        l.note = "A label is never filled in: a guessed class would be trained on as the truth.";
+        l.note = in.steps_reach_input
+                     ? "A label is never filled in: a guessed class would be trained on as the truth."
+                     : "Training reads " + where + " as its file holds it: remove these rows in the file, then "
+                       "Apply its Data Input again. A label is never filled in.";
         l.drop_steps.push_back(KeepRowsWith({label->name}, "Keep rows with a " + label->name));
         l.resolved = in.label != Done::No;
         if (in.label == Done::Dropped)
@@ -228,11 +234,12 @@ Card BuildCard(const Input& in) {
 
     // Fix and train: fill the features (drop on a supplied input), drop the
     // rows without a label.
-    if (f.present) {
+    if (f.present && in.steps_reach_input) {
         const auto& steps_for_features = f.can_fill ? f.fill_steps : f.drop_steps;
         card.fix_all_steps.insert(card.fix_all_steps.end(), steps_for_features.begin(), steps_for_features.end());
     }
-    if (l.present) card.fix_all_steps.insert(card.fix_all_steps.end(), l.drop_steps.begin(), l.drop_steps.end());
+    if (l.present && in.steps_reach_input)
+        card.fix_all_steps.insert(card.fix_all_steps.end(), l.drop_steps.begin(), l.drop_steps.end());
     card.fix_all_hint = std::string(f.present ? (f.can_fill ? "Fills the feature columns (numbers with the chosen "
                                                               "value, text with the most frequent)"
                                                             : "Drops the rows with an empty feature cell")

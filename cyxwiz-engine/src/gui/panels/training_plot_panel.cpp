@@ -1,6 +1,7 @@
 #include "../ui_tokens.h"
 #include "../../core/series_decimation.h"
 #include "training_plot_panel.h"
+#include "../missing_values_view.h"
 #include "../../core/training_dashboard_presentation.h"
 #include "../separate_windows.h"
 // Test builds that draw the dashboard without the training system define
@@ -934,6 +935,7 @@ void TrainingPlotPanel::ClearLocked() {
     total_training_time_ = 0.0f;
     terminal_status_.clear();
     terminal_reason_.clear();
+    ClearMissingValues();
     checkpoint_used_.clear();
     checkpoint_epoch_ = 0;
     checkpoint_step_ = 0;
@@ -961,6 +963,7 @@ void TrainingPlotPanel::SetTrainingState(bool is_training, int current_epoch, in
         preparation_progress_ = 0.0f;
         terminal_status_.clear();
         terminal_reason_.clear();
+        ClearMissingValues();
         last_executed_epoch_ = 0;
         checkpoint_used_.clear();
         checkpoint_epoch_ = 0;
@@ -1034,6 +1037,9 @@ void TrainingPlotPanel::SetTrainingComplete(
     total_training_time_ = total_time_seconds;
     terminal_status_ = metrics.terminal_status;
     terminal_reason_ = metrics.terminal_reason;
+    ClearMissingValues();
+    missing_columns_ = metrics.missing_columns;
+    missing_values_total_rows_ = metrics.missing_values_total_rows;
     current_epoch_ = metrics.current_epoch;
     last_executed_epoch_ = metrics.last_executed_epoch;
     if (metrics.total_epochs > 0) {
@@ -1209,6 +1215,7 @@ void TrainingPlotPanel::SetPreparationState(bool is_preparing,
         total_training_time_ = 0.0f;
         terminal_status_.clear();
         terminal_reason_.clear();
+        ClearMissingValues();
         last_executed_epoch_ = 0;
         checkpoint_used_.clear();
         checkpoint_epoch_ = 0;
@@ -1242,6 +1249,7 @@ void TrainingPlotPanel::SetPreparationFailed(
     total_training_time_ = 0.0f;
     terminal_status_ = "failed";
     terminal_reason_ = error_message;
+    ClearMissingValues();
     word_vector_runs_.EndAllLive(false, error_message);
 }
 
@@ -2463,6 +2471,60 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
     ui::EndCard();
 }
 
+void TrainingPlotPanel::ClearMissingValues() {
+    missing_columns_.clear();
+    missing_values_total_rows_ = -1;
+    missing_features_done_ = missing_values_fix::Done::No;
+    missing_label_done_ = missing_values_fix::Done::No;
+}
+
+// Under a run refused for missing values: the same card as the "Cannot start
+// training" report, its steps added by the main window; Train again once
+// every group has its step (mockup board 2).
+void TrainingPlotPanel::RenderMissingValuesFix(const std::vector<MissingColumn>& columns, int64_t total_rows,
+                                               const std::string& input_name) {
+    namespace mv = missing_values_fix;
+    mv::Input in;
+    in.columns = columns;
+    in.total_rows = total_rows;
+    in.input_name = input_name.empty() ? "the training data" : input_name;
+    in.number_fill = missing_values_fill_;
+    in.features = missing_features_done_;
+    in.label = missing_label_done_;
+    const mv::Card card = mv::BuildCard(in);
+    const bool can_act = static_cast<bool>(missing_values_actions_.add);
+    ImGui::PushID("missing_values_fix");
+    for (const bool label : {false, true}) {
+        const mv::Group& g = label ? card.label : card.features;
+        mv::Group shown = g;
+        if (!can_act) shown.can_fill = shown.can_drop = false;  // no canvas to add the steps to
+        shown.can_leave_out.clear();  // the column's role is set from the report or Data Studio
+        const auto events = ui::MissingValuesGroup(label ? "label" : "features", shown, label, missing_values_fill_);
+        mv::Done& done = label ? missing_label_done_ : missing_features_done_;
+        if (events.fill && missing_values_actions_.add(false, g.fill_steps, columns)) done = mv::Done::Filled;
+        if (events.drop && missing_values_actions_.add(label, g.drop_steps, columns)) done = mv::Done::Dropped;
+        if (events.undo && missing_values_actions_.undo) {
+            missing_values_actions_.undo(label);
+            done = mv::Done::No;
+        }
+    }
+    const ui::Tokens& c = ui::CurrentTokens();
+    if (missing_values_actions_.show_input) {
+        if (ui::LinkButton("Show on canvas")) missing_values_actions_.show_input();
+    }
+    if (card.resolved && missing_values_actions_.train_again) {
+        ImGui::SameLine();
+        if (ui::PrimaryButton("Train again")) missing_values_actions_.train_again();
+    } else if (!card.resolved) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(c.text_faint, "%s",
+                           "The same steps as before training. After one is added, Train again is offered here; "
+                           "the next run checks every batch the same way.");
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::PopID();
+}
+
 training_dashboard::HeaderFacts TrainingPlotPanel::HeaderFactsNow() const {
     training_dashboard::HeaderFacts h;
     h.preparing = is_preparing_;
@@ -2472,6 +2534,7 @@ training_dashboard::HeaderFacts TrainingPlotPanel::HeaderFactsNow() const {
     h.preparation_progress = preparation_progress_;
     h.terminal_status = terminal_status_;
     h.terminal_reason = terminal_reason_;
+    h.missing_columns = missing_columns_;
     h.dataset = run_dataset_;
     h.train_rows = run_train_rows_;
     h.validation_rows = run_validation_rows_;
@@ -2668,6 +2731,7 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     // model and the held-out test.
     LineWithTail(header.now, c.text, header.now_detail, c.text_dim);
     wrapped(tone(header.outcome_tone), header.outcome);
+    if (header.missing_values) RenderMissingValuesFix(facts.missing_columns, missing_values_total_rows_, facts.dataset);
     LineWithTail(header.active_model, c.text, header.active_model_detail, c.text_dim);
     LineWithTail(header.test, c.text, header.test_detail, c.text_dim);
 

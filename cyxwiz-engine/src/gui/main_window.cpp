@@ -562,6 +562,7 @@ MainWindow::MainWindow()
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     training_plot_panel_ = std::make_shared<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
+    WireMissingValuesDashboard();
     // Prepared-data cache actions from the dashboard's Data preparation card.
     training_plot_panel_->SetSavePathCallback([](const std::string& title, const std::string& default_name) {
         const std::string root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
@@ -3100,6 +3101,7 @@ void MainWindow::Render() {
 
     // Render the Compile Graph result popup (triggered from Train -> Compile Graph menu)
     RenderCompileResultPopup();
+    TrackMissingValuesSteps();
     RenderOperationErrorPopup();
     RenderMaterializationMemoryConfirmationPopup();
 
@@ -4025,6 +4027,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     accepted_materialization_memory_estimated_bytes_ = 0;
     try {
         spdlog::info("StartTrainingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
+        missing_values_.clear();  // a new attempt: its own check
 
         // === Pre-flight compile gate ===
         // Run the same Compile pass the explicit Compile button uses, and
@@ -4278,6 +4281,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         }
 
         auto dispatch_training = marked ? marked->dispatch : MakeEngineGraphTrainingDispatch(registry, tm);
+        const std::string source_dataset = config.dataset_name;  // the Data Input's own (its column roles)
         const std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel =
             marked ? std::weak_ptr<cyxwiz::TrainingPlotPanel>() : std::weak_ptr<cyxwiz::TrainingPlotPanel>(training_plot_panel_);
 
@@ -4300,6 +4304,9 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             if (training_plot_panel_) {
                 training_plot_panel_->SetVisible(true);
             }
+        } else if (!launch_result.missing_values.empty()) {
+            // Training would refuse missing values: the report offers the fix.
+            ShowMissingValuesReport(launch_result.missing_values, nodes, source_dataset);
         } else {
             compile_result_success_ = false;
             compile_result_issues_.clear();

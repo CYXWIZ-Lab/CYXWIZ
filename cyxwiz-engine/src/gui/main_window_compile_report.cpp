@@ -106,7 +106,9 @@ void MainWindow::ShowCompileReport(cyxwiz::compile_report::Mode mode, std::strin
         in.config.parameters = total;
         in.config.memory = live_compile_->Memory();
     }
-    compile_report_ = report::BuildReport(in);
+    // The missing-values cards come from the fix's state (empty for any other report).
+    compile_report_input_ = std::move(in);
+    RefreshMissingValuesReport();
     compile_report_mode_ = mode;
     show_compile_result_popup_ = true;
 }
@@ -122,7 +124,7 @@ void MainWindow::RenderCompileResultPopup() {
     NextWindowFits(860.0f, 640.0f);
     int focus_node = -1, open_node = -1, add_tokenizer_after = -1, add_after_input = -1;
     gui::NodeType add_type = gui::NodeType::Resize;
-    bool open_data_studio = false, train = false, run_debug = false, open_debugger = false;
+    bool open_data_studio = false, train = false, run_debug = false, open_debugger = false, fix_and_train = false;
     // The next step's state (TOFIX178 UI-1): the Compile and Train-blocked
     // reports show the last Local Debug run against the graph now.
     const bool show_debug = compile_report_mode_ == report::Mode::Compile ||
@@ -142,10 +144,14 @@ void MainWindow::RenderCompileResultPopup() {
 
         const float body_h = -FooterHeight() - (show_debug ? ImGui::GetFrameHeightWithSpacing() + 6.0f : 0.0f);
         if (ImGui::BeginTabBar("##compile_report_tabs")) {
-            const std::string findings_tab = "Findings (" + std::to_string(r.findings.size()) + ")###findings";
+            size_t groups = 0;
+            for (const auto& card : r.missing_values) groups += (card.features.present ? 1 : 0) + (card.label.present ? 1 : 0);
+            const std::string findings_tab =
+                "Findings (" + std::to_string(r.findings.size() + groups) + ")###findings";
             if (ImGui::BeginTabItem(findings_tab.c_str())) {
                 ImGui::BeginChild("##findings", ImVec2(0.0f, body_h));
-                if (r.findings.empty()) ImGui::TextColored(t.text_dim, "No findings.");
+                if (!r.missing_values.empty()) RenderMissingValuesCards();
+                if (r.findings.empty() && r.missing_values.empty()) ImGui::TextColored(t.text_dim, "No findings.");
                 int last_level = -1;
                 for (size_t i = 0; i < r.findings.size(); ++i) {
                     const auto& f = r.findings[i];
@@ -321,6 +327,8 @@ void MainWindow::RenderCompileResultPopup() {
         const char* run_debug_label = ICON_FA_BUG " Run Local Debug (F6)";
         float right = cyxwiz::ui::ButtonWidth("Close", cyxwiz::ui::ButtonSize::Regular);
         if (r.offer_train) right += spacing + cyxwiz::ui::ButtonWidth("Train", cyxwiz::ui::ButtonSize::Regular);
+        if (r.offer_fix_and_train)
+            right += spacing + cyxwiz::ui::ButtonWidth("Fix and train", cyxwiz::ui::ButtonSize::Regular);
         if (show_debug) right += spacing + cyxwiz::ui::ButtonWidth(run_debug_label, cyxwiz::ui::ButtonSize::Regular);
         cyxwiz::ui::SameLineRight(right);
         if (show_debug) {
@@ -330,7 +338,17 @@ void MainWindow::RenderCompileResultPopup() {
             ImGui::SameLine();
         }
         bool close = false;
-        if (r.offer_train) {
+        if (r.offer_fix_and_train) {
+            // Missing values: every open group gets its recommended fix, then Train.
+            close = cyxwiz::ui::SecondaryButton("Close", true, nullptr, cyxwiz::ui::ButtonSize::Regular);
+            ImGui::SameLine();
+            if (cyxwiz::ui::PrimaryButton("Fix and train", r.fix_and_train_blocked.empty(),
+                                          r.fix_and_train_blocked.c_str()))
+                fix_and_train = true;
+            if (ImGui::IsItemHovered() && r.fix_and_train_blocked.empty() && !r.missing_values.empty())
+                ImGui::SetTooltip("%s", r.missing_values.front().fix_all_hint.c_str());
+            ImGui::SetItemDefaultFocus();
+        } else if (r.offer_train) {
             close = cyxwiz::ui::SecondaryButton("Close", true, nullptr, cyxwiz::ui::ButtonSize::Regular);
             ImGui::SameLine();
             if (cyxwiz::ui::PrimaryButton("Train")) train = true;
@@ -339,7 +357,8 @@ void MainWindow::RenderCompileResultPopup() {
             close = cyxwiz::ui::PrimaryButton("Close");
             ImGui::SetItemDefaultFocus();
         }
-        if (close || train || run_debug || open_debugger || EscapePressedHere() || focus_node >= 0 || open_node >= 0 ||
+        if (close || train || fix_and_train || run_debug || open_debugger || EscapePressedHere() || focus_node >= 0 ||
+            open_node >= 0 ||
             open_data_studio ||
             add_tokenizer_after >= 0 || add_after_input >= 0)
             ImGui::CloseCurrentPopup();
@@ -358,6 +377,18 @@ void MainWindow::RenderCompileResultPopup() {
     }
     if (run_debug) LocalDebugGraphAndReport();
     if (open_debugger && studio_debugger_panel_) studio_debugger_panel_->Show();
+    if (fix_and_train) {
+        // The open groups' steps (the card's choice), then training once the
+        // canvas has them (TrackMissingValuesSteps).
+        const auto cards = compile_report_.missing_values;  // each add rebuilds the report
+        for (size_t i = 0; i < cards.size() && i < missing_values_.size(); ++i) {
+            const auto& card = cards[i];
+            if (!card.features.resolved && card.features.present)
+                AddMissingValuesSteps(i, false, card.features.can_fill ? card.features.fill_steps : card.features.drop_steps);
+            if (!card.label.resolved && card.label.present) AddMissingValuesSteps(i, true, card.label.drop_steps);
+        }
+        train_after_missing_values_fix_ = true;
+    }
     if (train && node_editor_) {
         StartTrainingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
         if (training_plot_panel_) training_plot_panel_->SetVisible(true);

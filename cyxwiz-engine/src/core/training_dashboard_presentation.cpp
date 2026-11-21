@@ -388,6 +388,15 @@ std::string Outcome(RunState state, const HeaderFacts& h, Tone& tone) {
                                                      : "Stopped before the last epoch.";
     case RunState::Failed:
         tone = Tone::Error;
+        if (!h.missing_columns.empty()) {
+            // NaN read from a file on disk is found only as its rows are read.
+            const bool found_while_reading = std::any_of(h.missing_columns.begin(), h.missing_columns.end(),
+                                                         [](const MissingColumn& c) { return c.at_least; });
+            return found_while_reading ? "Failed: the data has missing values the check before training could not "
+                                         "see (NaN in a file on disk)."
+                                       : "Failed: the data has missing values (empty cells or NaN), which training "
+                                         "does not use.";
+        }
         return h.terminal_reason.empty() ? "Failed." : "Failed: " + h.terminal_reason;
     case RunState::PreparationFailed:
         tone = Tone::Error;
@@ -514,6 +523,7 @@ Header BuildHeader(const RunFacts& run, const HeaderFacts& h) {
     }
 
     out.outcome = Outcome(out.state, h, out.outcome_tone);
+    out.missing_values = out.state == RunState::Failed && !h.missing_columns.empty();
 
     // The active model, once no run trains.
     if (!running && out.state != RunState::Preparing) {
@@ -548,7 +558,9 @@ Header BuildHeader(const RunFacts& run, const HeaderFacts& h) {
 
     // Run details > The run.
     if (ended) {
-        const std::string code = IsCode(h.terminal_reason) ? h.terminal_reason : h.terminal_status;
+        const std::string code = !h.missing_columns.empty() ? std::string("missing_values")
+                                 : IsCode(h.terminal_reason) ? h.terminal_reason
+                                                             : h.terminal_status;
         if (!code.empty()) out.run_rows.push_back({"Stop code", code});
     }
     if (h.checkpoint_epoch > 0 || h.checkpoint_step > 0) {

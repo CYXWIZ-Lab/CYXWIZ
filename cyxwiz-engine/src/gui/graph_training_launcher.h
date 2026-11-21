@@ -5,6 +5,7 @@
 #include "../core/node_executors/pipeline_operator.h"
 #include "../core/prepared_data_cache.h"
 #include "../core/execution_device_preferences.h"
+#include "../core/missing_columns.h"
 
 #include <functional>
 #include <memory>
@@ -19,8 +20,21 @@ class TrainingPlotPanel;
 
 namespace gui {
 
+// An input training would refuse for missing values, found before the run
+// (decision M-1 of the missing-values fix): the "Cannot start training"
+// report offers the fix.
+struct MissingValuesBlock {
+    std::string role;          // "Train", "Validation", "Test"
+    bool supplied = false;     // its own Data Input (a supplied Validation / Test)
+    int source_node_id = -1;   // the Data Input it comes from
+    std::string dataset_name;  // the table training reads
+    std::vector<cyxwiz::MissingColumn> columns;
+    int64_t total_rows = -1;
+};
+
 struct GraphTrainingLaunchResult {
     bool started = false;
+    std::vector<MissingValuesBlock> missing_values;  // not started: these inputs have missing values
     std::string status_title;
     std::string status_detail;
     std::string error_message;

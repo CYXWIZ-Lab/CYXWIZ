@@ -197,6 +197,21 @@ int main() {
         Check(typed, "the refusal is a MissingValuesError holding the columns, counts and kinds");
         const auto text = cyxwiz::CountMissingColumn("city", *Strings({"a", "b"}), false);
         Check(text.text && text.rows == 0, "a text column is counted as text");
+
+        // The check before training counts what the batcher refuses: the same
+        // columns and counts, the label last; a column a role keeps out, a
+        // "__" column and a text column (not a feature) are not counted.
+        auto wider = arrow::Table::Make(
+            arrow::schema({arrow::field("x", arrow::float64()), arrow::field("y", arrow::float64()),
+                           arrow::field("label", arrow::int64()), arrow::field("kept_out", arrow::float64()),
+                           arrow::field("__partition__", arrow::float64()), arrow::field("city", arrow::utf8())}),
+            {Doubles({1, nan, nan, 4}, false), Doubles({1, 2, 3, 4}, true),
+             std::make_shared<arrow::ChunkedArray>(label_array), Doubles({nan, 1, 2, 3}, true),
+             Doubles({nan, 0, 0, 0}, true), Strings({"a", "b", "c", "d"})});
+        const auto counted = cyxwiz::CountMissingTrainingColumns(*wider, "label", {"kept_out"});
+        Check(counted.size() == 2 && counted[0].name == "x" && counted[0].rows == 2 && counted[0].nan_rows == 2 &&
+                  counted[1].name == "label" && counted[1].label && counted[1].rows == 1,
+              "the check before training counts the batcher's columns (" + std::to_string(counted.size()) + ")");
     }
     {
         // The only empty cell is in a column the model does not use (a role

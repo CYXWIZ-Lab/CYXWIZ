@@ -37,6 +37,10 @@ struct Input {
     std::string input_name;              // the Data Input the data comes from ("Patients CSV")
     bool supplied_role = false;          // a supplied Validation / Test input (M-6)
     std::string role_name;               // "Validation" or "Test" for a supplied input
+    // Whether a step after the input reaches what training reads. A supplied
+    // Validation / Test is read from its own Data Input today, so a step
+    // there would not apply: the card then offers no step, only the file.
+    bool steps_reach_input = true;
     NumberFill number_fill = NumberFill::Mean;
     Done features = Done::No;
     Done label = Done::No;

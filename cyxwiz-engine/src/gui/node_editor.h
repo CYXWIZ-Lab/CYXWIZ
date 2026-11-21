@@ -800,6 +800,10 @@ public:
     // The node the last RequestStepAfter / RequestBranchAfter added (-1: none
     // yet); Data Studio's Prepare picks it once it is on the canvas.
     int LastAddedStep() const { return last_added_step_; }
+    // Step inserts, replacements or moves still waiting for the next canvas frame.
+    bool HasPendingStepRequests() const {
+        return !pending_steps_after_.empty() || !pending_replacements_.empty() || !pending_step_moves_.empty();
+    }
     int ReplacedBy(int old_id) const {
         const auto it = replaced_by_.find(old_id);
         return it == replaced_by_.end() ? -1 : it->second;
