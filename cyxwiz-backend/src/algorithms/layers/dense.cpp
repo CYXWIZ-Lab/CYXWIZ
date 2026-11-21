@@ -28,7 +28,10 @@ DenseLayer::DenseLayer(int in_features, int out_features, bool use_bias)
     // Initialize weights using Xavier initialization
     af::dim4 weight_dims(out_features, in_features);
     af::array w = XavierUniform(in_features, out_features, weight_dims);
-    weights_ = AfToTensor(w);
+    // An explicit shape: guessing it from the array would drop a trailing 1
+    // (one input feature: [out, 1] became [out], and an optimizer step then
+    // refused the [out, 1] gradient).
+    weights_ = Tensor::FromSemanticArray(w, {static_cast<size_t>(out_features), static_cast<size_t>(in_features)});
 
     if (use_bias_) {
         // Initialize bias to zeros
