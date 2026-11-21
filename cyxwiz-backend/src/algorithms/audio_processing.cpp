@@ -141,6 +141,18 @@ AudioFeatures AudioProcessing::ComputeSpectrogram(const AudioData& audio,
     int n_fft = config.n_fft;
     int hop = config.hop_length > 0 ? config.hop_length : n_fft / 2;
     int win_len = config.win_length > 0 ? config.win_length : n_fft;
+    // The window is copied into an n_fft buffer, so it cannot be longer
+    // (torch.stft refuses win_length > n_fft the same way).
+    if (n_fft < 2 || hop <= 0) {
+        result.error_message = "n_fft must be at least 2 and hop_length at least 1 (n_fft " + std::to_string(n_fft) +
+                               ", hop_length " + std::to_string(hop) + ")";
+        return result;
+    }
+    if (win_len > n_fft) {
+        result.error_message = "win_length (" + std::to_string(win_len) + ") must not be larger than n_fft (" +
+                               std::to_string(n_fft) + ")";
+        return result;
+    }
 
     // Create window
     std::vector<float> window;

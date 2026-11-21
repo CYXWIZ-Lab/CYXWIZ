@@ -70,3 +70,18 @@ TEST_CASE("Spectrograms computed on many threads match the single-threaded resul
     REQUIRE(errors.load() == 0);
     REQUIRE(mismatches.load() == 0);
 }
+
+// A window longer than the FFT was copied past the end of the n_fft buffer
+// (a heap overflow). It is refused, as torch.stft refuses it.
+TEST_CASE("A spectrogram window longer than n_fft is refused", "[audio]") {
+    const auto audio = Tone(4000, 440.0f);
+    auto config = Config(256);
+    config.win_length = 512;
+    const auto refused = cyxwiz::AudioProcessing::ComputeSpectrogram(audio, config);
+    REQUIRE_FALSE(refused.valid);
+    REQUIRE(refused.error_message.find("win_length") != std::string::npos);
+
+    config.win_length = 256;
+    const auto equal = cyxwiz::AudioProcessing::ComputeSpectrogram(audio, config);
+    if (equal.error_message.find("requires FFTW3") == std::string::npos) REQUIRE(equal.valid);
+}
