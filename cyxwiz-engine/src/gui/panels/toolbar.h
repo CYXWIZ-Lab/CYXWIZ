@@ -8,6 +8,7 @@
 #include "common/server_ca_view.h"
 #include "../../core/backend_pack_manager_model.h"
 #include "../../core/menu_presentation.h"
+#include "../../core/engine_config.h"
 #include "../dialogs/create_project_dialog.h"
 #include "../dialogs/new_file_dialog.h"
 #include "../dialogs/about_dialog.h"
@@ -182,11 +183,10 @@ public:
     void SetAutoSaveEnabled(bool enabled) { auto_save_enabled_ = enabled; }
 
     // Editor settings callbacks (for Preferences -> Script Editor synchronization)
-    void SetEditorTabSizeCallback(std::function<void(int)> callback) { editor_tab_size_callback_ = callback; }
-    void SetEditorFontScaleCallback(std::function<void(float)> callback) { editor_font_scale_callback_ = callback; }
-    void SetEditorShowWhitespaceCallback(std::function<void(bool)> callback) { editor_show_whitespace_callback_ = callback; }
-    void SetEditorWordWrapCallback(std::function<void(bool)> callback) { editor_word_wrap_callback_ = callback; }
-    void SetEditorAutoIndentCallback(std::function<void(bool)> callback) { editor_auto_indent_callback_ = callback; }
+    // Preferences > Script Editor changed: the editor applies the settings
+    void SetEditorSettingsCallback(std::function<void(const core::EditorConfig&)> callback) {
+        editor_settings_callback_ = std::move(callback);
+    }
 
     // Application theme callback (called when View -> Theme changes)
     void SetAppThemeChangedCallback(std::function<void(int)> callback) { app_theme_changed_callback_ = callback; }
@@ -293,7 +293,6 @@ public:
 
     // Minimap visibility pointers (for View -> Minimaps menu)
     void SetNodeEditorMinimapPtr(bool* ptr) { node_editor_minimap_ptr_ = ptr; }
-    void SetScriptEditorMinimapPtr(bool* ptr) { script_editor_minimap_ptr_ = ptr; }
 
     // Debug logging pointers (for View -> Developer Tools)
     void SetIdleLogPtr(bool* ptr) { idle_log_ptr_ = ptr; }
@@ -309,11 +308,6 @@ public:
     void SetPythonDiagnosticsCallback(std::function<std::string()> callback) { python_diagnostics_callback_ = callback; }
 
     // Initialize editor settings from script editor's current values
-    void SetEditorTabSize(int size) { editor_tab_size_ = size; }
-    void SetEditorFontScale(float scale);  // Converts scale to font size
-    void SetEditorShowWhitespace(bool show) { editor_show_whitespace_ = show; }
-    void SetEditorWordWrap(bool wrap) { editor_word_wrap_ = wrap; }
-    void SetEditorAutoIndent(bool indent) { editor_auto_indent_ = indent; }
 
     // Compute device selection callback
     void SetComputeDeviceChangedCallback(
@@ -663,21 +657,9 @@ private:
     int go_to_line_number_ = 1;
 
     // Editor preferences
-    int editor_font_size_ = 16;  // Maps to editor atlas sizes: 14, 16, 20, 24 px
-    int editor_tab_size_ = 4;
-    bool editor_word_wrap_ = false;
-    bool editor_show_line_numbers_ = true;
-    bool editor_show_whitespace_ = true;
-    bool editor_auto_indent_ = true;
-    bool editor_highlight_current_line_ = true;
-    bool editor_show_minimap_ = false;
 
     // Editor settings callbacks
-    std::function<void(int)> editor_tab_size_callback_;
-    std::function<void(float)> editor_font_scale_callback_;
-    std::function<void(bool)> editor_show_whitespace_callback_;
-    std::function<void(bool)> editor_word_wrap_callback_;
-    std::function<void(bool)> editor_auto_indent_callback_;
+    std::function<void(const core::EditorConfig&)> editor_settings_callback_;
 
     // Application theme callback
     std::function<void(int)> app_theme_changed_callback_;
@@ -781,7 +763,6 @@ private:
 
     // Minimap visibility pointers
     bool* node_editor_minimap_ptr_ = nullptr;
-    bool* script_editor_minimap_ptr_ = nullptr;
 
     // Debug logging pointers
     bool* idle_log_ptr_ = nullptr;
@@ -789,10 +770,6 @@ private:
     std::function<std::string()> python_diagnostics_callback_;
 
     // Files preferences
-    int files_default_encoding_ = 0;  // 0 = UTF-8, 1 = UTF-16, 2 = ASCII
-    int files_line_ending_ = 0;  // 0 = Auto, 1 = LF, 2 = CRLF
-    bool files_trim_trailing_whitespace_ = false;
-    bool files_insert_final_newline_ = true;
 // Performance/Compute preferences
     int compute_device_index_ = 0;
     std::vector<cyxwiz::DeviceInfo> compute_devices_;

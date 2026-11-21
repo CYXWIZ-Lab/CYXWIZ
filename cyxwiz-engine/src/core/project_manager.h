@@ -17,24 +17,6 @@ namespace cyxwiz {
 /**
  * Editor settings stored in project file
  */
-struct EditorSettings {
-    // Script Editor settings
-    float font_scale = 1.3f; // 1.0=Small 14px, 1.3=Medium 16px, 1.6=Large 20px, 2.0=Extra Large 24px
-    int tab_size = 4;        // 2, 4, or 8
-    bool show_whitespace = true;
-    bool syntax_highlighting = true;
-    bool word_wrap = false;
-    bool show_line_numbers = true;
-    bool auto_indent = true;
-
-    // Application-wide settings
-    int app_theme = 0;       // 0=CyxWizDark, 1=CyxWizLight, 2=VSCodeDark, 3=UnrealEngine, 4=ModernDark, 5=HighContrast
-    float ui_scale = 1.0f;   // Global UI scale (0.8 to 2.0)
-
-    // JSON serialization
-    static EditorSettings FromJson(const nlohmann::json& j);
-    nlohmann::json ToJson() const;
-};
 
 /**
  * Project configuration stored in .cyxwiz files
@@ -47,8 +29,6 @@ struct ProjectConfig {
     // Filter definitions (custom filters can be added)
     std::map<std::string, std::vector<std::string>> filters; // filter_name -> extensions
 
-    // Editor/UI settings
-    EditorSettings editor_settings;
 
     // Open files in Script Editor (to restore on project load)
     std::vector<std::string> open_scripts;

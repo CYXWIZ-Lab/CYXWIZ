@@ -231,7 +231,7 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
     in.focused_window_may_leave = ::gui::WindowMayLeave(in.focused_window.c_str());
     in.focused_window_outside = ::gui::WindowIsOutside(in.focused_window.c_str());
     in.studio_minimap = node_editor_minimap_ptr_ && *node_editor_minimap_ptr_;
-    in.script_minimap = script_editor_minimap_ptr_ && *script_editor_minimap_ptr_;
+    in.script_minimap = cyxwiz::core::EngineConfig::Instance().GetEditor().minimap;
     in.idle_log = idle_log_ptr_ && *idle_log_ptr_;
     in.verbose_python = verbose_python_log_ptr_ && *verbose_python_log_ptr_;
     in.frame_overlay = frame_overlay_ptr_ && *frame_overlay_ptr_;
@@ -627,7 +627,13 @@ void ToolbarPanel::BuildActionHandlers() {
         if (node_editor_minimap_ptr_) *node_editor_minimap_ptr_ = !*node_editor_minimap_ptr_;
     };
     h["view.script_minimap"] = [this](const std::string&) {
-        if (script_editor_minimap_ptr_) *script_editor_minimap_ptr_ = !*script_editor_minimap_ptr_;
+        // Engine-wide, as in Preferences > Script Editor
+        auto& config = cyxwiz::core::EngineConfig::Instance();
+        auto editor = config.GetEditor();
+        editor.minimap = !editor.minimap;
+        config.SetEditor(editor);
+        config.Save();
+        if (editor_settings_callback_) editor_settings_callback_(config.GetEditor());
     };
 
     // Nodes

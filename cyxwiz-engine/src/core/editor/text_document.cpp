@@ -793,6 +793,46 @@ void Document::Replace(Pos a, Pos b, std::string_view text) {
     ApplyEdits({Edit{a, b, std::string(text)}}, GroupKind::Other, CaretRule::KeepMapped);
 }
 
+bool Document::TidyForSave(bool trim_trailing_whitespace, bool final_newline) {
+    const int n = LineCount();
+    // A line's length once its trailing spaces and tabs go (when they go)
+    const auto kept = [&](int i) {
+        const std::string& line = lines_[static_cast<size_t>(i)];
+        int k = static_cast<int>(line.size());
+        if (trim_trailing_whitespace)
+            while (k > 0 && (line[static_cast<size_t>(k) - 1] == ' ' || line[static_cast<size_t>(k) - 1] == '\t')) --k;
+        return k;
+    };
+    // The text after the tidy ends after line `last` plus one line break;
+    // an empty text (one line, nothing kept) stays empty.
+    int last = n - 1;
+    const bool ends_here = final_newline && !(n == 1 && kept(0) == 0);
+    if (ends_here) {
+        last = 0;
+        for (int i = n - 1; i >= 0; --i)
+            if (kept(i) > 0) {
+                last = i;
+                break;
+            }
+    }
+    std::vector<Edit> edits;
+    for (int i = 0; i < (ends_here ? last : n); ++i) {
+        const int k = kept(i);
+        if (k < static_cast<int>(Line(i).size())) edits.push_back(Edit{{i, k}, {i, static_cast<int>(Line(i).size())}, ""});
+    }
+    if (ends_here) {
+        const Pos from{last, kept(last)};
+        const Pos to{n - 1, static_cast<int>(Line(n - 1).size())};
+        // Already right: line `last` keeps its length and one empty line follows
+        const bool right = n == last + 2 && Line(n - 1).empty() && from.col == static_cast<int>(Line(last).size());
+        if (!right) edits.push_back(Edit{from, to, "\n"});
+    }
+    if (edits.empty()) return false;
+    merge_open_ = false;
+    ApplyEdits(std::move(edits), GroupKind::Other, CaretRule::KeepMapped);
+    return true;
+}
+
 void Document::TransformSelections(const std::function<std::string(const std::string&)>& transform) {
     std::vector<Edit> edits;
     std::vector<Selection> after;

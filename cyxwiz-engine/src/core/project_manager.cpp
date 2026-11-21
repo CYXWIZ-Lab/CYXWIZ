@@ -318,39 +318,6 @@ bool HasProjectExtension(const fs::path& path) {
 
 namespace cyxwiz {
 
-// EditorSettings JSON serialization
-EditorSettings EditorSettings::FromJson(const nlohmann::json& j) {
-    EditorSettings settings;
-    // Script Editor settings
-    settings.font_scale = j.value("font_scale", 1.3f);
-    settings.tab_size = j.value("tab_size", 4);
-    settings.show_whitespace = j.value("show_whitespace", true);
-    settings.syntax_highlighting = j.value("syntax_highlighting", true);
-    settings.word_wrap = j.value("word_wrap", false);
-    settings.show_line_numbers = j.value("show_line_numbers", true);
-    settings.auto_indent = j.value("auto_indent", true);
-    // Application-wide settings
-    settings.app_theme = j.value("app_theme", 0);
-    settings.ui_scale = j.value("ui_scale", 1.0f);
-    return settings;
-}
-
-nlohmann::json EditorSettings::ToJson() const {
-    nlohmann::json j;
-    // Script Editor settings
-    j["font_scale"] = font_scale;
-    j["tab_size"] = tab_size;
-    j["show_whitespace"] = show_whitespace;
-    j["syntax_highlighting"] = syntax_highlighting;
-    j["word_wrap"] = word_wrap;
-    j["show_line_numbers"] = show_line_numbers;
-    j["auto_indent"] = auto_indent;
-    // Application-wide settings
-    j["app_theme"] = app_theme;
-    j["ui_scale"] = ui_scale;
-    return j;
-}
-
 // Static default filters
 static const std::map<std::string, std::vector<std::string>> s_default_filters = {
     {"Graphs", {".cyxgraph"}},
@@ -379,11 +346,6 @@ ProjectConfig ProjectConfig::FromJson(const nlohmann::json& j) {
         }
     }
 
-    // Load editor settings
-    if (j.contains("editor_settings") && j["editor_settings"].is_object()) {
-        config.editor_settings = EditorSettings::FromJson(j["editor_settings"]);
-    }
-
     // Load open scripts
     if (j.contains("open_scripts") && j["open_scripts"].is_array()) {
         for (const auto& script : j["open_scripts"]) {
@@ -403,7 +365,6 @@ nlohmann::json ProjectConfig::ToJson() const {
     j["created"] = created;
     j["description"] = description;
     j["filters"] = filters;
-    j["editor_settings"] = editor_settings.ToJson();
     j["open_scripts"] = open_scripts;
     j["active_script_index"] = active_script_index;
     if (!open_graph.empty()) j["open_graph"] = open_graph;

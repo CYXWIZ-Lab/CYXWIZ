@@ -7,6 +7,14 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Preferences > Script Editor: one place for the editor's settings, for
+  every project.** Tab size, whitespace, syntax colours, minimap, word wrap
+  and auto indent were saved into the open project only, on OK, and were
+  lost with no project open; they are Engine-wide now and the Script
+  Editor's View menu saves the same values. The Files tab (all four
+  settings did nothing) is folded in and real: **Line endings of new
+  files**, **Trim trailing whitespace on save**, **Insert a final newline on
+  save**; files are written as UTF-8.
 - **A Plot or Dashboard on an image Data Input reads its images.** It said
   "Data Input has no data yet: open it, choose a file and Apply" even with
   the images loaded (it looked for a file, and an image folder has a

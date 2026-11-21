@@ -27,8 +27,12 @@ bool ScriptEditorPanel::LoadFileContent(const std::string& filepath, std::string
 bool ScriptEditorPanel::SaveFileContent(const std::string& filepath, const std::string& content,
                                         const scriptfile::TextFormat& format, std::string* error) {
     // Same BOM and line endings as the file had; a failed write leaves the
-    // old file in place (TOFIX133 P0 item 3).
-    return scriptfile::WriteAtomically(filepath, scriptfile::Encode(content, format), error);
+    // old file in place (TOFIX133 P0 item 3). A script is tidied as
+    // Preferences > Script Editor says (a notebook is JSON, written as it is).
+    const std::string text = scriptfile::IsNotebookJson(filepath)
+                                 ? content
+                                 : scriptfile::TidyForSave(content, trim_trailing_whitespace_, final_newline_);
+    return scriptfile::WriteAtomically(filepath, scriptfile::Encode(text, format), error);
 }
 
 std::string ScriptEditorPanel::OpenFileDialog() {

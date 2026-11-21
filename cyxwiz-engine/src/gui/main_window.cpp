@@ -2144,7 +2144,6 @@ MainWindow::MainWindow()
 
     // Set minimap visibility pointers for View -> Minimaps menu
     toolbar_->SetNodeEditorMinimapPtr(node_editor_->GetShowMinimapPtr());
-    toolbar_->SetScriptEditorMinimapPtr(script_editor_->GetShowMinimapPtr());
 
     // Register callbacks with ProjectManager for project lifecycle events.
     auto& lifecycle_project_manager = cyxwiz::ProjectManager::Instance();
@@ -2437,61 +2436,19 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up editor settings callbacks (Preferences -> Script Editor synchronization)
-
-    toolbar_->SetEditorTabSizeCallback([this](int tab_size) {
-        if (script_editor_) {
-            script_editor_->SetTabSize(tab_size);
-            spdlog::info("Editor tab size changed to {}", tab_size);
-        }
-    });
-
-    toolbar_->SetEditorFontScaleCallback([](float scale) {
-        gui::SetCodeTextScale(scale);
-        spdlog::info("Code text scale changed to {}", scale);
-    });
-
-    toolbar_->SetEditorShowWhitespaceCallback([this](bool show) {
-        if (script_editor_) {
-            script_editor_->SetShowWhitespace(show);
-            spdlog::info("Editor show whitespace changed to {}", show);
-        }
-    });
-
-    toolbar_->SetEditorWordWrapCallback([this](bool wrap) {
-        if (script_editor_) {
-            script_editor_->SetWordWrap(wrap);
-            spdlog::info("Editor word wrap changed to {}", wrap);
-        }
-    });
-
-    toolbar_->SetEditorAutoIndentCallback([this](bool indent) {
-        if (script_editor_) {
-            script_editor_->SetAutoIndent(indent);
-            spdlog::info("Editor auto indent changed to {}", indent);
-        }
-    });
-
-    // Initialize toolbar editor settings from script editor's current values
+    // The Script Editor's settings are Engine-wide (Preferences > Script
+    // Editor, TOFIX129 B9-8): applied at start, from Preferences, and the
+    // editor's View menu saves what it changes.
     if (script_editor_) {
-        toolbar_->SetEditorTabSize(script_editor_->GetTabSize());
-        toolbar_->SetEditorFontScale(script_editor_->GetFontScale());
-        toolbar_->SetEditorShowWhitespace(script_editor_->GetShowWhitespace());
-        toolbar_->SetEditorWordWrap(script_editor_->GetWordWrap());
-        toolbar_->SetEditorAutoIndent(script_editor_->GetAutoIndent());
-
-        // Set up callback for when settings change in Script Editor (View menu)
-        // This syncs changes back to the Preferences dialog and saves to project
+        script_editor_->ApplyEditorSettings(cyxwiz::core::EngineConfig::Instance().GetEditor());
+        toolbar_->SetEditorSettingsCallback([this](const cyxwiz::core::EditorConfig& settings) {
+            if (script_editor_) script_editor_->ApplyEditorSettings(settings);
+        });
         script_editor_->SetOnSettingsChangedCallback([this]() {
-            if (toolbar_ && script_editor_) {
-                toolbar_->SetEditorTabSize(script_editor_->GetTabSize());
-                toolbar_->SetEditorFontScale(script_editor_->GetFontScale());
-                toolbar_->SetEditorShowWhitespace(script_editor_->GetShowWhitespace());
-                toolbar_->SetEditorWordWrap(script_editor_->GetWordWrap());
-                toolbar_->SetEditorAutoIndent(script_editor_->GetAutoIndent());
-            }
-            // Save settings to project file immediately
-            SaveProjectSettings();
+            if (!script_editor_) return;
+            auto& config = cyxwiz::core::EngineConfig::Instance();
+            config.SetEditor(script_editor_->EditorSettings());
+            config.Save();
         });
     }
 
@@ -6208,16 +6165,8 @@ void MainWindow::SaveProjectSettings() {
         return;
     }
 
-    // Get current editor settings from script editor
-    cyxwiz::EditorSettings& settings = pm.GetConfig().editor_settings;
+    // The project keeps what was open (its editor settings are Engine-wide)
     if (script_editor_) {
-        settings.font_scale = script_editor_->GetFontScale();
-        settings.tab_size = script_editor_->GetTabSize();
-        settings.show_whitespace = script_editor_->GetShowWhitespace();
-        settings.word_wrap = script_editor_->GetWordWrap();
-        settings.auto_indent = script_editor_->GetAutoIndent();
-        settings.syntax_highlighting = script_editor_->GetSyntaxHighlighting();
-
         // Persist open scripts for project restore
         pm.GetConfig().open_scripts.clear();
         auto open_paths = script_editor_->GetOpenFilePaths();
@@ -6232,14 +6181,9 @@ void MainWindow::SaveProjectSettings() {
             cyxwiz::project_session::StoredGraph(node_editor_->GetCurrentFilePath(), pm.GetProjectRoot());
     }
 
-    // Save application-wide settings
-    settings.app_theme = static_cast<int>(GetTheme().GetCurrentPreset());
-    settings.ui_scale = ImGui::GetIO().FontGlobalScale;
-
     // Save layout file
     SaveLayout();
 
-    // Save project file (includes editor settings)
     pm.SaveProject();
     spdlog::info("Saved project settings");
 }
@@ -6250,28 +6194,8 @@ void MainWindow::LoadProjectSettings() {
         return;
     }
 
-    const cyxwiz::EditorSettings& settings = pm.GetConfig().editor_settings;
-
-    // Apply editor settings to script editor
-    if (script_editor_) {
-        script_editor_->SetTabSize(settings.tab_size);
-        script_editor_->SetShowWhitespace(settings.show_whitespace);
-        script_editor_->SetWordWrap(settings.word_wrap);
-        script_editor_->SetAutoIndent(settings.auto_indent);
-        script_editor_->SetSyntaxHighlighting(settings.syntax_highlighting);
-    }
-
-    // Sync settings to toolbar/preferences
-    if (toolbar_) {
-        toolbar_->SetEditorTabSize(settings.tab_size);
-        toolbar_->SetEditorFontScale(gui::CodeTextScale());
-        toolbar_->SetEditorShowWhitespace(settings.show_whitespace);
-        toolbar_->SetEditorWordWrap(settings.word_wrap);
-        toolbar_->SetEditorAutoIndent(settings.auto_indent);
-    }
-
-    // Theme and text sizes are Engine-wide (Preferences > Appearance); the
-    // project's older app_theme / ui_scale fields are no longer applied.
+    // Theme, text sizes and the Script Editor's settings are Engine-wide
+    // (Preferences); the project brings back what was open.
     ImGui::GetIO().FontGlobalScale = 1.0f;
 
     // Restore open scripts
@@ -6290,7 +6214,7 @@ void MainWindow::LoadProjectSettings() {
         script_editor_->SetActiveTabIndex(pm.GetConfig().active_script_index);
     }
 
-    spdlog::debug("Loaded project settings (font_scale={:.1f}, tab_size={})", settings.font_scale, settings.tab_size);
+    spdlog::debug("Loaded project settings ({} open scripts)", open_scripts.size());
 }
 
 void MainWindow::OnProjectOpened(const std::string& project_root) {

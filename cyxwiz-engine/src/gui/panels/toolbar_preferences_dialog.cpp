@@ -2,12 +2,14 @@
 
 #include "toolbar.h"
 #include "../separate_windows.h"
+#include "../appearance_settings.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_widgets.h"
 #include "../../core/compute_runtime_config.h"
 #include "../../core/compute_runtime_paths.h"
 #include "../../core/engine_config.h"
+#include "../../core/appearance_options.h"
 #include "../../core/project_manager.h"
 #include "../../core/utilities_presentation.h"
 #include "../../core/data_budget.h"
@@ -93,8 +95,8 @@ void ToolbarPanel::RenderPreferencesDialog() {
         // Wide enough for every tab's whole name when the Engine window allows
         // it; narrower, the tabs scroll and the list button names them all.
         static const char* const kTabLabels[] = {
-            ICON_FA_GEAR " General", ICON_FA_PEN " Editor", ICON_FA_PALETTE " Appearance", ICON_FA_FILE " Files",
-            ICON_FA_CODE " Python", ICON_FA_KEYBOARD " Shortcuts", ICON_FA_MICROCHIP " Devices",
+            ICON_FA_GEAR " General", ICON_FA_PEN " Script Editor", ICON_FA_PALETTE " Appearance",
+            ICON_FA_CODE " Python", ICON_FA_WAVE_SQUARE " Simulation", ICON_FA_KEYBOARD " Shortcuts", ICON_FA_MICROCHIP " Devices",
             ICON_FA_BUG " Studio Debugger", ICON_FA_GRADUATION_CAP " Training", ICON_FA_CUBES " Nodes panel",
             ICON_FA_SLIDERS " Search", ICON_FA_HARD_DRIVE " Storage", ICON_FA_SERVER " Servers"};
         const ImGuiStyle& style = ImGui::GetStyle();
@@ -394,80 +396,78 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::EndTabItem();
                 }
 
-                // ========== Editor Tab ==========
-                if (ImGui::BeginTabItem(ICON_FA_PEN " Editor")) {
+                // ========== Script Editor (Editor + Files, TOFIX129 B9-7, B9-8) ==========
+                if (ImGui::BeginTabItem(ICON_FA_PEN " Script Editor")) {
                     preferences_tab_ = 1;
                     ImGui::Spacing();
+                    // Engine-wide, saved at once; the editor's View menu edits the same values
+                    auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                    cyxwiz::core::EditorConfig editor = engine_config.GetEditor();
+                    bool changed = false;
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("For every project. The Script Editor's View menu changes the same settings.");
+                    ImGui::PopTextWrapPos();
 
-                    ImGui::Text("Theme & Colors");
+                    ImGui::Spacing();
+                    ImGui::Text("Text");
                     ImGui::Separator();
                     ImGui::Spacing();
-
-                    // Code colours follow the Engine theme (TOFIX133 P1); there is
-                    // no separate editor theme any more.
+                    static const char* const kTabSizes[] = {"2", "4", "8"};
+                    int tab_index = editor.tab_size == 2 ? 0 : editor.tab_size == 8 ? 2 : 1;
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted("Tab size (spaces)");
+                    ImGui::SameLine();
+                    if (ui::SegmentedControl("##tab_size", kTabSizes, 3, &tab_index)) {
+                        editor.tab_size = tab_index == 0 ? 2 : tab_index == 2 ? 8 : 4;
+                        changed = true;
+                    }
+                    changed |= ImGui::Checkbox("Show whitespace", &editor.show_whitespace);
+                    changed |= ImGui::Checkbox("Syntax colours", &editor.syntax_colours);
+                    changed |= ImGui::Checkbox("Minimap", &editor.minimap);
+                    changed |= ImGui::Checkbox("Word wrap", &editor.word_wrap);
+                    changed |= ImGui::Checkbox("Auto indent", &editor.auto_indent);
+                    ImGui::AlignTextToFramePadding();
+                    const auto& sizes = cyxwiz::appearance::kCodeTextSizes;
+                    ImGui::Text("Code text size: %d px",
+                                sizes[cyxwiz::appearance::CodeScaleIndex(::gui::CodeTextScale())].pixels);
+                    ImGui::SameLine();
+                    if (ui::LinkButton("set under Appearance##editor_font")) preferences_open_appearance_ = true;
                     ImGui::PushTextWrapPos(0.0f);
-                    ImGui::TextDisabled("Code colours follow the Engine theme (View > Theme).");
+                    ImGui::TextDisabled("Line numbers are always shown and the current line is highlighted. Code "
+                                        "colours follow the Engine theme (View > Theme).");
                     ImGui::PopTextWrapPos();
 
                     ImGui::Spacing();
                     ImGui::Spacing();
-                    ImGui::Text("Font & Display");
+                    ImGui::Text("Saving files");
                     ImGui::Separator();
                     ImGui::Spacing();
-
-                    ImGui::Text("Font Size:");
-                    ImGui::TextDisabled("Code text size is set for the whole Engine under Appearance.");
-                    if (ui::LinkButton("Open Appearance settings##editor_font")) {
-                        preferences_open_appearance_ = true;
+#ifdef _WIN32
+                    static const char* const kEndings[] = {"As the system (CRLF here)", "LF", "CRLF"};
+#else
+                    static const char* const kEndings[] = {"As the system (LF here)", "LF", "CRLF"};
+#endif
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted("Line endings of new files");
+                    if (ui::SegmentedControl("##new_file_eol", kEndings, 3, &editor.new_file_line_endings)) changed = true;
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("A file keeps the line endings it has; the Script Editor's status bar changes "
+                                        "them for one file.");
+                    ImGui::PopTextWrapPos();
+                    changed |= ImGui::Checkbox("Trim trailing whitespace on save", &editor.trim_trailing_whitespace);
+                    changed |= ImGui::Checkbox("Insert a final newline on save", &editor.final_newline);
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("Files are written as UTF-8 (a file with a byte-order mark keeps it). Notebooks "
+                                        "are saved as they are.");
+                    ImGui::PopTextWrapPos();
+                    if (changed) {
+                        engine_config.SetEditor(editor);
+                        engine_config.Save();
+                        if (editor_settings_callback_) editor_settings_callback_(engine_config.GetEditor());
                     }
-
-                    ImGui::Spacing();
-
-                    ImGui::Text("Tab Size:");
-                    ImGui::SetNextItemWidth(200);
-                    const char* tab_size_items[] = { "2 Spaces", "4 Spaces", "8 Spaces" };
-                    int tab_size_index = (editor_tab_size_ == 2) ? 0 : (editor_tab_size_ == 8) ? 2 : 1;
-                    int prev_tab_index = tab_size_index;
-                    if (ImGui::Combo("##tab_size", &tab_size_index, tab_size_items, IM_ARRAYSIZE(tab_size_items))) {
-                        int sizes[] = { 2, 4, 8 };
-                        editor_tab_size_ = sizes[tab_size_index];
-                        if (editor_tab_size_callback_ && tab_size_index != prev_tab_index) {
-                            editor_tab_size_callback_(editor_tab_size_);
-                        }
-                    }
-
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    ImGui::Text("Editor Features");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    bool prev_show_whitespace = editor_show_whitespace_;
-                    if (ImGui::Checkbox("Show Whitespace Characters", &editor_show_whitespace_)) {
-                        if (editor_show_whitespace_callback_ && editor_show_whitespace_ != prev_show_whitespace) {
-                            editor_show_whitespace_callback_(editor_show_whitespace_);
-                        }
-                    }
-
-                    bool prev_word_wrap = editor_word_wrap_;
-                    if (ImGui::Checkbox("Word Wrap", &editor_word_wrap_)) {
-                        if (editor_word_wrap_callback_ && editor_word_wrap_ != prev_word_wrap) {
-                            editor_word_wrap_callback_(editor_word_wrap_);
-                        }
-                    }
-
-                    bool prev_auto_indent = editor_auto_indent_;
-                    if (ImGui::Checkbox("Auto Indent", &editor_auto_indent_)) {
-                        if (editor_auto_indent_callback_ && editor_auto_indent_ != prev_auto_indent) {
-                            editor_auto_indent_callback_(editor_auto_indent_);
-                        }
-                    }
-
-                    ImGui::Spacing();
-                    ImGui::TextDisabled("Line numbers are always shown. Current line is highlighted.");
-                    ImGui::TextDisabled("These settings will be saved with your project.");
 
                     RenderPluginPreferences("Editor");
+                    RenderPluginPreferences("Files");
                     ImGui::EndTabItem();
                 }
 
@@ -480,44 +480,6 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     preferences_tab_ = 2;
                     ImGui::Spacing();
                     RenderAppearancePreferences();
-                    ImGui::EndTabItem();
-                }
-
-                // ========== Files Tab ==========
-                if (ImGui::BeginTabItem(ICON_FA_FILE " Files")) {
-                    preferences_tab_ = 3;
-                    ImGui::Spacing();
-
-                    ImGui::Text("File Encoding");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    ImGui::Text("Default Encoding:");
-                    const char* encodings[] = { "UTF-8", "UTF-16", "ASCII" };
-                    ImGui::SetNextItemWidth(150);
-                    ImGui::Combo("##encoding", &files_default_encoding_, encodings, IM_ARRAYSIZE(encodings));
-
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    ImGui::Text("Line Endings");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    ImGui::Text("Default Line Ending:");
-                    const char* line_endings[] = { "Auto (OS default)", "LF (Unix/macOS)", "CRLF (Windows)" };
-                    ImGui::SetNextItemWidth(200);
-                    ImGui::Combo("##line_ending", &files_line_ending_, line_endings, IM_ARRAYSIZE(line_endings));
-
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    ImGui::Text("Save Options");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    ImGui::Checkbox("Trim trailing whitespace on save", &files_trim_trailing_whitespace_);
-                    ImGui::Checkbox("Insert final newline on save", &files_insert_final_newline_);
-
-                    RenderPluginPreferences("Files");
                     ImGui::EndTabItem();
                 }
 

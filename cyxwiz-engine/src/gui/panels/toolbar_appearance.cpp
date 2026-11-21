@@ -232,7 +232,6 @@ void ToolbarPanel::RenderAppearancePreferences() {
             if (ui::SegmentedControl("code_text", labels.data(), static_cast<int>(labels.size()),
                                      &index)) {
                 ::gui::SetCodeTextScale(cyxwiz::appearance::kCodeTextSizes[index].scale);
-                editor_font_size_ = cyxwiz::appearance::kCodeTextSizes[index].pixels;
             }
             ImGui::TextDisabled("Script Editor, Python REPL, Logs, Commands and terminals");
         }

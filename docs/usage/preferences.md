@@ -35,3 +35,28 @@ Save) and when the Engine closes.
 - **Record Debug messages**: see [Console logs](console_logs.md).
 - **Any window can have a window of its own**: see [Windows of their own](windows.md).
 - **Data budget (MB)**: see [Big data](big_data.md).
+
+## Script Editor
+
+For every project (they used to be saved into the open project only, and
+only on OK). The Script Editor's **View** menu and **View > Minimaps >
+Script Editor Minimap** change the same settings and they are saved the same
+way.
+
+- **Text**: **Tab size** (2, 4 or 8 spaces), **Show whitespace**, **Syntax
+  colours**, **Minimap**, **Word wrap**, **Auto indent**. The code text size
+  is set under **Appearance** (the line shows it, with a link). Line numbers
+  are always shown and the current line is highlighted; code colours follow
+  the Engine theme.
+- **Saving files**:
+  - **Line endings of new files**: as the system (CRLF on Windows, LF
+    elsewhere), LF or CRLF. A file you open keeps the line endings it has;
+    the Script Editor's status bar changes them for that one file.
+  - **Trim trailing whitespace on save** (off by default): spaces and tabs at
+    the end of each line are not written.
+  - **Insert a final newline on save** (on by default): the file ends with
+    exactly one line break.
+  - Trimming and the final newline happen in the editor too, as one step
+    that **Ctrl+Z** takes back, so the editor shows what the file holds.
+  - Files are written as UTF-8; a file with a byte-order mark keeps it.
+    Notebooks (`.ipynb`) are saved as they are.

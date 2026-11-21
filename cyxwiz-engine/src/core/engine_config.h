@@ -185,6 +185,22 @@ struct PolicyStressDefaults {
     int episodes = 10;  // a level, 1 to 100
 };
 
+// The Script Editor's settings (Preferences > Script Editor)
+struct EditorConfig {
+    int tab_size = 4;  // 2, 4 or 8
+    bool show_whitespace = true;
+    bool syntax_colours = true;
+    bool minimap = true;
+    bool word_wrap = false;
+    bool auto_indent = true;
+    // Line endings of a new file: 0 as the system (CRLF on Windows), 1 LF,
+    // 2 CRLF. A file keeps the line endings it has.
+    int new_file_line_endings = 0;
+    bool trim_trailing_whitespace = false;
+    bool final_newline = true;
+    bool operator==(const EditorConfig&) const = default;
+};
+
 class EngineConfig {
 public:
     static EngineConfig& Instance();
@@ -399,6 +415,11 @@ public:
     MonitorConfig GetMonitor() const;
     void SetMonitor(const MonitorConfig& monitor);
 
+    // ===== Script Editor (Preferences > Script Editor, TOFIX129 B9-7, B9-8) =====
+    // Engine-wide (every project); the Script Editor's View menu edits the same values.
+    EditorConfig GetEditor() const;
+    void SetEditor(const EditorConfig& editor);
+
     // ===== General (Preferences > General, TOFIX129 B9) =====
 
     // When the Engine starts: the start page, or the last project (its
@@ -488,6 +509,7 @@ private:
     MonitorConfig monitor_;
 
     // Recent projects
+    EditorConfig editor_;
     bool start_with_last_project_ = false;
     int recent_projects_kept_ = kDefaultRecentProjects;
     bool ask_before_closing_always_ = false;

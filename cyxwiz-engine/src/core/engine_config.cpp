@@ -652,6 +652,23 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
+        // The Script Editor
+        editor_ = {};
+        if (config.contains("editor") && config["editor"].is_object()) {
+            const auto& e = config["editor"];
+            const int tab = e.value("tab_size", 4);
+            editor_.tab_size = tab == 2 || tab == 8 ? tab : 4;
+            editor_.show_whitespace = e.value("show_whitespace", true);
+            editor_.syntax_colours = e.value("syntax_colours", true);
+            editor_.minimap = e.value("minimap", true);
+            editor_.word_wrap = e.value("word_wrap", false);
+            editor_.auto_indent = e.value("auto_indent", true);
+            const std::string eol = e.value("new_file_line_endings", std::string("system"));
+            editor_.new_file_line_endings = eol == "lf" ? 1 : eol == "crlf" ? 2 : 0;
+            editor_.trim_trailing_whitespace = e.value("trim_trailing_whitespace", false);
+            editor_.final_newline = e.value("final_newline", true);
+        }
+
         // General: how the Engine starts and closes
         start_with_last_project_ = false;
         recent_projects_kept_ = kDefaultRecentProjects;
@@ -868,6 +885,17 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"train_best", architecture_search_defaults_.train_best}
         };
 
+        config["editor"] = {{"tab_size", editor_.tab_size},
+                            {"show_whitespace", editor_.show_whitespace},
+                            {"syntax_colours", editor_.syntax_colours},
+                            {"minimap", editor_.minimap},
+                            {"word_wrap", editor_.word_wrap},
+                            {"auto_indent", editor_.auto_indent},
+                            {"new_file_line_endings", editor_.new_file_line_endings == 1   ? "lf"
+                                                      : editor_.new_file_line_endings == 2 ? "crlf"
+                                                                                           : "system"},
+                            {"trim_trailing_whitespace", editor_.trim_trailing_whitespace},
+                            {"final_newline", editor_.final_newline}};
         config["general"] = {{"start", start_with_last_project_ ? "last_project" : "start_page"},
                              {"recent_projects", recent_projects_kept_},
                              {"ask_before_closing", ask_before_closing_always_ ? "always" : "when_lost"}};
@@ -1477,6 +1505,22 @@ void EngineConfig::SetRuntimeLogSavedFilters(
     std::lock_guard<std::mutex> lock(mutex_);
     if (runtime_log_saved_filters_ != filters) {
         runtime_log_saved_filters_ = filters;
+        modified_ = true;
+    }
+}
+
+EditorConfig EngineConfig::GetEditor() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return editor_;
+}
+
+void EngineConfig::SetEditor(const EditorConfig& editor) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    EditorConfig e = editor;
+    if (e.tab_size != 2 && e.tab_size != 8) e.tab_size = 4;
+    e.new_file_line_endings = std::clamp(e.new_file_line_endings, 0, 2);
+    if (!(editor_ == e)) {
+        editor_ = e;
         modified_ = true;
     }
 }

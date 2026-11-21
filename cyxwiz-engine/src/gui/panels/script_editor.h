@@ -5,6 +5,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/large_text_file.h"
 #include "../../core/script_text_file.h"
+#include "../../core/engine_config.h"
 #include "../../scripting/cell_manager.h"
 #include "../../core/notebook_presentation.h"
 #include "../../core/language_results.h"
@@ -161,14 +162,10 @@ public:
     void SetAutoIndent(bool indent);
     void SetSyntaxHighlighting(bool enabled);
     void SetShowMinimap(bool show) { show_minimap_ = show; }
-    float GetFontScale() const;
-    int GetTabSize() const { return tab_size_; }
-    bool GetShowWhitespace() const { return show_whitespace_; }
-    bool GetWordWrap() const { return word_wrap_; }
-    bool GetAutoIndent() const { return auto_indent_; }
-    bool GetSyntaxHighlighting() const { return syntax_highlighting_; }
-    bool GetShowMinimap() const { return show_minimap_; }
-    bool* GetShowMinimapPtr() { return &show_minimap_; }
+    // Preferences > Script Editor (Engine-wide): every setting in one call,
+    // and the editor's current values (the View menu changes them too)
+    void ApplyEditorSettings(const core::EditorConfig& settings);
+    core::EditorConfig EditorSettings() const;
 
     // Open files state (for project persistence)
     std::vector<std::string> GetOpenFilePaths() const;
@@ -339,6 +336,9 @@ private:
     std::string DedentCode(const std::string& code);  // Remove common leading whitespace
     void SyncActiveCellEditor(EditorTab& tab);
     std::string GetTabContentForPersistence(EditorTab& tab, const std::string& path);
+    // Before a save: the tidy the save makes (trim, final newline) is made in
+    // a text tab's editor as one undo step, so it shows what is written
+    void TidyBeforeSave(EditorTab& tab, const std::string& path);
     std::string GetTabExecutableText(EditorTab& tab);
     bool IsTabContentBlank(EditorTab& tab) const;
 
@@ -434,6 +434,10 @@ private:
     bool auto_indent_ = true;
     int tab_size_ = 4;  // 2, 4, or 8
     bool show_minimap_ = true;  // Show code minimap on the right
+    // What a save does and new files' line endings (Preferences > Script Editor)
+    int new_file_line_endings_ = 0;
+    bool trim_trailing_whitespace_ = false;
+    bool final_newline_ = true;
     float minimap_width_ = 100.0f;  // Width of minimap in pixels
 
     // Save/Close dialog state

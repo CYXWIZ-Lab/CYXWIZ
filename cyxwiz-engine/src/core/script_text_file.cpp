@@ -50,6 +50,41 @@ std::string Encode(const std::string& text, const TextFormat& format) {
     return out;
 }
 
+std::string TidyForSave(const std::string& text, bool trim_trailing_whitespace, bool final_newline) {
+    std::string out;
+    if (trim_trailing_whitespace) {
+        out.reserve(text.size());
+        size_t line_start = 0;
+        while (line_start <= text.size()) {
+            const size_t end = text.find('\n', line_start);
+            const size_t line_end = end == std::string::npos ? text.size() : end;
+            size_t keep = line_end;
+            while (keep > line_start && (text[keep - 1] == ' ' || text[keep - 1] == '\t')) --keep;
+            out.append(text, line_start, keep - line_start);
+            if (end == std::string::npos) break;
+            out += '\n';
+            line_start = end + 1;
+        }
+    } else {
+        out = text;
+    }
+    if (final_newline && !out.empty()) {
+        while (out.size() >= 2 && out[out.size() - 1] == '\n' && out[out.size() - 2] == '\n') out.pop_back();
+        if (out.back() != '\n') out += '\n';
+    }
+    return out;
+}
+
+LineEnding NewFileLineEnding(int choice) {
+    if (choice == 1) return LineEnding::LF;
+    if (choice == 2) return LineEnding::CRLF;
+#ifdef _WIN32
+    return LineEnding::CRLF;
+#else
+    return LineEnding::LF;
+#endif
+}
+
 bool WriteAtomically(const std::string& path, const std::string& bytes, std::string* error) {
     namespace fs = std::filesystem;
     const fs::path target(path);
