@@ -511,6 +511,7 @@ set(ENGINE_SOURCES
     src/core/threshold_calibration.cpp
     src/core/training_health_presentation.cpp
     src/core/compile_report_presentation.cpp
+    src/core/missing_values_presentation.cpp  # one-click fix for missing values (TOFIX223 0.3)
     src/core/studio_toolbar_presentation.cpp
     src/core/data_input_presentation.cpp
     src/core/cloud_source_presentation.cpp
@@ -5098,6 +5099,19 @@ if(Python3_EXECUTABLE)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/checks/check_icon_headers.py" "${CMAKE_SOURCE_DIR}")
     set_tests_properties(icon_headers_check PROPERTIES SKIP_RETURN_CODE 77)
 endif()
+
+# ===== Test: the missing-values fix card and its steps (TOFIX223 0.3) =====
+add_executable(test_missing_values_presentation
+    tests/test_missing_values_presentation.cpp
+    src/core/missing_values_presentation.cpp
+    src/core/filter_condition.cpp
+)
+target_include_directories(test_missing_values_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_compile_definitions(test_missing_values_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_missing_values_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME missing_values_presentation COMMAND test_missing_values_presentation)
 
 # ===== Test: the Row Filter's condition as dialog rows (TOFIX129 B-5) =====
 add_executable(test_filter_condition
