@@ -116,10 +116,8 @@ DataStudioPanel::DataStudioPanel() {
                                              {{"feature_col", r.predictors.front()}, {"target_col", r.response}, {"degree", std::to_string(r.degree)}},
                                              name);
         } else {
-            std::string features;
-            for (const auto& p : r.predictors) features += (features.empty() ? "" : ",") + p;
             node_editor_->RequestBranchAfter(from->id, ::gui::NodeType::LinearRegressionNode,
-                                             {{"feature_cols", features}, {"target_col", r.response}, {"fit_intercept", "true"}}, name);
+                                             {{"feature_cols", cyxwiz::FormatColumnList(r.predictors)}, {"target_col", r.response}, {"fit_intercept", "true"}}, name);
         }
         return std::string("Added the ") + (r.polynomial ? "Polynomial" : "Linear") + " Regression node \"" + name + "\" reading \"" +
                from->name + "\" (Ctrl+Z on the canvas undoes it). " + explore_view::BranchAddedNote();

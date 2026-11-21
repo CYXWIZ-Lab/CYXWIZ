@@ -258,6 +258,13 @@ int main() {
         const Names odd{"age", "a,b", " lead", "trail ", "\"q", "x\"y", "ok name"};
         Check(ParseColumnList(FormatColumnList(odd)) == odd, "every name comes back: " + FormatColumnList(odd));
         Check(FormatColumnList({"age", "sex"}) == "age,sex", "plain names are not quoted");
+        // A column with an empty name is "" and comes back (an empty entry does not).
+        Check(FormatColumnList({"a", ""}) == "a,\"\"" && ParseColumnList("a,\"\"") == Names{"a", ""},
+              "an empty name is quoted and comes back");
+        Check(ParseColumnList(FormatColumnList({""})) == Names{""}, "an empty name alone comes back");
+        Check(FormatColumnList({"a", "b, c"}, ", ") == "a, \"b, c\"" &&
+                  ParseColumnList(FormatColumnList({"a", "b, c"}, ", ")) == Names{"a", "b, c"},
+              "the list can be written with spaces after the commas");
     }
 
     // Only the label; and counts read with thousands.

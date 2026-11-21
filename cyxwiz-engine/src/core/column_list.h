@@ -28,8 +28,9 @@ inline std::string Trim(const std::string& s) {
 }
 }  // namespace column_list_detail
 
-// The names in `text`, in order; empty names are skipped. A quoted name keeps
-// its spaces and commas; a quote left open runs to the end of the text.
+// The names in `text`, in order; empty entries are skipped, but "" is a column
+// with an empty name. A quoted name keeps its spaces and commas; a quote left
+// open runs to the end of the text.
 inline std::vector<std::string> ParseColumnList(const std::string& text) {
     using column_list_detail::IsSpace;
     std::vector<std::string> out;
@@ -38,7 +39,8 @@ inline std::vector<std::string> ParseColumnList(const std::string& text) {
     while (i < n) {
         while (i < n && IsSpace(text[i])) ++i;
         std::string name;
-        if (i < n && text[i] == '"') {
+        const bool quoted = i < n && text[i] == '"';
+        if (quoted) {
             ++i;
             while (i < n) {
                 if (text[i] == '"') {
@@ -63,7 +65,7 @@ inline std::vector<std::string> ParseColumnList(const std::string& text) {
             name = column_list_detail::Trim(text.substr(i, end - i));
             i = end;
         }
-        if (!name.empty()) out.push_back(std::move(name));
+        if (!name.empty() || quoted) out.push_back(std::move(name));  // "" names an empty column
         if (i < n) ++i;  // the comma
     }
     return out;
@@ -76,12 +78,15 @@ inline bool ColumnNeedsQuotes(const std::string& name) {
            IsSpace(name.back());
 }
 
-// The list text for `names` (comma-separated, quoted where needed), which
-// ParseColumnList reads back as the same names.
-inline std::string FormatColumnList(const std::vector<std::string>& names) {
+// The list text for `names` (separated by `separator`, a comma with or without
+// spaces; quoted where needed), which ParseColumnList reads back as the same
+// names.
+inline std::string FormatColumnList(const std::vector<std::string>& names, const char* separator = ",") {
     std::string out;
+    bool first = true;
     for (const auto& name : names) {
-        if (!out.empty()) out += ',';
+        if (!first) out += separator;
+        first = false;
         if (!ColumnNeedsQuotes(name)) {
             out += name;
             continue;
