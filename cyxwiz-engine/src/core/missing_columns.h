@@ -39,8 +39,15 @@ public:
     const std::vector<MissingColumn>& Columns() const { return columns_; }
     int64_t TotalRows() const { return total_rows_; }  // -1 when not known
 
+    // "Validation" or "Test" when the refusing table is a supplied input read
+    // from its own Data Input (set by the executor as the error passes): a
+    // step after the training input does not reach it. Empty for Train.
+    const std::string& SuppliedRole() const { return supplied_role_; }
+    void SetSuppliedRole(std::string role) { supplied_role_ = std::move(role); }
+
 private:
     std::string source_;
+    std::string supplied_role_;
     std::vector<MissingColumn> columns_;
     int64_t total_rows_ = -1;
 };

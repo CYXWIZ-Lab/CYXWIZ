@@ -1040,6 +1040,7 @@ void TrainingPlotPanel::SetTrainingComplete(
     ClearMissingValues();
     missing_columns_ = metrics.missing_columns;
     missing_values_total_rows_ = metrics.missing_values_total_rows;
+    missing_values_supplied_role_ = metrics.missing_values_supplied_role;
     current_epoch_ = metrics.current_epoch;
     last_executed_epoch_ = metrics.last_executed_epoch;
     if (metrics.total_epochs > 0) {
@@ -2474,8 +2475,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 void TrainingPlotPanel::ClearMissingValues() {
     missing_columns_.clear();
     missing_values_total_rows_ = -1;
-    missing_features_done_ = missing_values_fix::Done::No;
-    missing_label_done_ = missing_values_fix::Done::No;
+    missing_values_supplied_role_.clear();
 }
 
 // Under a run refused for missing values: the same card as the "Cannot start
@@ -2484,13 +2484,9 @@ void TrainingPlotPanel::ClearMissingValues() {
 void TrainingPlotPanel::RenderMissingValuesFix(const std::vector<MissingColumn>& columns, int64_t total_rows,
                                                const std::string& input_name) {
     namespace mv = missing_values_fix;
-    mv::Input in;
-    in.columns = columns;
-    in.total_rows = total_rows;
-    in.input_name = input_name.empty() ? "the training data" : input_name;
+    mv::Input in = mv::MakeInput(columns, total_rows, input_name, missing_values_supplied_role_);
     in.number_fill = missing_values_fill_;
-    in.features = missing_features_done_;
-    in.label = missing_label_done_;
+    if (missing_values_actions_.state) missing_values_actions_.state(in);
     const mv::Card card = mv::BuildCard(in);
     const bool can_act = static_cast<bool>(missing_values_actions_.add);
     ImGui::PushID("missing_values_fix");
@@ -2500,13 +2496,9 @@ void TrainingPlotPanel::RenderMissingValuesFix(const std::vector<MissingColumn>&
         if (!can_act) shown.can_fill = shown.can_drop = false;  // no canvas to add the steps to
         shown.can_leave_out.clear();  // the column's role is set from the report or Data Studio
         const auto events = ui::MissingValuesGroup(label ? "label" : "features", shown, label, missing_values_fill_);
-        mv::Done& done = label ? missing_label_done_ : missing_features_done_;
-        if (events.fill && missing_values_actions_.add(false, g.fill_steps, columns)) done = mv::Done::Filled;
-        if (events.drop && missing_values_actions_.add(label, g.drop_steps, columns)) done = mv::Done::Dropped;
-        if (events.undo && missing_values_actions_.undo) {
-            missing_values_actions_.undo(label);
-            done = mv::Done::No;
-        }
+        if (events.fill && can_act) missing_values_actions_.add(false, g.fill_steps, in);
+        if (events.drop && can_act) missing_values_actions_.add(label, g.drop_steps, in);
+        if (events.undo && missing_values_actions_.undo) missing_values_actions_.undo(label);
     }
     const ui::Tokens& c = ui::CurrentTokens();
     if (missing_values_actions_.show_input) {

@@ -188,12 +188,17 @@ public:
 
     // A run refused for missing values gets the fix under its outcome
     // (TOFIX223 0.3, mockup board 2); the main window adds the steps.
+    // The main window keeps what was done (one state for the report and the
+    // Dashboard, following the canvas); the panel only draws it.
     struct MissingValuesActions {
-        // The steps for the run's columns; false when they were not added.
-        std::function<bool(bool label, const std::vector<missing_values_fix::Step>& steps,
-                           const std::vector<MissingColumn>& columns)>
+        // Fills in what was done for the run's refusal (features, label, left out).
+        std::function<void(missing_values_fix::Input& in)> state;
+        // Adds a group's steps for the run's refusal (`in`: its columns).
+        std::function<void(bool label, const std::vector<missing_values_fix::Step>& steps,
+                           const missing_values_fix::Input& in)>
             add;
         std::function<void(bool label)> undo;
+        // Asks for a new run; it starts after the panels drew.
         std::function<void()> train_again;
         std::function<void()> show_input;
     };
@@ -383,9 +388,8 @@ private:
     std::vector<MissingColumn> missing_columns_;  // a run refused for missing values
     int64_t missing_values_total_rows_ = -1;
     MissingValuesActions missing_values_actions_;
+    std::string missing_values_supplied_role_;  // a supplied Validation / Test refused: fix its file
     missing_values_fix::NumberFill missing_values_fill_ = missing_values_fix::NumberFill::Mean;
-    missing_values_fix::Done missing_features_done_ = missing_values_fix::Done::No;
-    missing_values_fix::Done missing_label_done_ = missing_values_fix::Done::No;
     void ClearMissingValues();
     void RenderMissingValuesFix(const std::vector<MissingColumn>& columns, int64_t total_rows,
                                 const std::string& input_name);

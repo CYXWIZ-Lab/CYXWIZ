@@ -671,6 +671,45 @@ void TestMissingValuesRefusalKeepsColumns(const std::filesystem::path& work_dir)
             }
         }
     }
+
+    // A supplied Validation input read from its own table refuses its NaN
+    // while validating: the failed run names the role, so the Dashboard says
+    // to fix that file (a step after the training input never reaches it).
+    {
+        auto clean = arrow::Table::Make(schema,
+                                        {FinishFloatArray({0.0f, 0.1f, 0.9f, 1.0f}),
+                                         FinishFloatArray({0.0f, 0.2f, 0.5f, 0.7f}), label_array->Slice(0, 4)},
+                                        4);
+        const auto clean_dataset = std::make_shared<cyxwiz::ArrowDataset>(clean, "supplied_validation_train");
+        cyxwiz::ExternalBatcherFactory factory = [clean_dataset, dataset](const cyxwiz::TrainingConfiguration&,
+                                                                          int batch_size) {
+            auto train = std::make_shared<cyxwiz::ArrowDatasetBatcher>(clean_dataset, "label", batch_size, false,
+                                                                       1.0f, true);
+            auto dev = std::make_shared<cyxwiz::ArrowDatasetBatcher>(dataset, "label", batch_size, false, 1.0f, true);
+            train->SetOneHotEncoding(2);
+            dev->SetOneHotEncoding(2);
+            cyxwiz::ResolvedExternalBatchers batchers;
+            batchers.train = train;
+            batchers.dev = dev;
+            batchers.dev_phase = cyxwiz::BatcherPhase::Train;  // the supplied table is read whole
+            return batchers;
+        };
+        auto config = MakeConfig(work_dir / "missing-values-supplied-validation");
+        config.batch_size = 2;
+        config.log_interval = 0;
+        config.dataset_roles.dev.dataset_name = "supplied_validation";
+        config.dataset_roles.dev.label_column = "label";
+        cyxwiz::TrainingExecutor executor(config, factory);
+        try {
+            executor.Train(1, config.batch_size, nullptr, nullptr, nullptr);
+        } catch (const std::exception&) {
+        }
+        const auto metrics = executor.GetMetrics();
+        Check(metrics.terminal_status == "failed" && metrics.missing_columns.size() == 1 &&
+                  metrics.missing_values_supplied_role == "Validation",
+              "a supplied Validation input's refusal names its role (got '" + metrics.terminal_status + "', role '" +
+                  metrics.missing_values_supplied_role + "', reason '" + metrics.terminal_reason + "')");
+    }
 }
 
 // class_weight=balanced comes from the Train part's class counts on every

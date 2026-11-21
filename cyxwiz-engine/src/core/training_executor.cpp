@@ -808,7 +808,14 @@ void TrainingExecutor::Train(
         UpdateMetrics([&](TrainingMetrics& m) {
             m.missing_columns = e.Columns();
             m.missing_values_total_rows = e.TotalRows();
+            m.missing_values_supplied_role = e.SuppliedRole();
         });
+    };
+    // A supplied Validation / Test read from its own Data Input (not joined
+    // to the Training table): a refusal there names that role, since a step
+    // after the training input does not reach it.
+    const auto supplied_role_input = [](const ResolvedDatasetRole& role) {
+        return role.IsSupplied() && !role.joined_to_training;
     };
     // Stopped before the first batch (while waiting for the GPU, while the
     // data was being prepared): cancelled, not failed
@@ -1637,7 +1644,12 @@ void TrainingExecutor::Train(
             // Not without a validation part (an image Data Split at 0.9 / 0 /
             // 0.1): it scored 0 samples and gave early stopping metrics of 0.
             active_val_ibatcher->SetPhase(val_batcher_phase);
-            RunValidationArrow(*active_val_ibatcher);
+            try {
+                RunValidationArrow(*active_val_ibatcher);
+            } catch (MissingValuesError& e) {
+                if (supplied_role_input(config_.dataset_roles.dev)) e.SetSuppliedRole("Validation");
+                throw;
+            }
             active_val_ibatcher->SetPhase(train_batcher_phase);
             validation_ran_this_epoch = true;
             if ((config_.pair_metrics || config_.retrieval_metrics) && metric_eval_val) {
@@ -2054,7 +2066,14 @@ void TrainingExecutor::Train(
         // follows its phase; out of it, a wired test set reads 0).
         model_->SetTraining(false);
         active_test_ibatcher->SetPhase(test_batcher_phase);
-        const auto test_evaluation = EvaluateArrowBatcher(*active_test_ibatcher);
+        const auto test_evaluation = [&] {
+            try {
+                return EvaluateArrowBatcher(*active_test_ibatcher);
+            } catch (MissingValuesError& e) {
+                if (supplied_role_input(config_.dataset_roles.test)) e.SetSuppliedRole("Test");
+                throw;
+            }
+        }();
         active_test_ibatcher->SetPhase(train_batcher_phase);
         UpdateMetrics([test_evaluation](TrainingMetrics& m) {
             m.test_loss = test_evaluation.loss;

@@ -29,8 +29,9 @@ without a `diagnosis`.
    these columns**, or **Drop these rows**; **Drop rows without a label**),
    then **Train**, or click **Fix and train**: it fills the features with the
    mean of the Train rows, drops the rows without a label and trains.
-4. The canvas now has the steps between **Patients CSV** and the Split
-   ("Fill age, bmi, cholesterol (mean)", "Keep rows with a diagnosis"). Ctrl+Z
-   removes them, as **Undo** does in the report.
+4. The canvas now has the steps between **Patients CSV** and the Split, in
+   the card's order ("Fill age, bmi, cholesterol (mean)", then "Keep rows with
+   a diagnosis"). **Undo** in the report removes a group's step; Ctrl+Z on
+   the canvas removes the last one added, and the card follows.
 
 More in [the compile report](../../docs/usage/studio_toolbar.md#missing-values-the-fix-in-the-report).

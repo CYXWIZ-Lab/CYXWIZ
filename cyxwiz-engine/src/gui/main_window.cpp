@@ -4028,6 +4028,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     try {
         spdlog::info("StartTrainingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
         missing_values_.clear();  // a new attempt: its own check
+        dashboard_missing_ = MissingValuesEntry{};  // and a refused run gets a fresh card
 
         // === Pre-flight compile gate ===
         // Run the same Compile pass the explicit Compile button uses, and

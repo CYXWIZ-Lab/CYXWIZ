@@ -134,6 +134,7 @@ struct TrainingMetrics {
     // Dashboard can offer the fix (empty otherwise).
     std::vector<MissingColumn> missing_columns;
     int64_t missing_values_total_rows = -1;
+    std::string missing_values_supplied_role;  // "Validation" / "Test": a supplied input refused (fix its file)
 
     // History (for plotting)
     std::vector<float> loss_history;

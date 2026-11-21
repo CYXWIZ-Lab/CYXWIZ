@@ -144,10 +144,8 @@ void MainWindow::RenderCompileResultPopup() {
 
         const float body_h = -FooterHeight() - (show_debug ? ImGui::GetFrameHeightWithSpacing() + 6.0f : 0.0f);
         if (ImGui::BeginTabBar("##compile_report_tabs")) {
-            size_t groups = 0;
-            for (const auto& card : r.missing_values) groups += (card.features.present ? 1 : 0) + (card.label.present ? 1 : 0);
             const std::string findings_tab =
-                "Findings (" + std::to_string(r.findings.size() + groups) + ")###findings";
+                "Findings (" + std::to_string(r.findings.size() + r.missing_value_groups) + ")###findings";
             if (ImGui::BeginTabItem(findings_tab.c_str())) {
                 ImGui::BeginChild("##findings", ImVec2(0.0f, body_h));
                 if (!r.missing_values.empty()) RenderMissingValuesCards();
@@ -378,16 +376,13 @@ void MainWindow::RenderCompileResultPopup() {
     if (run_debug) LocalDebugGraphAndReport();
     if (open_debugger && studio_debugger_panel_) studio_debugger_panel_->Show();
     if (fix_and_train) {
-        // The open groups' steps (the card's choice), then training once the
-        // canvas has them (TrackMissingValuesSteps).
+        // The open groups' steps, one chain in the card's order, then
+        // training once the canvas has them (TrackMissingValuesSteps).
         const auto cards = compile_report_.missing_values;  // each add rebuilds the report
-        for (size_t i = 0; i < cards.size() && i < missing_values_.size(); ++i) {
-            const auto& card = cards[i];
-            if (!card.features.resolved && card.features.present)
-                AddMissingValuesSteps(i, false, card.features.can_fill ? card.features.fill_steps : card.features.drop_steps);
-            if (!card.label.resolved && card.label.present) AddMissingValuesSteps(i, true, card.label.drop_steps);
-        }
+        for (size_t i = 0; i < cards.size() && i < missing_values_.size(); ++i)
+            AddMissingValuesSteps(missing_values_[i], cards[i].fix_all_steps);
         train_after_missing_values_fix_ = true;
+        train_after_from_dashboard_ = false;
     }
     if (train && node_editor_) {
         StartTrainingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());

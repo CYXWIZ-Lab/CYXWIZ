@@ -316,27 +316,34 @@ reads (after the steps before it ran) and in each supplied Validation / Test
 input. When there are some, *Cannot start training* says how many columns
 have them and shows a card per group:
 
-- **Feature columns**: a row per column (number or text, how many cells are
-  empty and how many are NaN, what Fill would use). **Fill numbers with**
-  Mean / Median / 0, then **Fill these columns** adds Missing Value steps
-  (text columns take their most frequent value). The value is learned from
-  the Train rows only. **Drop these rows** adds a Row Filter that keeps the
-  rows where each of these columns IS NOT EMPTY. A column more than half
-  empty can be left out of the features instead (**Actions**: its Data Input
-  role becomes Ignore).
+- **Feature columns** (training reads number columns): a row per column
+  (how many cells are empty and how many are NaN, what Fill would use).
+  **Fill numbers with** Mean / Median / 0, then **Fill these columns** adds a
+  Missing Value step. The value is learned from the Train rows only. **Drop
+  these rows** adds a Row Filter that keeps the rows where each of these
+  columns IS NOT EMPTY. A column more than half empty can be left out of the
+  features instead (**Actions**: its Data Input role becomes Ignore). Fill is
+  not offered when a column's name has a comma or spaces at its ends (the
+  Missing Value step lists its columns separated by commas); Drop is.
 - **The label**: **Drop rows without a label** adds a Row Filter
-  (`"<label>" IS NOT EMPTY`). A label is never filled in.
+  (`"<label>" IS NOT EMPTY`). A label is never filled in. A regression target
+  of several columns (`y`, `y_1`, ...) is a label in each of them: one Row
+  Filter keeps the rows that have every target.
 
-The steps go after the step that feeds the Data Split, so Train runs them
-first. After an action the card says what was added, with **Undo** (it
-removes those steps; Ctrl+Z on the canvas does too). **Fix and train** fills
-the feature columns and drops the rows without a label, then trains; once
-every group is fixed the button is **Train**. Missing Value and Row Filter
-treat NaN in a number column as an empty cell.
+The steps go after the step that feeds the Data Split, one after the other in
+the card's order, so Train runs them first. After an action the card says
+what was added, with **Undo**. The card follows the canvas: Ctrl+Z on the
+canvas removes the last step added and its group opens again, Redo puts it
+back, and opening another graph starts the card over. **Fix and train** fills
+the feature columns and drops the rows without a label, then trains (when the
+canvas could not add a step, the report opens again instead); once every
+group is fixed the button is **Train**. Missing Value and Row Filter treat
+NaN in a number column as an empty cell.
 
 A supplied Validation / Test input is read from its own file, so a step
 after it would not apply: its card says to fix the file and Apply its Data
-Input again.
+Input again (on the Dashboard too, when such an input is refused during the
+run).
 
 A table on disk (Parquet) counts its empty cells from the file before the
 run, but NaN only as the rows are read: such a run stops at that batch, and
