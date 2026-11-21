@@ -1262,11 +1262,15 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     arabic_config.OversampleH = 1;
     arabic_config.OversampleV = 1;
     arabic_config.RasterizerDensity = font_rasterizer_density_;
-    // Noto Sans Arabic draws its letters small for its size next to Inter's
-    // Latin (seen on screen): 1.2 times the size reads alike.
+    // A font's pixel size is its ascent plus descent: 1.21 em for Inter, 2.11
+    // for Noto Sans Arabic, so at the same size Arabic was drawn at 57% of
+    // Inter's scale (small on screen). Its letters span -0.42 to 1.01 em, more
+    // than Inter's line (-0.24 to 0.97): 1.48 times the size fits them in the
+    // line, lifted by 0.095 of the size, so nothing is cut at the bottom.
     const auto merge_arabic = [&](float font_size) {
-        if (has_arabic_font)
-            io.Fonts->AddFontFromFileTTF(arabic_font.c_str(), std::round(font_size * 1.2f), &arabic_config, arabic_ranges);
+        if (!has_arabic_font) return;
+        arabic_config.GlyphOffset.y = -std::round(font_size * 0.095f);
+        io.Fonts->AddFontFromFileTTF(arabic_font.c_str(), std::round(font_size * 1.48f), &arabic_config, arabic_ranges);
     };
     if (!has_arabic_font) spdlog::warn("Arabic font not found ({}): Arabic text is drawn as '?'", arabic_font);
 

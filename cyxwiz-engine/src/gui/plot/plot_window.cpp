@@ -5,6 +5,7 @@
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 #include "plot_style.h"
+#include "../../core/display_text.h"
 #include "../../core/plot/plot_arrow_source.h"
 #include "../../core/plot/plot_image.h"
 #include "../../core/plot/plot_presets.h"
@@ -662,7 +663,7 @@ bool PlotWindow::DrawColours(float w) {
             const ImVec4 now = view_.DrawnColour(i);
             if (ImGui::ColorButton("##swatch", now, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder)) ImGui::OpenPopup("##series_colour");
             ImGui::SameLine();
-            ImGui::TextUnformatted(names[i].c_str());
+            ImGui::TextUnformatted(core::DisplayText(names[i]).c_str());  // as the legend shows it
             if (ImGui::BeginPopup("##series_colour")) {
                 ImGui::TextColored(t.text_dim, "Theme colours");
                 for (int k = 0; k < ui::Tokens::kSeriesCount; ++k) {
