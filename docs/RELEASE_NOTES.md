@@ -778,6 +778,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- **A CyxQL count groups by the other columns.** `RETURN type(n) AS type,
+  count(n) AS count` gave one row (the first node's type beside the count of
+  every node); it now gives one row per type, as in Cypher.
 - Query Console: Run on an example puts the query in the editor, so a
   result or an error's line and column read against the text on screen; an
   error says its line and column once.

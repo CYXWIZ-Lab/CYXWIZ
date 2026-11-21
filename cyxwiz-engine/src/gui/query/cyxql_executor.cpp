@@ -1,6 +1,8 @@
 #include "cyxql_executor.h"
 #include "../node_type_import_registry.h"
 #include <algorithm>
+#include <cctype>
+#include <map>
 #include <numeric>
 #include <cmath>
 #include <spdlog/spdlog.h>
@@ -494,75 +496,75 @@ QueryResult Executor::executeReturn(const ASTNodePtr& clause, const std::vector<
         result.addColumn(name);
     }
 
-    // Check for aggregation
+    // An item's expression (an alias wraps it), and whether it aggregates.
+    auto itemExpr = [](const ASTNodePtr& item) {
+        return (item->type == ASTNodeType::Alias && !item->children.empty()) ? item->children[0] : item;
+    };
+    auto aggregateName = [](const ASTNodePtr& expr) {
+        if (expr->type != ASTNodeType::FunctionCall) return std::string();
+        std::string fn = expr->value;
+        std::transform(fn.begin(), fn.end(), fn.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        const bool aggregate = fn == "count" || fn == "sum" || fn == "avg" ||
+                               fn == "min" || fn == "max" || fn == "collect";
+        return aggregate ? fn : std::string();
+    };
+
     bool hasAggregation = false;
     for (const auto& item : clause->children) {
-        if (item->type == ASTNodeType::FunctionCall) {
-            std::string fn = item->value;
-            if (fn == "count" || fn == "COUNT" ||
-                fn == "sum" || fn == "SUM" ||
-                fn == "avg" || fn == "AVG" ||
-                fn == "min" || fn == "MIN" ||
-                fn == "max" || fn == "MAX" ||
-                fn == "collect" || fn == "COLLECT") {
-                hasAggregation = true;
-                break;
-            }
-        } else if (item->type == ASTNodeType::Alias && !item->children.empty()) {
-            auto& expr = item->children[0];
-            if (expr->type == ASTNodeType::FunctionCall) {
-                std::string fn = expr->value;
-                if (fn == "count" || fn == "COUNT" ||
-                    fn == "sum" || fn == "SUM" ||
-                    fn == "avg" || fn == "AVG" ||
-                    fn == "min" || fn == "MIN" ||
-                    fn == "max" || fn == "MAX" ||
-                    fn == "collect" || fn == "COLLECT") {
-                    hasAggregation = true;
-                    break;
-                }
-            }
+        if (!aggregateName(itemExpr(item)).empty()) {
+            hasAggregation = true;
+            break;
         }
     }
 
     if (hasAggregation) {
-        // Aggregate all contexts into single row
-        ResultRow row;
-        for (size_t i = 0; i < clause->children.size(); i++) {
-            auto& item = clause->children[i];
-            auto& colName = columnNames[i];
+        // The items that do not aggregate are the grouping keys: one row per
+        // distinct key, in the order the keys first appear (a count by type
+        // gives a row per type). With no keys, all rows make one group, so a
+        // count of nothing is one row of 0; with keys, nothing gives no rows.
+        bool hasKeys = false;
+        for (const auto& item : clause->children) {
+            if (aggregateName(itemExpr(item)).empty()) hasKeys = true;
+        }
+        std::vector<std::vector<size_t>> groups;
+        std::map<std::string, size_t> groupOfKey;
+        for (size_t c = 0; c < contexts.size(); ++c) {
+            std::string key;
+            for (const auto& item : clause->children) {
+                const auto expr = itemExpr(item);
+                if (aggregateName(expr).empty()) {
+                    key += evaluateExpression(expr, contexts[c]).toString();
+                    key += '\x1f';
+                }
+            }
+            const auto [it, inserted] = groupOfKey.emplace(key, groups.size());
+            if (inserted) groups.emplace_back();
+            groups[it->second].push_back(c);
+        }
+        if (groups.empty() && !hasKeys) groups.emplace_back();
 
-            auto expr = (item->type == ASTNodeType::Alias && !item->children.empty())
-                         ? item->children[0] : item;
-
-            if (expr->type == ASTNodeType::FunctionCall) {
-                std::string fn = expr->value;
-                std::transform(fn.begin(), fn.end(), fn.begin(), ::tolower);
-
-                if (fn == "count" || fn == "sum" || fn == "avg" || fn == "min" || fn == "max" || fn == "collect") {
+        for (const auto& group : groups) {
+            ResultRow row;
+            for (size_t i = 0; i < clause->children.size(); i++) {
+                const auto expr = itemExpr(clause->children[i]);
+                const std::string fn = aggregateName(expr);
+                if (!fn.empty()) {
                     std::vector<ResultValue> values;
-                    for (const auto& ctx : contexts) {
+                    for (size_t c : group) {
                         if (!expr->children.empty()) {
-                            values.push_back(evaluateExpression(expr->children[0], ctx));
+                            values.push_back(evaluateExpression(expr->children[0], contexts[c]));
                         } else {
                             values.push_back(ResultValue::makeInt(1));  // COUNT(*)
                         }
                     }
-                    row.set(colName, aggregate(fn, values));
-                } else {
-                    // Non-aggregate function, use first context
-                    if (!contexts.empty()) {
-                        row.set(colName, evaluateExpression(expr, contexts[0]));
-                    }
-                }
-            } else {
-                // Non-aggregate expression, use first context
-                if (!contexts.empty()) {
-                    row.set(colName, evaluateExpression(expr, contexts[0]));
+                    row.set(columnNames[i], aggregate(fn, values));
+                } else if (!group.empty()) {
+                    row.set(columnNames[i], evaluateExpression(expr, contexts[group.front()]));
                 }
             }
+            result.addRow(row);
         }
-        result.addRow(row);
     } else {
         // No aggregation - one row per context
         for (const auto& ctx : contexts) {
