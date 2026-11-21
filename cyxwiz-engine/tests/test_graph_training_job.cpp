@@ -370,6 +370,13 @@ int main() {
         };
         const auto memory = run(false, "checkpoints_tabular_memory");
         Check(memory.ok, "tabular in memory: trained" + (memory.error.empty() ? "" : " (" + memory.error + ")"));
+        // Both in memory, with a validation input: validation reads that input
+        // (TOFIX223 0.17: the job trained the plain table and never validated).
+        const auto memory_validation = run(true, "checkpoints_tabular_memory_validation");
+        Check(memory_validation.ok && memory_validation.metrics.has_validation_metrics &&
+                  !memory_validation.metrics.val_loss_history.empty(),
+              "tabular in memory with a validation input in memory: validated on it" +
+                  (memory_validation.error.empty() ? "" : " (" + memory_validation.error + ")"));
         cyxwiz::SetDataBudgetBytes(1);
         const auto on_disk = run(false, "checkpoints_tabular_disk");
         Check(on_disk.ok && on_disk.model != nullptr,

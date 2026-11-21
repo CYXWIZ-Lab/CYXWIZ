@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 #include "csv_ingestion_options.h"
 
@@ -178,6 +179,10 @@ public:
     // About the size of the table in memory (TOFIX154): the row groups'
     // uncompressed sizes from the file metadata.
     uint64_t GetInMemoryBytesEstimate() const { return uncompressed_bytes_; }
+    // Empty cells of a column, summed from the file's row-group statistics
+    // (no data is read); -1 when a row group has no null count for it.
+    // NaN values are not counted: the statistics do not hold them.
+    int64_t NullCount(const std::string& column) const;
 
 private:
     ParquetBackedDataset(const std::string& name, const std::string& path);
@@ -202,6 +207,7 @@ private:
     // Row count per row group, pre-computed in Open() so the batcher can
     // partition work without re-reading metadata every epoch.
     std::vector<int64_t> row_group_sizes_;
+    std::vector<std::pair<std::string, int64_t>> null_counts_;  // per leaf column, -1 = unknown
 };
 
 // Adds the distinct values of `column` (as text, nulls skipped) to `seen`,

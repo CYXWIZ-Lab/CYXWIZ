@@ -209,10 +209,11 @@ std::vector<float> ResolveCrossEntropyClassWeights(
     if (class_weight) {
         const std::string mode = ToLowerAscii(TrimAscii(*class_weight));
         if (mode == "balanced") {
-            spdlog::warn(
-                "TrainingExecutor: class_weight=balanced was not resolved "
-                "before loss construction; "
-                "using unweighted CrossEntropy loss");
+            // Weights need the Train part's class counts: TrainingExecutor
+            // sets them once its batchers are built and rebuilds the loss, or
+            // refuses the run (ResolveBalancedClassWeights, TOFIX223 0.16).
+            // Built here before that, the loss is unweighted.
+            spdlog::debug("class_weight=balanced: loss built unweighted until the Train class counts are known");
             return {};
         }
         if (mode == "manual") {
@@ -472,6 +473,23 @@ bool BuildSequential(
         if ((!config.graph_op_node_ids.empty() || !config.multi_input_layer_node_ids.empty()) &&
             !layer_cfg.input_shape.empty() && layer_cfg.input_shape.size() <= 2) {
             current_input_size = layer_cfg.input_shape.back();
+        }
+
+        // Rows that hold an [L, C] sequence channel-major (time-series windows,
+        // audio features: torch [N, C, L]) reach a first recurrent layer as
+        // [N, L, C] time steps, as torch's x.view(N, C, L).transpose(1, 2)
+        // (TOFIX223 0.20, audit SEQ-01: they reached LSTM / GRU / RNN as
+        // [N, L*C] rows and the layer threw on the first batch).
+        const bool recurrent = layer_cfg.type == gui::NodeType::LSTM || layer_cfg.type == gui::NodeType::GRU ||
+                               layer_cfg.type == gui::NodeType::RNN;
+        if (i == 0 && recurrent && config.sequence_input_shape.size() == 2 &&
+            config.sequence_input_shape[0] * config.sequence_input_shape[1] == current_input_size) {
+            const size_t steps = config.sequence_input_shape[0];
+            const size_t channels = config.sequence_input_shape[1];
+            model.Add<ReshapeModule>(std::vector<size_t>{channels, steps});
+            model.Add<PermuteModule>(std::vector<int>{1, 0});
+            current_input_size = channels;
+            CYXWIZ_BUILDER_INFO("  [{}] rows -> [{} steps, {} features]", i, steps, channels);
         }
 
         switch (layer_cfg.type) {

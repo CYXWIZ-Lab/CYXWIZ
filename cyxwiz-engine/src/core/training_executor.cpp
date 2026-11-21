@@ -1078,6 +1078,21 @@ void TrainingExecutor::Train(
         return;
     }
 
+    // class_weight=balanced, for every kind of data: from the Train part's
+    // class counts, now that the batchers exist; the loss is rebuilt with the
+    // weights. When the counts cannot be had, the run stops with the reason
+    // instead of training unweighted (TOFIX223 0.16).
+    if (IsBalancedClassWeightRequest(config_)) {
+        try {
+            ResolveBalancedClassWeights(config_, active_train_ibatcher);
+            loss_ = BuildLossFromConfig(config_);
+        } catch (const std::exception& e) {
+            spdlog::error("TrainingExecutor: {}", e.what());
+            fail_run(std::string("class_weight_failed: ") + e.what());
+            return;
+        }
+    }
+
     // Layer snapshots on items by number (6.1c): from the batchers built
     // here, before any metric sampler wraps them.
     if (layer_snapshot_schedule_) snapshot_run_record_ = {};
@@ -3478,6 +3493,23 @@ void TrainingExecutor::RunTrainingEpochArrow(
             }
         }
 
+        // A NaN or infinite loss fails the run, before the optimizer step, as
+        // the sequence loop does (TOFIX223 0.6). The classification loss is
+        // summed on the device and read on the report interval (always on an
+        // epoch's last batch), so it is checked there: no extra device sync.
+        // A learning rate range test ends on a non-finite loss itself (its
+        // Record, after the step): that is its result, not a failure.
+        if (!range_test_ && (regression_metrics || should_report)) {
+            const float checked_loss = regression_metrics ? batch_loss : current_loss;
+            if (!std::isfinite(checked_loss)) {
+                throw std::runtime_error("the training loss became " +
+                                         std::string(std::isnan(checked_loss) ? "NaN" : "infinite") +
+                                         " at epoch " + std::to_string(epoch) + ", batch " +
+                                         std::to_string(batch_num) +
+                                         " (a learning rate too high, or NaN / infinite values in the data)");
+            }
+        }
+
         // Update metrics
         const float current_mae = regression.Mae();
         const float current_rmse = regression.Rmse();
@@ -3659,6 +3691,13 @@ ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
                 ? &device_loss_weight_sum
                 : nullptr,
             "TrainingExecutor::ReadValidationLoss");
+    }
+    if (batch_num > 0 && !std::isfinite(final_loss)) {
+        // As the sequence evaluation does: early stopping and the best model
+        // cannot use a NaN or infinite loss (TOFIX223 0.6).
+        throw std::runtime_error("the evaluation loss became " +
+                                 std::string(std::isnan(final_loss) ? "NaN" : "infinite") +
+                                 " (NaN / infinite values in the evaluation data, or a diverged model)");
     }
     float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
 

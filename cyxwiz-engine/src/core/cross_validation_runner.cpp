@@ -268,6 +268,10 @@ CrossValidationOutcome RunCrossValidation(const TrainingConfiguration& config, c
                             (trained.terminal_reason.empty() ? std::string("training failed") : trained.terminal_reason));
             std::shared_ptr<IExecutableModel> model = executor.ReleaseModel();
             if (!model) return fail("fold " + std::to_string(k + 1) + ": training gave no model");
+            // The fold is scored with the loss it trained with: class_weight
+            // balanced was resolved from this fold's Train rows into manual
+            // weights, which the graph's configuration does not hold.
+            fold.loss_params = executor.GetConfig().loss_params;
 
             const auto score = [&](const std::shared_ptr<ArrowDataset>& rows, CrossValidationScores& out) {
                 TestExecutor tester(fold, rows, label_column, TestDatasetScope::EntireProvidedDataset);

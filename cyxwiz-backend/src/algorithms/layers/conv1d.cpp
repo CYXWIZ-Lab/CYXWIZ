@@ -216,10 +216,13 @@ Conv1DLayer::Conv1DLayer(int in_channels,
     if (fan_in_size > static_cast<size_t>((std::numeric_limits<int>::max)())) {
         throw std::overflow_error("Conv1D fan-in exceeds ArrayFire limit");
     }
-    weights_ = AfToTensor(XavierUniform(
-        static_cast<int>(fan_in_size),
-        out_channels_,
-        af::dim4(out_channels_, in_channels_, kernel_size_)));
+    // An explicit shape: guessing it from the array would drop a trailing 1
+    // (kernel 1: [F, C, 1] became [F, C]; TOFIX223 0.14).
+    weights_ = Tensor::FromSemanticArray(
+        XavierUniform(static_cast<int>(fan_in_size), out_channels_,
+                      af::dim4(out_channels_, in_channels_, kernel_size_)),
+        {static_cast<size_t>(out_channels_), static_cast<size_t>(in_channels_),
+         static_cast<size_t>(kernel_size_)});
     if (use_bias_) {
         bias_ = AfToTensor(
             af::constant(0.0f, af::dim4(out_channels_)));

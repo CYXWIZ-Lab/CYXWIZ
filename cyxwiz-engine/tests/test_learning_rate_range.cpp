@@ -246,6 +246,22 @@ void CheckExecutor() {
               all.range_stop_reason + ")");
     Check(Near(all.range_points.back().learning_rate, 1e-2), "the last step trains at To");
     Check(validations == 0, "still no validation pass");
+
+    // A rate so high that the loss overflows on the next step: the test ends
+    // there with its curve, as a range test should, not as a failed run (the
+    // non-finite loss check once threw before the test recorded the loss).
+    cyxwiz::LearningRateRangeSettings overflow;
+    overflow.start = 1e30;
+    overflow.end = 1e32;
+    overflow.steps = 10;
+    const auto blown = RunRange(overflow, &validations);
+    Check(blown.terminal_status != "failed",
+          "a loss that overflows ends the range test, not the run as failed (" + blown.terminal_status + ": " +
+              blown.terminal_reason + ")");
+    Check(blown.range_points.size() >= 2 && !std::isfinite(blown.range_points.back().loss) &&
+              blown.range_stop_reason.find("stopped being a number") != std::string::npos,
+          "the overflowing step is the curve's last point and says why: " + std::to_string(blown.range_points.size()) +
+              " steps (" + blown.range_stop_reason + ")");
 }
 
 void CheckWords() {

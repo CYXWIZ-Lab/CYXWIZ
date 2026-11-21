@@ -1,6 +1,6 @@
 # Contributing to CyxWiz
 
-Thank you for helping improve CyxWiz. This is a source-available project; contributions and use remain subject to [LICENSE](LICENSE).
+Thank you for helping improve CyxWiz. CyxWiz is licensed under the [GNU AGPL v3.0 or later](LICENSE) with a [commercial licence](LICENSE-COMMERCIAL.md) available. Because CYXWIZ offers both, outside contributions need a signed Contributor Licence Agreement that lets CYXWIZ license them under both. The agreement is being prepared; please open an issue before sending a pull request.
 
 ## Before starting
 

@@ -31,8 +31,8 @@ std::vector<size_t> KernelAxes(gui::NodeType type, const std::string& key, size_
         case gui::NodeType::DepthwiseConv2D:  // [C x M, 1, k, k] -> [k, k, 1, C x M]
         case gui::NodeType::ConvTranspose2D:  // [in, out, kh, kw] -> [kh, kw, out, in]
             return rank == 4 ? std::vector<size_t>{2, 3, 1, 0} : std::vector<size_t>{};
-        case gui::NodeType::Conv1D:           // [out, in, k] -> [k, in, out]
-            return rank == 3 ? std::vector<size_t>{2, 1, 0} : std::vector<size_t>{};
+        // Conv1D needs none: its kernel is [out, in, k], PyTorch's own order
+        // (TOFIX223 0.15: it was permuted to [k, in, out]).
         default:
             return {};
     }

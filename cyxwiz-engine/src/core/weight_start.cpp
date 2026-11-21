@@ -17,16 +17,21 @@ size_t Elements(const std::vector<size_t>& shape) {
 }
 
 // The channel count of the feature map flattened into this layer's input: the
-// nearest layer before it is a Flatten of a channels-last sample ([H, W, C],
-// [L, C], [D, H, W, C]) with as many values as this layer reads, with only
-// layers that keep the row as it is (activations, dropout) between. 0 otherwise.
+// nearest layer before it is a Flatten of a 2-D feature map [H, W, C] with as
+// many values as this layer reads, with only layers that keep the row as it
+// is (activations, dropout) between. 0 otherwise. Only a 2-D map is flattened
+// channels last by the Engine; a Conv1D section ([L, C]) and a Conv3D volume
+// ([D, H, W, C]) are flattened channel first, as PyTorch's flatten(1) does, so
+// their Dense columns need no reorder (TOFIX223 0.15: they were reordered as
+// channels last, which scrambled the head; the Conv1D and Conv3D PyTorch
+// parity tests set torch's own head weights and pass).
 size_t FlattenedChannels(const std::vector<BuiltModuleProvenance>& provenance, size_t at) {
     const size_t width = Elements(provenance[at].input_shape);
     for (size_t i = at; i-- > 0;) {
         const auto& before = provenance[i];
         if (before.compiled_layer_index == provenance[at].compiled_layer_index) continue;
         if (before.node_type == gui::NodeType::Flatten) {
-            const bool feature_map = before.input_shape.size() >= 2 && Elements(before.input_shape) == width;
+            const bool feature_map = before.input_shape.size() == 3 && Elements(before.input_shape) == width;
             return feature_map ? before.input_shape.back() : 0;
         }
         if (before.input_shape != before.output_shape || before.output_shape != provenance[at].input_shape) return 0;

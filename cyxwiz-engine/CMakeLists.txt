@@ -201,7 +201,6 @@ set(ENGINE_SOURCES
     src/core/ml_readiness.cpp
     src/core/data_convert_service.cpp
     src/core/data_preview_service.cpp
-    src/core/datasets/kaggle_dataset.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/datasets/streaming_dataset.cpp
     src/core/datasets/mnist_dataset.cpp
@@ -211,7 +210,6 @@ set(ENGINE_SOURCES
     src/core/datasets/json_dataset.cpp
     src/core/datasets/txt_dataset.cpp
     src/core/datasets/image_folder_dataset.cpp
-    src/core/datasets/huggingface_dataset.cpp
     src/core/datasets/custom_dataset.cpp
     src/core/sparse_feature_dataset_cache.cpp
     src/core/image_batchers.cpp
@@ -3346,7 +3344,6 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
     src/core/datasets/image_csv_dataset.cpp
-    src/core/datasets/kaggle_dataset.cpp
     src/core/datasets/streaming_dataset.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
@@ -4833,6 +4830,31 @@ if(WIN32)
 endif()
 set_target_properties(test_arrow_batcher_resident PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME arrow_batcher_resident COMMAND test_arrow_batcher_resident)
+
+# Feature values do not depend on the table's chunking, for every numeric type (TOFIX223 0.1).
+add_executable(test_arrow_batcher_chunking tests/test_arrow_batcher_chunking.cpp)
+target_include_directories(test_arrow_batcher_chunking PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_arrow_batcher_chunking PRIVATE
+    cyxwiz-training-core cyxwiz-backend Arrow::arrow_shared spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_arrow_batcher_chunking PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_arrow_batcher_chunking PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME arrow_batcher_chunking COMMAND test_arrow_batcher_chunking)
+
+# A batcher refuses what it cannot train on: no empty batch for an error, no
+# all-zero target row for a label outside the width (TOFIX223 0.2, 0.4).
+add_executable(test_batcher_refusals tests/test_batcher_refusals.cpp)
+target_include_directories(test_batcher_refusals PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_batcher_refusals PRIVATE
+    cyxwiz-training-core cyxwiz-backend Arrow::arrow_shared spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_batcher_refusals PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_batcher_refusals PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME batcher_refusals COMMAND test_batcher_refusals)
 
 # Training data-path benchmark (TOFIX178 S0-a): batch preparation vs the model step.
 add_executable(cyxwiz-bench-training-data tests/tool_bench_training_data.cpp)
@@ -7978,12 +8000,20 @@ add_test(NAME metric_graph_pytorch_parity COMMAND test_metric_graph_training)
 # ===== Test: Conv1D graphs vs PyTorch (TOFIX140) =====
 set(CYXWIZ_CONV1D_GRAPH_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/conv1d_graph_pytorch.json")
+# A recurrent layer first on time-series window rows (TOFIX223 0.20).
+add_executable(test_time_series_recurrent_rows tests/test_time_series_recurrent_rows.cpp)
+configure_training_executor_harness(test_time_series_recurrent_rows)
+target_include_directories(test_time_series_recurrent_rows PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+add_test(NAME time_series_recurrent_rows COMMAND test_time_series_recurrent_rows)
+
 add_executable(test_conv1d_graph_training
     tests/test_conv1d_graph_training.cpp
 )
 configure_training_executor_harness(test_conv1d_graph_training)
 target_compile_definitions(test_conv1d_graph_training PRIVATE
     CYXWIZ_CONV1D_GRAPH_FIXTURE="${CYXWIZ_CONV1D_GRAPH_PYTORCH_FIXTURE}"
+    CYXWIZ_WEIGHT_FILE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/weight_files"
 )
 add_custom_target(copy_test_conv1d_graph_training_fixture
     COMMAND ${CMAKE_COMMAND} -E make_directory

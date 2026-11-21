@@ -305,7 +305,15 @@ private:
     std::string split_policy_key_;            // in each step's change hash
     std::set<int> source_node_ids_;           // the run's Data Inputs
     std::mutex partitioned_mutex_;
-    std::map<std::string, std::string> partitioned_sources_;  // source + policy -> partitioned name
+    // source + policy -> the partitioned copy, with the tables it was made from
+    // (the source, then any supplied Validation / Test rows joined to it). The
+    // copy is reused only while those are still the registered tables: a
+    // re-loaded input is a new table and gets a new copy (TOFIX223 0.8).
+    struct PartitionedCopy {
+        std::string name;
+        std::vector<std::weak_ptr<arrow::Table>> made_from;
+    };
+    std::map<std::string, PartitionedCopy> partitioned_sources_;
     // `name` with its rows' partition when `input_node` is a Data Input and
     // the graph has a split, followed by the supplied Validation / Test
     // inputs' rows when it is the training input; `name` otherwise.

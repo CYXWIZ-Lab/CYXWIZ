@@ -32,6 +32,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <functional>
 #include <fstream>
 #include <iostream>
@@ -526,6 +527,146 @@ FullBatchMetricOracle EvaluateCurrentModelAsOneBatch(
         }
     }
     return oracle;
+}
+
+// A NaN or infinite loss fails the run with the reason, for a classification
+// graph (loss summed on the device, checked where it is read) and a regression
+// graph (loss read every batch); it does not finish "completed" with NaN
+// weights (TOFIX223 0.6). One feature value is infinite (a NaN cell is a
+// missing value, refused before the first batch: TOFIX223 0.3).
+void TestNonFiniteLossFailsTheRun(const std::filesystem::path& work_dir) {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("label", arrow::float32()),
+    });
+    const float inf = std::numeric_limits<float>::infinity();
+    auto table = arrow::Table::Make(
+        schema,
+        {
+            FinishFloatArray({0.0f, 0.1f, 0.9f, 1.0f, 0.2f, 0.8f}),
+            FinishFloatArray({0.0f, 0.2f, inf, 1.0f, 0.1f, 0.9f}),
+            FinishFloatArray({0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f}),
+        },
+        6);
+    const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(table, "non_finite_loss");
+    for (const bool regression : {false, true}) {
+        auto config = MakeConfig(work_dir / (regression ? "non-finite-regression" : "non-finite-classification"));
+        config.train_ratio = 1.0f;
+        config.val_ratio = 0.0f;
+        config.test_ratio = 0.0f;
+        config.has_data_split = true;
+        config.batch_size = 2;
+        config.log_interval = 0;
+        if (regression) {
+            config.loss_type = gui::NodeType::MSELoss;
+            config.output_size = 1;
+            config.layers.front().units = 1;
+        }
+        cyxwiz::TrainingExecutor executor(config, dataset, "label");
+        std::string error;
+        try {
+            executor.Train(1, config.batch_size, nullptr, nullptr, nullptr);
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
+        Check(error.find("training loss became") != std::string::npos,
+              std::string(regression ? "regression" : "classification") +
+                  ": a non-finite loss fails the run with the reason (got: '" + error + "')");
+    }
+}
+
+// class_weight=balanced comes from the Train part's class counts on every
+// path: a table in memory, a Parquet file, host-built batchers. A Train part
+// without one of the classes stops the run with the reason, never trains
+// unweighted (TOFIX223 0.16).
+void TestBalancedClassWeightsOnEveryPath(const std::filesystem::path& work_dir) {
+    const auto make_dataset = [](const std::vector<int64_t>& labels, const std::string& name) {
+        auto schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("x1", arrow::float32()),
+                                     arrow::field("label", arrow::int64())});
+        std::vector<float> x0, x1;
+        for (size_t i = 0; i < labels.size(); ++i) {
+            x0.push_back(0.1f * static_cast<float>(i));
+            x1.push_back(labels[i] ? 1.0f : 0.0f);
+        }
+        arrow::Int64Builder label_builder;
+        (void)label_builder.AppendValues(labels);
+        std::shared_ptr<arrow::Array> label_array;
+        (void)label_builder.Finish(&label_array);
+        auto table = arrow::Table::Make(schema, {FinishFloatArray(x0), FinishFloatArray(x1), label_array},
+                                        static_cast<int64_t>(labels.size()));
+        return std::make_shared<cyxwiz::ArrowDataset>(table, name);
+    };
+    const auto balanced_config = [&](const std::string& name) {
+        auto config = MakeConfig(work_dir / name);
+        config.has_data_split = true;
+        config.train_ratio = 0.75f;  // Train: the first 6 of 8 rows
+        config.val_ratio = 0.25f;
+        config.test_ratio = 0.0f;
+        config.batch_size = 2;
+        config.log_interval = 0;
+        config.loss_params["class_weight"] = "balanced";
+        return config;
+    };
+    const auto train = [](cyxwiz::TrainingExecutor& executor, int batch_size) {
+        try {
+            executor.Train(1, batch_size, nullptr, nullptr, nullptr);
+        } catch (const std::exception& e) {
+            return std::string(e.what());
+        }
+        const auto metrics = executor.GetMetrics();
+        return metrics.terminal_status == "failed" ? metrics.terminal_reason : std::string();
+    };
+    const auto weights_of = [](const cyxwiz::TrainingExecutor& executor) {
+        const auto& params = executor.GetConfig().loss_params;
+        const auto it = params.find("class_weights");
+        return it == params.end() ? std::string("(none)") : it->second;
+    };
+
+    // Train labels 0,0,0,0,0,1: 6 / (2 x 5) and 6 / (2 x 1).
+    const std::string expected = "[0.60000002, 3]";
+    const auto imbalanced = make_dataset({0, 0, 0, 0, 0, 1, 1, 0}, "balanced_weights");
+    {
+        cyxwiz::TrainingExecutor executor(balanced_config("balanced-arrow"), imbalanced, "label");
+        const std::string error = train(executor, 2);
+        Check(error.empty() && weights_of(executor) == expected,
+              "in memory: balanced weights from the Train counts (got " + weights_of(executor) + ", error '" + error +
+                  "')");
+    }
+    const auto parquet_path = work_dir / "balanced-weights.parquet";
+    WriteParquetWithRowGroupSize(*imbalanced, parquet_path.string(), 3);
+    const auto parquet_dataset = cyxwiz::ParquetBackedDataset::Open(parquet_path.string(), "balanced_weights_parquet");
+    Check(parquet_dataset != nullptr, "the balanced-weights Parquet fixture opens");
+    if (parquet_dataset) {
+        cyxwiz::TrainingExecutor executor(balanced_config("balanced-parquet"), parquet_dataset, "label");
+        const std::string error = train(executor, 2);
+        Check(error.empty() && weights_of(executor) == expected,
+              "from a Parquet file: the same weights (got " + weights_of(executor) + ", error '" + error + "')");
+    }
+    {
+        // Host-built batchers (image, audio, supplied roles and the job's
+        // datasets come this way).
+        cyxwiz::ExternalBatcherFactory factory = [imbalanced](const cyxwiz::TrainingConfiguration&, int batch_size) {
+            auto batcher = std::make_shared<cyxwiz::ArrowDatasetBatcher>(imbalanced, "label", batch_size, false,
+                                                                         0.75f, true);
+            batcher->SetOneHotEncoding(2);
+            cyxwiz::ResolvedExternalBatchers batchers;
+            batchers.train = batcher;
+            return batchers;
+        };
+        cyxwiz::TrainingExecutor executor(balanced_config("balanced-external"), factory);
+        const std::string error = train(executor, 2);
+        Check(error.empty() && weights_of(executor) == expected,
+              "host-built batchers: the same weights (got " + weights_of(executor) + ", error '" + error + "')");
+    }
+    {
+        // No class 1 in the Train rows: its weight would be infinite.
+        const auto one_class = make_dataset({0, 0, 0, 0, 0, 0, 1, 1}, "balanced_weights_one_class");
+        cyxwiz::TrainingExecutor executor(balanced_config("balanced-missing-class"), one_class, "label");
+        const std::string error = train(executor, 2);
+        Check(error.find("no rows of class 1") != std::string::npos,
+              "a Train part without class 1 stops the run with the reason (got '" + error + "')");
+    }
 }
 
 void TestUnevenFinalBatchMetricAggregation(
@@ -4849,6 +4990,8 @@ int main(int argc, char** argv) {
     TestSequenceLifecycleCadence(work_dir);
     TestMetricReportingCadenceInvariance(dataset, work_dir);
     TestUnevenFinalBatchMetricAggregation(work_dir);
+    TestNonFiniteLossFailsTheRun(work_dir);
+    TestBalancedClassWeightsOnEveryPath(work_dir);
     const auto training_core_fixture = LoadTrainingCoreFixture(
         argc > 0 ? fs::path(argv[0]) : fs::path{});
     TestGradientAccumulationPyTorchParity(

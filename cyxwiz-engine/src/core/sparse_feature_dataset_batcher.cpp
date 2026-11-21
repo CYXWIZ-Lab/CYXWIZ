@@ -1,5 +1,6 @@
 #include "sparse_feature_dataset_batcher.h"
 #include "split_partitioning.h"
+#include "class_label_range.h"
 
 #include "materialization_memory_guard.h"
 #include "cyxwiz/portable_random.h"
@@ -364,6 +365,18 @@ std::optional<Batch> SparseFeatureDatasetBatcher::GetSourceSamples(const std::ve
     return AssembleBatch(rows.data(), rows.size());
 }
 
+std::optional<std::vector<size_t>> SparseFeatureDatasetBatcher::TrainClassCounts() const {
+    if (split_phase_ != BatcherPhase::Train || !is_training_ || !dataset_ || !dataset_->GetLabels())
+        return std::nullopt;
+    std::vector<size_t> counts;
+    try {
+        for (const int64_t row : base_indices_) CountClass(counts, ReadLabel(row, true).class_index);
+    } catch (const std::exception&) {
+        return std::nullopt;  // an empty or non-class label: batches refuse it with the reason
+    }
+    return counts;
+}
+
 std::optional<BatcherPhase> SparseFeatureDatasetBatcher::SourceSamplePart(size_t index) const {
     // This batcher holds one part of the split.
     return std::find(base_indices_.begin(), base_indices_.end(), static_cast<int64_t>(index)) != base_indices_.end()
@@ -491,11 +504,7 @@ Batch SparseFeatureDatasetBatcher::AssembleBatch(const int64_t* rows, size_t act
             for (size_t row = 0; row < actual_batch_size; ++row) {
                 const int64_t label =
                     ReadLabel(rows[row], true).class_index;
-                if (label < 0 || static_cast<uint64_t>(label) >= num_classes_) {
-                    throw std::runtime_error(
-                        "SparseFeatureDatasetBatcher class index is outside "
-                        "the one-hot width");
-                }
+                CheckClassLabelInWidth("SparseFeatureDatasetBatcher", label, num_classes_);
                 output[row * num_classes_ + static_cast<size_t>(label)] = 1.0f;
             }
             batch.labels = Tensor(

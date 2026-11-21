@@ -111,6 +111,7 @@ public:
     size_t SourceSampleCount() const override;
     // This batcher's part when the row is in it (it holds one part).
     std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
+    std::optional<std::vector<size_t>> TrainClassCounts() const override;
 
     // Preprocessing (IBatcher)
     void SetNormalization(float mean, float std_dev) override;
@@ -156,6 +157,9 @@ private:
 
     // Column layout (populated by InitializeColumns at construction)
     std::vector<int> feature_cols_;   // column indices that carry feature data
+    // Missing values refused once, from the file's statistics (TOFIX223 0.3).
+    void RefuseMissingValues() const;
+    mutable bool missing_values_checked_ = false;
     int label_col_idx_ = -1;          // column index of the label column, -1 = none
     std::vector<int> label_col_indices_;  // ordered regression target columns
     size_t num_features_ = 0;

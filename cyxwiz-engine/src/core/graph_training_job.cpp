@@ -308,9 +308,11 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
         ApplySequenceBatcherBuildResultToTrainingConfig(sequence, config);
         executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(sequence.batcher),
                                                       std::move(sequence.id_to_label));
-    } else if (role_on_disk || (train_on_disk && (roles.dev.IsSupplied() || roles.test.IsSupplied()))) {
-        // Supplied roles with any of them on disk: one batcher per role, each
-        // from memory or from its file (the Engine's TabularLoader path).
+    } else if (roles.dev.IsSupplied() || roles.test.IsSupplied()) {
+        // Supplied roles: one batcher per role, each from memory or from its
+        // file, as the Engine's TabularLoader does. In memory too (TOFIX223
+        // 0.17: with every role in memory the job trained the plain table,
+        // whose split gives a supplied role no rows, and never validated).
         ResolvedTabularDatasets resolved;
         const auto pick = [&](const std::string& name, std::shared_ptr<ArrowDataset>& memory,
                               std::shared_ptr<ParquetBackedDataset>& file) {

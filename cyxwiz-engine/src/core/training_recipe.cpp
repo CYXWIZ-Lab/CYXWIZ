@@ -76,8 +76,6 @@ TrainingRecipe ArrowTrainingRecipe(std::shared_ptr<ArrowDataset> dataset, std::s
                   [dataset, label_column](TrainingConfiguration config, int, std::string&) {
                       ResolveTableInputSize(config, dataset->GetSchema(), label_column, dataset->GetNumRows(),
                                             dataset->GetNumColumns(), "Arrow");
-                      TryApplyBalancedClassWeightsFromArrowTable(config, dataset->GetArrowTable(), label_column,
-                                                                 /*partition_column=*/"", "TrainingManager Arrow");
                       return std::make_unique<TrainingExecutor>(std::move(config), dataset, label_column);
                   });
 }
@@ -225,6 +223,7 @@ TrainingRecipe AudioTrainingRecipe(DataRegistry::AudioDatasetEntry audio_entry) 
             auto batcher = MakeAudioTrainingBatcher(audio_entry, config, batch_size, AudioTrainingSplit(config));
             if (batcher->GetNumSamples() == 0) {
                 error = "the audio dataset has 0 samples";
+                if (!batcher->LoadError().empty()) error += ": " + batcher->LoadError();
                 return nullptr;
             }
 
