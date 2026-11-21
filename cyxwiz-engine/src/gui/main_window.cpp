@@ -563,6 +563,7 @@ MainWindow::MainWindow()
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     training_plot_panel_ = std::make_shared<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
     training_plot_panel_->SetViewDefaults(cyxwiz::core::EngineConfig::Instance().GetTrainingDashboard());
+    WireMissingValuesDashboard();
     // Prepared-data cache actions from the dashboard's Data preparation card.
     training_plot_panel_->SetSavePathCallback([](const std::string& title, const std::string& default_name) {
         const std::string root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
@@ -3066,6 +3067,7 @@ void MainWindow::Render() {
 
     // Render the Compile Graph result popup (triggered from Train -> Compile Graph menu)
     RenderCompileResultPopup();
+    TrackMissingValuesSteps();
     RenderOperationErrorPopup();
     RenderMaterializationMemoryConfirmationPopup();
 
@@ -3991,6 +3993,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     accepted_materialization_memory_estimated_bytes_ = 0;
     try {
         spdlog::info("StartTrainingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
+        missing_values_.clear();  // a new attempt: its own check
+        dashboard_missing_ = MissingValuesEntry{};  // and a refused run gets a fresh card
 
         // === Pre-flight compile gate ===
         // Run the same Compile pass the explicit Compile button uses, and
@@ -4244,8 +4248,32 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         }
 
         auto dispatch_training = marked ? marked->dispatch : MakeEngineGraphTrainingDispatch(registry, tm);
+        const std::string source_dataset = config.dataset_name;  // the Data Input's own (its column roles)
         const std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel =
             marked ? std::weak_ptr<cyxwiz::TrainingPlotPanel>() : std::weak_ptr<cyxwiz::TrainingPlotPanel>(training_plot_panel_);
+
+        // Training would refuse missing values: the launch task finds them
+        // off the UI thread and the report offers the fix. Nothing started:
+        // the canvas is free again for the fix's steps (its pins unchanged).
+        // The report is for this graph only: one opened or cleared during
+        // the check gets no card for these columns and node ids.
+        const uint64_t launch_graph = node_editor_ ? node_editor_->GraphGeneration() : 0;
+        auto on_missing_values = [this, nodes, source_dataset, launch_graph, held = static_cast<bool>(node_editor_callback),
+                                  not_started = marked ? marked->not_started : nullptr](
+                                     std::vector<MissingValuesBlock> blocks) {
+            const std::string why = "Not started: the data has missing values (the report says where).";
+            if (held && node_editor_) node_editor_->SetTrainingActive(false);
+            if (not_started) not_started(why);
+            // Loading the data or running its steps first left the Dashboard
+            // preparing (its last run was cleared then): end that here.
+            if (training_plot_panel_ && training_plot_panel_->IsPreparing())
+                training_plot_panel_->SetPreparationFailed(why);
+            if (!node_editor_ || node_editor_->GraphGeneration() != launch_graph) {
+                spdlog::info("Missing values: the graph changed during the check; no report");
+                return;
+            }
+            ShowMissingValuesReport(blocks, nodes, source_dataset);
+        };
 
         auto launch_result = StartGraphTrainingFromCompiledConfig(
             nodes, links, std::move(config), registry, plot_panel,
@@ -4256,16 +4284,16 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 : std::nullopt,
             cyxwiz::ProjectManager::Instance().GetProjectRoot(),
             canvas_dataset,
-            prepared_key);
+            prepared_key,
+            std::move(on_missing_values));
 
+        // Started: the launch task checks the data, then prepares and
+        // dispatches (the Dashboard shows itself once the check passes).
         if (launch_result.started && marked) {
             marked_launch_.reset();  // the preparation runs, then its dispatch
             spdlog::info("{} started", marked->what);
         } else if (launch_result.started) {
-            spdlog::info("Training started successfully");
-            if (training_plot_panel_) {
-                training_plot_panel_->SetVisible(true);
-            }
+            spdlog::info("Training launch queued");
         } else {
             compile_result_success_ = false;
             compile_result_issues_.clear();

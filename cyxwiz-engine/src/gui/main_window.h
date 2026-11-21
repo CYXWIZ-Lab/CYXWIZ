@@ -254,6 +254,23 @@ private:
     // compile found, or for why Train / Local Debug / a checkpoint load
     // stopped (`stop_reason`, empty when the findings say it).
     void ShowCompileReport(cyxwiz::compile_report::Mode mode, std::string stop_reason = {});
+    // The missing-values fix in that report (TOFIX223 0.3): the cards from
+    // the state below, the steps each action adds and removes, and the
+    // training "Fix and train" starts once its steps are on the canvas.
+    struct MissingValuesEntry;
+    void ShowMissingValuesReport(const std::vector<MissingValuesBlock>& blocks, const std::vector<MLNode>& nodes,
+                                 const std::string& source_dataset);
+    void RefreshMissingValuesReport();
+    void RenderMissingValuesCards();
+    // `steps` in the card's order: all go after the step that feeds the Data
+    // Split, as one chain in that order.
+    void AddMissingValuesSteps(MissingValuesEntry& entry, const std::vector<cyxwiz::missing_values_fix::Step>& steps);
+    void RemoveMissingValuesSteps(MissingValuesEntry& entry, bool label);
+    void LeaveColumnOut(size_t entry, const std::string& column);
+    // The entry's steps checked against the canvas; true when what it says changed.
+    bool SyncMissingValuesEntry(MissingValuesEntry& entry);
+    void TrackMissingValuesSteps();
+    void WireMissingValuesDashboard();
     // User-facing failure for an action that has no result panel of its own
     // (checkpoint load, Run Test refusals): shown on screen, also logged.
     void ShowOperationError(std::string title, std::string message);
@@ -299,6 +316,42 @@ private:
     std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;
     cyxwiz::compile_report::Report compile_report_;
     cyxwiz::compile_report::Mode compile_report_mode_ = cyxwiz::compile_report::Mode::Compile;
+    cyxwiz::compile_report::Input compile_report_input_;  // the report's input, rebuilt as the fix acts
+
+    // Each input training refused for missing values, what was done there and
+    // the steps added for it. What the card says follows the canvas: a step
+    // is matched by id, type and name (an id another graph or an undo reused
+    // is not ours), a step the canvas no longer has makes its group open
+    // again, and one a redo puts back is taken back.
+    struct MissingValuesEntry {
+        struct AddedStep {
+            int id = -1;
+            NodeType type = NodeType::FilterRows;
+            std::string name;
+        };
+        MissingValuesBlock block;
+        std::string input_name;
+        std::string source_dataset;  // the Data Input's own dataset (its column roles)
+        std::string supplied_role;   // the Dashboard's run: a supplied input refused ("Validation" / "Test")
+        cyxwiz::missing_values_fix::Done features = cyxwiz::missing_values_fix::Done::No;  // from the steps
+        cyxwiz::missing_values_fix::Done label = cyxwiz::missing_values_fix::Done::No;
+        std::vector<std::string> left_out;
+        std::vector<AddedStep> feature_steps, label_steps;                // on the canvas
+        std::vector<AddedStep> undone_feature_steps, undone_label_steps;  // removed; taken back on a redo
+        // Requested, not on the canvas yet (ids -1), and the largest node id
+        // before the request: a new node has a larger one.
+        std::vector<AddedStep> awaiting_feature, awaiting_label;
+        int awaiting_after_id = -1;
+        uint64_t graph_generation = 0;  // the canvas graph it was made for
+    };
+    std::vector<MissingValuesEntry> missing_values_;
+    MissingValuesEntry dashboard_missing_;  // the Training Dashboard's refused run (one at a time)
+    cyxwiz::missing_values_fix::NumberFill missing_values_fill_ = cyxwiz::missing_values_fix::NumberFill::Mean;
+    // Start training once the fix's steps are on the canvas (Fix and train,
+    // the Dashboard's Train again): never from inside a panel's drawing.
+    bool train_after_missing_values_fix_ = false;
+    bool train_after_from_dashboard_ = false;  // Train again: the Dashboard's card must be fixed
+    bool reopen_missing_values_report_ = false;  // Fix and train could not add a step: show the report again
 
     // Main-thread confirmation state for a warning/risky operator estimate.
     // The worker is not queued until the user accepts this frozen graph copy.

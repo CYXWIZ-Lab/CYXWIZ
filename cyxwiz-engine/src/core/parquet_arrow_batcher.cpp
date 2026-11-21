@@ -262,26 +262,32 @@ void AppendClassIds(const arrow::Array& chunk, std::unordered_map<std::string, u
     }
 }
 
+// A label cell with no value (empty, NaN, empty text): apart from a negative
+// class, which is a value the class-range check refuses.
+constexpr int64_t kMissingLabelClass = std::numeric_limits<int64_t>::min();
 
 template <typename ArrayT>
 void AppendIntegerClasses(const arrow::Array& chunk, std::vector<int64_t>& out) {
     const auto& values = static_cast<const ArrayT&>(chunk);
     for (int64_t i = 0; i < values.length(); ++i) {
         if (values.IsNull(i)) {
-            out.push_back(-1);
+            out.push_back(kMissingLabelClass);
             continue;
         }
-        // A float label as FillRows reads it (truncated, saturated); NaN is no class.
+        // A float label as FillRows reads it (truncated, saturated); NaN is missing.
         if constexpr (std::is_floating_point_v<typename ArrayT::TypeClass::c_type>)
-            out.push_back(std::isnan(values.Value(i)) ? -1 : ClassLabelFromValue(static_cast<float>(values.Value(i))));
+            out.push_back(std::isnan(values.Value(i)) ? kMissingLabelClass
+                                                      : ClassLabelFromValue(static_cast<float>(values.Value(i))));
         else
             out.push_back(static_cast<int64_t>(values.Value(i)));
     }
 }
 
 // The class of each label cell as FillRows reads it: a number is its class
-// (a float truncated), a text its vocabulary index; -1 for an empty cell or
-// an unknown text. False for a label type FillRows does not read.
+// (a float truncated, a negative number stays negative), a text its
+// vocabulary index (-1 when unknown); kMissingLabelClass for a missing label
+// (empty cell, NaN, empty text). False for a label type FillRows does not
+// read, or a text label without its vocabulary.
 bool AppendLabelClasses(const arrow::Array& chunk, const LabelVocabulary* vocabulary, std::vector<int64_t>& out) {
     switch (chunk.type_id()) {
     case arrow::Type::INT8: AppendIntegerClasses<arrow::Int8Array>(chunk, out); return true;
@@ -296,21 +302,23 @@ bool AppendLabelClasses(const arrow::Array& chunk, const LabelVocabulary* vocabu
     case arrow::Type::DOUBLE: AppendIntegerClasses<arrow::DoubleArray>(chunk, out); return true;
     case arrow::Type::BOOL: {
         const auto& values = static_cast<const arrow::BooleanArray&>(chunk);
-        for (int64_t i = 0; i < values.length(); ++i) out.push_back(values.IsNull(i) ? -1 : (values.Value(i) ? 1 : 0));
+        for (int64_t i = 0; i < values.length(); ++i)
+            out.push_back(values.IsNull(i) ? kMissingLabelClass : (values.Value(i) ? 1 : 0));
         return true;
     }
     case arrow::Type::STRING:
     case arrow::Type::LARGE_STRING:
+        if (!vocabulary) return false;
         for (int64_t i = 0; i < chunk.length(); ++i) {
-            if (chunk.IsNull(i) || !vocabulary) {
-                out.push_back(-1);
+            if (chunk.IsNull(i)) {
+                out.push_back(kMissingLabelClass);
                 continue;
             }
             const std::string value =
                 chunk.type_id() == arrow::Type::STRING
                     ? std::string(static_cast<const arrow::StringArray&>(chunk).GetView(i))
                     : std::string(static_cast<const arrow::LargeStringArray&>(chunk).GetView(i));
-            out.push_back(vocabulary->IndexOf(value));
+            out.push_back(value.empty() ? kMissingLabelClass : vocabulary->IndexOf(value));
         }
         return true;
     default:
@@ -778,11 +786,16 @@ void ParquetArrowBatcher::RefuseMissingValues() const {
                          "are not checked before training", name);
             return;
         }
-        columns.push_back({name, nulls, label});
+        MissingColumn c;
+        c.name = name;
+        c.rows = nulls;
+        c.label = label;
+        c.text = IsTextArrowType(schema->field(col)->type()->id());
+        columns.push_back(std::move(c));
     };
     for (const int col : feature_cols_) add(col, false);
     for (const int col : label_col_indices_) add(col, true);
-    ThrowIfMissingValues("ParquetArrowBatcher", columns);
+    ThrowIfMissingValues("ParquetArrowBatcher", columns, dataset_->GetNumRows());
     missing_values_checked_ = true;
 }
 
@@ -896,11 +909,13 @@ void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* loca
         int64_t nans = 0;
         for (size_t b = 0; b < n; ++b)
             if (std::isnan(first[b * stride])) ++nans;
-        if (nans > 0) nan_columns.push_back({table.schema()->field(col)->name(), nans, label, true});
+        if (nans > 0) nan_columns.push_back({table.schema()->field(col)->name(), nans, label, true, nans, false});
     };
     for (size_t f = 0; f < feature_cols_.size(); ++f)
         count_nan(feature_cols_[f], batch_data.data() + dst * num_features_ + f, num_features_, false);
-    const auto refuse_nan = [&] { ThrowIfMissingValues("ParquetArrowBatcher", nan_columns); };
+    const auto refuse_nan = [&] {
+        ThrowIfMissingValues("ParquetArrowBatcher", nan_columns, dataset_ ? dataset_->GetNumRows() : -1);
+    };
 
     // The label of the same rows, then any further regression targets.
     if (label_col_idx_ < 0 || label_col_idx_ >= num_cols_in_table) {
@@ -918,6 +933,7 @@ void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* loca
             starts.push_back(start);
             start += chunk->length();
         }
+        int64_t missing_labels = 0;  // empty cells and empty texts: missing labels, refused below
         for (size_t b = 0; b < n; ++b) {
             const int64_t row = rows[b];
             if (row < 0 || row >= num_rows) continue;
@@ -925,10 +941,18 @@ void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* loca
                 static_cast<size_t>(std::upper_bound(starts.begin(), starts.end(), row) - starts.begin()) - 1;
             const auto& chunk = *label.chunk(static_cast<int>(c));
             const int64_t local = row - starts[c];
+            if (chunk.IsNull(local)) {
+                ++missing_labels;
+                continue;
+            }
             const std::string value =
                 label_type == arrow::Type::STRING
                     ? std::string(static_cast<const arrow::StringArray&>(chunk).GetView(local))
                     : std::string(static_cast<const arrow::LargeStringArray&>(chunk).GetView(local));
+            if (value.empty()) {
+                ++missing_labels;
+                continue;
+            }
             const int32_t index = label_vocabulary_ ? label_vocabulary_->IndexOf(value) : -1;
             if (index < 0) {
                 throw std::runtime_error("ParquetArrowBatcher: label '" + value + "' in column '" +
@@ -937,6 +961,8 @@ void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* loca
             }
             batch_labels[dst + b] = index;
         }
+        if (missing_labels > 0)
+            nan_columns.push_back({table.schema()->field(label_col_idx_)->name(), missing_labels, true, true, 0, true});
     } else {
         RequireNumberColumns("ParquetArrowBatcher", table, {label_col_idx_}, "label", /*allow_bool=*/true);
         std::vector<float> values(n, 0.0f);
@@ -1069,6 +1095,7 @@ std::optional<std::vector<size_t>> ParquetArrowBatcher::TrainClassCounts() const
     std::vector<size_t> counts;
     std::vector<int64_t> classes;
     std::vector<int8_t> parts;
+    int64_t missing = 0;
     for (const int g : assigned_row_groups_) {
         const auto labels = dataset_->ReadRowGroupColumn(g, label_name);
         if (!labels) return std::nullopt;
@@ -1090,8 +1117,24 @@ std::optional<std::vector<size_t>> ParquetArrowBatcher::TrainClassCounts() const
         for (size_t i = 0; i < classes.size(); ++i) {
             if (row_split_ && (offset + i >= row_split_->bucket.size() || row_split_->bucket[offset + i] != 0)) continue;
             if (!parts.empty() && parts[i] != 0) continue;
-            CountClass(counts, classes[i]);
+            if (classes[i] == kMissingLabelClass) {
+                ++missing;
+                continue;
+            }
+            // A negative class (a -1 / +1 label, an unknown text) has no output:
+            // the class-range refusal, as at the first batch.
+            if (!CountClass(counts, classes[i]))
+                ThrowNegativeClassLabel("ParquetArrowBatcher", classes[i]);
         }
+    }
+    // A Train row without a class (an empty cell or an empty text) is a
+    // missing label: the same refusal as at the first batch, not a class
+    // count that leaves it out.
+    if (missing > 0) {
+        const auto type = dataset_->GetSchema()->field(label_col_idx_)->type()->id();
+        // Counted in the Train rows only, out of the whole file's rows.
+        ThrowIfMissingValues("ParquetArrowBatcher",
+                             {{label_name, missing, true, true, 0, IsTextArrowType(type)}}, dataset_->GetNumRows());
     }
     return counts;
 }

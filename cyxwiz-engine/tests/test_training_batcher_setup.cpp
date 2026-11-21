@@ -849,6 +849,20 @@ void TestTextLabels(const std::filesystem::path& work_dir) {
     Check(cyxwiz::BuildLabelVocabulary(std::vector<std::string>{"north", "", "east", "delta", "east"}).names ==
               full.names,
           "plain values give the same sorted vocabulary (empty = missing)");
+    {
+        // An empty text is a missing label in a column too: no class "", and
+        // it encodes to null (refused by training). A text of spaces is a value.
+        arrow::StringBuilder texts;
+        (void)texts.AppendValues(std::vector<std::string>{"b", "", "a", " "});
+        std::shared_ptr<arrow::Array> array;
+        (void)texts.Finish(&array);
+        const auto column = std::make_shared<arrow::ChunkedArray>(array);
+        const cyxwiz::LabelVocabulary vocabulary = cyxwiz::BuildLabelVocabulary({column});
+        Check(vocabulary.names == std::vector<std::string>({" ", "a", "b"}), "an empty text is not a class");
+        const auto encoded = cyxwiz::EncodeLabels(*column, vocabulary);
+        Check(encoded.ok() && (*encoded)->null_count() == 1 && (*encoded)->chunk(0)->IsNull(1),
+              "an empty text encodes to a missing label");
+    }
 
     auto config = MakeConfig();
     config.output_size = 3;

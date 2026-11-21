@@ -505,9 +505,7 @@ arrow::Status ColumnTransformOperator::BeginStream(const std::shared_ptr<arrow::
     state_.input_schema_fingerprint = FingerprintPreprocessingSchema(schema);
     state_.configuration = Settings();
     state_.configuration["label_col"] = label_col_;
-    std::string excluded;
-    for (const auto& name : exclude_columns_) excluded += (excluded.empty() ? "" : ",") + name;
-    state_.configuration["exclude_columns"] = excluded;
+    state_.configuration["exclude_columns"] = FormatColumnList(exclude_columns_);
     return arrow::Status::OK();
 }
 

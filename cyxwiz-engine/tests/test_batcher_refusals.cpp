@@ -12,6 +12,7 @@
 
 #include "core/arrow_dataset.h"
 #include "core/dataset_batcher.h"
+#include "core/missing_values.h"
 #include "core/parquet_arrow_batcher.h"
 #include "core/parquet_backed_dataset.h"
 #include "computation_truth/test_device_selection.h"
@@ -159,6 +160,77 @@ int main() {
                                                 std::make_shared<arrow::ChunkedArray>(label_array), {"note"});
         Check(error.find("label 'label' 1 row") != std::string::npos && error.find("IS NOT EMPTY") != std::string::npos,
               "an empty label is refused with the Row Filter hint (got: '" + error + "')");
+    }
+    {
+        // The refusal carries its columns as data, for the fix the Engine
+        // offers: name, count, NaN among them, text or number, label or not,
+        // and the rows they are out of. Columns without a missing cell are
+        // not listed.
+        arrow::Int64Builder labels;
+        (void)labels.AppendValues({0, 1});
+        (void)labels.AppendNull();
+        (void)labels.Append(0);
+        std::shared_ptr<arrow::Array> label_array;
+        (void)labels.Finish(&label_array);
+        auto schema = arrow::schema({arrow::field("x", arrow::float64()), arrow::field("y", arrow::float64()),
+                                     arrow::field("label", arrow::int64())});
+        auto table = arrow::Table::Make(
+            schema, {Doubles({1, nan, nan, 4}, false), Doubles({1, 2, 3, 4}, true),
+                     std::make_shared<arrow::ChunkedArray>(label_array)});
+        auto dataset = std::make_shared<cyxwiz::ArrowDataset>(table, "refusals_typed");
+        bool typed = false;
+        try {
+            cyxwiz::ArrowDatasetBatcher batcher(dataset, "label", 4, false, 1.0f, true);
+            batcher.Reset();
+            (void)batcher.GetNextBatch();
+        } catch (const cyxwiz::MissingValuesError& e) {
+            const auto& c = e.Columns();
+            typed = c.size() == 2 && c[0].name == "x" && c[0].rows == 2 && c[0].nan_rows == 2 && !c[0].label &&
+                    !c[0].text && c[1].name == "label" && c[1].rows == 1 && c[1].nan_rows == 0 && c[1].label &&
+                    !c[1].text && e.TotalRows() == 4 && e.Source() == "ArrowDatasetBatcher";
+            if (!typed)
+                std::cerr << "  columns " << c.size() << ", total " << e.TotalRows() << ", source " << e.Source()
+                          << "\n";
+        } catch (const std::exception& e) {
+            std::cerr << "  untyped: " << e.what() << "\n";
+        }
+        Check(typed, "the refusal is a MissingValuesError holding the columns, counts and kinds");
+        const auto text = cyxwiz::CountMissingColumn("city", *Strings({"a", "b"}), false);
+        Check(text.text && text.rows == 0, "a text column is counted as text");
+
+        // The check before training counts what the batcher refuses: the same
+        // columns and counts, the label last; a column a role keeps out, a
+        // "__" column and a text column (not a feature) are not counted.
+        auto wider = arrow::Table::Make(
+            arrow::schema({arrow::field("x", arrow::float64()), arrow::field("y", arrow::float64()),
+                           arrow::field("label", arrow::int64()), arrow::field("kept_out", arrow::float64()),
+                           arrow::field("__partition__", arrow::float64()), arrow::field("city", arrow::utf8())}),
+            {Doubles({1, nan, nan, 4}, false), Doubles({1, 2, 3, 4}, true),
+             std::make_shared<arrow::ChunkedArray>(label_array), Doubles({nan, 1, 2, 3}, true),
+             Doubles({nan, 0, 0, 0}, true), Strings({"a", "b", "c", "d"})});
+        const auto counted = cyxwiz::CountMissingTrainingColumns(*wider, {"label"}, {"kept_out"});
+        Check(counted.size() == 2 && counted[0].name == "x" && counted[0].rows == 2 && counted[0].nan_rows == 2 &&
+                  counted[1].name == "label" && counted[1].label && counted[1].rows == 1,
+              "the check before training counts the batcher's columns (" + std::to_string(counted.size()) + ")");
+        // An empty text label counts as missing before training too (as IS NOT
+        // EMPTY drops it); a text of spaces does not.
+        auto text_label = arrow::Table::Make(arrow::schema({arrow::field("x", arrow::float64()),
+                                                            arrow::field("label", arrow::utf8())}),
+                                             {Doubles({1, 2, 3, 4}, true), Strings({"a", "", " ", "b"})});
+        const auto text_counted = cyxwiz::CountMissingTrainingColumns(*text_label, {"label"}, {});
+        Check(text_counted.size() == 1 && text_counted[0].name == "label" && text_counted[0].rows == 1 &&
+                  text_counted[0].text,
+              "an empty text label is counted as missing before training");
+        // A regression target of width 2 (y, y_1): NaN in y_1 is a missing
+        // target, never a feature the fix would fill.
+        auto targets = arrow::Table::Make(arrow::schema({arrow::field("x", arrow::float64()),
+                                                         arrow::field("y", arrow::float64()),
+                                                         arrow::field("y_1", arrow::float64())}),
+                                          {Doubles({1, 2, 3, 4}, true), Doubles({1, 2, 3, 4}, true),
+                                           Doubles({1, nan, 3, 4}, false)});
+        const auto target_counted = cyxwiz::CountMissingTrainingColumns(*targets, {"y", "y_1"}, {});
+        Check(target_counted.size() == 1 && target_counted[0].name == "y_1" && target_counted[0].label,
+              "a regression target's further column is counted as a label");
     }
     {
         // The only empty cell is in a column the model does not use (a role
@@ -339,6 +411,37 @@ int main() {
             Check(error.find("missing values") != std::string::npos && error.find("'x' at least 1 row") != std::string::npos,
                   "a NaN feature value from Parquet is refused, naming the column (got: '" + error + "')");
         }
+    }
+
+    // Counting the Train classes (balanced weights): a negative class is a
+    // value without an output, refused as at the first batch, never a missing
+    // label (whose fix, a Row Filter IS NOT EMPTY, would keep it), from a
+    // Parquet file and in memory alike.
+    {
+        auto schema = arrow::schema({arrow::field("x", arrow::float64()), arrow::field("label", arrow::int64())});
+        auto table = arrow::Table::Make(schema, {Doubles({1, 2, 3, 4}, true), Ints({-1, 1, -1, 1})});
+        std::shared_ptr<cyxwiz::ParquetBackedDataset> dataset;
+        auto batcher = parquet_batcher_of(table, "cyxwiz_refusals_negative_class.parquet", nullptr, dataset);
+        if (batcher) {
+            std::string error;
+            try {
+                (void)batcher->TrainClassCounts();
+            } catch (const std::exception& e) {
+                error = e.what();
+            }
+            Check(error.find("class label -1") != std::string::npos && error.find("missing values") == std::string::npos,
+                  "a negative class from Parquet is a class-range refusal (got: '" + error + "')");
+        }
+        auto memory = std::make_shared<cyxwiz::ArrowDataset>(table, "refusals_negative_class");
+        cyxwiz::ArrowDatasetBatcher in_memory(memory, "label", 4, false, 1.0f, true);
+        std::string error;
+        try {
+            (void)in_memory.TrainClassCounts();
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
+        Check(error.find("class label -1") != std::string::npos,
+              "a negative class in memory is refused when the classes are counted (got: '" + error + "')");
     }
 
     if (failures == 0) std::cout << "test_batcher_refusals: all checks passed\n";

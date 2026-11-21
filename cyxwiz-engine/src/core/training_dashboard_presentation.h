@@ -5,6 +5,7 @@
 // the time words. The panel (gui/panels/training_plot_panel.cpp) draws them;
 // test_training_dashboard_presentation checks them on a real run's numbers.
 
+#include "missing_columns.h"
 #include "training_run_comparison_record.h"
 
 #include <optional>
@@ -132,6 +133,8 @@ struct HeaderFacts {
     double preparation_progress = 0.0;
     std::string terminal_status;  // "completed", "early_stopped", "cancelled", "stopped", "failed"
     std::string terminal_reason;  // "completed_all_epochs", "validation_loss_plateau_patience_3", ...
+    // A run refused for missing values: its columns (the Dashboard offers the fix).
+    std::vector<MissingColumn> missing_columns;
     std::optional<Route> route;
     // The data.
     std::string dataset;
@@ -183,6 +186,7 @@ struct Header {
     std::string active_model_detail;  // "(validation loss 0.2554, accuracy 92.61%)"
     std::string test;           // "Held-out test: accuracy 94.15%, loss 0.2220"
     std::string test_detail;    // "(188 rows the model never saw)"
+    bool missing_values = false;  // failed for missing values: the fix card goes under the outcome
     // Run details > The run: the stop code, checkpoint, batches, engine tasks.
     std::vector<DetailRow> run_rows;
 };

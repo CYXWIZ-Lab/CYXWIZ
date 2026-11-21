@@ -1,4 +1,5 @@
 #include "data_studio_checks.h"
+#include "column_list.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -25,21 +26,9 @@ std::string Get(const std::map<std::string, std::string>& p, const char* key) {
     return it == p.end() ? std::string() : Trim(it->second);
 }
 
-// "a, b ,c" -> "a, b, c" (the operator splits on commas and trims).
-std::string ListText(const std::string& list) {
-    std::string out, item;
-    const auto flush = [&] {
-        const std::string t = Trim(item);
-        if (!t.empty()) out += (out.empty() ? "" : ", ") + t;
-        item.clear();
-    };
-    for (char ch : list) {
-        if (ch == ',') flush();
-        else item += ch;
-    }
-    flush();
-    return out;
-}
+// "a, b ,c" -> "a, b, c": the operator reads it as a column list (a name with
+// a comma in double quotes).
+std::string ListText(const std::string& list) { return FormatColumnList(ParseColumnList(list), ", "); }
 
 bool WholeCount(const std::string& text, int64_t& value) {
     if (text.empty()) return false;

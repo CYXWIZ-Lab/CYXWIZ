@@ -1,5 +1,6 @@
 #include "graph_compiler.h"
 #include "rl_graph_compile.h"
+#include "column_list.h"
 #include <tuple>
 #include "normalize_statistics.h"
 #include "sample_split.h"
@@ -3148,14 +3149,7 @@ bool ContainsWhenFiltered(
 }
 
 std::vector<std::string> ParseOrderedColumnList(const std::string& value) {
-    std::vector<std::string> columns;
-    std::stringstream stream(value);
-    std::string token;
-    while (std::getline(stream, token, ',')) {
-        token = TrimAscii(token);
-        if (!token.empty()) columns.push_back(std::move(token));
-    }
-    return columns;
+    return ParseColumnList(value);
 }
 
 std::vector<std::string> ExpectedTargetColumns(
@@ -5268,19 +5262,12 @@ TrainingConfiguration GraphCompiler::Compile(
                     static_cast<size_t>(label_width);
             }
             // Multivariate: input_size = input_width * (1 + num_feature_cols).
-            // feature_cols is comma-separated; count non-empty tokens.
+            // feature_cols is a column list; count its names.
             // Single-variate (empty feature_cols) keeps input_size = input_width.
             int num_features = 1;
             auto fc_it = node.parameters.find("feature_cols");
             if (fc_it != node.parameters.end() && !fc_it->second.empty()) {
-                int extras = 0;
-                std::stringstream ss(fc_it->second);
-                std::string token;
-                while (std::getline(ss, token, ',')) {
-                    size_t start = token.find_first_not_of(" \t");
-                    if (start != std::string::npos) ++extras;
-                }
-                num_features = 1 + extras;
+                num_features = 1 + static_cast<int>(ParseColumnList(fc_it->second).size());
             }
             const int total_input = input_width * num_features;
             if (total_input > 0) {

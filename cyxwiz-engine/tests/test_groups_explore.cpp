@@ -341,6 +341,14 @@ int main() {
         };
         std::string configure_error;
 
+        // A column whose name has a comma is quoted in the step's list.
+        {
+            auto odd = km;
+            odd.columns = {"income, net", "age"};
+            Check(groups::NodeParameters(odd).at("feature_cols") == "\"income, net\",age",
+                  "a name with a comma is quoted in feature_cols: " + groups::NodeParameters(odd).at("feature_cols"));
+        }
+
         KMeansOperator kmeans;
         Check(kmeans.Configure(groups::NodeParameters(km), configure_error),
               "K-Means node configures: " + configure_error);

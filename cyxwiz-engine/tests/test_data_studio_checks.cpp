@@ -149,6 +149,12 @@ int main() {
         Same(ValidatorRule(p), "required: text, source_id \xC2\xB7 unique: paragraph_id", "validator rule from the form");
         const ValidatorForm back = ValidatorFormFrom(p);
         Check(back.required == "text, source_id" && back.unique == "paragraph_id" && back.not_null.empty(), "validator round trip");
+        // A column whose name has a comma stays one column (quoted, as the
+        // validator reads its lists).
+        v.required = " \"income,net\" ,age";
+        Check(ValidatorParameters(v, p, error), "validator form with a quoted name");
+        Same(p["required_columns"], "\"income,net\", age", "a quoted name kept whole");
+        Same(ValidatorFormFrom(p).required, "\"income,net\", age", "a quoted name round trip");
     }
 
     // The form -> the node's parameters -> the form again.

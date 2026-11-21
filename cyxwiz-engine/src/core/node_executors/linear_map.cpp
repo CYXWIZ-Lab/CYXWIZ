@@ -32,20 +32,6 @@ bool IsNumberColumn(const std::shared_ptr<arrow::ChunkedArray>& col) {
 
 }  // namespace
 
-std::vector<std::string> ParseColumnList(const std::string& text) {
-    std::vector<std::string> out;
-    size_t start = 0;
-    while (start <= text.size()) {
-        const size_t comma = text.find(',', start);
-        std::string name = text.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
-        const size_t first = name.find_first_not_of(" \t"), last = name.find_last_not_of(" \t");
-        if (first != std::string::npos) out.push_back(name.substr(first, last - first + 1));
-        if (comma == std::string::npos) break;
-        start = comma + 1;
-    }
-    return out;
-}
-
 bool ReadBoolParameter(const std::map<std::string, std::string>& params, const char* key, bool fallback, bool& out,
                        const std::string& op_name, std::string& error) {
     const auto it = params.find(key);
@@ -258,9 +244,7 @@ FittedPreprocessingState LinearMapState(const LinearMap& map, const std::string&
     state.fit_rows = fit_rows;
     state.input_schema_fingerprint = FingerprintPreprocessingSchema(schema);
     state.configuration = configuration;
-    std::string outputs;
-    for (const auto& name : map.outputs) outputs += (outputs.empty() ? "" : ",") + name;
-    state.configuration["outputs"] = outputs;
+    state.configuration["outputs"] = FormatColumnList(map.outputs);
     for (size_t j = 0; j < map.inputs.size(); ++j) {
         PreprocessingFeatureState f;
         f.name = map.inputs[j];
@@ -277,14 +261,7 @@ bool LinearMapFromState(const FittedPreprocessingState& state, LinearMap& map, s
     map = LinearMap{};
     const auto outputs = state.configuration.find("outputs");
     if (outputs == state.configuration.end() || outputs->second.empty()) return error = "the saved values name no output columns", false;
-    size_t start = 0;
-    const std::string& list = outputs->second;
-    while (start <= list.size()) {
-        const size_t comma = list.find(',', start);
-        map.outputs.push_back(list.substr(start, comma == std::string::npos ? std::string::npos : comma - start));
-        if (comma == std::string::npos) break;
-        start = comma + 1;
-    }
+    map.outputs = ParseColumnList(outputs->second);
     for (const auto& f : state.features) {
         const auto value = [&](const std::string& key, double& v) {
             const auto it = f.numeric_values.find(key);

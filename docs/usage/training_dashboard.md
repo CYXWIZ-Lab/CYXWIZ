@@ -37,6 +37,12 @@ The first card says what the run is doing, in plain words.
   - how it ended: "Finished: every epoch ran.", "Stopped early: the
     validation loss did not improve for 3 epochs.", "Stopped: you stopped
     the run before its last epoch." or "Failed:" with the reason;
+  - a run refused for missing values (empty cells or NaN it met while it
+    read the data) says so, and the card under it offers the same fix as the
+    Cannot-start-training report (Fill these columns, Drop these rows, Drop
+    rows without a label, Undo, Show on canvas), then **Train again**; its
+    stop code is `missing_values` (see
+    [the compile report](studio_toolbar.md#missing-values-the-fix-in-the-report));
   - the active model, the one the Engine keeps for testing and export: "the
     best validation checkpoint, epoch 10 (validation loss 0.2554, accuracy
     92.61%)", or "the final state of the run" when no checkpoint was kept;

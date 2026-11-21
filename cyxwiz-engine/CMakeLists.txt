@@ -455,6 +455,8 @@ set(ENGINE_SOURCES
     src/gui/main_window.cpp
     src/gui/main_window_shortcuts.cpp
     src/gui/main_window_compile_report.cpp
+    src/gui/main_window_missing_values.cpp  # missing-values fix in the report (TOFIX223 0.3)
+    src/gui/missing_values_view.cpp
     src/gui/node_editor.cpp
     src/gui/node_editor_plot.cpp
     src/gui/node_editor_toolbar.cpp
@@ -514,6 +516,7 @@ set(ENGINE_SOURCES
     src/core/threshold_calibration.cpp
     src/core/training_health_presentation.cpp
     src/core/compile_report_presentation.cpp
+    src/core/missing_values_presentation.cpp  # one-click fix for missing values (TOFIX223 0.3)
     src/core/studio_toolbar_presentation.cpp
     src/core/data_input_presentation.cpp
     src/core/cloud_source_presentation.cpp
@@ -4203,6 +4206,10 @@ add_executable(test_graph_training_sequence_preflight
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
+    src/core/missing_values_presentation.cpp
+    src/core/data_input_presentation.cpp  # FormatCount
+    src/gui/missing_values_view.cpp
+    src/core/filter_condition.cpp
     src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
@@ -4351,6 +4358,10 @@ add_executable(test_text_gui_training_launch
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
+    src/core/missing_values_presentation.cpp
+    src/core/data_input_presentation.cpp  # FormatCount
+    src/gui/missing_values_view.cpp
+    src/core/filter_condition.cpp
     src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
@@ -5097,6 +5108,20 @@ if(Python3_EXECUTABLE)
     set_tests_properties(icon_headers_check PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
+# ===== Test: the missing-values fix card and its steps (TOFIX223 0.3) =====
+add_executable(test_missing_values_presentation
+    tests/test_missing_values_presentation.cpp
+    src/core/missing_values_presentation.cpp
+    src/core/data_input_presentation.cpp  # FormatCount
+    src/core/filter_condition.cpp
+)
+target_include_directories(test_missing_values_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_compile_definitions(test_missing_values_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_missing_values_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME missing_values_presentation COMMAND test_missing_values_presentation)
+
 # ===== Test: the Row Filter's condition as dialog rows (TOFIX129 B-5) =====
 add_executable(test_filter_condition
     tests/test_filter_condition.cpp
@@ -5112,6 +5137,9 @@ add_test(NAME filter_condition COMMAND test_filter_condition)
 add_executable(test_compile_report_presentation
     tests/test_compile_report_presentation.cpp
     src/core/compile_report_presentation.cpp
+    src/core/missing_values_presentation.cpp
+    src/core/data_input_presentation.cpp  # FormatCount
+    src/core/filter_condition.cpp
     src/core/compiled_node_presentation.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
@@ -5958,6 +5986,10 @@ add_executable(test_training_manager_session
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
+    src/core/missing_values_presentation.cpp
+    src/core/data_input_presentation.cpp  # FormatCount
+    src/gui/missing_values_view.cpp
+    src/core/filter_condition.cpp
     src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
@@ -9053,6 +9085,10 @@ set(CYXWIZ_TRAIN_PATH_TEST_SOURCES
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
+    src/core/missing_values_presentation.cpp
+    src/core/data_input_presentation.cpp  # FormatCount
+    src/gui/missing_values_view.cpp
+    src/core/filter_condition.cpp
     src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp

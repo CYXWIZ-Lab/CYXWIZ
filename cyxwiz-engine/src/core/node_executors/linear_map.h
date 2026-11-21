@@ -9,6 +9,7 @@
 // and the fitted state (one feature per input column: its shift, divisor
 // and row of W).
 
+#include "../column_list.h"
 #include "../preprocessing_state.h"
 
 #include <cyxwiz/linear_algebra.h>
@@ -33,8 +34,6 @@ struct LinearMap {
     std::vector<std::string> outputs;  // k column names
 };
 
-// A comma-separated column list (spaces around names dropped).
-std::vector<std::string> ParseColumnList(const std::string& text);
 // A "true" / "false" parameter (absent or empty: `fallback`); false + error otherwise.
 bool ReadBoolParameter(const std::map<std::string, std::string>& params, const char* key, bool fallback, bool& out,
                        const std::string& op_name, std::string& error);

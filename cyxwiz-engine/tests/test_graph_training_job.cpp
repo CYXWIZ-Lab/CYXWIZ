@@ -567,6 +567,15 @@ int main() {
               "a failed device preflight is a device error");
         Check(ClassifyTrainingFailure("CW-T-0501 Training failed: vector subscript") == TrainingFailureKind::Internal,
               "anything else is internal");
+        Check(ClassifyTrainingFailure("[CW-T-0501] Training failed. Detail: ArrowDatasetBatcher: the data has missing "
+                                      "values (empty cells or NaN), which training does not use: feature 'age' 3 "
+                                      "rows.") == TrainingFailureKind::DataError,
+              "a missing-values refusal is a data error");
+        Check(ClassifyTrainingFailure("[CW-T-0501] Training failed. Detail: ParquetArrowBatcher: the data has missing "
+                                      "values (empty cells or NaN), which training does not use: feature "
+                                      "'is_cancelled' 2 rows; feature 'gpu_out_of_memory_flag' 1 row.") ==
+                  TrainingFailureKind::DataError,
+              "a column name in the refusal never makes it a cancellation or out of memory");
         Check(std::string(cyxwiz::TrainingFailureCode(TrainingFailureKind::OutOfMemory)) == "OUT_OF_MEMORY" &&
                   std::string(cyxwiz::TrainingFailureLabel("OUT_OF_MEMORY")) == "Out of memory" &&
                   std::string(cyxwiz::TrainingFailureLabel("TRAINING_FAILED")) == "Training failed",

@@ -652,6 +652,28 @@ void CheckLinearSteps() {
                   "svd_0"),
            {1.2287401639, 1.9288812994, 4.122062113, 9.9087060113, 6.751084548, 3.1576214633}, "Truncated SVD from its saved values");
     fs::remove(state);
+
+    // A feature whose name holds a comma: quoted in feature_cols, and its
+    // output name survives the saved values.
+    const auto rename = [](std::shared_ptr<arrow::Table> t) {
+        std::vector<std::string> names = t->ColumnNames();
+        for (auto& n : names)
+            if (n == "a") n = "a, x";
+        return *t->RenameColumns(names);
+    };
+    const fs::path comma_state = fs::temp_directory_path() / "cyxwiz_fit_on_train_zca_comma.cyxstate.json";
+    fs::remove(comma_state);
+    WhiteningOperator comma_fit;
+    const auto cz = Run(comma_fit, {{"feature_cols", "\"a, x\",y"}, {"method", "zca"}, {"save_state", "true"}, {"state_path", comma_state.string()}},
+                        rename(Table()));
+    Expect(Column(cz, "a, x_white"), {-1.2189321934, -0.281099197, 1.143805273, 5.8692802058, 3.6567965803, 0.3562261175}, "ZCA on a name with a comma");
+    WhiteningOperator comma_reuse;
+    Expect(Column(Run(comma_reuse, {{"feature_cols", "\"a, x\",y"}, {"method", "zca"}, {"operation_mode", "transform_only"},
+                                    {"state_path", comma_state.string()}},
+                      rename(Table(false))),
+                  "a, x_white"),
+           {-1.2189321934, -0.281099197, 1.143805273, 5.8692802058, 3.6567965803, 0.3562261175}, "ZCA from saved values on a name with a comma");
+    fs::remove(comma_state);
 }
 
 int main() {

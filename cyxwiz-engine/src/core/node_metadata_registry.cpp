@@ -1633,7 +1633,7 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         {{"Filled", PinType::Dataset, true, "Filled"}},
         {{"strategy", "enum", "mean", "Statistic or value used to replace nulls", {"mean", "median", "mode", "constant"}, "", "Strategy", "Transformation"},
          {"value", "string", "0", "Value used when Strategy is constant", {}, "", "Constant value", "Transformation"},
-         {"columns", "string", "", "Comma-separated feature columns; empty selects all except Label column", {}, "", "Feature columns", "Columns"},
+         {"columns", "string", "", "Comma-separated feature columns (a name with a comma in double quotes); empty selects all except Label column", {}, "", "Feature columns", "Columns"},
          {"label_col", "string", "", "Label/target column excluded from fitting", {}, "", "Label column", "Columns"},
          {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse a saved training state", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
          {"save_state", "bool", "false", "Persist fitted values to an engine-managed project artifact for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},

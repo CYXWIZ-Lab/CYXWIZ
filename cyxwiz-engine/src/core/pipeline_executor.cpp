@@ -1,4 +1,5 @@
 #include "pipeline_executor.h"
+#include "column_list.h"
 #include "dataset_lineage.h"
 #include "sha256_digest.h"
 #include "hashing_output_stream.h"
@@ -86,6 +87,7 @@ std::string OperatorOutputName(const std::string& type, int id) {
 bool TryParseFiniteDouble(const std::string& value, double& out);
 bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type);
 bool IsStringArrowType(const std::shared_ptr<arrow::DataType>& type);
+std::string NanAsNullSql(const std::string& quoted, const std::shared_ptr<arrow::DataType>& type);
 std::string ParameterOrDefault(
     const std::map<std::string, std::string>& parameters,
     const char* key,
@@ -242,15 +244,9 @@ std::string ToUpperAscii(std::string value) {
     return value;
 }
 
+// Appends the names in a column list (quoted names: core/column_list.h).
 void ParseCommaList(const std::string& value, std::vector<std::string>& out) {
-    std::stringstream parts(value);
-    std::string part;
-    while (std::getline(parts, part, ',')) {
-        const std::string trimmed = TrimString(part);
-        if (!trimmed.empty()) {
-            out.push_back(trimmed);
-        }
-    }
+    for (auto& name : cyxwiz::ParseColumnList(value)) out.push_back(std::move(name));
 }
 
 std::map<std::string, std::string> ParseRenameMapping(const std::string& mapping) {
@@ -573,17 +569,9 @@ bool BuildUnitConverterExpression(const std::string& category,
     return true;
 }
 
+// A step's column list; a name with a comma or edge spaces is quoted.
 std::vector<std::string> ParseCommaSeparatedNames(const std::string& value) {
-    std::vector<std::string> result;
-    std::stringstream stream(value);
-    std::string name;
-    while (std::getline(stream, name, ',')) {
-        name = TrimString(name);
-        if (!name.empty()) {
-            result.push_back(name);
-        }
-    }
-    return result;
+    return cyxwiz::ParseColumnList(value);
 }
 
 bool ResolveDataInputColumnProjection(
@@ -719,6 +707,13 @@ bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type) {
         default:
             return false;
     }
+}
+
+// A float column's value with NaN read as missing: training counts a NaN as
+// a missing value, so filling and the IS EMPTY test treat it as one too.
+std::string NanAsNullSql(const std::string& quoted, const std::shared_ptr<arrow::DataType>& type) {
+    if (!type || (type->id() != arrow::Type::FLOAT && type->id() != arrow::Type::DOUBLE)) return quoted;
+    return "(CASE WHEN isnan(" + quoted + ") THEN NULL ELSE " + quoted + " END)";
 }
 
 bool IsStringArrowType(const std::shared_ptr<arrow::DataType>& type) {
@@ -895,11 +890,14 @@ private:
             }
             Consume();
             const std::string name = QuoteSqlIdentifier(column);
-            const bool text = IsStringArrowType(table_->schema()->field(column_index)->type());
+            const auto& type = table_->schema()->field(column_index)->type();
+            const bool text = IsStringArrowType(type);
+            // A number column's NaN is empty too, as training counts it.
+            const std::string value = NanAsNullSql(name, type);
             if (negated) {
-                expression = text ? "(" + name + " IS NOT NULL AND " + name + " <> '')" : name + " IS NOT NULL";
+                expression = text ? "(" + name + " IS NOT NULL AND " + name + " <> '')" : value + " IS NOT NULL";
             } else {
-                expression = text ? "(" + name + " IS NULL OR " + name + " = '')" : name + " IS NULL";
+                expression = text ? "(" + name + " IS NULL OR " + name + " = '')" : value + " IS NULL";
             }
             return true;
         }
@@ -5098,7 +5096,8 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                         strategy == "mean"
                             ? "AVG"
                             : (strategy == "median" ? "MEDIAN" : "MODE");
-                    aggregate_sql += aggregate + "(" + quoted + ") AS " +
+                    // NaN is missing: it is not averaged, nor counted as a value.
+                    aggregate_sql += aggregate + "(" + NanAsNullSql(quoted, field->type()) + ") AS " +
                                      quoted;
                 }
                 aggregate_sql += " FROM " + temp_table;
@@ -5125,7 +5124,7 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                         !scalar_result.ValueOrDie()->is_valid) {
                         ReportError(
                             "FillMissing: column '" + column +
-                            "' has no non-null training values, so " +
+                            "' has no training values (every Train cell is empty or NaN), so " +
                             strategy +
                             " cannot be fitted. Remove the column or use a "
                             "constant fill value.");
@@ -5187,7 +5186,8 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                     ReportError(constant_error);
                     return false;
                 }
-                expression = "COALESCE(" + quoted_column + ", " +
+                // NaN in a number column is filled as an empty cell is.
+                expression = "COALESCE(" + NanAsNullSql(quoted_column, field->type()) + ", " +
                              constant_expression + ")";
             }
 

@@ -271,6 +271,24 @@ int main() {
     Check(head.pill == "Failed" && head.outcome == "Failed: Out of memory while building batch 3" &&
               head.outcome_tone == td::Tone::Error && row(head, "Stop code") == "failed",
           "a failure's sentence on the surface, its status as the code");
+    Check(!head.missing_values, "no fix card for another failure");
+    // Refused for missing values: a plain sentence, the code missing_values
+    // and the fix card (TOFIX223 0.3); NaN found while reading a file says so.
+    e.terminal_reason = "[CW-T-0501] Training failed. Detail: ArrowDatasetBatcher: the data has missing values ...";
+    cyxwiz::MissingColumn x1;
+    x1.name = "x1";
+    x1.rows = 2;
+    e.missing_columns = {x1};
+    head = td::BuildHeader(early, e);
+    Check(head.outcome == "Failed: the data has missing values (empty cells or NaN), which training does not use." &&
+              head.missing_values && row(head, "Stop code") == "missing_values",
+          "missing values: " + head.outcome);
+    e.missing_columns.front().at_least = true;
+    head = td::BuildHeader(early, e);
+    Check(head.outcome == "Failed: the data has missing values the check before training could not see (NaN in a "
+                          "file on disk).",
+          "NaN read from disk: " + head.outcome);
+    e.missing_columns.clear();
 
     // A regression run: no accuracy anywhere.
     td::HeaderFacts reg = h;

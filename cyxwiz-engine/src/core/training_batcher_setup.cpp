@@ -105,14 +105,7 @@ template <typename BatcherT>
 void ApplyRoleTargetTransform(const TrainingConfiguration& config, const std::string& label_column,
                               BatcherT& batcher) {
     const bool continuous_target = UsesContinuousTargetMetrics(config);
-    if (continuous_target) {
-        const size_t target_width =
-            config.target.width > 0
-                ? config.target.width
-                : (config.is_time_series ? config.time_series_target_width
-                                         : std::max<size_t>(1, config.output_size));
-        batcher.SetRegressionTargetWidth(target_width, label_column);
-    }
+    if (continuous_target) batcher.SetRegressionTargetWidth(RegressionTargetWidth(config), label_column);
     if (config.preprocessing.has_normalization) {
         batcher.SetNormalization(config.preprocessing.norm_mean, config.preprocessing.norm_std);
     }

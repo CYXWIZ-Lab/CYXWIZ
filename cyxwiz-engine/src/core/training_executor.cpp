@@ -803,6 +803,20 @@ void TrainingExecutor::Train(
         is_paused_.store(false);
         is_training_.store(false);
     };
+    // A missing-values refusal keeps its columns on the run for the fix.
+    auto keep_missing_columns = [&](const MissingValuesError& e) {
+        UpdateMetrics([&](TrainingMetrics& m) {
+            m.missing_columns = e.Columns();
+            m.missing_values_total_rows = e.TotalRows();
+            m.missing_values_supplied_role = e.SuppliedRole();
+        });
+    };
+    // A supplied Validation / Test read from its own Data Input (not joined
+    // to the Training table): a refusal there names that role, since a step
+    // after the training input does not reach it.
+    const auto supplied_role_input = [](const ResolvedDatasetRole& role) {
+        return role.IsSupplied() && !role.joined_to_training;
+    };
     // Stopped before the first batch (while waiting for the GPU, while the
     // data was being prepared): cancelled, not failed
     auto cancel_run = [&](const std::string& message) {
@@ -1086,6 +1100,13 @@ void TrainingExecutor::Train(
         try {
             ResolveBalancedClassWeights(config_, active_train_ibatcher);
             loss_ = BuildLossFromConfig(config_);
+        } catch (const MissingValuesError& e) {
+            // Counting the classes met the missing values first: the run
+            // stops with that refusal and its columns, as at the first batch.
+            keep_missing_columns(e);
+            fail_run(errors::FormatError(errors::Training::TrainingExecutionFailed, "Training failed", e.what()));
+            spdlog::error("TrainingExecutor: {}", e.what());
+            return;
         } catch (const std::exception& e) {
             spdlog::error("TrainingExecutor: {}", e.what());
             fail_run(std::string("class_weight_failed: ") + e.what());
@@ -1623,7 +1644,12 @@ void TrainingExecutor::Train(
             // Not without a validation part (an image Data Split at 0.9 / 0 /
             // 0.1): it scored 0 samples and gave early stopping metrics of 0.
             active_val_ibatcher->SetPhase(val_batcher_phase);
-            RunValidationArrow(*active_val_ibatcher);
+            try {
+                RunValidationArrow(*active_val_ibatcher);
+            } catch (MissingValuesError& e) {
+                if (supplied_role_input(config_.dataset_roles.dev)) e.SetSuppliedRole("Validation");
+                throw;
+            }
             active_val_ibatcher->SetPhase(train_batcher_phase);
             validation_ran_this_epoch = true;
             if ((config_.pair_metrics || config_.retrieval_metrics) && metric_eval_val) {
@@ -2040,7 +2066,14 @@ void TrainingExecutor::Train(
         // follows its phase; out of it, a wired test set reads 0).
         model_->SetTraining(false);
         active_test_ibatcher->SetPhase(test_batcher_phase);
-        const auto test_evaluation = EvaluateArrowBatcher(*active_test_ibatcher);
+        const auto test_evaluation = [&] {
+            try {
+                return EvaluateArrowBatcher(*active_test_ibatcher);
+            } catch (MissingValuesError& e) {
+                if (supplied_role_input(config_.dataset_roles.test)) e.SetSuppliedRole("Test");
+                throw;
+            }
+        }();
         active_test_ibatcher->SetPhase(train_batcher_phase);
         UpdateMetrics([test_evaluation](TrainingMetrics& m) {
             m.test_loss = test_evaluation.loss;
@@ -2159,6 +2192,15 @@ void TrainingExecutor::Train(
     }
 
     spdlog::info("TrainingExecutor: Training complete");
+    } catch (const MissingValuesError& e) {
+        keep_missing_columns(e);
+        const std::string coded_error = errors::FormatError(
+            errors::Training::TrainingExecutionFailed,
+            "Training failed",
+            e.what());
+        fail_run(coded_error);
+        spdlog::error("TrainingExecutor: {}", coded_error);
+        throw;
     } catch (const std::exception& e) {
         const std::string coded_error = errors::FormatError(
             errors::Training::TrainingExecutionFailed,
