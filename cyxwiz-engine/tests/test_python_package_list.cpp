@@ -24,6 +24,8 @@ int main() {
           "commas, as the setting was typed before");
     Check(ParsePackageList("  numpy \n numpy  ") == List{"numpy"}, "blanks and repeats");
     Check(ParsePackageList("").empty() && ParsePackageList(" , ").empty(), "empty: none");
+    Check(ParsePackageList("pandas>=2,<3 numpy>=1.2,!=1.5") == List{"pandas>=2,<3", "numpy>=1.2,!=1.5"},
+          "a comma between version conditions stays");
     Check(ParsePackageList("numpy==2.1 \"pandas>=2\"") == List{"numpy==2.1", "\"pandas>=2\""}, "versions stay with the name");
     List ignored;
     Check(ParsePackageList("numpy --index-url http://x -e .", &ignored) == List{"numpy", "http://x", "."} &&

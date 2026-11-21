@@ -25,10 +25,6 @@ Decoded Decode(const std::string& raw);
 // The editor's text back in the file's own format.
 std::string Encode(const std::string& text, const TextFormat& format);
 
-// What a save writes (Preferences > Script Editor): trailing spaces and tabs
-// off each line, and the text ends with exactly one line break (an empty
-// text stays empty). '\n' line endings, as the editor holds them.
-std::string TidyForSave(const std::string& text, bool trim_trailing_whitespace, bool final_newline);
 // A new file's line endings: 0 as the system (CRLF on Windows, LF elsewhere), 1 LF, 2 CRLF
 LineEnding NewFileLineEnding(int choice);
 

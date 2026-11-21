@@ -76,6 +76,7 @@ public:
     bool HasUnsavedFiles() const;
     std::vector<std::string> GetUnsavedFileNames() const;
     void SaveAllFiles();  // Save all unsaved files
+    void SaveFilesThatHaveAPath();  // Auto Save: modified files with a path (untitled ones wait)
     bool HasEmptyNewTab() const;  // Check if there's an empty untitled tab
 
     // Inline find and replace widget (Ctrl+F / Ctrl+H).
@@ -336,8 +337,9 @@ private:
     std::string DedentCode(const std::string& code);  // Remove common leading whitespace
     void SyncActiveCellEditor(EditorTab& tab);
     std::string GetTabContentForPersistence(EditorTab& tab, const std::string& path);
-    // Before a save: the tidy the save makes (trim, final newline) is made in
-    // a text tab's editor as one undo step, so it shows what is written
+    // Before a save: Preferences > Script Editor's tidy (trim, final newline)
+    // in a text tab's editor, as one undo step; the save writes what the
+    // editor then holds. Notebooks and cell mode are written as they are.
     void TidyBeforeSave(EditorTab& tab, const std::string& path);
     std::string GetTabExecutableText(EditorTab& tab);
     bool IsTabContentBlank(EditorTab& tab) const;

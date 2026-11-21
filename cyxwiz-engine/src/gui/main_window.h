@@ -139,6 +139,7 @@ public:
     bool HasUnsavedFiles() const;
     std::vector<std::string> GetUnsavedFileNames() const;
     void SaveAllFiles();
+    void AutoSaveFiles();  // File > Auto Save: only what already has a file
 
     // Get the scripting engine
     std::shared_ptr<scripting::ScriptingEngine> GetScriptingEngine() { return scripting_engine_; }

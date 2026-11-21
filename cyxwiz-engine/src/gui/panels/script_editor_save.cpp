@@ -53,6 +53,17 @@ void ScriptEditorPanel::SaveAllFiles() {
     }
 }
 
+void ScriptEditorPanel::SaveFilesThatHaveAPath() {
+    const int original_active = active_tab_index_;
+    for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
+        const auto& tab = tabs_[i];
+        if (tab->is_new || tab->filepath.empty() || !tab->is_modified) continue;
+        active_tab_index_ = i;
+        SaveFile();
+    }
+    if (original_active >= 0 && original_active < static_cast<int>(tabs_.size())) active_tab_index_ = original_active;
+}
+
 bool ScriptEditorPanel::HasEmptyNewTab() const {
     for (const auto& tab : tabs_) {
         if (tab->is_new && !tab->is_modified) {

@@ -132,6 +132,8 @@ public:
     // Run one menu action by id (the Command Palette and shortcuts use this).
     void Dispatch(const std::string& id, const std::string& argument = "");
     void SetSaveAllCallback(std::function<void()> callback) { save_all_callback_ = callback; }
+    // File > Auto Save: saves what already has a file (never asks for a name)
+    void SetAutoSaveCallback(std::function<void()> callback) { auto_save_callback_ = std::move(callback); }
     void SetAccountSettingsCallback(std::function<void()> callback) { account_settings_callback_ = callback; }
     void SetExitCallback(std::function<void()> callback) { exit_callback_ = callback; }
     void SetOnLoginSuccessCallback(std::function<void(const std::string&)> callback) { on_login_success_callback_ = callback; }
@@ -307,8 +309,6 @@ public:
     // Python diagnostics callback (Preferences -> Python)
     void SetPythonDiagnosticsCallback(std::function<std::string()> callback) { python_diagnostics_callback_ = callback; }
 
-    // Initialize editor settings from script editor's current values
-
     // Compute device selection callback
     void SetComputeDeviceChangedCallback(
         std::function<bool(DeviceType,
@@ -460,6 +460,7 @@ private:
     std::unordered_map<std::string, std::function<void(const std::string&)>> action_handlers_;
     std::string status_hint_;
     std::function<void()> save_all_callback_;
+    std::function<void()> auto_save_callback_;
     std::function<void()> account_settings_callback_;
     std::function<void()> exit_callback_;
     std::function<void(const std::string&)> on_login_success_callback_;
@@ -655,8 +656,6 @@ private:
     bool show_go_to_line_dialog_ = false;
     int go_to_line_number_ = 1;
 
-    // Editor preferences
-
     // Editor settings callbacks
     std::function<void(const core::EditorConfig&)> editor_settings_callback_;
 
@@ -758,8 +757,6 @@ private:
     std::function<void(int)> export_model_callback_;  // int = format index (0=CyxModel, 1=Safetensors, 2=ONNX, 3=GGUF)
     std::function<void()> import_model_callback_;
 
-    // Appearance preferences
-
     // Minimap visibility pointers
     bool* node_editor_minimap_ptr_ = nullptr;
 
@@ -768,8 +765,7 @@ private:
     std::atomic<bool>* verbose_python_log_ptr_ = nullptr;  // read by Python worker threads
     std::function<std::string()> python_diagnostics_callback_;
 
-    // Files preferences
-// Performance/Compute preferences
+    // Use this device (Preferences > Devices)
     std::function<bool(cyxwiz::DeviceType,
                        int,
                        const std::string&,

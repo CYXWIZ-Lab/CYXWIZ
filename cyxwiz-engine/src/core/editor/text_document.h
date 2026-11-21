@@ -109,8 +109,9 @@ public:
     void TransformSelections(const std::function<std::string(const std::string&)>& transform);
     // One undo step before a save (Preferences > Script Editor): trailing
     // spaces and tabs off each line, and the text ends with exactly one line
-    // break (an empty text stays empty); cursors follow. Nothing to change,
-    // no step. True when the text changed.
+    // break (an empty text stays empty); cursors follow. Lines with a caret
+    // are left as they are, and a caret where the final line break goes in
+    // stays before it. Nothing to change, no step. True when the text changed.
     bool TidyForSave(bool trim_trailing_whitespace, bool final_newline);
 
     // ---- Undo.

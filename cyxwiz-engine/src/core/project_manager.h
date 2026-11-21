@@ -15,10 +15,6 @@
 namespace cyxwiz {
 
 /**
- * Editor settings stored in project file
- */
-
-/**
  * Project configuration stored in .cyxwiz files
  */
 struct ProjectConfig {
@@ -148,7 +144,6 @@ public:
     // How many recent projects are kept (Preferences > General); a smaller
     // limit trims the list at once
     void SetRecentProjectsLimit(size_t limit);
-    size_t RecentProjectsLimit() const { return recent_limit_; }
 
 private:
     ProjectManager();

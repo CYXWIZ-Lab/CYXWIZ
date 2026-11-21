@@ -29,7 +29,7 @@ constexpr RestorablePage kRestorable[] = {
                    "icons."},
     {"Studio", nullptr},
     {"Script Editor", nullptr},
-    {"Python", "The interpreter is kept."},
+    {"Python", "The interpreter is kept; Packages to install is emptied."},
     {"Nodes panel", "Favourites and Recent are kept."},
     {"Training", nullptr},
     {"Search", nullptr},
@@ -76,6 +76,7 @@ void ToolbarPanel::RestorePageDefaults(const std::string& page) {
         ProjectManager::Instance().SetRecentProjectsLimit(config.RecentProjectsKept());
         config.SetAskBeforeClosingAlways(false);
         config.SetRecordDebugLogs(true);
+        spdlog::set_level(spdlog::level::debug);
         config.SetEveryWindowMayLeave(false);
         ::gui::SetEveryWindowMayLeave(false);
         config.SetDataBudgetBytes(0);

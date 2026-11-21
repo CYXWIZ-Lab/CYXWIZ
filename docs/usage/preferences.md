@@ -17,7 +17,8 @@ first (**Restore defaults** / **Keep my settings**). What is yours is kept:
 the Python interpreter, the Nodes panel's Favourites and Recent, and plugin
 sections on the Simulation page. Appearance's restore is the old "Reset
 appearance": CyxWiz Dark, 15 px interface text, 16 px code text, sidebar on
-the right, Font Awesome node icons.
+the right, Font Awesome node icons. Python's restore empties **Packages to
+install**.
 
 ## General
 
@@ -58,7 +59,9 @@ How the Studio starts. The menus change these for the session; here is what
 every start uses.
 
 - **Auto Save on when the Engine starts** (off by default): File > Auto Save
-  then saves open scripts and the graph every minute.
+  then saves, every minute, the open scripts and the graph that already have
+  a file. An untitled graph or script waits for File > Save (it never brings
+  up a Save dialog by itself).
 - **Show the canvas minimap** (on by default): View > Minimaps > Studio
   Minimap (M) still shows or hides it for the session.
 - **Require a passing Local Debug run before Train** (off by default): off,
@@ -85,10 +88,12 @@ way.
     the end of each line are not written.
   - **Insert a final newline on save** (on by default): the file ends with
     exactly one line break.
-  - Trimming and the final newline happen in the editor too, as one step
-    that **Ctrl+Z** takes back, so the editor shows what the file holds.
+  - Trimming and the final newline happen in the editor, as one step that
+    **Ctrl+Z** takes back, and the file gets exactly what the editor shows.
+    Lines with the cursor are left as they are (a space you just typed, blank
+    lines you opened at the end), and the cursor stays before the added final
+    line break. Notebooks and cell mode are saved as they are.
   - Files are written as UTF-8; a file with a byte-order mark keeps it.
-    Notebooks (`.ipynb`) are saved as they are.
 
 ## Python
 
@@ -107,7 +112,7 @@ way.
   - **Packages to install**: names separated by spaces (or commas), for
     example `numpy pandas`, installed with pip into each new environment
     before Python starts there. A version stays with its name
-    (`numpy==2.1`). Words starting with `-` are pip options and are not
+    (`numpy==2.1`, `pandas>=2,<3`). Words starting with `-` are pip options and are not
     passed. A package that fails to install is reported in the Console log;
     the environment is still used.
 - **When Python starts** (each Python session: before its first command or

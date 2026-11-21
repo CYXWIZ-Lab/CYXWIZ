@@ -7,7 +7,8 @@
 
 namespace cyxwiz::core {
 
-// Names split on spaces and commas, empties and repeats dropped, order kept.
+// Names split on spaces and commas (a comma inside a version condition,
+// "pandas>=2,<3", stays), empties and repeats dropped, order kept.
 // A word starting with '-' is a pip option, not a package: it goes to
 // `ignored` (when given) and never reaches pip.
 std::vector<std::string> ParsePackageList(const std::string& text, std::vector<std::string>* ignored = nullptr);

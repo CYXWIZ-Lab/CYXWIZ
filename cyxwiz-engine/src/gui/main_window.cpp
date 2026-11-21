@@ -2249,6 +2249,7 @@ MainWindow::MainWindow()
         SaveAllFiles();
         spdlog::info("All files saved via toolbar");
     });
+    toolbar_->SetAutoSaveCallback([this]() { AutoSaveFiles(); });
 
     // Set up Exit callback (called when user confirms exit)
     toolbar_->SetExitCallback([this]() {
@@ -2857,6 +2858,14 @@ void MainWindow::SaveAllFiles() {
     // An untitled graph asks where to save it; cancelled, it stays unsaved
     if (node_editor_ && node_editor_->HasUnsavedGraph()) node_editor_->SaveCurrentGraph();
     if (script_editor_) script_editor_->SaveAllFiles();
+}
+
+void MainWindow::AutoSaveFiles() {
+    // A Save dialog every minute for an untitled graph or script would be no
+    // help: those wait for File > Save
+    if (node_editor_ && node_editor_->HasUnsavedGraph() && !node_editor_->GetCurrentFilePath().empty())
+        node_editor_->SaveCurrentGraph();
+    if (script_editor_) script_editor_->SaveFilesThatHaveAPath();
 }
 
 void MainWindow::PrepareForShutdown() {

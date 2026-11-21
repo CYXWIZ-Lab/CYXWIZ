@@ -227,21 +227,25 @@ int main() {
     d.AddCursorVertical(1);
     Check(d.CursorCount() == 2 && Caret(d, 1).line == 1 && Caret(d, 1).col == 2, "cursor added below");
 
-    // Tidy before a save (Preferences > Script Editor): one undo step
-    const auto tidy = [](const std::string& text, bool trim, bool newline) {
+    // Tidy before a save (Preferences > Script Editor): one undo step; lines
+    // with a caret are left as they are
+    const auto tidy = [](const std::string& text, bool trim, bool newline, Pos cursor) {
         Document t(text);
+        t.SetCursor(cursor);
         t.TidyForSave(trim, newline);
         return t.Text();
     };
-    Check(tidy("a = 1  \nb = 2\t\n", true, false) == "a = 1\nb = 2\n", "tidy: trim line ends");
-    Check(tidy("  x\n    \n", true, false) == "  x\n\n", "tidy: indentation stays, blank lines empty");
-    Check(tidy("a = 1", false, true) == "a = 1\n", "tidy: final newline added");
-    Check(tidy("a = 1\n\n\n", false, true) == "a = 1\n", "tidy: exactly one final newline");
-    Check(tidy("a  \n  \n\n", true, true) == "a\n", "tidy: both, trailing blank lines with spaces");
-    Check(tidy("a  \n  \n", false, true) == "a  \n  \n", "tidy: without trim a spaces line is content");
-    Check(tidy("", true, true).empty() && tidy("   ", true, true).empty(), "tidy: an empty text stays empty");
-    Check(tidy("\n\n", true, true) == "\n", "tidy: blank lines become one line break");
-    Check(tidy("a  ", false, false) == "a  ", "tidy: off changes nothing");
+    Check(tidy("a = 1  \nb = 2\t\n", true, false, {2, 0}) == "a = 1\nb = 2\n", "tidy: trim line ends");
+    Check(tidy("  x\n    \n", true, false, {2, 0}) == "  x\n\n", "tidy: indentation stays, blank lines empty");
+    Check(tidy("a = 1", false, true, {0, 0}) == "a = 1\n", "tidy: final newline added");
+    Check(tidy("a = 1\n\n\n", false, true, {0, 0}) == "a = 1\n", "tidy: exactly one final newline");
+    Check(tidy("a  \n  \n\n", true, true, {0, 0}) == "a  \n", "tidy: the caret's line keeps its spaces");
+    Check(tidy("a  \n  \n", false, true, {0, 0}) == "a  \n  \n", "tidy: without trim a spaces line is content");
+    Check(tidy("", true, true, {0, 0}).empty(), "tidy: an empty text stays empty");
+    Check(tidy("\n\n", true, true, {0, 0}) == "\n", "tidy: blank lines become one line break");
+    Check(tidy("a  ", false, false, {0, 0}) == "a  ", "tidy: off changes nothing");
+    Check(tidy("a\n\n\n", true, true, {3, 0}) == "a\n\n\n", "tidy: blank lines opened at the end, caret there, stay");
+    Check(tidy("a\n\n\n\n", true, true, {2, 0}) == "a\n\n\n", "tidy: lines up to the caret's blank line stay");
     d.SetText("x = 1   \ny = 2\n\n\n");
     d.SetCursor({1, 3});
     Check(d.TidyForSave(true, true) && d.Text() == "x = 1\ny = 2\n", "tidy: the document's text");
@@ -249,7 +253,18 @@ int main() {
     Check(!d.TidyForSave(true, true), "tidy: already tidy, no step");
     d.Undo();
     Check(d.Text() == "x = 1   \ny = 2\n\n\n", "tidy: one undo step brings it back");
+    // Typing on the last line goes on on the same line after a save
+    d.SetText("print(x");
+    d.SetCursor({0, 7});
+    Check(d.TidyForSave(true, true) && d.Text() == "print(x\n", "tidy: final newline after the last line");
+    Check(Caret(d, 0).line == 0 && Caret(d, 0).col == 7, "tidy: the caret stays before the added line break");
+    d.Type(")");
+    Check(d.Text() == "print(x)\n", "tidy: typing goes on on the same line");
+    // A space just typed at the caret stays (Auto Save while typing)
+    d.SetText("a  \nb = ");
+    d.SetCursor({1, 4});
+    Check(d.TidyForSave(true, true) && d.Text() == "a\nb = \n", "tidy: the caret's line keeps the space typed");
 
-    std::cout << "text document: typing, pairs, indent, cursors, paste, motion, lines, comments, undo, tidy. OK\n";
+    std::cout << "text document: typing, pairs, indent, cursors, paste, motion, lines, comments, undo, tidy (caret lines kept). OK\n";
     return 0;
 }

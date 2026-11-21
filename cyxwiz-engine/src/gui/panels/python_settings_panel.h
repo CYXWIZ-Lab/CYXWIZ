@@ -44,6 +44,7 @@ private:
     std::map<std::string, Check> checks_;  // by path
     std::future<Check> checking_;
     std::string checking_path_;
+    std::string next_check_path_;  // asked while another check runs
     std::future<std::vector<Found>> finding_;
     std::vector<Found> found_;
     bool found_shown_ = false;

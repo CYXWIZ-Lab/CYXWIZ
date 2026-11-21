@@ -1,6 +1,7 @@
 #include "python_package_list.h"
 
 #include <algorithm>
+#include <cctype>
 
 namespace cyxwiz::core {
 
@@ -16,11 +17,22 @@ std::vector<std::string> ParsePackageList(const std::string& text, std::vector<s
         }
         word.clear();
     };
-    for (const char c : text) {
-        if (c == ' ' || c == ',' || c == '\t' || c == '\n' || c == '\r')
+    for (size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
             take();
-        else
+        } else if (c == ',') {
+            // "numpy, pandas" and "torch,scipy" are two packages; in
+            // "pandas>=2,<3" the comma joins two version conditions
+            const char next = i + 1 < text.size() ? text[i + 1] : ' ';
+            if (std::isalnum(static_cast<unsigned char>(next)) || next == ' ' || next == '\t' || next == '\n' ||
+                next == '\r')
+                take();
+            else
+                word += c;
+        } else {
             word += c;
+        }
     }
     take();
     return packages;

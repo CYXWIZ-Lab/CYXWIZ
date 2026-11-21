@@ -2067,6 +2067,9 @@ def _cyxwiz_run_cell(src, key, filename, count=0, on_error=None):
 }
 
 void ScriptingEngine::PrepareSession() {
+    // The console's worker and a script can both start a session's first
+    // command: the start (and the startup script) runs once
+    std::lock_guard<std::mutex> prepare_lock(prepare_session_mutex_);
     if (session_prepared_) return;
 
     const auto start = cyxwiz::core::EngineConfig::Instance().GetPythonStart();

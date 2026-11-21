@@ -795,11 +795,19 @@ void Document::Replace(Pos a, Pos b, std::string_view text) {
 
 bool Document::TidyForSave(bool trim_trailing_whitespace, bool final_newline) {
     const int n = LineCount();
+    // Lines with a caret are left as they are: what is being typed there (a
+    // space, blank lines opened at the end) stays, as in other editors
+    std::vector<bool> caret_line(static_cast<size_t>(n), false);
+    int last_caret = -1;
+    for (const auto& s : selections_) {
+        caret_line[static_cast<size_t>(s.head.line)] = true;
+        last_caret = std::max(last_caret, s.head.line);
+    }
     // A line's length once its trailing spaces and tabs go (when they go)
     const auto kept = [&](int i) {
         const std::string& line = lines_[static_cast<size_t>(i)];
         int k = static_cast<int>(line.size());
-        if (trim_trailing_whitespace)
+        if (trim_trailing_whitespace && !caret_line[static_cast<size_t>(i)])
             while (k > 0 && (line[static_cast<size_t>(k) - 1] == ' ' || line[static_cast<size_t>(k) - 1] == '\t')) --k;
         return k;
     };
@@ -814,22 +822,39 @@ bool Document::TidyForSave(bool trim_trailing_whitespace, bool final_newline) {
                 last = i;
                 break;
             }
+        // A caret on a trailing blank line keeps the lines up to it (on the
+        // final empty line, that line is the final line break's own)
+        if (last_caret > last)
+            last = last_caret == n - 1 && Line(n - 1).empty() && n >= 2 ? std::max(last, n - 2) : last_caret;
     }
     std::vector<Edit> edits;
     for (int i = 0; i < (ends_here ? last : n); ++i) {
         const int k = kept(i);
         if (k < static_cast<int>(Line(i).size())) edits.push_back(Edit{{i, k}, {i, static_cast<int>(Line(i).size())}, ""});
     }
+    Pos newline_at{-1, -1};  // where the final line break is added, when nothing is removed there
     if (ends_here) {
         const Pos from{last, kept(last)};
         const Pos to{n - 1, static_cast<int>(Line(n - 1).size())};
         // Already right: line `last` keeps its length and one empty line follows
         const bool right = n == last + 2 && Line(n - 1).empty() && from.col == static_cast<int>(Line(last).size());
-        if (!right) edits.push_back(Edit{from, to, "\n"});
+        if (!right) {
+            edits.push_back(Edit{from, to, "\n"});
+            if (from == to) newline_at = from;
+        }
     }
     if (edits.empty()) return false;
+    const std::vector<Selection> before = selections_;
     merge_open_ = false;
     ApplyEdits(std::move(edits), GroupKind::Other, CaretRule::KeepMapped);
+    // A caret where the final line break went in stays before it (typing
+    // goes on on the same line)
+    if (newline_at.line >= 0 && before.size() == selections_.size()) {
+        for (size_t i = 0; i < before.size(); ++i) {
+            if (before[i].head == newline_at) selections_[i].head = newline_at;
+            if (before[i].anchor == newline_at) selections_[i].anchor = newline_at;
+        }
+    }
     return true;
 }
 

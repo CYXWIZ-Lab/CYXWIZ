@@ -534,8 +534,8 @@ private:
     UtilitiesConfig utilities_;
     MonitorConfig monitor_;
 
-    // Recent projects
     EditorConfig editor_;
+    // Preferences > General
     bool start_with_last_project_ = false;
     int recent_projects_kept_ = kDefaultRecentProjects;
     bool ask_before_closing_always_ = false;

@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <utility>
 
 namespace gui {
 
@@ -60,8 +61,10 @@ void PythonSettingsPanel::Load() {
 
 void PythonSettingsPanel::StartCheck(const std::string& path) {
     if (path.empty() || checks_.count(path) || (checking_.valid() && checking_path_ == path)) return;
-    if (checking_.valid()) checking_.wait();  // one check at a time; Poll stores it
-    Poll();
+    if (checking_.valid()) {  // one check at a time: this one starts when it ends (Poll)
+        next_check_path_ = path;
+        return;
+    }
     checking_path_ = path;
     checking_ = std::async(std::launch::async, [path]() {
         Check c;
@@ -77,7 +80,10 @@ void PythonSettingsPanel::StartCheck(const std::string& path) {
 }
 
 void PythonSettingsPanel::Poll() {
-    if (Ready(checking_)) checks_[checking_path_] = checking_.get();
+    if (Ready(checking_)) {
+        checks_[checking_path_] = checking_.get();
+        if (!next_check_path_.empty()) StartCheck(std::exchange(next_check_path_, std::string()));
+    }
     if (Ready(finding_)) {
         found_ = finding_.get();
         found_shown_ = true;
@@ -138,7 +144,7 @@ void PythonSettingsPanel::RenderInterpreter(const std::function<std::string()>& 
     const auto it = checks_.find(path_);
     if (path_.empty()) {
         Note("None set, and no Python ships with this Engine: Python features are off until one is chosen.");
-    } else if (checking_.valid() && checking_path_ == path_) {
+    } else if ((checking_.valid() && checking_path_ == path_) || next_check_path_ == path_) {
         ImGui::TextDisabled("Checking %s...", path_.c_str());
     } else if (it == checks_.end()) {
         Note("Press Enter or leave the field to check it.");

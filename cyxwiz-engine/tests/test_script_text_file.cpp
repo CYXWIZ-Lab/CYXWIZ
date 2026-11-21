@@ -84,15 +84,7 @@ int main() {
     Check(ReadAll(file) == crlf_bom, "failed write elsewhere left the file alone");
     std::filesystem::remove_all(dir);
 
-    // Preferences > Script Editor: trim trailing whitespace, one final newline
-    Check(TidyForSave("a = 1  \nb = 2\t\n", true, false) == "a = 1\nb = 2\n", "trim: spaces and tabs at line ends go");
-    Check(TidyForSave("a = 1  ", true, false) == "a = 1", "trim: the last line without a break");
-    Check(TidyForSave("  x\n    \n", true, false) == "  x\n\n", "trim: indentation stays, blank lines empty");
-    Check(TidyForSave("a = 1", false, true) == "a = 1\n", "final newline: added");
-    Check(TidyForSave("a = 1\n\n\n", false, true) == "a = 1\n", "final newline: exactly one");
-    Check(TidyForSave("", true, true).empty(), "an empty file stays empty");
-    Check(TidyForSave("a = 1  \n\n", true, true) == "a = 1\n", "both");
-    Check(TidyForSave("a  \n", false, false) == "a  \n", "off: unchanged");
+    // Preferences > Script Editor: a new file's line endings
     Check(NewFileLineEnding(1) == LineEnding::LF && NewFileLineEnding(2) == LineEnding::CRLF, "new file: LF / CRLF");
 #ifdef _WIN32
     Check(NewFileLineEnding(0) == LineEnding::CRLF, "new file: as the system (CRLF on Windows)");
@@ -100,6 +92,6 @@ int main() {
     Check(NewFileLineEnding(0) == LineEnding::LF, "new file: as the system (LF)");
 #endif
 
-    std::cout << "script text file: writable rule, Save As path, BOM/CRLF round trip, atomic write, tidy on save. OK\n";
+    std::cout << "script text file: writable rule, Save As path, BOM/CRLF round trip, atomic write, new-file line endings. OK\n";
     return 0;
 }

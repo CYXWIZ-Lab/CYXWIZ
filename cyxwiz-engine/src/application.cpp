@@ -75,6 +75,8 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 #include <filesystem>
+#include <fstream>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <algorithm>
 #include <cctype>
@@ -518,9 +520,13 @@ bool CyxWizApp::Initialize() {
         if (startup_project_path_.empty() && general.StartWithLastProject()) {
             std::vector<std::string> paths;
             for (const auto& recent : pm.GetRecentProjects()) paths.push_back(recent.path);
+            // A file that is gone or does not read as a project is skipped
+            // (opening it would leave neither a project nor the start page)
             startup_project_path_ = cyxwiz::project_session::FirstExisting(paths, [](const std::string& path) {
                 std::error_code ec;
-                return std::filesystem::exists(path, ec);
+                if (!std::filesystem::is_regular_file(path, ec)) return false;
+                std::ifstream file(path);
+                return file && nlohmann::json::accept(file);
             });
             reopening_last_project_ = !startup_project_path_.empty();
             if (reopening_last_project_) spdlog::info("Reopening the last project: {}", startup_project_path_);
