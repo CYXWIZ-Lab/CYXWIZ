@@ -4,7 +4,7 @@ Problems we know about in CyxWiz Studio, mostly in the GPU runtimes it builds on
 which devices are affected, and what to do. Each entry says whether CyxWiz already works around it.
 This file ships with every release package, next to `LICENSE`.
 
-Last updated: 2026-10-14.
+Last updated: 2026-11-21.
 
 ## GPU runtimes
 
@@ -62,6 +62,18 @@ Last updated: 2026-10-14.
 - **What to do:** for float64 results, choose a device that has it (NVIDIA CUDA or OpenCL, or the
   CPU route). The usage docs in the source repository (`docs/usage/`) give the tolerances for each
   feature.
+
+## Text
+
+### Right-to-left text is joined only in the dashboard and plots
+
+- **Affects:** Arabic (and Hebrew) text in data.
+- **What happens:** the Dashboard and plots (Plot window, plot cards) draw Arabic with its letters
+  joined and in right-to-left order. Other windows (Table Viewer, Data Studio, Properties, the
+  Script Editor) show the Arabic letters one by one, unjoined and left to right. Hebrew letters
+  have no font yet and show as "?".
+- **What to do:** read Arabic values in a dashboard or plot; the data itself is unchanged.
+- **Status:** the other windows are to follow.
 
 ## Reporting a new issue
 

@@ -4,6 +4,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/column_role_store.h"
 #include "../../core/data_registry.h"
+#include "../../core/display_text.h"
 #include "../../core/parquet_backed_dataset.h"
 #include "../../core/dashboard/sparse_summary.h"
 #include "../../core/dashboard/text_words.h"
@@ -495,7 +496,7 @@ void DashboardWindow::DrawFilters() {
     int remove = -1;
     for (size_t i = 0; i < spec_.filters.predicates.size(); ++i) {
         ImGui::PushID(static_cast<int>(i));
-        const std::string chip = spec_.filters.predicates[i].Text() + "  " ICON_FA_XMARK;
+        const std::string chip = cyxwiz::core::DisplayText(spec_.filters.predicates[i].Text()) + "  " ICON_FA_XMARK;
         if (ui::ToggleChip("##filter", chip.c_str(), "", true, ImGui::ColorConvertFloat4ToU32(t.accent_text))) remove = static_cast<int>(i);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove this filter");
         ImGui::PopID();
@@ -516,7 +517,7 @@ void DashboardWindow::DrawFields(float width) {
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::TextColored(t.text_dim, "FIELDS");
     for (const auto& c : contract_.columns) {
-        ImGui::TextUnformatted(c.name.c_str());
+        ImGui::TextUnformatted(cyxwiz::core::DisplayText(c.name).c_str());
         const char* role = RoleLabel(c.role);
         const float rw = ImGui::CalcTextSize(role).x;
         ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 4.0f, ImGui::GetContentRegionMax().x - rw));
@@ -559,10 +560,10 @@ void DashboardWindow::DrawStrip() {
         ImGui::PushStyleColor(ImGuiCol_ChildBg, t.plot_bg);
         ImGui::BeginChild("##kpi", ImVec2(w, ImGui::GetTextLineHeight() * 3.2f), ImGuiChildFlags_AlwaysUseWindowPadding);
         ImGui::PopStyleColor();
-        ImGui::TextColored(t.text_dim, "%s", kpis[i].label.c_str());
+        ImGui::TextColored(t.text_dim, "%s", cyxwiz::core::DisplayText(kpis[i].label).c_str());
         {
             ui::FontScope big(ui::Font::Heading);
-            ImGui::TextUnformatted(kpis[i].value.c_str());
+            ImGui::TextUnformatted(cyxwiz::core::DisplayText(kpis[i].value).c_str());
         }
         if (!kpis[i].sub.empty()) {
             ImGui::SameLine();
@@ -614,8 +615,8 @@ void DashboardWindow::DrawCard(WidgetSpec& w, float width, float height) {
     // Header: the title selects the widget; the state at the right.
     {
         ui::FontScope medium(ui::Font::Medium);
-        if (mode_ == Mode::Visualize) ImGui::TextUnformatted(WidgetTitle(w).c_str());
-        else if (ImGui::Selectable(WidgetTitle(w).c_str(), false, 0, ImVec2(width * 0.6f, 0))) selected_ = selected ? std::string() : w.id;
+        if (mode_ == Mode::Visualize) ImGui::TextUnformatted(cyxwiz::core::DisplayText(WidgetTitle(w)).c_str());
+        else if (ImGui::Selectable(cyxwiz::core::DisplayText(WidgetTitle(w)).c_str(), false, 0, ImVec2(width * 0.6f, 0))) selected_ = selected ? std::string() : w.id;
     }
     if (mode_ == Mode::Dashboard && ImGui::IsItemHovered()) ImGui::SetTooltip("Click to edit this widget");
     // The state after the title, on its line (the body starts below).
@@ -687,14 +688,14 @@ void DashboardWindow::DrawCard(WidgetSpec& w, float width, float height) {
                 const int cols = std::min(r.table->num_columns(), 24);
                 if (cols > 0 && ImGui::BeginTable("##rows", cols, ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_RowBg |
                                                                     ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoBordersInBody, body)) {
-                    for (int c = 0; c < cols; ++c) ImGui::TableSetupColumn(r.table->field(c)->name().c_str());
+                    for (int c = 0; c < cols; ++c) ImGui::TableSetupColumn(cyxwiz::core::DisplayText(r.table->field(c)->name()).c_str());
                     ImGui::TableHeadersRow();
                     for (int64_t row = 0; row < r.table->num_rows(); ++row) {
                         ImGui::TableNextRow();
                         for (int c = 0; c < cols; ++c) {
                             ImGui::TableSetColumnIndex(c);
                             auto s = r.table->column(c)->GetScalar(row);
-                            ImGui::TextUnformatted(s.ok() && (*s)->is_valid ? (*s)->ToString().c_str() : "");
+                            ImGui::TextUnformatted(s.ok() && (*s)->is_valid ? cyxwiz::core::DisplayText((*s)->ToString()).c_str() : "");
                         }
                     }
                     ImGui::EndTable();
@@ -852,7 +853,7 @@ void DashboardWindow::DrawSettings(float width) {
     }
     ImGui::TextColored(t.text_dim, mode_ == Mode::Visualize ? "PLOT" : "WIDGET");
     ImGui::SameLine();
-    ImGui::TextUnformatted(WidgetTitle(*w).c_str());
+    ImGui::TextUnformatted(cyxwiz::core::DisplayText(WidgetTitle(*w)).c_str());
     if (title_for_ != w->id) {
         title_for_ = w->id;
         std::snprintf(title_buf_, sizeof(title_buf_), "%s", w->title.c_str());
@@ -871,7 +872,7 @@ void DashboardWindow::DrawSettings(float width) {
             for (const auto& c : contract_.columns) {
                 if (need == FieldNeed::Number && !NumberType(c.type)) continue;
                 const std::string label = c.name + "  \xC2\xB7  " + RoleLabel(c.role);
-                if (ImGui::Selectable(label.c_str(), value == c.name)) {
+                if (ImGui::Selectable(cyxwiz::core::DisplayText(label).c_str(), value == c.name)) {
                     value = c.name;
                     changed = true;
                 }
@@ -1214,7 +1215,7 @@ void DashboardWindow::DrawPlotList() {
         const ImVec2 at = ImGui::GetCursorPos();
         if (ImGui::Selectable("##plot", sel, 0, ImVec2(0, line * 2 + 2))) selected_ = w.id;
         ImGui::SetCursorPos(ImVec2(at.x + 4, at.y));
-        ImGui::TextUnformatted(WidgetTitle(w).c_str());
+        ImGui::TextUnformatted(cyxwiz::core::DisplayText(WidgetTitle(w)).c_str());
         ImGui::SetCursorPos(ImVec2(at.x + 4, at.y + line + 2));
         ImGui::TextColored(t.text_dim, "%s", KindOf(w).label.c_str());
         ImGui::PopID();

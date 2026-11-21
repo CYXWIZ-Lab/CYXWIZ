@@ -1249,6 +1249,27 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     icon_config.RasterizerDensity = font_rasterizer_density_;
     icon_config.GlyphMinAdvanceX = base_font_size;  // Make icons monospaced
 
+    // Arabic letters and their joined forms (Noto Sans Arabic, OFL), merged
+    // into each interface font: Inter has none, so Arabic data was drawn as
+    // "?". core::DisplayText gives the joined forms and the right-to-left
+    // order; the ranges are the letters and the forms it uses.
+    static const ImWchar arabic_ranges[] = {0x0600, 0x06FF, 0x0750, 0x077F, 0xFB50, 0xFBFF, 0xFE70, 0xFEFF, 0};
+    const std::string arabic_font = font_base_path + "NotoSansArabic-Regular.ttf";
+    const bool has_arabic_font = std::filesystem::exists(arabic_font);
+    ImFontConfig arabic_config;
+    arabic_config.MergeMode = true;
+    arabic_config.PixelSnapH = true;
+    arabic_config.OversampleH = 1;
+    arabic_config.OversampleV = 1;
+    arabic_config.RasterizerDensity = font_rasterizer_density_;
+    // Noto Sans Arabic draws its letters small for its size next to Inter's
+    // Latin (seen on screen): 1.2 times the size reads alike.
+    const auto merge_arabic = [&](float font_size) {
+        if (has_arabic_font)
+            io.Fonts->AddFontFromFileTTF(arabic_font.c_str(), std::round(font_size * 1.2f), &arabic_config, arabic_ranges);
+    };
+    if (!has_arabic_font) spdlog::warn("Arabic font not found ({}): Arabic text is drawn as '?'", arabic_font);
+
     // Load regular font (this becomes the default)
     if (std::filesystem::exists(inter_regular)) {
         font_regular_ = io.Fonts->AddFontFromFileTTF(inter_regular.c_str(), base_font_size, &font_config);
@@ -1260,6 +1281,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
                 spdlog::debug("Merged FontAwesome icons into regular font");
             }
+            merge_arabic(base_font_size);
         }
     }
 
@@ -1273,6 +1295,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
             if (std::filesystem::exists(fa_solid)) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
             }
+            merge_arabic(base_font_size);
         }
     }
 
@@ -1288,6 +1311,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), heading_font_size - 1.0f, &icon_config, icon_ranges);
                 icon_config.GlyphMinAdvanceX = base_font_size;
             }
+            merge_arabic(heading_font_size);
             cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Heading, heading);
         }
     }
@@ -1302,6 +1326,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
             if (std::filesystem::exists(fa_solid)) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
             }
+            merge_arabic(base_font_size);
         }
     }
 
