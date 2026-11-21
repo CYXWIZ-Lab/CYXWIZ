@@ -363,6 +363,7 @@ private:
     void RenderNodesPanelPreferences();
     void RenderTrainingPreferences();
     void RenderStudioPreferences();  // Preferences > Studio
+    void RenderToolsPreferences();   // Preferences > Tools
     // Preferences > Search (toolbar_preferences_search.cpp)
     void RenderSearchPreferences();
     void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)

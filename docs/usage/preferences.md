@@ -131,3 +131,15 @@ Besides the server address, what the Engine connects to and the account:
   deployment can still change it.
 - **Deployment > P2P port**: used when a server node does not say its own
   (50052 by default).
+
+## Tools
+
+How the Tools windows open when the Engine starts (they were under General
+before; each window also has "Save as my default"):
+
+- **Utilities**: the tab it opens on, the calculator's digits and degrees,
+  the unit category, the hash, the JSON indent, the regex flags.
+- **Monitoring**: how often it samples, how long it keeps readings (5 min,
+  15 min, 1 hour) and the tab it opens on.
+- **Diagnostics**: log frame-rate changes, log every Python command, and the
+  frame time overlay; on at once and kept.
