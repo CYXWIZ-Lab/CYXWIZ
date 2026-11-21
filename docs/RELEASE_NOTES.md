@@ -826,6 +826,11 @@ private Data Studio tickets (`tofix*/track*`).
   is rebuilt on the current graph: a text corpus, a Tokenizer making causal
   windows, Split, Loader, two decoder blocks, a per-position token head, the
   loss and Adam.
+- **A language model that tokenizes its text in the graph can be trained.**
+  Train refused a graph whose Tokenizer (Causal document windows) sits
+  before the Data Split, saying the source table had no token column: it
+  checked the raw text before the Tokenizer had run. That check now waits
+  for the prepared windows.
 - The node icon pack you choose is kept: View > Node Icon Pack and the new
   Node icons row of Preferences > Appearance set it, the next launch starts
   with it, and Reset appearance goes back to Font Awesome.
