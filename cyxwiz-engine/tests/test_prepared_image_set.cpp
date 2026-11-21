@@ -523,10 +523,24 @@ void CheckLabelsCsvRows(const fs::path& root) {
         (void)list("bare.csv", "file,label\n0001.png,cat\n");
     } catch (const std::runtime_error& e) {
         const std::string what = e.what();
-        refused = what.find("more than one place") != std::string::npos &&
+        refused = what.find("more than one image file") != std::string::npos &&
                   what.find("train/0001.png") != std::string::npos && what.find("test/0001.png") != std::string::npos;
     }
     Check(refused, "a bare name that two files have is refused, naming both");
+
+    // A row without its extension that fits two files in the folder itself
+    // (stem.jpg, stem.png) is refused too; it once took the first extension.
+    Write(dir / "stem.jpg", Gradient(8, 8, CV_8UC3, 6));
+    Write(dir / "stem.png", Gradient(8, 8, CV_8UC3, 7));
+    refused = false;
+    try {
+        (void)list("stem.csv", "file,label\nstem,cat\n");
+    } catch (const std::runtime_error& e) {
+        const std::string what = e.what();
+        refused = what.find("more than one image file") != std::string::npos &&
+                  what.find("stem.jpg") != std::string::npos && what.find("stem.png") != std::string::npos;
+    }
+    Check(refused, "a row without its extension that fits two files in the folder is refused, naming both");
 
     // Paths relative to the folder pick each file (headerless: the first row names an image).
     const auto relative = list("relative.csv", "train/0001.png,cat\ntest/0001.png,dog\n");

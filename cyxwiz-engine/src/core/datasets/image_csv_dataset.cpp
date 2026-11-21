@@ -350,13 +350,22 @@ void ImageCSVDataset::LoadFromCSV() {
         if (fs::is_regular_file(image_path)) {
             resolved_path = image_path.string();
         } else {
+            // Without its extension the row may fit several files (a.jpg and
+            // a.png): that is as ambiguous as a bare name in two folders.
+            std::vector<std::string> fits;
             for (const auto ext : image_formats::kExtensions) {
                 const fs::path test_path = fs::path(image_folder_) / (filename + std::string(ext));
-                if (fs::is_regular_file(test_path)) {
-                    resolved_path = test_path.string();
-                    break;
-                }
+                if (fs::is_regular_file(test_path)) fits.push_back(test_path.string());
             }
+            if (fits.size() > 1) {
+                std::string where;
+                for (size_t i = 0; i < fits.size() && i < 3; ++i)
+                    where += (i ? ", " : "") + fs::relative(fits[i], image_folder_).generic_string();
+                if (fits.size() > 3) where += ", ...";
+                ambiguous.push_back("'" + filename + "' (" + where + ")");
+                continue;
+            }
+            if (fits.size() == 1) resolved_path = fits.front();
         }
         if (resolved_path.empty()) {
             const auto it = paths_by_name.find(filename);
@@ -384,8 +393,9 @@ void ImageCSVDataset::LoadFromCSV() {
         std::string examples;
         for (size_t i = 0; i < ambiguous.size() && i < 3; ++i) examples += (i ? "; " : "") + ambiguous[i];
         throw std::runtime_error("Labels CSV '" + csv_path_ + "': " + std::to_string(ambiguous.size()) +
-                                 " row(s) name a file that exists in more than one place, e.g. " + examples +
-                                 ". Write each file's path relative to the image folder in the CSV.");
+                                 " row(s) fit more than one image file, e.g. " + examples +
+                                 ". Write each file's path relative to the image folder, with its extension, "
+                                 "in the CSV.");
     }
 }
 
