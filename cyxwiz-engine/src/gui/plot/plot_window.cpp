@@ -376,7 +376,7 @@ void PlotWindow::Render() {
     ImGui::PopStyleColor();
     {
         ui::FontScope heading(ui::Font::Medium);
-        ImGui::TextUnformatted(spec_.title.c_str());
+        ImGui::TextUnformatted(core::DisplayText(spec_.title).c_str());
     }
     if (!table_ && !arrow_table_) {
         // No data: the reason where the plot would be.
@@ -1261,7 +1261,7 @@ void PlotWindow::DrawSettings() {
                 ImGui::TableNextColumn();
                 ImGui::TextUnformatted(value.c_str());
             };
-            if (!d.positive_label.empty()) row("positive class", d.positive_label);
+            if (!d.positive_label.empty()) row("positive class", core::DisplayText(d.positive_label));
             for (const auto& [name, v] : d.metrics) row(name, MetricText(name, v));
             ImGui::EndTable();
         }

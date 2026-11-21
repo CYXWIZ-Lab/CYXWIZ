@@ -66,6 +66,13 @@ int main() {
     // A mark stays after its letter (ImGui draws it over the letter before it)
     Check(DisplayText(U(U"\u0628\u0650")) == U(U"\uFE8F\u0650"), "kasra after its beh");
     Check(DisplayText(U(U"\u0628\u0650\u0628")) == U(U"\uFE90\uFE91\u0650"), "a mark does not break the joining");
+    // Arabic separators belong to the number: 3.14 and 1,000 in Arabic digits
+    Check(DisplayText(U(U"\u0627\u0644\u0639\u062F\u062F \u0663\u066B\u0661\u0664")) == U(U"\u0663\u066B\u0661\u0664 \uFEA9\uFEAA\uFECC\uFEDF\uFE8D"), "Arabic decimal separator: the number stays in order");
+    Check(DisplayText(U(U"\u0645\u0631 \u0661\u066C\u0660\u0660\u0660")) == U(U"\u0661\u066C\u0660\u0660\u0660 \uFEAE\uFEE3"), "Arabic thousands separator: one number");
+    Check(!HasRightToLeft(U(U"3\u066B14")), "a number with an Arabic separator is not right-to-left text");
+    // Bytes that are not text in a right-to-left string become U+FFFD, never a NUL
+    Check(DisplayText(std::string("\xC0\x80", 2) + U(U"\u0628")).find('\0') == std::string::npos,
+          "an overlong NUL is not decoded as NUL");
     // Hebrew: reversed, no joined forms
     Check(DisplayText(U(U"\u05E9\u05DC\u05D5\u05DD")) == U(U"\u05DD\u05D5\u05DC\u05E9"), "Hebrew reversed");
     // Persian letters with forms of their own (peh, gaf, farsi yeh)

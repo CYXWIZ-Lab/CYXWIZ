@@ -95,9 +95,14 @@ bool JoinsPrevious(char32_t c) {
     return f && (f->final || f->medial);
 }
 
+// Arabic digits and the signs that go with numbers: the comma, the decimal
+// and thousands separators and the percent sign.
+bool IsArabicNumberSign(char32_t c) {
+    return (c >= 0x0660 && c <= 0x066C) || (c >= 0x06F0 && c <= 0x06F9) || c == 0x060C;
+}
+
 bool IsRightToLeftLetter(char32_t c) {
-    if (IsMark(c)) return false;
-    if ((c >= 0x0660 && c <= 0x0669) || (c >= 0x06F0 && c <= 0x06F9)) return false;  // digits
+    if (IsMark(c) || IsArabicNumberSign(c)) return false;
     return (c >= 0x0590 && c <= 0x08FF) || (c >= 0xFB1D && c <= 0xFDFF) || (c >= 0xFE70 && c <= 0xFEFF);
 }
 
@@ -114,6 +119,9 @@ std::u32string Decode(std::string_view s) {
             if ((n & 0xC0) != 0x80) ok = false;
             else c = (c << 6) | (n & 0x3F);
         }
+        // Overlong forms, surrogates and values past U+10FFFF are not text
+        static constexpr char32_t kLeast[] = {0, 0x80, 0x800, 0x10000};
+        if (ok && (c < kLeast[extra] || (c >= 0xD800 && c <= 0xDFFF) || c > 0x10FFFF)) ok = false;
         if (!ok) {
             out.push_back(0xFFFD);
             ++i;
@@ -187,6 +195,8 @@ enum class Dir { L, R, Number, Neutral, Mark };
 Dir DirOf(char32_t c) {
     if (IsMark(c)) return Dir::Mark;
     if ((c >= '0' && c <= '9') || (c >= 0x0660 && c <= 0x0669) || (c >= 0x06F0 && c <= 0x06F9)) return Dir::Number;
+    if (c == 0x066B || c == 0x066C) return Dir::Number;  // Arabic decimal and thousands separators
+    if (c == 0x060C || c == 0x066A) return Dir::Neutral;  // Arabic comma and percent sign
     if (IsRightToLeftLetter(c)) return Dir::R;
     if (c < 0x80) return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ? Dir::L : Dir::Neutral;
     if ((c >= 0x0080 && c <= 0x00BF) || c == 0x00D7 || c == 0x00F7 || (c >= 0x2000 && c <= 0x2BFF) ||
@@ -239,7 +249,7 @@ std::string DisplayText(std::string_view utf8) {
         }
     for (size_t i = 1; i + 1 < n; ++i)
         if (dir[i] == Dir::Neutral && dir[i - 1] == Dir::Number && dir[i + 1] == Dir::Number &&
-            (text[i] == '.' || text[i] == ',' || text[i] == ':' || text[i] == '/' || text[i] == 0x066B || text[i] == 0x066C))
+            (text[i] == '.' || text[i] == ',' || text[i] == ':' || text[i] == '/' || text[i] == 0x060C))
             dir[i] = Dir::Number;
     for (size_t i = 0; i < n; ++i)
         if (text[i] == '%' || text[i] == 0x066A)

@@ -18,9 +18,9 @@ Position encoding -> two Transformer decoder blocks -> Token logits 64 per
 position (TimeDistributed) -> Causal LM output -> Next-token cross entropy
 (with the loader's labels) -> Adam.
 
-Open it from the repository root (the data path is relative to it), then
-Compile and Train. It compiles with no errors; the corpus is far too small to
-learn real language: it shows the pieces work.
+Open it in any project (its data path is relative to the repository; the
+Engine finds it from the graph's folder), then Compile and Train. The corpus is far too small to learn real language: it
+shows the pieces work.
 
 ## Scope Reminder
 

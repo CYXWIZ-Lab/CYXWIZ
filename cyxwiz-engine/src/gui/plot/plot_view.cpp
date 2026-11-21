@@ -923,21 +923,32 @@ void PlotView::DrawPlot(ImVec2 size) {
             // Column names longer than their cell are shortened ("artist_po..");
             // the rows and the hover keep the full names.
             float row_w = 0.0f;
-            for (const auto& r : p.row_names) side_names.push_back(core::DisplayText(r));
+            const bool row_ticks = p.row_names.size() <= 40;  // more: no names down the side
+            if (row_ticks)
+                for (const auto& r : p.row_names) side_names.push_back(core::DisplayText(r));
             for (const auto& r : side_names) row_w = std::max(row_w, ImGui::CalcTextSize(r.c_str()).x);
             const float cell_w = p.grid_cols > 0 ? (plot_size.x - row_w - 40.0f) / static_cast<float>(p.grid_cols) - 6.0f : 0.0f;
             for (size_t i = 0; i < p.col_names.size() && p.col_names.size() <= 40; ++i) {
+                // Shortened at the end of the name as written (whole characters),
+                // then drawn: right-to-left names lose their end, not their start
                 std::string name = core::DisplayText(p.col_names[i]);
                 if (ImGui::CalcTextSize(name.c_str()).x > cell_w) {
-                    while (name.size() > 1 && ImGui::CalcTextSize((name + "..").c_str()).x > cell_w) name.pop_back();
-                    name += "..";
+                    std::string kept = p.col_names[i];
+                    const auto drop_last = [&kept] {  // the last character, all its bytes
+                        while (!kept.empty() && (static_cast<unsigned char>(kept.back()) & 0xC0) == 0x80) kept.pop_back();
+                        if (!kept.empty()) kept.pop_back();
+                    };
+                    do {
+                        drop_last();
+                        name = core::DisplayText(kept + "..");
+                    } while (kept.size() > 1 && ImGui::CalcTextSize(name.c_str()).x > cell_w);
                 }
                 short_names.push_back(std::move(name));
                 xpos.push_back(static_cast<double>(i) + 0.5);
             }
             for (const auto& name : short_names) xnames.push_back(name.c_str());
             // Row 0 is drawn at the top.
-            for (size_t i = 0; i < side_names.size() && side_names.size() <= 40; ++i) {
+            for (size_t i = 0; i < side_names.size(); ++i) {
                 ynames.push_back(side_names[i].c_str());
                 ypos.push_back(static_cast<double>(p.grid_rows) - static_cast<double>(i) - 0.5);
             }
@@ -1526,8 +1537,9 @@ void PlotView::DrawPlot(ImVec2 size) {
                 const ImVec4 c = ColourOf(i);
                 // A small marker per point keeps the fit and the legend; the
                 // sized and coloured circles are drawn over it.
-                const ImVec4 marker = p.colour_scale ? ui::WithAlpha(t.text, 0.0f) : c;
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 1.0f, marker, 0.0f, marker);
+                // The outline (weight 0, not drawn) names the legend colour also
+                // when the markers are see-through under a colour scale
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 1.0f, p.colour_scale ? ui::WithAlpha(t.text, 0.0f) : c, 0.0f, c);
                 ImPlot::PlotScatter((p.series.size() > 1 ? LegendLabel(p, i, sr.label) : std::string("##points")).c_str(), sr.x.data(), sr.y.data(), n(sr.x));
                 ImPlot::PushPlotClipRect();
                 for (size_t k = 0; k < sr.x.size(); ++k) {

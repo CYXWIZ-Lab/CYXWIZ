@@ -137,22 +137,16 @@
       "name": "Tiny text corpus",
       "parameters": {
         "configured": "true",
-        "create_causal_lm_targets": "true",
         "dataset_name": "tiny_causal_lm_corpus",
         "delimiter": ",",
         "file_category": "text",
         "file_path": "examples/cyxgraph/text/causal_lm_tiny_corpus.csv",
         "file_type": "csv",
         "has_header": "true",
-        "model_task": "causal_lm",
-        "sentence_id_column": "document_id",
-        "shape": "[8]",
         "source_type": "file",
-        "target_ignore_index": "-100",
         "text_column": "text",
         "text_label_column": "",
-        "text_layout": "0",
-        "token_column": "token_ids"
+        "text_layout": "0"
       },
       "pos_x": -840.0,
       "pos_y": -80.0,
