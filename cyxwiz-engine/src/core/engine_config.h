@@ -185,6 +185,18 @@ struct PolicyStressDefaults {
     int episodes = 10;  // a level, 1 to 100
 };
 
+// What each Python session starts with, and the Python console's history
+// (Preferences > Python)
+struct PythonStartConfig {
+    static constexpr int kMinCommandsKept = 100;
+    static constexpr int kMaxCommandsKept = 10000;
+    std::string startup_script;       // run in each new session; empty: none
+    bool import_numpy = true;         // import numpy as np
+    bool import_pycyxwiz = true;      // import pycyxwiz and its short names (cyx, svd, zeros...)
+    int console_commands_kept = 500;  // commands, each with its output
+    bool operator==(const PythonStartConfig&) const = default;
+};
+
 // The Script Editor's settings (Preferences > Script Editor)
 struct EditorConfig {
     int tab_size = 4;  // 2, 4 or 8
@@ -314,6 +326,10 @@ public:
     // Default packages to install in new venvs
     std::vector<std::string> GetDefaultVenvPackages() const;
     void SetDefaultVenvPackages(const std::vector<std::string>& packages);
+
+    // Each Python session's start and the console's history (Preferences > Python)
+    PythonStartConfig GetPythonStart() const;
+    void SetPythonStart(const PythonStartConfig& start);
 
     // ===== Local Debug =====
 
@@ -482,6 +498,7 @@ private:
     std::string detected_python_path_;  // session only, not serialized
     bool auto_create_venv_ = true;    // Auto-create venv for new projects
     std::vector<std::string> default_venv_packages_;  // Default packages to install in new venvs
+    PythonStartConfig python_start_;
 
     // Local Debug settings
     bool require_debug_before_train_ = false;

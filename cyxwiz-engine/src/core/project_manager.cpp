@@ -1,4 +1,5 @@
 #include "project_manager.h"
+#include "core/python_package_list.h"
 #include "async_task_manager.h"
 #include "core/engine_config.h"
 #include "core/child_process.h"
@@ -284,6 +285,21 @@ void QueueProjectVenvCreation(const fs::path& project_dir, const std::string& pr
             if (!CreateProjectVenv(fs::path(project_root), &error)) {
                 throw std::runtime_error(error.empty() ? "Failed to create project venv" : error);
             }
+            // Preferences > Python > Packages to install; Python starts after them
+            const auto packages = cyxwiz::core::EngineConfig::Instance().GetDefaultVenvPackages();
+            if (!packages.empty()) {
+                const std::string names = cyxwiz::core::JoinPackageList(packages);
+                task.ReportProgress(0.5f, "Installing " + names + "...");
+                const std::string python = GetVenvInterpreterPath(fs::path(project_root) / "python");
+                const int code = cyxwiz::core::RunHidden(cyxwiz::core::PipInstallCommand(python, packages));
+                if (code == 0) {
+                    spdlog::info("Installed {} in the new environment", names);
+                } else {
+                    spdlog::warn("Could not install {} in the new environment (pip exit code {}); install them "
+                                 "with pip in the Python console",
+                                 names, code);
+                }
+            }
             task.ReportProgress(1.0f, "Virtual environment ready");
         },
         nullptr,
@@ -500,7 +516,13 @@ bool ProjectManager::CreateProject(const std::string& name, const std::string& l
 
         spdlog::info("Project created: {} at {}", name, project_root_);
 
-        QueueProjectVenvCreation(project_dir, name, GetSessionToken());
+        // Preferences > Python: without an environment the project runs in
+        // the Engine's interpreter
+        if (cyxwiz::core::EngineConfig::Instance().GetAutoCreateVenv()) {
+            QueueProjectVenvCreation(project_dir, name, GetSessionToken());
+        } else {
+            spdlog::info("No virtual environment for the new project (Preferences > Python)");
+        }
 
         // Add to recent projects
         AddToRecentProjects(name, project_file_path_);
@@ -598,15 +620,18 @@ bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
         // Only create venv if both python_env.json AND python folder are missing
         // (if python folder exists, venv creation is likely already in progress)
         if (!fs::exists(python_env_file) && !fs::exists(python_dir)) {
-            spdlog::warn("Legacy project detected (no python_env.json) - creating virtual environment");
-
             // As for a new project: Python waits for the environment (setup
             // pending), then starts in it.
             auto& config = cyxwiz::core::EngineConfig::Instance();
-            if (config.HasSystemPython()) {
+            if (!config.GetAutoCreateVenv()) {
+                spdlog::info("The project has no virtual environment and Preferences > Python makes none: it "
+                             "runs in the Engine's interpreter");
+            } else if (config.HasSystemPython()) {
+                spdlog::info("The project has no virtual environment: making one");
                 QueueProjectVenvCreation(fs::path(project_root_), project_name_, GetSessionToken());
             } else {
-                spdlog::error("Cannot create venv for legacy project: no system Python configured");
+                spdlog::error("The project has no virtual environment and no Python is set to make one "
+                              "(Preferences > Python)");
             }
         } else if (!fs::exists(python_env_file) && fs::exists(python_dir)) {
             spdlog::info("Virtual environment creation already in progress for project: {}", project_name_);

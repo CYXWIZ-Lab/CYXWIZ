@@ -384,7 +384,6 @@ private:
 
     // Helper functions
     std::string OpenFolderDialog();
-    std::string OpenFileDialog(const char* filter, const char* title);
 
     bool show_account_settings_dialog_ = false;
     bool auto_save_enabled_ = false;
@@ -561,16 +560,8 @@ private:
     std::string server_probed_;  // what the last probe asked about
     int preferences_tab_ = 0;  // 0 = Python/Scripting, 1 = Keyboard Shortcuts
 
-    // Python/Scripting preferences
-    bool python_settings_changed_ = false;  // Track if restart needed
+    // Preferences > Python
     gui::PythonSettingsPanel python_settings_panel_;
-    char python_interpreter_path_[512] = "";
-    char python_startup_script_[512] = "";
-    bool python_auto_import_numpy_ = true;
-    bool python_auto_import_cyxwiz_ = true;
-    int python_output_limit_ = 1000;  // Max lines in output
-    bool show_python_diagnostics_popup_ = false;
-    std::string python_diagnostics_text_;
 
     // Keyboard shortcuts (action name -> shortcut string)
     int shortcuts_context_ = 0;        // Preferences > Shortcuts: selected window

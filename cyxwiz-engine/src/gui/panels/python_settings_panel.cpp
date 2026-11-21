@@ -1,323 +1,307 @@
 #include "python_settings_panel.h"
+
 #include "../../core/engine_config.h"
-#include "../../core/python_detector.h"
 #include "../../core/file_dialogs.h"
+#include "../../core/python_detector.h"
+#include "../../core/python_package_list.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
+
 #include <imgui.h>
+#include <imgui_stdlib.h>
 #include <spdlog/spdlog.h>
-#include <filesystem>
-#include <cstring>
-#include <sstream>
+
 #include <algorithm>
+#include <chrono>
+#include <filesystem>
 
 namespace gui {
 
-// Settings load when the panel is first drawn (Preferences), not when the
-// toolbar is built: checking the interpreter runs Python three times.
-PythonSettingsPanel::PythonSettingsPanel() = default;
+namespace ui = cyxwiz::ui;
+using cyxwiz::core::EngineConfig;
+using cyxwiz::core::PythonDetector;
 
-void PythonSettingsPanel::LoadSettings() {
-    auto& config = cyxwiz::core::EngineConfig::Instance();
-
-    // Load system Python path
-    std::string python_path = config.GetSystemPythonPath();
-    strncpy(system_python_path_, python_path.c_str(), sizeof(system_python_path_) - 1);
-
-    // Load auto-create venv setting
-    auto_create_venv_ = config.GetAutoCreateVenv();
-
-    // Load default packages
-    const auto& packages = config.GetDefaultVenvPackages();
-    std::ostringstream oss;
-    for (size_t i = 0; i < packages.size(); ++i) {
-        if (i > 0) oss << ", ";
-        oss << packages[i];
-    }
-    std::string packages_str = oss.str();
-    strncpy(default_packages_, packages_str.c_str(), sizeof(default_packages_) - 1);
-
-    // Validate current Python
-    if (!python_path.empty()) {
-        auto detector = cyxwiz::core::PythonDetector();
-        auto installation = detector.ValidatePythonInstallation(python_path);
-        if (installation && cyxwiz::core::PythonDetector::MeetsRequirements(*installation)) {
-            python_valid_ = true;
-            python_version_ = installation->version;
-            python_error_.clear();
-        } else {
-            python_valid_ = false;
-            python_version_.clear();
-            python_error_ = installation
-                ? cyxwiz::core::PythonDetector::GetRequirementError(*installation)
-                : "Invalid or inaccessible Python installation";
-        }
-    } else {
-        python_valid_ = false;
-        python_version_.clear();
-        python_error_ = "No Python configured";
-    }
-
-    is_modified_ = false;
+namespace {
+void Heading(const char* text) {
+    ImGui::Spacing();
+    ImGui::TextUnformatted(text);
+    ImGui::Separator();
+    ImGui::Spacing();
 }
 
-void PythonSettingsPanel::ApplySettings() {
-    auto& config = cyxwiz::core::EngineConfig::Instance();
+void Note(const char* text) {
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", text);
+    ImGui::PopTextWrapPos();
+}
 
-    auto installation = cyxwiz::core::PythonDetector::ValidatePythonInstallation(system_python_path_);
-    if (!installation) {
-        python_valid_ = false;
-        python_version_.clear();
-        python_error_ = "Invalid or inaccessible Python installation";
-        spdlog::error("Cannot save Python settings: {}", python_error_);
-        return;
-    }
-    if (!cyxwiz::core::PythonDetector::MeetsRequirements(*installation)) {
-        python_valid_ = false;
-        python_version_.clear();
-        python_error_ = cyxwiz::core::PythonDetector::GetRequirementError(*installation);
-        spdlog::error("Cannot save Python settings: {}", python_error_);
-        return;
-    }
-    python_valid_ = true;
-    python_version_ = installation->version;
-    python_error_.clear();
+template <typename T>
+bool Ready(const std::future<T>& f) {
+    return f.valid() && f.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+}
 
-    // Save system Python path
-    config.SetSystemPythonPath(std::string(system_python_path_));
+std::string Trimmed(std::string s) {
+    s.erase(0, s.find_first_not_of(" \t\""));
+    s.erase(s.find_last_not_of(" \t\"") + 1);
+    return s;
+}
+}  // namespace
 
-    // Save auto-create venv setting
-    config.SetAutoCreateVenv(auto_create_venv_);
+void PythonSettingsPanel::Load() {
+    auto& config = EngineConfig::Instance();
+    saved_path_ = config.GetSystemPythonPath();
+    path_ = saved_path_;
+    packages_ = cyxwiz::core::JoinPackageList(config.GetDefaultVenvPackages());
+    startup_script_ = config.GetPythonStart().startup_script;
+    if (!path_.empty()) StartCheck(path_);
+}
 
-    // Parse and save default packages
-    std::vector<std::string> packages;
-    std::string packages_str(default_packages_);
-    std::istringstream iss(packages_str);
-    std::string package;
-    while (std::getline(iss, package, ',')) {
-        // Trim whitespace
-        package.erase(0, package.find_first_not_of(" \t"));
-        package.erase(package.find_last_not_of(" \t") + 1);
-        if (!package.empty()) {
-            packages.push_back(package);
-        }
-    }
-    config.SetDefaultVenvPackages(packages);
+void PythonSettingsPanel::StartCheck(const std::string& path) {
+    if (path.empty() || checks_.count(path) || (checking_.valid() && checking_path_ == path)) return;
+    if (checking_.valid()) checking_.wait();  // one check at a time; Poll stores it
+    Poll();
+    checking_path_ = path;
+    checking_ = std::async(std::launch::async, [path]() {
+        Check c;
+        const auto python = PythonDetector::ValidatePythonInstallation(path);
+        if (!python)
+            c.error = "Not a Python interpreter (or it cannot be run)";
+        else if (!PythonDetector::MeetsRequirements(*python))
+            c.error = PythonDetector::GetRequirementError(*python);
+        else
+            c.version = python->version;
+        return c;
+    });
+}
 
-    // Save config to disk
-    if (config.Save()) {
-        spdlog::info("Python settings saved successfully");
-        is_modified_ = false;
-    } else {
-        spdlog::error("Failed to save Python settings");
+void PythonSettingsPanel::Poll() {
+    if (Ready(checking_)) checks_[checking_path_] = checking_.get();
+    if (Ready(finding_)) {
+        found_ = finding_.get();
+        found_shown_ = true;
+        for (const auto& f : found_) checks_[f.path] = Check{f.version, ""};
+        spdlog::info("{} of them supported ({})", found_.size(), PythonDetector::SupportedVersionsText());
     }
 }
 
-void PythonSettingsPanel::RevertSettings() {
-    LoadSettings();
-    is_modified_ = false;
-}
-
-void PythonSettingsPanel::Render() {
+void PythonSettingsPanel::Render(const std::function<std::string()>& runtime_details) {
     if (!loaded_) {
-        LoadSettings();
+        Load();
         loaded_ = true;
     }
-    ImGui::TextWrapped("Configure Python interpreter and virtual environment settings.");
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    Poll();
+    RenderInterpreter(runtime_details);
+    RenderNewProjects();
+    RenderSessionStart();
+    RenderConsole();
+}
 
-    // ========== System Python Path ==========
-    ImGui::TextColored(cyxwiz::ui::CurrentTokens().accent_text, ICON_FA_CODE " System Python");
-    ImGui::Spacing();
-
-    ImGui::Text("Python Executable:");
-    ImGui::SetNextItemWidth(-140);
-    if (ImGui::InputText("##PythonPath", system_python_path_, sizeof(system_python_path_))) {
-        is_modified_ = true;
-    }
-
+void PythonSettingsPanel::RenderInterpreter(const std::function<std::string()>& runtime_details) {
+    const auto& tokens = ui::CurrentTokens();
+    Heading("Interpreter");
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Python");
     ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_FOLDER_OPEN " Browse", ImVec2(120, 0))) {
-        BrowsePythonExecutable();
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float buttons = ui::ButtonWidth("Browse...", ui::ButtonSize::Small) +
+                          ui::ButtonWidth("Find Python", ui::ButtonSize::Small) + 2.0f * spacing;
+    ImGui::SetNextItemWidth(std::max(200.0f, ImGui::GetContentRegionAvail().x - buttons));
+    ImGui::InputTextWithHint("##python_path", "path to python.exe", &path_);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        path_ = Trimmed(path_);
+        StartCheck(path_);
+    }
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Browse...##python")) {
+        if (auto chosen = cyxwiz::FileDialogs::OpenFile(
+                "Choose a Python interpreter", {{"Python", "exe"}, {"All files", "*"}},
+                path_.empty() ? nullptr : path_.c_str())) {
+            path_ = *chosen;
+            StartCheck(path_);
+        }
+    }
+    ImGui::SameLine();
+    const bool finding = finding_.valid();
+    if (ui::SecondaryButton("Find Python", !finding, "Looking for Python on this PC...")) {
+        spdlog::info("Looking for Python installations...");
+        finding_ = std::async(std::launch::async, []() {
+            std::vector<Found> found;
+            for (const auto& p : PythonDetector::FindAllPythonInstallations())
+                if (PythonDetector::MeetsRequirements(p)) found.push_back({p.executable_path, p.version});
+            return found;
+        });
     }
 
-    ImGui::Spacing();
-
-    // Auto-detect button
-    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS " Auto-Detect Python", ImVec2(200, 0))) {
-        RunAutoDetection();
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Scan system for supported Python 3.12-3.13 installations");
-    }
-
-    ImGui::Spacing();
-
-    // Python status
-    if (!std::string(system_python_path_).empty()) {
-        if (python_valid_) {
-            ImGui::TextColored(cyxwiz::ui::CurrentTokens().success, ICON_FA_CHECK " Python %s", python_version_.c_str());
+    // What the field holds
+    const auto it = checks_.find(path_);
+    if (path_.empty()) {
+        Note("None set, and no Python ships with this Engine: Python features are off until one is chosen.");
+    } else if (checking_.valid() && checking_path_ == path_) {
+        ImGui::TextDisabled("Checking %s...", path_.c_str());
+    } else if (it == checks_.end()) {
+        Note("Press Enter or leave the field to check it.");
+    } else if (!it->second.error.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(tokens.error, ICON_FA_XMARK " %s", it->second.error.c_str());
+        ImGui::PopTextWrapPos();
+    } else {
+        ImGui::TextColored(tokens.success, ICON_FA_CHECK " Python %s", it->second.version.c_str());
+        if (path_ == saved_path_) {
             ImGui::SameLine();
-            ImGui::TextDisabled("(Valid)");
-        } else {
-            ImGui::TextColored(cyxwiz::ui::CurrentTokens().error, ICON_FA_XMARK " %s", python_error_.c_str());
-        }
-    } else {
-        ImGui::TextDisabled("No Python configured");
-    }
-
-    // Auto-detection results
-    if (show_detection_results_ && !detected_pythons_.empty()) {
-        ImGui::Spacing();
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().accent_text, "Detected Python Installations:");
-        ImGui::Spacing();
-
-        if (ImGui::BeginChild("DetectedPythons", ImVec2(0, 150), true)) {
-            for (int i = 0; i < static_cast<int>(detected_pythons_.size()); ++i) {
-                const auto& python = detected_pythons_[i];
-
-                bool is_selected = (i == selected_detected_index_);
-                std::string label = python.version + " - " + python.path;
-
-                if (ImGui::Selectable(label.c_str(), is_selected)) {
-                    selected_detected_index_ = i;
-                }
-
-                if (ImGui::IsItemHovered()) {
-                    std::string tooltip = "Path: " + python.path + "\n";
-                    tooltip += "Version: " + python.version + "\n";
-                    tooltip += "Has venv: " + std::string(python.has_venv ? "Yes" : "No") + "\n";
-                    tooltip += "Has pip: " + std::string(python.has_pip ? "Yes" : "No");
-                    ImGui::SetTooltip("%s", tooltip.c_str());
-                }
+            ImGui::TextDisabled("- project environments are made from it; Python runs in it when a project has none -");
+            ImGui::SameLine();
+            if (ui::LinkButton("Runtime details")) {
+                details_text_ = runtime_details ? runtime_details() : std::string("Python runtime details are not available.");
+                ImGui::OpenPopup("Python runtime details");
             }
         }
-        ImGui::EndChild();
-
-        ImGui::Spacing();
-        ImGui::BeginDisabled(selected_detected_index_ < 0);
-        if (ImGui::Button(ICON_FA_CHECK " Use Selected Python", ImVec2(200, 0))) {
-            if (selected_detected_index_ >= 0 && selected_detected_index_ < static_cast<int>(detected_pythons_.size())) {
-                const auto& selected = detected_pythons_[selected_detected_index_];
-                strncpy(system_python_path_, selected.path.c_str(), sizeof(system_python_path_) - 1);
-                python_version_ = selected.version;
-                python_valid_ = true;
-                python_error_.clear();
-                is_modified_ = true;
-                show_detection_results_ = false;
-            }
+    }
+    if (path_ != saved_path_) {
+        const bool usable = it != checks_.end() && it->second.error.empty();
+        if (ui::PrimaryButton("Use this Python", usable,
+                              it == checks_.end() ? "Check it first (Enter in the field)" : "This one cannot be used",
+                              ui::ButtonSize::Small)) {
+            auto& config = EngineConfig::Instance();
+            config.SetSystemPythonPath(path_);
+            config.Save();
+            saved_path_ = path_;
+            changed_this_run_ = true;
+            spdlog::info("Python interpreter set: {} (Python {})", path_, it->second.version);
         }
-        ImGui::EndDisabled();
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // ========== Virtual Environment Settings ==========
-    ImGui::TextColored(cyxwiz::ui::CurrentTokens().accent_text, ICON_FA_CUBE " Virtual Environment");
-    ImGui::Spacing();
-
-    if (ImGui::Checkbox("Auto-create virtual environment for new projects", &auto_create_venv_)) {
-        is_modified_ = true;
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("When enabled, a Python venv will be automatically created\nfor each new project in <project>/python/");
-    }
-
-    ImGui::Spacing();
-
-    ImGui::Text("Default packages to install in new venvs:");
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Comma-separated list of packages to install automatically.\nExample: numpy, torch, scikit-learn");
-    }
-
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::InputTextMultiline("##DefaultPackages", default_packages_, sizeof(default_packages_), ImVec2(-1, 60))) {
-        is_modified_ = true;
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // ========== Apply/Revert Buttons ==========
-    ImGui::BeginDisabled(!is_modified_);
-    if (ImGui::Button(ICON_FA_FLOPPY_DISK " Apply", ImVec2(100, 0))) {
-        ApplySettings();
-    }
-    ImGui::EndDisabled();
-
-    ImGui::SameLine();
-
-    ImGui::BeginDisabled(!is_modified_);
-    if (ImGui::Button(ICON_FA_ROTATE_LEFT " Revert", ImVec2(100, 0))) {
-        RevertSettings();
-    }
-    ImGui::EndDisabled();
-
-    if (is_modified_) {
         ImGui::SameLine();
-        ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning, ICON_FA_TRIANGLE_EXCLAMATION " Unsaved changes");
+        if (ui::LinkButton("Keep the current one")) path_ = saved_path_;
     }
-}
+    if (changed_this_run_)
+        Note("Python that is already running keeps its interpreter until the Engine restarts; new project "
+             "environments are made from this one.");
 
-void PythonSettingsPanel::RunAutoDetection() {
-    spdlog::info("Running Python auto-detection...");
-    detected_pythons_.clear();
-    selected_detected_index_ = -1;
-
-    auto detector = cyxwiz::core::PythonDetector();
-    auto installations = detector.FindAllPythonInstallations();
-
-    for (const auto& installation : installations) {
-        if (!cyxwiz::core::PythonDetector::MeetsRequirements(installation)) {
-            continue;
-        }
-        DetectedPython python;
-        python.path = installation.executable_path;
-        python.version = installation.version;
-        python.has_venv = installation.has_venv_module;
-        python.has_pip = installation.has_pip;
-        detected_pythons_.push_back(python);
-    }
-
-    if (detected_pythons_.empty()) {
-        spdlog::warn("No supported Python {} installations found", cyxwiz::core::PythonDetector::SupportedVersionsText());
-    } else {
-        spdlog::info("Found {} Python installation(s)", detected_pythons_.size());
-        show_detection_results_ = true;
-    }
-}
-
-void PythonSettingsPanel::BrowsePythonExecutable() {
-    if (auto selected = cyxwiz::FileDialogs::OpenFile(
-            "Select Python Executable",
-            {{"Python Executables", "python,python3,python.exe"}, {"All Files", "*"}},
-            system_python_path_[0] == '\0' ? nullptr : system_python_path_)) {
-        strncpy(system_python_path_, selected->c_str(), sizeof(system_python_path_) - 1);
-        system_python_path_[sizeof(system_python_path_) - 1] = '\0';
-        is_modified_ = true;
-
-        // Validate the selected Python
-        auto detector = cyxwiz::core::PythonDetector();
-        auto installation = detector.ValidatePythonInstallation(*selected);
-        if (installation && cyxwiz::core::PythonDetector::MeetsRequirements(*installation)) {
-            python_valid_ = true;
-            python_version_ = installation->version;
-            python_error_.clear();
-            spdlog::info("Selected Python: {} ({})", *selected, python_version_);
+    if (found_shown_) {
+        ImGui::Spacing();
+        if (found_.empty()) {
+            ImGui::TextDisabled("No Python %s found on this PC.", PythonDetector::SupportedVersionsText().c_str());
         } else {
-            python_valid_ = false;
-            python_version_.clear();
-            python_error_ = installation
-                ? cyxwiz::core::PythonDetector::GetRequirementError(*installation)
-                : "Invalid Python installation";
-            spdlog::error("Selected file is not a supported Python installation: {} ({})", *selected, python_error_);
+            ImGui::TextDisabled("Found on this PC (pick one, then Use this Python):");
+            for (size_t i = 0; i < found_.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                const std::string label = "Python " + found_[i].version + "   " + found_[i].path;
+                if (ImGui::Selectable(label.c_str(), path_ == found_[i].path)) path_ = found_[i].path;
+                ImGui::PopID();
+            }
         }
+    }
+
+    if (ImGui::BeginPopupModal("Python runtime details", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const ImVec2 size(std::min(720.0f, ImGui::GetMainViewport()->WorkSize.x * 0.6f),
+                          std::min(360.0f, ImGui::GetMainViewport()->WorkSize.y * 0.5f));
+        ImGui::BeginChild("##python_details", size, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::TextUnformatted(details_text_.c_str());
+        ImGui::EndChild();
+        if (ui::SecondaryButton("Copy")) ImGui::SetClipboardText(details_text_.c_str());
+        ImGui::SameLine();
+        if (ui::SecondaryButton("Close")) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
     }
 }
 
-} // namespace gui
+void PythonSettingsPanel::RenderNewProjects() {
+    auto& config = EngineConfig::Instance();
+    Heading("New projects");
+    bool venv = config.GetAutoCreateVenv();
+    if (ImGui::Checkbox("Create a virtual environment for each new project", &venv)) {
+        config.SetAutoCreateVenv(venv);
+        config.Save();
+    }
+    Note("In the project's python folder, made from the interpreter above. A project without one runs in that "
+         "interpreter.");
+    ImGui::BeginDisabled(!venv);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Packages to install");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##packages", "numpy pandas (space separated; empty: none)", &packages_);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        packages_ignored_.clear();
+        const auto packages = cyxwiz::core::ParsePackageList(packages_, &packages_ignored_);
+        config.SetDefaultVenvPackages(packages);
+        config.Save();
+        packages_ = cyxwiz::core::JoinPackageList(packages);
+    }
+    ImGui::EndDisabled();
+    if (!packages_ignored_.empty())
+        ImGui::TextColored(ui::CurrentTokens().warning, "Not passed to pip: %s (pip options are not taken here)",
+                           cyxwiz::core::JoinPackageList(packages_ignored_).c_str());
+}
+
+void PythonSettingsPanel::RenderSessionStart() {
+    auto& config = EngineConfig::Instance();
+    Heading("When Python starts");
+    Note("Each Python session: before its first command or script, and again after Restart. A change applies to "
+         "the next session.");
+    auto start = config.GetPythonStart();
+    bool changed = false;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Startup script");
+    ImGui::SameLine();
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float buttons = ui::ButtonWidth("Browse...", ui::ButtonSize::Small) + spacing;
+    if (!startup_script_.empty()) buttons += ImGui::CalcTextSize("Clear").x + 2.0f * spacing;
+    ImGui::SetNextItemWidth(std::max(200.0f, ImGui::GetContentRegionAvail().x - buttons));
+    ImGui::InputTextWithHint("##startup_script", "none", &startup_script_);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        startup_script_ = Trimmed(startup_script_);
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Browse...##startup")) {
+        if (auto chosen = cyxwiz::FileDialogs::OpenFile("Choose a startup script",
+                                                        {{"Python scripts", "py,cyx"}, {"All files", "*"}},
+                                                        startup_script_.empty() ? nullptr : startup_script_.c_str())) {
+            startup_script_ = *chosen;
+            changed = true;
+        }
+    }
+    if (!startup_script_.empty()) {
+        ImGui::SameLine();
+        if (ui::LinkButton("Clear##startup")) {
+            startup_script_.clear();
+            changed = true;
+        }
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(std::filesystem::path(startup_script_), ec))
+            ImGui::TextColored(ui::CurrentTokens().warning, "The file is not there: sessions start without it.");
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Imports");
+    ImGui::SameLine();
+    changed |= ImGui::Checkbox("import numpy as np", &start.import_numpy);
+    ImGui::SameLine();
+    changed |= ImGui::Checkbox("import pycyxwiz", &start.import_pycyxwiz);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("With its short names: cyx, svd, eig, zeros, ones and the other MATLAB-style functions.");
+    if (changed) {
+        start.startup_script = startup_script_;
+        config.SetPythonStart(start);
+        config.Save();
+    }
+}
+
+void PythonSettingsPanel::RenderConsole() {
+    auto& config = EngineConfig::Instance();
+    Heading("Python console");
+    auto start = config.GetPythonStart();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Commands kept");
+    ImGui::SameLine();
+    if (ui::NumberField("##commands_kept", &start.console_commands_kept,
+                        cyxwiz::core::PythonStartConfig::kMinCommandsKept,
+                        cyxwiz::core::PythonStartConfig::kMaxCommandsKept, 100, 80.0f)) {
+        config.SetPythonStart(start);
+        config.Save();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("each with its output; 100 to 10,000");
+}
+
+}  // namespace gui

@@ -488,75 +488,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     preferences_tab_ = 4;
                     ImGui::Spacing();
 
-                    python_settings_panel_.Render();
-
-                    ImGui::Spacing();
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    // Startup Script
-                    ImGui::Text("Startup Script (run on launch):");
-                    ImGui::SetNextItemWidth(-100);
-                    ImGui::InputText("##startup_script", python_startup_script_, sizeof(python_startup_script_));
-                    ImGui::SameLine();
-                    if (ImGui::Button("Browse##startup")) {
-                        std::string path = OpenFileDialog("Python Scripts (*.py)\0*.py\0CyxWiz Scripts (*.cyx)\0*.cyx\0All Files (*.*)\0*.*\0", "Select Startup Script");
-                        if (!path.empty()) {
-                            strncpy(python_startup_script_, path.c_str(), sizeof(python_startup_script_) - 1);
-                        }
-                    }
-
-                    ImGui::Spacing();
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    // Auto-import options
-                    ImGui::Text("Auto-Import Libraries:");
-                    ImGui::Checkbox("Import NumPy as 'np'", &python_auto_import_numpy_);
-                    ImGui::Checkbox("Import CyxWiz module", &python_auto_import_cyxwiz_);
-
-                    ImGui::Spacing();
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    // Output limit
-                    ImGui::Text("Console Output Limit (lines):");
-                    ImGui::SetNextItemWidth(150);
-                    ImGui::InputInt("##output_limit", &python_output_limit_);
-                    if (python_output_limit_ < 100) python_output_limit_ = 100;
-                    if (python_output_limit_ > 10000) python_output_limit_ = 10000;
-                    ImGui::TextDisabled("Range: 100 - 10000 lines");
-
-                    ImGui::Spacing();
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    if (ImGui::Button("Show Runtime Details")) {
-                        if (python_diagnostics_callback_) {
-                            python_diagnostics_text_ = python_diagnostics_callback_();
-                        } else {
-                            python_diagnostics_text_ = "Python diagnostics are not available.";
-                        }
-                        show_python_diagnostics_popup_ = true;
-                        ImGui::OpenPopup("Python Runtime Details");
-                    }
-
-                    if (ImGui::BeginPopupModal("Python Runtime Details", &show_python_diagnostics_popup_, ImGuiWindowFlags_AlwaysAutoResize)) {
-                        ImGui::BeginChild("##python_diag_text", ImVec2(560, 300), true, ImGuiWindowFlags_HorizontalScrollbar);
-                        ImGui::TextUnformatted(python_diagnostics_text_.c_str());
-                        ImGui::EndChild();
-
-                        if (ImGui::Button("Copy")) {
-                            ImGui::SetClipboardText(python_diagnostics_text_.c_str());
-                        }
-                        ImGui::SameLine();
-                        if (ImGui::Button("Close")) {
-                            show_python_diagnostics_popup_ = false;
-                            ImGui::CloseCurrentPopup();
-                        }
-
-                        ImGui::EndPopup();
-                    }
+                    python_settings_panel_.Render(python_diagnostics_callback_);
 
                     RenderPluginPreferences("Python");
                     ImGui::EndTabItem();

@@ -7,6 +7,16 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Preferences > Python: the settings that did nothing now work.** The
+  venv switch and the packages for new projects were saved but never read
+  (every project got an environment, with no packages); the startup script,
+  the two imports and the console limit were not even saved. Now a new
+  project gets an environment only when the switch is on, with the listed
+  packages installed before Python starts in it; each Python session runs
+  the chosen imports and startup script; the Python console keeps the chosen
+  number of commands. The interpreter is taken with **Use this Python**
+  (no separate Apply / Revert), and checking or finding interpreters no
+  longer freezes the window.
 - **Preferences > Script Editor: one place for the editor's settings, for
   every project.** Tab size, whitespace, syntax colours, minimap, word wrap
   and auto indent were saved into the open project only, on OK, and were

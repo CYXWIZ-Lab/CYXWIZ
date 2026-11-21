@@ -264,7 +264,7 @@ bool ScriptingEngine::ResetSession(std::string* error_out) {
         if (error_out) *error_out = e.what();
         return false;
     }
-    matlab_aliases_initialized_ = false;
+    session_prepared_ = false;
     return true;
 }
 
@@ -415,9 +415,9 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
         return result;
     }
 
-    // Initialize MATLAB-style aliases on first command
-    if (!matlab_aliases_initialized_) {
-        InitializeMatlabAliases();
+    // The session's start (imports, startup script) before its first command
+    if (!session_prepared_) {
+        PrepareSession();
     }
 
     // Internal Variable Explorer commands skip the timeout below.
@@ -847,9 +847,9 @@ void ScriptingEngine::CommandAsyncWorker(const std::string& command) {
     // Mark Python as busy before any GIL operations
     python_busy_ = true;
 
-    // Initialize MATLAB aliases if needed (must be done with GIL)
-    if (!matlab_aliases_initialized_) {
-        InitializeMatlabAliases();
+    // The session's start, once (takes the GIL itself)
+    if (!session_prepared_) {
+        PrepareSession();
     }
 
     // Reset cancel flag
@@ -1668,11 +1668,11 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script,
         return result;
     }
 
-    // MATLAB-style names are installed once per interpreter, like the
-    // console does; re-running them before every script overwrote the
-    // user's own svd/norm/zeros... (TOFIX133 P0 item 11).
-    if (!matlab_aliases_initialized_) {
-        InitializeMatlabAliases();
+    // The session's start runs once per session, like the console does;
+    // re-running it before every script overwrote the user's own
+    // svd/norm/zeros... (TOFIX133 P0 item 11).
+    if (!session_prepared_) {
+        PrepareSession();
     }
 
     // Reset the cancellation flag at start
@@ -2066,16 +2066,24 @@ def _cyxwiz_run_cell(src, key, filename, count=0, on_error=None):
     return result;
 }
 
-void ScriptingEngine::InitializeMatlabAliases() {
-    if (matlab_aliases_initialized_) return;
+void ScriptingEngine::PrepareSession() {
+    if (session_prepared_) return;
 
-    spdlog::info("Initializing MATLAB-style aliases...");
+    const auto start = cyxwiz::core::EngineConfig::Instance().GetPythonStart();
+    spdlog::info("Preparing the Python session...");
 
     try {
         py::gil_scoped_acquire acquire;
 
+        const std::string numpy_setup = R"PYTHON(
+try:
+    import numpy as np
+except ImportError:
+    print("[CyxWiz] NumPy not installed - run: pip install numpy")
+)PYTHON";
+
         // MATLAB-style aliases setup code
-        std::string matlab_setup = R"PYTHON(
+        const std::string pycyxwiz_setup = R"PYTHON(
 # ============================================================================
 # MATLAB-style Console functions (flat namespace)
 # ============================================================================
@@ -2208,7 +2216,9 @@ except AttributeError as e:
 except Exception as e:
     # Any other error
     print(f"[CyxWiz] Error loading MATLAB functions: {e}")
+)PYTHON";
 
+        const std::string data_tools_setup = R"PYTHON(
 # ============================================================================
 # DuckDB - Fast Analytics Database
 # ============================================================================
@@ -2317,24 +2327,69 @@ except Exception as e:
     print(f"[CyxWiz] Polars error: {e}")
 )PYTHON";
 
-        py::exec(matlab_setup);
-        matlab_aliases_initialized_ = true;
-        spdlog::info("MATLAB-style aliases initialized");
+        py::exec((start.import_numpy ? numpy_setup : std::string()) +
+                 (start.import_pycyxwiz ? pycyxwiz_setup : std::string()) + data_tools_setup);
+        session_prepared_ = true;
+        spdlog::info("Python session ready (numpy as np: {}, pycyxwiz: {})", start.import_numpy ? "yes" : "no",
+                     start.import_pycyxwiz ? "yes" : "no");
 
         // RL metrics reach the dashboard (TOFIX134 P0 item 7): scripts call
         // pycyxwiz.rl_update_metric, which dropped every value because no
         // callback was ever set. The callback only queues; the UI takes.
-        if (py::module_::import("sys").attr("modules").contains("pycyxwiz")) {
+        // Set when pycyxwiz loads, whether or not the session imports it by name.
+        try {
             py::module_::import("pycyxwiz").attr("rl_set_metric_callback")(
                 py::cpp_function([this](const std::string& name, float value) {
                     rl_metrics_.Publish({RLMetricSample{name, value}});
                 }));
+        } catch (const py::error_already_set&) {
+            // pycyxwiz did not load (reported by the setup above when imported)
+        }
+
+        // Preferences > Python > Startup script, in the session's namespace
+        if (!start.startup_script.empty()) {
+            std::ifstream file(std::filesystem::path(start.startup_script), std::ios::binary);
+            if (!file) {
+                spdlog::warn("The startup script {} is not there; the session starts without it",
+                             start.startup_script);
+            } else {
+                const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+                // What it prints goes to the Console log (no command is
+                // capturing output while the session starts)
+                py::dict scope;
+                scope["_source"] = py::bytes(source);
+                scope["_path"] = start.startup_script;
+                scope["_ns"] = py::module_::import("__main__").attr("__dict__");
+                const auto printed = [&scope]() {
+                    std::string text = scope.contains("_printed") ? scope["_printed"].cast<std::string>() : "";
+                    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
+                    if (text.size() > 4000) text = text.substr(0, 4000) + "...";
+                    return text;
+                };
+                try {
+                    py::exec(R"PYTHON(
+import contextlib as _contextlib, io as _io
+_out = _io.StringIO()
+try:
+    with _contextlib.redirect_stdout(_out), _contextlib.redirect_stderr(_out):
+        exec(compile(_source, _path, "exec"), _ns)
+finally:
+    _printed = _out.getvalue()
+)PYTHON",
+                             scope);
+                    spdlog::info("Ran the startup script {}", start.startup_script);
+                    if (const std::string out = printed(); !out.empty()) spdlog::info("Startup script printed: {}", out);
+                } catch (const py::error_already_set& e) {
+                    if (const std::string out = printed(); !out.empty()) spdlog::info("Startup script printed: {}", out);
+                    spdlog::warn("The startup script {} stopped: {}", start.startup_script, e.what());
+                }
+            }
         }
 
     } catch (const py::error_already_set& e) {
-        spdlog::error("Failed to initialize MATLAB aliases: {}", e.what());
+        spdlog::error("Could not prepare the Python session: {}", e.what());
     } catch (const std::exception& e) {
-        spdlog::error("Failed to initialize MATLAB aliases: {}", e.what());
+        spdlog::error("Could not prepare the Python session: {}", e.what());
     }
 }
 

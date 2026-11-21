@@ -406,8 +406,15 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         }
 
         // Python settings
+        python_start_ = {};
         if (config.contains("python")) {
             const auto& python = config["python"];
+            python_start_.startup_script = python.value("startup_script", std::string());
+            python_start_.import_numpy = python.value("import_numpy", true);
+            python_start_.import_pycyxwiz = python.value("import_pycyxwiz", true);
+            python_start_.console_commands_kept =
+                std::clamp(python.value("console_commands_kept", 500), PythonStartConfig::kMinCommandsKept,
+                           PythonStartConfig::kMaxCommandsKept);
             if (python.contains("system_python_path")) {
                 system_python_path_ = python["system_python_path"].get<std::string>();
             }
@@ -764,7 +771,11 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
         config["python"] = {
             {"system_python_path", system_python_path_},
             {"auto_create_venv", auto_create_venv_},
-            {"default_venv_packages", default_venv_packages_}
+            {"default_venv_packages", default_venv_packages_},
+            {"startup_script", python_start_.startup_script},
+            {"import_numpy", python_start_.import_numpy},
+            {"import_pycyxwiz", python_start_.import_pycyxwiz},
+            {"console_commands_kept", python_start_.console_commands_kept}
         };
 
         // Local Debug settings
@@ -1505,6 +1516,22 @@ void EngineConfig::SetRuntimeLogSavedFilters(
     std::lock_guard<std::mutex> lock(mutex_);
     if (runtime_log_saved_filters_ != filters) {
         runtime_log_saved_filters_ = filters;
+        modified_ = true;
+    }
+}
+
+PythonStartConfig EngineConfig::GetPythonStart() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return python_start_;
+}
+
+void EngineConfig::SetPythonStart(const PythonStartConfig& start) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    PythonStartConfig s = start;
+    s.console_commands_kept = std::clamp(s.console_commands_kept, PythonStartConfig::kMinCommandsKept,
+                                         PythonStartConfig::kMaxCommandsKept);
+    if (!(python_start_ == s)) {
+        python_start_ = s;
         modified_ = true;
     }
 }

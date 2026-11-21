@@ -334,8 +334,10 @@ private:
     std::atomic<unsigned long> python_thread_id_{0};
 
     // MATLAB-style aliases initialization
-    bool matlab_aliases_initialized_{false};
-    void InitializeMatlabAliases();
+    bool session_prepared_{false};
+    // Each session's start (Preferences > Python): numpy as np, pycyxwiz and
+    // its short names, DuckDB and Polars helpers, then the startup script
+    void PrepareSession();
 
     // Ensure Python is initialized before use
     bool EnsurePythonInitialized(std::string* error_out = nullptr);

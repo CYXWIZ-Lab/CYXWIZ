@@ -60,3 +60,34 @@ way.
     that **Ctrl+Z** takes back, so the editor shows what the file holds.
   - Files are written as UTF-8; a file with a byte-order mark keeps it.
     Notebooks (`.ipynb`) are saved as they are.
+
+## Python
+
+- **Interpreter**: the Python the Engine uses (empty: the one shipped with
+  the Engine, when there is one). Type a path and press Enter, **Browse...**,
+  or **Find Python** (looks on this PC for a supported version; pick one in
+  the list). The line under the field says whether it can be used; **Use
+  this Python** takes it. Project environments are made from it, and Python
+  runs in it when a project has none. Python that is already running keeps
+  its interpreter until the Engine restarts. **Runtime details** shows the
+  running Python (paths, version, packages folder), with **Copy**.
+- **New projects**:
+  - **Create a virtual environment for each new project** (on by default):
+    in the project's `python` folder. Off, a new project (and one opened
+    without an environment) runs in the interpreter above.
+  - **Packages to install**: names separated by spaces (or commas), for
+    example `numpy pandas`, installed with pip into each new environment
+    before Python starts there. A version stays with its name
+    (`numpy==2.1`). Words starting with `-` are pip options and are not
+    passed. A package that fails to install is reported in the Console log;
+    the environment is still used.
+- **When Python starts** (each Python session: before its first command or
+  script, and again after **Restart**; a change applies to the next session):
+  - **Startup script**: a `.py` file run in the session's namespace, so what
+    it defines is there in the Python console and in scripts. If it is
+    missing or stops with an error, the session starts anyway and the
+    Console log says why.
+  - **Imports**: **import numpy as np**, and **import pycyxwiz** (with its
+    short names: `cyx`, `svd`, `eig`, `zeros`...). Both on by default.
+- **Python console > Commands kept**: how many commands, each with its
+  output, the Python console keeps (100 to 10,000; 500 by default).

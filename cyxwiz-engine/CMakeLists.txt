@@ -312,6 +312,7 @@ set(ENGINE_SOURCES
     src/core/rl_device_presentation.cpp
     src/core/rl_dashboard_presentation.cpp
     src/core/project_session.cpp
+    src/core/python_package_list.cpp
     src/gui/panels/policy_playback_panel.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
@@ -7930,6 +7931,16 @@ if(WIN32)
     target_compile_definitions(test_project_session PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
 add_test(NAME project_session COMMAND test_project_session)
+
+# ===== Test: packages for new project environments (TOFIX129 B9-9) =====
+add_executable(test_python_package_list
+    tests/test_python_package_list.cpp
+    src/core/python_package_list.cpp
+)
+if(WIN32)
+    target_compile_definitions(test_python_package_list PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME python_package_list COMMAND test_python_package_list)
 
 # ===== Test: metric learning (pairs, triplets) vs PyTorch (TOFIX140 A5) =====
 set(CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE
