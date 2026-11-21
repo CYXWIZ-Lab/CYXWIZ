@@ -770,9 +770,6 @@ private:
 
     // Files preferences
 // Performance/Compute preferences
-    int compute_device_index_ = 0;
-    std::vector<cyxwiz::DeviceInfo> compute_devices_;
-    bool compute_devices_initialized_ = false;
     std::function<bool(cyxwiz::DeviceType,
                        int,
                        const std::string&,

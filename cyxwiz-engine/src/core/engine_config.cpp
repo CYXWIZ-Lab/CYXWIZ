@@ -168,9 +168,6 @@ void EngineConfig::SetDefaults() {
     auth_api_url_ = "http://127.0.0.1:3002/api";
     default_deployment_address_ = "localhost:50056";
     default_p2p_port_ = 50052;
-    auto_connect_on_startup_ = false;
-    connection_timeout_ = 10;
-    request_timeout_ = 30;
     system_python_path_ = "";  // Will be auto-detected on first launch
     runtime_log_saved_filters_.clear();
 }
@@ -260,11 +257,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             defaults["auth"] = {
                 {"api_url", auth_api_url_}
             };
-            defaults["connection"] = {
-                {"auto_connect", auto_connect_on_startup_},
-                {"timeout", connection_timeout_},
-                {"request_timeout", request_timeout_}
-            };
             defaults["python"] = {
                 {"system_python_path", system_python_path_},
                 {"auto_create_venv", auto_create_venv_},
@@ -323,11 +315,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                 };
                 template_config["auth"] = {
                     {"api_url", auth_api_url_}
-                };
-                template_config["connection"] = {
-                    {"auto_connect", auto_connect_on_startup_},
-                    {"timeout", connection_timeout_},
-                    {"request_timeout", request_timeout_}
                 };
                 template_config["python"] = {
                     {"system_python_path", system_python_path_},
@@ -388,20 +375,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             const auto& auth = config["auth"];
             if (auth.contains("api_url")) {
                 auth_api_url_ = auth["api_url"].get<std::string>();
-            }
-        }
-
-        // Connection settings
-        if (config.contains("connection")) {
-            const auto& conn = config["connection"];
-            if (conn.contains("auto_connect")) {
-                auto_connect_on_startup_ = conn["auto_connect"].get<bool>();
-            }
-            if (conn.contains("timeout")) {
-                connection_timeout_ = conn["timeout"].get<int>();
-            }
-            if (conn.contains("request_timeout")) {
-                request_timeout_ = conn["request_timeout"].get<int>();
             }
         }
 
@@ -779,13 +752,6 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"api_url", auth_api_url_}
         };
 
-        // Connection settings
-        config["connection"] = {
-            {"auto_connect", auto_connect_on_startup_},
-            {"timeout", connection_timeout_},
-            {"request_timeout", request_timeout_}
-        };
-
         // Python settings
         config["python"] = {
             {"system_python_path", system_python_path_},
@@ -1083,46 +1049,6 @@ void EngineConfig::SetDefaultDeploymentAddress(const std::string& address) {
     }
 }
 
-
-bool EngineConfig::AutoConnectOnStartup() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return auto_connect_on_startup_;
-}
-
-void EngineConfig::SetAutoConnectOnStartup(bool auto_connect) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (auto_connect_on_startup_ != auto_connect) {
-        auto_connect_on_startup_ = auto_connect;
-        modified_ = true;
-    }
-}
-
-int EngineConfig::GetConnectionTimeout() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return connection_timeout_;
-}
-
-void EngineConfig::SetConnectionTimeout(int seconds) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (connection_timeout_ != seconds) {
-        connection_timeout_ = seconds;
-        modified_ = true;
-    }
-}
-
-int EngineConfig::GetRequestTimeout() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return request_timeout_;
-}
-
-void EngineConfig::SetRequestTimeout(int seconds) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (request_timeout_ != seconds) {
-        request_timeout_ = seconds;
-        modified_ = true;
-    }
-}
-
 int EngineConfig::GetDefaultP2PPort() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return default_p2p_port_;
@@ -1135,7 +1061,6 @@ void EngineConfig::SetDefaultP2PPort(int port) {
         modified_ = true;
     }
 }
-
 
 // ===== Python Settings =====
 

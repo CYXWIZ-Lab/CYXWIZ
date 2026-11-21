@@ -156,9 +156,6 @@ void ToolbarPanel::RenderPreferencesDialog() {
     // ========== Preferences Dialog ==========
     if (show_preferences_dialog_) {
 
-        // Python settings have been moved to PythonSettingsPanel
-        // This initialization code is no longer needed
-
         ImGui::OpenPopup("Preferences");
         ImVec2 center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));

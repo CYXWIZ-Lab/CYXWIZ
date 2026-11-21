@@ -306,20 +306,6 @@ public:
     int GetDefaultP2PPort() const;
     void SetDefaultP2PPort(int port);
 
-    // ===== Feature Flags =====
-
-    // Auto-connect to central server on startup
-    bool AutoConnectOnStartup() const;
-    void SetAutoConnectOnStartup(bool auto_connect);
-
-    // ===== Timeouts (in seconds) =====
-
-    int GetConnectionTimeout() const;
-    void SetConnectionTimeout(int seconds);
-
-    int GetRequestTimeout() const;
-    void SetRequestTimeout(int seconds);
-
     // ===== Python Settings =====
 
     // Effective Python interpreter: the configured path when it exists,
@@ -513,13 +499,6 @@ private:
     std::string auth_api_url_;
     std::string default_deployment_address_;
     int default_p2p_port_ = 50052;
-
-    // Feature flags
-    bool auto_connect_on_startup_ = false;
-
-    // Timeouts
-    int connection_timeout_ = 10;  // seconds
-    int request_timeout_ = 30;     // seconds
 
     // Python settings
     std::string system_python_path_;  // System Python interpreter path (auto-detected or user-configured)
