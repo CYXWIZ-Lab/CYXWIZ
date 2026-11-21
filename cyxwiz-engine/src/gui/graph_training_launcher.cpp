@@ -373,6 +373,45 @@ std::optional<MissingValuesBlock> CountMissingTrainingValues(cyxwiz::DataRegistr
     return block;
 }
 
+// The inputs training would refuse for missing values (decision M-1): the
+// table the batchers read (`train_table`, empty when it is made inside
+// training) and each supplied Validation / Test table. Sequence and
+// time-series tables are made inside training: their refusal comes at the
+// first batch. Runs on the launch task's worker: it reads every number column
+// of an in-memory table.
+std::vector<MissingValuesBlock> FindMissingTrainingValues(cyxwiz::DataRegistry& registry,
+                                                          const cyxwiz::TrainingConfiguration& config,
+                                                          const std::string& train_table,
+                                                          const std::string& label_column) {
+    std::vector<MissingValuesBlock> blocks;
+    if (config.sequence_batch.enabled || config.is_time_series) return blocks;
+    if (!train_table.empty()) {
+        const std::string requested =
+            !config.target.primary_column.empty() ? config.target.primary_column : label_column;
+        const std::string label = ResolveRuntimeArrowLabelColumn(registry, train_table, requested);
+        if (auto block = CountMissingTrainingValues(registry, train_table, cyxwiz::TrainingTargetColumns(config, label),
+                                                    config.excluded_feature_columns)) {
+            block->role = "Train";
+            block->source_node_id = config.data_source_node_id;
+            blocks.push_back(std::move(*block));
+        }
+    }
+    const auto supplied = [&](const cyxwiz::ResolvedDatasetRole& role, const char* name) {
+        if (!role.IsSupplied() || role.joined_to_training) return;
+        if (auto block = CountMissingTrainingValues(registry, role.dataset_name,
+                                                    cyxwiz::TrainingTargetColumns(config, role.label_column),
+                                                    config.excluded_feature_columns)) {
+            block->role = name;
+            block->supplied = true;
+            block->source_node_id = role.source_node_id;
+            blocks.push_back(std::move(*block));
+        }
+    };
+    supplied(config.dataset_roles.dev, "Validation");
+    supplied(config.dataset_roles.test, "Test");
+    return blocks;
+}
+
 } // namespace
 
 std::vector<cyxwiz::ValidationIssue> CheckGraphLaunchReadiness(
@@ -559,7 +598,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         materialization_preflight_evidence,
     std::filesystem::path project_root,
     std::string canvas_prepared_dataset,
-    cyxwiz::PreparedDataKey prepared_data_key) {
+    cyxwiz::PreparedDataKey prepared_data_key,
+    std::function<void(std::vector<MissingValuesBlock>)> on_missing_values) {
 
     GraphTrainingLaunchResult result;
 
@@ -656,53 +696,6 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         return result;
     }
 
-    // Missing values training would refuse, found before the run so the
-    // report offers the fix (decision M-1): on the table the batchers read
-    // (the canvas run's result, or the source when no step runs first) and on
-    // each supplied Validation / Test table. Sequence and time-series tables
-    // are made inside training: their refusal comes at the first batch.
-    if (!config.sequence_batch.enabled && !config.is_time_series) {
-        std::string train_table;
-        if (!canvas_prepared_dataset.empty() && (registry.GetArrowDataset(canvas_prepared_dataset) ||
-                                                 registry.GetParquetBackedDataset(canvas_prepared_dataset)))
-            train_table = canvas_prepared_dataset;
-        else if (!config.training_data_needs_pipeline_run)
-            train_table = dataset_name;
-        if (!train_table.empty()) {
-            const std::string requested =
-                !config.target.primary_column.empty() ? config.target.primary_column : label_column;
-            const std::string label = ResolveRuntimeArrowLabelColumn(registry, train_table, requested);
-            if (auto block = CountMissingTrainingValues(registry, train_table, cyxwiz::TrainingTargetColumns(config, label),
-                                                        config.excluded_feature_columns)) {
-                block->role = "Train";
-                block->source_node_id = config.data_source_node_id;
-                result.missing_values.push_back(std::move(*block));
-            }
-        }
-        const auto supplied = [&](const cyxwiz::ResolvedDatasetRole& role, const char* name) {
-            if (!role.IsSupplied() || role.joined_to_training) return;
-            if (auto block = CountMissingTrainingValues(registry, role.dataset_name,
-                                                        cyxwiz::TrainingTargetColumns(config, role.label_column),
-                                                        config.excluded_feature_columns)) {
-                block->role = name;
-                block->supplied = true;
-                block->source_node_id = role.source_node_id;
-                result.missing_values.push_back(std::move(*block));
-            }
-        };
-        supplied(config.dataset_roles.dev, "Validation");
-        supplied(config.dataset_roles.test, "Test");
-        if (!result.missing_values.empty()) {
-            size_t columns = 0;
-            for (const auto& block : result.missing_values) columns += block.columns.size();
-            SetBlockedStatus(result, "The data has missing values",
-                             std::to_string(columns) + (columns == 1 ? " column has" : " columns have") +
-                                 " empty cells or NaN, which training does not use.");
-            spdlog::warn("StartTrainingFromGraph: not started: {}", result.status_detail);
-            return result;
-        }
-    }
-
     if (config.sequence_batch.enabled) {
         const bool has_arrow = registry.GetArrowDataset(dataset_name) != nullptr;
         const bool has_parquet = registry.GetParquetBackedDataset(dataset_name) != nullptr;
@@ -749,14 +742,9 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         result.materialization_cache_root,
         project_root.empty() ? "standalone_runtime" : "active_project");
 
-    if (auto panel = plot_panel.lock()) {
-        panel->Clear();
-        panel->SetPreparationState(
-            true,
-            "Preparing graph materialization and training loaders...",
-            0.02f);
-        panel->SetVisible(true);
-    }
+    // The canvas is held from here (the launch task reads its snapshot); the
+    // Dashboard is cleared once the check finds nothing missing, and until
+    // then keeps the last run.
     auto preparation_node_editor_callback = node_editor_callback;
     if (preparation_node_editor_callback) {
         preparation_node_editor_callback(true);
@@ -780,8 +768,74 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
          callback = std::move(node_editor_callback),
          dispatch = std::move(dispatch),
          canvas_dataset = std::move(canvas_prepared_dataset),
-         prepared_key = std::move(prepared_data_key)](cyxwiz::LambdaTask& task) mutable {
+         prepared_key = std::move(prepared_data_key),
+         on_missing_values = std::move(on_missing_values)](cyxwiz::LambdaTask& task) mutable {
             CYXWIZ_PROFILE_ZONE("CyxWiz Prepare Graph Training");
+            task.ReportProgress(0.01f, "Checking the data for missing values...");
+
+            // The canvas run's table (TOFIX178 S0-d), while it is loaded: the
+            // data steps already ran on it, nothing is prepared again. Without
+            // one, the same table kept on disk by an earlier session (S0-e2).
+            const auto loaded = [&registry](const std::string& name) {
+                return !name.empty() && (registry.GetArrowDataset(name) || registry.GetParquetBackedDataset(name) ||
+                                         registry.IsSparseFeatureDataset(name));
+            };
+            std::string prepared_dataset = canvas_dataset;
+            std::string prepared_origin = "Prepared by the canvas run";
+            if (!loaded(prepared_dataset) && cyxwiz::ProbePreparedData(cache_config, prepared_key)) {
+                const std::string name = "prepared_" + prepared_key.key.substr(0, 16);
+                task.ReportProgress(0.02f, "Loading the prepared data from disk...");
+                std::string error;
+                if (const auto registered =
+                        cyxwiz::LoadPreparedData(cache_config, prepared_key, registry, name, &error)) {
+                    prepared_dataset = *registered;
+                    prepared_origin = "Loaded from the prepared data cache";
+                    spdlog::info("StartTrainingFromGraph: training reads '{}', prepared in an earlier session; "
+                                 "the data steps do not run", *registered);
+                } else {
+                    spdlog::warn("StartTrainingFromGraph: the prepared data on disk could not be used ({}); "
+                                 "preparing it again", error);
+                }
+            }
+            const bool use_canvas = loaded(prepared_dataset);
+
+            // Missing values training would refuse, found before the run so the
+            // report offers the fix: on the table the batchers read (the canvas
+            // run's or the kept result, or the source when no step runs first).
+            // Here, off the UI thread: it reads every number column.
+            {
+                const std::string train_table = use_canvas ? prepared_dataset
+                                                : !config.training_data_needs_pipeline_run ? dataset_name
+                                                                                            : std::string();
+                auto blocks = FindMissingTrainingValues(registry, config, train_table, label_column);
+                if (task.ShouldStop()) return;
+                if (!blocks.empty()) {
+                    size_t columns = 0;
+                    for (const auto& block : blocks) columns += block.columns.size();
+                    const std::string detail = std::to_string(columns) +
+                                               (columns == 1 ? " column has" : " columns have") +
+                                               " empty cells or NaN, which training does not use.";
+                    spdlog::warn("StartTrainingFromGraph: not started: {}", detail);
+                    // A table loaded from disk for this run is not kept (the
+                    // fix changes the steps, so its key); the report reads only
+                    // the counts.
+                    if (use_canvas && prepared_dataset != canvas_dataset)
+                        registry.UnregisterTabularDataset(prepared_dataset);
+                    if (on_missing_values) {
+                        cyxwiz::AsyncTaskManager::Instance().PostToMainThread(
+                            [on_missing_values, blocks = std::move(blocks)]() mutable {
+                                on_missing_values(std::move(blocks));
+                            });
+                    }
+                    task.MarkCompleted("Not started: " + detail, "not_started");
+                    return;
+                }
+            }
+            PostPlotPanelUpdate(plot_panel, [](cyxwiz::TrainingPlotPanel& panel) {
+                panel.Clear();
+                panel.SetPreparationState(true, "Preparing graph materialization and training loaders...", 0.02f);
+                panel.SetVisible(true);
+            });
             const auto now = std::chrono::system_clock::now().time_since_epoch();
             const auto run_ms =
                 std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
@@ -815,31 +869,6 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             std::string effective_dataset_name = dataset_name;
             std::string effective_label_column = label_column;
 
-            // The canvas run's table (TOFIX178 S0-d), while it is loaded: the
-            // data steps already ran on it, nothing is prepared again. Without
-            // one, the same table kept on disk by an earlier session (S0-e2).
-            const auto loaded = [&registry](const std::string& name) {
-                return !name.empty() && (registry.GetArrowDataset(name) || registry.GetParquetBackedDataset(name) ||
-                                         registry.IsSparseFeatureDataset(name));
-            };
-            std::string prepared_dataset = canvas_dataset;
-            std::string prepared_origin = "Prepared by the canvas run";
-            if (!loaded(prepared_dataset) && cyxwiz::ProbePreparedData(cache_config, prepared_key)) {
-                const std::string name = "prepared_" + prepared_key.key.substr(0, 16);
-                task.ReportProgress(0.3f, "Loading the prepared data from disk...");
-                std::string error;
-                if (const auto registered =
-                        cyxwiz::LoadPreparedData(cache_config, prepared_key, registry, name, &error)) {
-                    prepared_dataset = *registered;
-                    prepared_origin = "Loaded from the prepared data cache";
-                    spdlog::info("StartTrainingFromGraph: training reads '{}', prepared in an earlier session; "
-                                 "the data steps do not run", *registered);
-                } else {
-                    spdlog::warn("StartTrainingFromGraph: the prepared data on disk could not be used ({}); "
-                                 "preparing it again", error);
-                }
-            }
-            const bool use_canvas = loaded(prepared_dataset);
             if (use_canvas) {
                 if (prepared_dataset == canvas_dataset) {
                     spdlog::info("StartTrainingFromGraph: training reads '{}', prepared by the canvas run; "

@@ -4286,6 +4286,17 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         const std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel =
             marked ? std::weak_ptr<cyxwiz::TrainingPlotPanel>() : std::weak_ptr<cyxwiz::TrainingPlotPanel>(training_plot_panel_);
 
+        // Training would refuse missing values: the launch task finds them
+        // off the UI thread and the report offers the fix. Nothing started:
+        // the canvas is free again for the fix's steps (its pins unchanged).
+        auto on_missing_values = [this, nodes, source_dataset, held = static_cast<bool>(node_editor_callback),
+                                  not_started = marked ? marked->not_started : nullptr](
+                                     std::vector<MissingValuesBlock> blocks) {
+            if (held && node_editor_) node_editor_->SetTrainingActive(false);
+            if (not_started) not_started("Not started: the data has missing values (the report says where).");
+            ShowMissingValuesReport(blocks, nodes, source_dataset);
+        };
+
         auto launch_result = StartGraphTrainingFromCompiledConfig(
             nodes, links, std::move(config), registry, plot_panel,
             node_editor_callback, dispatch_training,
@@ -4295,19 +4306,16 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 : std::nullopt,
             cyxwiz::ProjectManager::Instance().GetProjectRoot(),
             canvas_dataset,
-            prepared_key);
+            prepared_key,
+            std::move(on_missing_values));
 
+        // Started: the launch task checks the data, then prepares and
+        // dispatches (the Dashboard shows itself once the check passes).
         if (launch_result.started && marked) {
             marked_launch_.reset();  // the preparation runs, then its dispatch
             spdlog::info("{} started", marked->what);
         } else if (launch_result.started) {
-            spdlog::info("Training started successfully");
-            if (training_plot_panel_) {
-                training_plot_panel_->SetVisible(true);
-            }
-        } else if (!launch_result.missing_values.empty()) {
-            // Training would refuse missing values: the report offers the fix.
-            ShowMissingValuesReport(launch_result.missing_values, nodes, source_dataset);
+            spdlog::info("Training launch queued");
         } else {
             compile_result_success_ = false;
             compile_result_issues_.clear();

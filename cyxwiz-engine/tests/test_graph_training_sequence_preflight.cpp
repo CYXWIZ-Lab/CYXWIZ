@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <thread>
@@ -373,6 +374,68 @@ void CheckLaunchReadinessAtCompile(cyxwiz::DataRegistry& registry) {
     std::cout << "Launch readiness at Compile passed\n";
 }
 
+// Missing values training would refuse are counted by the launch task, off
+// the UI thread: the call returns queued, the task hands the inputs to
+// `on_missing_values` on the main thread, and nothing is prepared or
+// dispatched (the canvas callback is not told the run ended).
+void CheckMissingValuesFoundByTheLaunchTask(cyxwiz::DataRegistry& registry) {
+    const std::string train = "gui_missing_values_train";
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    auto table = arrow::Table::Make(
+        arrow::schema({arrow::field("sample_id", arrow::int64()), arrow::field("sensor_a", arrow::float64()),
+                       arrow::field("sensor_b", arrow::float64()), arrow::field("label", arrow::int64())}),
+        {FinishInt64Array({100, 200, 300}), FinishDoubleArray({1.0, nan, 3.0}), FinishDoubleArray({10.0, 20.0, 30.0}),
+         FinishInt64Array({0, 1, 0})},
+        3);
+    registry.UnregisterTabularDataset(train);
+    Check(registry.RegisterArrowTable(table, train) != nullptr, "register the table with a NaN");
+    auto config = MakeRoleConfig(train, "");
+    config.dataset_roles.test = {};
+    const std::vector<gui::MLNode> nodes = {MakeRoleDataInputNode(10, "Patients", train)};
+
+    std::atomic<bool> dispatched{false}, ended{false};
+    bool reported = false;
+    std::vector<gui::MissingValuesBlock> blocks;
+    const auto main_thread = std::this_thread::get_id();
+    bool on_main_thread = false;
+    auto result = gui::StartGraphTrainingFromCompiledConfig(
+        nodes, {}, std::move(config), registry, {}, [&](bool active) { if (!active) ended.store(true); },
+        [&](cyxwiz::TrainingConfiguration, const std::string&, const std::string&, int, int,
+            std::weak_ptr<cyxwiz::TrainingPlotPanel>, std::function<void(bool)>) {
+            dispatched.store(true);
+            return true;
+        },
+        {}, std::nullopt, {}, {}, {},
+        [&](std::vector<gui::MissingValuesBlock> found) {
+            reported = true;
+            on_main_thread = std::this_thread::get_id() == main_thread;
+            blocks = std::move(found);
+        });
+    Check(result.started && result.status_title == "Training launch queued",
+          "the call returns queued; the count is the launch task's: " + result.status_title + " " +
+              result.error_message);
+    Check(WaitFor([&] { return reported; }, std::chrono::seconds(5)), "the launch task reports the missing values");
+    Check(on_main_thread, "the report is handed over on the main thread");
+    Check(blocks.size() == 1 && blocks[0].role == "Train" && !blocks[0].supplied && blocks[0].source_node_id == 10 &&
+              blocks[0].dataset_name == train && blocks[0].total_rows == 3,
+          "one Train input, from its Data Input");
+    Check(blocks[0].columns.size() == 1 && blocks[0].columns[0].name == "sensor_a" && blocks[0].columns[0].rows == 1 &&
+              blocks[0].columns[0].nan_rows == 1 && !blocks[0].columns[0].label,
+          "sensor_a has one NaN");
+    Check(WaitFor([] { return !HasActiveTaskNamed("Prepare graph training"); }, std::chrono::seconds(2)),
+          "the launch task ends");
+    Check(!dispatched.load() && !ended.load(), "nothing is dispatched, and the canvas is not told a run ended");
+    bool not_started = false;
+    for (const auto& task : cyxwiz::AsyncTaskManager::Instance().GetRecentTasks(10))
+        if (task.name == "Prepare graph training") {
+            not_started = task.state == cyxwiz::TaskState::Completed;
+            break;
+        }
+    Check(not_started, "the launch task completes (not failed): training did not start");
+    registry.UnregisterTabularDataset(train);
+    std::cout << "Missing values found by the launch task passed\n";
+}
+
 } // namespace
 
 int main() {
@@ -617,6 +680,7 @@ int main() {
     registry.UnregisterTabularDataset(kRoleOverlappingIdDataset);
     CheckCausalExternalRoleLaunch(registry);
     CheckLaunchReadinessAtCompile(registry);
+    CheckMissingValuesFoundByTheLaunchTask(registry);
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
     std::cout << "Graph training sequence preflight test passed\n";
     return 0;

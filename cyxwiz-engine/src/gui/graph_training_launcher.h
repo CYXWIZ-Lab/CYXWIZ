@@ -21,8 +21,8 @@ class TrainingPlotPanel;
 namespace gui {
 
 // An input training would refuse for missing values, found before the run
-// (decision M-1 of the missing-values fix): the "Cannot start training"
-// report offers the fix.
+// (decision M-1 of the missing-values fix) by the launch task: the "Cannot
+// start training" report offers the fix.
 struct MissingValuesBlock {
     std::string role;          // "Train", "Validation", "Test"
     bool supplied = false;     // its own Data Input (a supplied Validation / Test)
@@ -34,7 +34,6 @@ struct MissingValuesBlock {
 
 struct GraphTrainingLaunchResult {
     bool started = false;
-    std::vector<MissingValuesBlock> missing_values;  // not started: these inputs have missing values
     std::string status_title;
     std::string status_detail;
     std::string error_message;
@@ -130,7 +129,12 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     // The disk key of that table (TOFIX178 S0-e2): training loads it from the
     // prepared data cache when the canvas has none, and keeps a canvas table
     // there for the next session.
-    cyxwiz::PreparedDataKey prepared_data_key = {});
+    cyxwiz::PreparedDataKey prepared_data_key = {},
+    // The launch task first counts the empty cells and NaN training would
+    // refuse (off the UI thread). When there are some, training does not
+    // start: this runs on the main thread with them, and neither the
+    // Dashboard nor `node_editor_callback(false)` is called.
+    std::function<void(std::vector<MissingValuesBlock>)> on_missing_values = {});
 
 // True while a graph's training data is being prepared (before the run
 // starts).

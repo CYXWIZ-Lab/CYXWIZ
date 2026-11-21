@@ -312,9 +312,13 @@ Compile (F7) shows what the graph compiles to, in a window titled
 
 Training never uses an empty cell, or NaN in a number column, as 0 or as
 class 0. Before a run starts, Train counts them in the table the Data Split
-reads (after the steps before it ran) and in each supplied Validation / Test
-input. When there are some, *Cannot start training* says how many columns
-have them and shows a card per group:
+reads (after the steps before it ran, or as kept on disk from an earlier
+session) and in each supplied Validation / Test input. The count runs in the
+background (Task Progress: *Prepare graph training*, "Checking the data for
+missing values..."), so the Engine stays responsive on a large table; the
+Training Dashboard keeps the last run until the check passes. When there are
+some, *Cannot start training* says how many columns have them and shows a
+card per group:
 
 - **Feature columns** (training reads number columns): a row per column
   (how many cells are empty and how many are NaN, what Fill would use).
