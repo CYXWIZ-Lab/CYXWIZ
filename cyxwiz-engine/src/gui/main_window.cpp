@@ -114,7 +114,6 @@
 #include "../core/async_task_manager.h"
 #include "../core/dataset_catalog.h"
 #include "../scripting/scripting_engine.h"
-#include "../scripting/startup_script_manager.h"
 #include "../network/job_manager.h"
 #include "../network/grpc_client.h"
 #include "../network/reservation_client.h"
@@ -2503,17 +2502,6 @@ MainWindow::MainWindow()
         OpenGraphInNodeEditor(path);
     });
 
-    // Initialize startup script manager
-    startup_script_manager_ = std::make_unique<scripting::StartupScriptManager>(scripting_engine_);
-
-    // Load and execute startup scripts
-    if (startup_script_manager_->LoadConfig()) {
-        spdlog::debug("Executing startup scripts...");
-        startup_script_manager_->ExecuteAll(console_.get());
-    } else {
-        spdlog::debug("No startup scripts configured or startup_scripts.txt not found");
-    }
-
     // Install custom dock node handler for Unreal-style tabs
     DockStyle::InstallCustomHandler();
     auto& dock_style = GetDockStyle();
@@ -2598,8 +2586,6 @@ MainWindow::~MainWindow() {
     variable_explorer_.reset();
     spdlog::info("~MainWindow: plot_output_panel_ (holds scripting_engine)");
     plot_output_panel_.reset();
-    spdlog::info("~MainWindow: startup_script_manager_ (holds scripting_engine)");
-    startup_script_manager_.reset();
 
     // NOW reset MainWindow's scripting_engine_ - it should be the last reference
     spdlog::info("~MainWindow: scripting_engine_");

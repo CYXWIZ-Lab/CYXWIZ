@@ -94,7 +94,6 @@ enum class StudioDebuggerRunMode;
 
 namespace scripting {
 class ScriptingEngine;
-class StartupScriptManager;
 } // namespace scripting
 
 namespace network {
@@ -463,8 +462,6 @@ private:
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
 
-    // Startup script manager
-    std::unique_ptr<scripting::StartupScriptManager> startup_script_manager_;
 
     bool first_time_layout_;
     bool reset_layout_requested_ = false;

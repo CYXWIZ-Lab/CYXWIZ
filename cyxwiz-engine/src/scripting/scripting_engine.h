@@ -337,7 +337,7 @@ private:
     std::atomic<bool> session_prepared_{false};
     std::mutex prepare_session_mutex_;  // one PrepareSession at a time (callers do not hold the GIL)
     // Each session's start (Preferences > Python): numpy as np, pycyxwiz and
-    // its short names, DuckDB and Polars helpers, then the startup script
+    // its short names, DuckDB and Polars helpers, then the startup scripts
     void PrepareSession();
 
     // Ensure Python is initialized before use

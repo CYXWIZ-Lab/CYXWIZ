@@ -249,8 +249,8 @@ void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
         const std::filesystem::path script = std::filesystem::absolute(arg, ec);
         const std::string ext = script.extension().string();
         if (!ec && (ext == ".py" || ext == ".cyx" || ext == ".ipynb") && std::filesystem::is_regular_file(script, ec)) {
-            startup_scripts_.push_back(script.string());
-            spdlog::info("Startup script: {}", startup_scripts_.back());
+            command_line_scripts_.push_back(script.string());
+            spdlog::info("Script to open: {}", command_line_scripts_.back());
         } else if (!ec && ext == ".cyxgraph" && std::filesystem::is_regular_file(script, ec)) {
             // cyxwiz-engine <project> graph.cyxgraph opens the graph in the Node Editor.
             startup_graph_path_ = script.string();
@@ -900,8 +900,8 @@ void CyxWizApp::Render() {
         main_window_ = std::make_unique<gui::MainWindow>();
         OpenStartupProjectIfRequested();
         OpenStartupGraphIfRequested();
-        for (const auto& script : startup_scripts_) main_window_->OpenScriptFile(script);
-        startup_scripts_.clear();
+        for (const auto& script : command_line_scripts_) main_window_->OpenScriptFile(script);
+        command_line_scripts_.clear();
         grpc_client_ = std::make_unique<network::GRPCClient>();
         job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());
 

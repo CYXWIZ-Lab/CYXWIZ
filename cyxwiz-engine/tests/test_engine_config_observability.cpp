@@ -129,7 +129,7 @@ int main() {
     editor.final_newline = false;
     config.SetEditor(editor);
     cyxwiz::core::PythonStartConfig start;
-    start.startup_script = "C:/scripts/start.py";
+    start.startup_scripts = {"C:/scripts/start.py", "C:/scripts/helpers.py"};
     start.import_numpy = false;
     start.console_commands_kept = 99999;
     config.SetPythonStart(start);

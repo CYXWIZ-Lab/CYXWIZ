@@ -382,7 +382,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         python_start_ = {};
         if (config.contains("python")) {
             const auto& python = config["python"];
-            python_start_.startup_script = python.value("startup_script", std::string());
+            python_start_.startup_scripts = python.value("startup_scripts", std::vector<std::string>());
             python_start_.import_numpy = python.value("import_numpy", true);
             python_start_.import_pycyxwiz = python.value("import_pycyxwiz", true);
             python_start_.console_commands_kept =
@@ -757,7 +757,7 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"system_python_path", system_python_path_},
             {"auto_create_venv", auto_create_venv_},
             {"default_venv_packages", default_venv_packages_},
-            {"startup_script", python_start_.startup_script},
+            {"startup_scripts", python_start_.startup_scripts},
             {"import_numpy", python_start_.import_numpy},
             {"import_pycyxwiz", python_start_.import_pycyxwiz},
             {"console_commands_kept", python_start_.console_commands_kept}

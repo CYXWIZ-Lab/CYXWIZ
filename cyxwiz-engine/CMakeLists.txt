@@ -781,7 +781,6 @@ set(ENGINE_SOURCES
     src/scripting/python_engine.cpp
     src/scripting/python_environment.cpp
     src/scripting/script_manager.cpp
-    src/scripting/startup_script_manager.cpp
     src/scripting/cell_manager.cpp
     src/gui/panels/output_renderer.cpp
     # Preview system
@@ -1065,7 +1064,6 @@ set(ENGINE_HEADERS
     src/scripting/scripting_engine.h
     src/scripting/python_sandbox.h
     src/scripting/script_output_sink.h
-    src/scripting/startup_script_manager.h
     src/scripting/cell.h
     src/scripting/cell_manager.h
     src/gui/panels/output_renderer.h
@@ -1302,14 +1300,6 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
     ${CMAKE_SOURCE_DIR}/scripts/templates
     $<TARGET_FILE_DIR:cyxwiz-engine>/scripts/templates
     COMMENT "Copying scripts..."
-)
-
-# Copy the safe default startup-script configuration next to the Engine.
-add_custom_command(TARGET cyxwiz-engine POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    ${CMAKE_SOURCE_DIR}/scripts/startup/startup_scripts.txt
-    $<TARGET_FILE_DIR:cyxwiz-engine>/startup_scripts.txt
-    COMMENT "Copying startup_scripts.txt..."
 )
 
 # Copy test data files to build directory

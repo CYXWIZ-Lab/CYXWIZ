@@ -50,7 +50,6 @@ private:
     bool found_shown_ = false;
     std::string packages_;
     std::vector<std::string> packages_ignored_;
-    std::string startup_script_;
     std::string details_text_;
 };
 

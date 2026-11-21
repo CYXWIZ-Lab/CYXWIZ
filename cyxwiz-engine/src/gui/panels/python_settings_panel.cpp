@@ -55,7 +55,6 @@ void PythonSettingsPanel::Load() {
     saved_path_ = config.GetSystemPythonPath();
     path_ = saved_path_;
     packages_ = cyxwiz::core::JoinPackageList(config.GetDefaultVenvPackages());
-    startup_script_ = config.GetPythonStart().startup_script;
     if (!path_.empty()) StartCheck(path_);
 }
 
@@ -247,36 +246,53 @@ void PythonSettingsPanel::RenderSessionStart() {
          "the next session.");
     auto start = config.GetPythonStart();
     bool changed = false;
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("Startup script");
+    auto& scripts = start.startup_scripts;
+    ImGui::TextUnformatted("Startup scripts");
     ImGui::SameLine();
-    const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    float buttons = ui::ButtonWidth("Browse...", ui::ButtonSize::Small) + spacing;
-    if (!startup_script_.empty()) buttons += ImGui::CalcTextSize("Clear").x + 2.0f * spacing;
-    ImGui::SetNextItemWidth(std::max(200.0f, ImGui::GetContentRegionAvail().x - buttons));
-    ImGui::InputTextWithHint("##startup_script", "none", &startup_script_);
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-        startup_script_ = Trimmed(startup_script_);
+    ImGui::TextDisabled(scripts.empty() ? "none" : "run in this order, in the session's namespace");
+    // One row a script: Up (not the first), Remove, then the path
+    int move_up = -1;
+    int remove = -1;
+    const float up_width = ui::ButtonWidth(ICON_FA_ARROW_UP, ui::ButtonSize::Small);
+    for (int i = 0; i < static_cast<int>(scripts.size()); ++i) {
+        ImGui::PushID(scripts[i].c_str());
+        if (i > 0) {
+            if (ui::GhostButton(ICON_FA_ARROW_UP)) move_up = i;
+            ui::Tooltip("Run it before the one above");
+        } else {
+            ImGui::Dummy(ImVec2(up_width, ImGui::GetFrameHeight()));
+        }
+        ImGui::SameLine();
+        if (ui::GhostButton(ICON_FA_XMARK)) remove = i;
+        ui::Tooltip("Remove it from the list (the file stays)");
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(std::filesystem::path(scripts[i]), ec)) {
+            ImGui::TextUnformatted(scripts[i].c_str());
+        } else {
+            ImGui::TextColored(ui::CurrentTokens().warning, "%s  (not there: sessions start without it)",
+                               scripts[i].c_str());
+        }
+        ImGui::PopID();
+    }
+    if (move_up > 0) {
+        std::swap(scripts[move_up], scripts[move_up - 1]);
         changed = true;
     }
-    ImGui::SameLine();
-    if (ui::SecondaryButton("Browse...##startup")) {
+    if (remove >= 0) {
+        scripts.erase(scripts.begin() + remove);
+        changed = true;
+    }
+    if (ui::SecondaryButton("Add a script...##startup")) {
         if (auto chosen = cyxwiz::FileDialogs::OpenFile("Choose a startup script",
                                                         {{"Python scripts", "py,cyx"}, {"All files", "*"}},
-                                                        startup_script_.empty() ? nullptr : startup_script_.c_str())) {
-            startup_script_ = *chosen;
-            changed = true;
+                                                        scripts.empty() ? nullptr : scripts.back().c_str())) {
+            if (std::find(scripts.begin(), scripts.end(), *chosen) == scripts.end()) {
+                scripts.push_back(*chosen);
+                changed = true;
+            }
         }
-    }
-    if (!startup_script_.empty()) {
-        ImGui::SameLine();
-        if (ui::LinkButton("Clear##startup")) {
-            startup_script_.clear();
-            changed = true;
-        }
-        std::error_code ec;
-        if (!std::filesystem::is_regular_file(std::filesystem::path(startup_script_), ec))
-            ImGui::TextColored(ui::CurrentTokens().warning, "The file is not there: sessions start without it.");
     }
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Imports");
@@ -287,7 +303,6 @@ void PythonSettingsPanel::RenderSessionStart() {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("With its short names: cyx, svd, eig, zeros, ones and the other MATLAB-style functions.");
     if (changed) {
-        start.startup_script = startup_script_;
         config.SetPythonStart(start);
         config.Save();
     }

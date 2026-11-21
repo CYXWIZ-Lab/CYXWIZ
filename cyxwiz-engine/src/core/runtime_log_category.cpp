@@ -49,7 +49,6 @@ constexpr Rule kRules[] = {
     {Match::Contains, "Python", "python"},
     {Match::Starts, "ScriptingEngine", "python"},
     {Match::Starts, "ScriptManager", "python"},
-    {Match::Starts, "StartupScriptManager", "python"},
     {Match::Contains, "startup scripts", "python"},
     {Match::Contains, "virtual environment", "python"},
     {Match::Starts, "Script Editor language tools", "python"},

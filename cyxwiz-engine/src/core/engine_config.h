@@ -214,7 +214,7 @@ struct PolicyStressDefaults {
 struct PythonStartConfig {
     static constexpr int kMinCommandsKept = 100;
     static constexpr int kMaxCommandsKept = 10000;
-    std::string startup_script;       // run in each new session; empty: none
+    std::vector<std::string> startup_scripts;  // run in this order in each new session
     bool import_numpy = true;         // import numpy as np
     bool import_pycyxwiz = true;      // import pycyxwiz and its short names (cyx, svd, zeros...)
     int console_commands_kept = 500;  // commands, each with its output

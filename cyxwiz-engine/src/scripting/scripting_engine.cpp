@@ -415,7 +415,7 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
         return result;
     }
 
-    // The session's start (imports, startup script) before its first command
+    // The session's start (imports, startup scripts) before its first command
     if (!session_prepared_) {
         PrepareSession();
     }
@@ -2068,7 +2068,7 @@ def _cyxwiz_run_cell(src, key, filename, count=0, on_error=None):
 
 void ScriptingEngine::PrepareSession() {
     // The console's worker and a script can both start a session's first
-    // command: the start (and the startup script) runs once
+    // command: the start (and the startup scripts) runs once
     std::lock_guard<std::mutex> prepare_lock(prepare_session_mutex_);
     if (session_prepared_) return;
 
@@ -2349,19 +2349,19 @@ except Exception as e:
             // pycyxwiz did not load (reported by the setup above when imported)
         }
 
-        // Preferences > Python > Startup script, in the session's namespace
-        if (!start.startup_script.empty()) {
-            std::ifstream file(std::filesystem::path(start.startup_script), std::ios::binary);
+        // Preferences > Python > Startup scripts, in order, in the session's
+        // namespace; one that is missing or stops does not stop the others
+        for (const std::string& script : start.startup_scripts) {
+            std::ifstream file(std::filesystem::path(script), std::ios::binary);
             if (!file) {
-                spdlog::warn("The startup script {} is not there; the session starts without it",
-                             start.startup_script);
+                spdlog::warn("The startup script {} is not there; the session starts without it", script);
             } else {
                 const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
                 // What it prints goes to the Console log (no command is
                 // capturing output while the session starts)
                 py::dict scope;
                 scope["_source"] = py::bytes(source);
-                scope["_path"] = start.startup_script;
+                scope["_path"] = script;
                 scope["_ns"] = py::module_::import("__main__").attr("__dict__");
                 const auto printed = [&scope]() {
                     std::string text = scope.contains("_printed") ? scope["_printed"].cast<std::string>() : "";
@@ -2380,11 +2380,11 @@ finally:
     _printed = _out.getvalue()
 )PYTHON",
                              scope);
-                    spdlog::info("Ran the startup script {}", start.startup_script);
+                    spdlog::info("Ran the startup script {}", script);
                     if (const std::string out = printed(); !out.empty()) spdlog::info("Startup script printed: {}", out);
                 } catch (const py::error_already_set& e) {
                     if (const std::string out = printed(); !out.empty()) spdlog::info("Startup script printed: {}", out);
-                    spdlog::warn("The startup script {} stopped: {}", start.startup_script, e.what());
+                    spdlog::warn("The startup script {} stopped: {}", script, e.what());
                 }
             }
         }

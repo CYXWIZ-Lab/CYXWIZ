@@ -117,10 +117,13 @@ way.
     the environment is still used.
 - **When Python starts** (each Python session: before its first command or
   script, and again after **Restart**; a change applies to the next session):
-  - **Startup script**: a `.py` file run in the session's namespace, so what
-    it defines is there in the Python console and in scripts. If it is
-    missing or stops with an error, the session starts anyway and the
-    Console log says why.
+  - **Startup scripts**: `.py` files run in the order listed, in the
+    session's namespace, so what they define is there in the Python console
+    and in scripts. **Add a script...** adds one; the arrow moves it up, the
+    cross removes it from the list. One that is missing or stops with an
+    error is reported in the Console log; the session starts anyway and the
+    next one still runs. Example and notes: `scripts/startup/` next to the
+    Engine.
   - **Imports**: **import numpy as np**, and **import pycyxwiz** (with its
     short names: `cyx`, `svd`, `eig`, `zeros`...). Both on by default.
 - **Python console > Commands kept**: how many commands, each with its
