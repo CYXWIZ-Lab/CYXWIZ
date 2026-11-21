@@ -189,6 +189,11 @@ int main() {
     Check(skip_pad.sequence_batch.target_ignore_index == 0,
           "a Cross Entropy ignore_index of 0 is the language-model targets' ignore index (got " +
               std::to_string(skip_pad.sequence_batch.target_ignore_index) + ")");
+    lm_nodes[4].type = gui::NodeType::NLLLoss;
+    const auto nll_skip_pad = compiler.Compile(lm_nodes, lm_links, true);
+    Check(nll_skip_pad.sequence_batch.target_ignore_index == 0,
+          "an NLL Loss ignore_index of 0 is the language-model targets' ignore index too (got " +
+              std::to_string(nll_skip_pad.sequence_batch.target_ignore_index) + ")");
 
     Check(config.model_seed == -1, "old graph without model seed must remain unset");
     auto seeded_nodes = nodes;

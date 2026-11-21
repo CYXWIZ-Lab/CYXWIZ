@@ -1081,9 +1081,9 @@ void ValidateCrossEntropyWeightParams(
     if (class_weight) {
         const std::string mode = ToLowerAscii(TrimAscii(*class_weight));
         if (mode == "balanced") {
-            // Runtime resolves this from the supported train split before
-            // constructing the loss. Unsupported dataset paths warn later and
-            // fall back to unweighted CrossEntropy.
+            // Training resolves this from the Train part's class counts once
+            // the batchers exist; a path that cannot count them stops the run
+            // with the reason (never an unweighted fallback).
             return;
         }
         if (mode == "manual") {
@@ -5182,11 +5182,12 @@ TrainingConfiguration GraphCompiler::Compile(
         ExtractSequenceBatchContractFromNode(*loss_node, config.sequence_batch);
     }
     // One ignore index for language-model targets (TOFIX223 0.19, audit
-    // TXT-02): the loss skips its Cross Entropy ignore_index, so the batcher
+    // TXT-02): the loss skips its ignore_index (Cross Entropy, NLL), so the batcher
     // fills the positions that are no target with that id and the metrics skip
     // it too. A separate target_ignore_index left the two apart: with
     // ignore_index 0 every padded position became a target of class -100.
-    if (loss_node && loss_node->type == gui::NodeType::CrossEntropyLoss &&
+    if (loss_node &&
+        (loss_node->type == gui::NodeType::CrossEntropyLoss || loss_node->type == gui::NodeType::NLLLoss) &&
         config.sequence_batch.create_causal_lm_targets) {
         const auto it = loss_node->parameters.find("ignore_index");
         if (it != loss_node->parameters.end() && !it->second.empty()) {
