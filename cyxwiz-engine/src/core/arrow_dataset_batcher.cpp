@@ -505,8 +505,13 @@ std::optional<std::vector<size_t>> ArrowDatasetBatcher::TrainClassCounts() const
     if (!labels.ok()) return std::nullopt;
     const auto& values = labels.ValueOrDie();
     std::vector<size_t> counts;
-    for (const int64_t row : base_indices_)
-        if (row >= 0 && static_cast<size_t>(row) < values.size()) CountClass(counts, values[static_cast<size_t>(row)]);
+    for (const int64_t row : base_indices_) {
+        if (row < 0 || static_cast<size_t>(row) >= values.size()) continue;
+        // A negative class (a -1 / +1 label) has no output: the class-range
+        // refusal, as at the first batch, not a row left out of the counts.
+        const int64_t label = values[static_cast<size_t>(row)];
+        if (!CountClass(counts, label)) ThrowNegativeClassLabel("ArrowDatasetBatcher", label);
+    }
     return counts;
 }
 

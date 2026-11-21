@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -18,6 +19,13 @@ namespace cyxwiz {
                              " outputs (class labels must be 0 to " +
                              std::to_string(num_classes == 0 ? 0 : num_classes - 1) +
                              "; check the label column and the last layer's units)");
+}
+
+// A negative class label: no output can have it, whatever the model's width.
+[[noreturn]] inline void ThrowNegativeClassLabel(const char* batcher, int64_t label) {
+    throw std::runtime_error(std::string(batcher) + ": class label " + std::to_string(label) +
+                             " is not a class number (class labels are 0, 1, 2, ...; map a -1 / +1 label to "
+                             "0 / 1, or check the label column)");
 }
 
 // A label read as a number, as a class number: truncated, as the batchers

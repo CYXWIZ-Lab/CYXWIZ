@@ -413,6 +413,37 @@ int main() {
         }
     }
 
+    // Counting the Train classes (balanced weights): a negative class is a
+    // value without an output, refused as at the first batch, never a missing
+    // label (whose fix, a Row Filter IS NOT EMPTY, would keep it), from a
+    // Parquet file and in memory alike.
+    {
+        auto schema = arrow::schema({arrow::field("x", arrow::float64()), arrow::field("label", arrow::int64())});
+        auto table = arrow::Table::Make(schema, {Doubles({1, 2, 3, 4}, true), Ints({-1, 1, -1, 1})});
+        std::shared_ptr<cyxwiz::ParquetBackedDataset> dataset;
+        auto batcher = parquet_batcher_of(table, "cyxwiz_refusals_negative_class.parquet", nullptr, dataset);
+        if (batcher) {
+            std::string error;
+            try {
+                (void)batcher->TrainClassCounts();
+            } catch (const std::exception& e) {
+                error = e.what();
+            }
+            Check(error.find("class label -1") != std::string::npos && error.find("missing values") == std::string::npos,
+                  "a negative class from Parquet is a class-range refusal (got: '" + error + "')");
+        }
+        auto memory = std::make_shared<cyxwiz::ArrowDataset>(table, "refusals_negative_class");
+        cyxwiz::ArrowDatasetBatcher in_memory(memory, "label", 4, false, 1.0f, true);
+        std::string error;
+        try {
+            (void)in_memory.TrainClassCounts();
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
+        Check(error.find("class label -1") != std::string::npos,
+              "a negative class in memory is refused when the classes are counted (got: '" + error + "')");
+    }
+
     if (failures == 0) std::cout << "test_batcher_refusals: all checks passed\n";
     return failures == 0 ? 0 : 1;
 }
