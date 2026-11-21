@@ -218,12 +218,6 @@ void QueryConsolePanel::RenderResults() {
         ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
         ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION, current_result_.error.c_str());
         ImGui::PopStyleColor();
-
-        if (current_result_.errorLine > 0) {
-            ImGui::TextDisabled("at line %d, column %d",
-                               current_result_.errorLine,
-                               current_result_.errorColumn);
-        }
         return;
     }
 
@@ -393,6 +387,7 @@ void QueryConsolePanel::RenderExamples() {
 
                 // Run button
                 if (ImGui::Button(ICON_FA_PLAY " Run")) {
+                    std::strncpy(query_buffer_, example.query, QUERY_BUFFER_SIZE - 1);
                     ExecuteQuery(example.query);
                     show_examples_ = false;
                 }

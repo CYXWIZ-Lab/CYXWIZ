@@ -778,6 +778,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- Query Console: Run on an example puts the query in the editor, so a
+  result or an error's line and column read against the text on screen; an
+  error says its line and column once.
 - **Every Query Console example runs.** "Count nodes by type" stopped with
   "Expected alias after AS" and "List optimizers" with "Expected clause":
   CyxQL refused function words (type, count, size...) as an alias, property,
