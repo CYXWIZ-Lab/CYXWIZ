@@ -59,9 +59,6 @@ bool ThemeCard(::gui::ThemePreset preset, bool selected, float width) {
         dl->AddText(ImVec2(max.x - 8.0f - mark_w, sw_max.y + 6.0f),
                     ImGui::GetColorU32(palette.accent_text), mark);
         dl->AddRect(pos, max, ImGui::GetColorU32(palette.accent), 8.0f, 0, 2.0f);
-    } else {
-        dl->AddRect(pos, max, ImGui::GetColorU32(hovered ? palette.border : palette.inner_border),
-                    8.0f);
     }
     if (hovered) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -184,6 +181,8 @@ void ToolbarPanel::RenderAppearancePreferences() {
     const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - editor_w;
     if (right > ImGui::GetCursorPosX())
         ImGui::SetCursorPosX(right);
+    else
+        ImGui::NewLine();  // no room on the title's line: the link goes under it
     // The Theme Editor is a window of the Engine; Preferences is modal and kept
     // it behind and out of reach. Close Preferences (everything is saved), then open it.
     if (ui::LinkButton(editor_label) && open_theme_editor_callback_) {

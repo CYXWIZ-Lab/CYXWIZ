@@ -189,6 +189,8 @@ void ToolbarPanel::RenderPreferencesDialog() {
             ImGui::BeginChild("PreferencesBody", ImVec2(0.0f, -footer_height), ImGuiChildFlags_AlwaysUseWindowPadding);
             const std::string page = preferences_page_;
             ImGui::TextColored(t.text_bright, "%s", page.c_str());
+            // Long texts wrap at the page's edge instead of clipping (B9-11)
+            ImGui::PushTextWrapPos(0.0f);
             {
 
                 // ========== General Tab ==========
@@ -301,9 +303,12 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         // at once (TOFIX154).
                         auto& engine_config = cyxwiz::core::EngineConfig::Instance();
                         int budget_mb = static_cast<int>(engine_config.DataBudgetBytes() >> 20);
+                        ImGui::AlignTextToFramePadding();
                         ImGui::Text("Data budget (MB):");
-                        ImGui::SetNextItemWidth(160.0f);
-                        if (ImGui::InputInt("##data_budget_mb", &budget_mb, 256, 1024)) {
+                        ImGui::SameLine();
+                        if (ui::NumberField("##data_budget_mb", &budget_mb, 0,
+                                            static_cast<int>(cyxwiz::MaxDataBudgetBytes() >> 20), 256, 90.0f,
+                                            "MB of memory for data; 0 uses half of this PC's memory")) {
                             budget_mb = std::clamp(budget_mb, 0, 2000000);
                             engine_config.SetDataBudgetBytes(static_cast<uint64_t>(budget_mb) << 20);
                             engine_config.Save();
@@ -740,29 +745,23 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     if (training_active) {
                         ImGui::BeginDisabled();
                     }
-                    const bool compatibility_clicked = ImGui::RadioButton(
-                        "Compatibility##execution_policy",
-                        selected_policy ==
-                            cyxwiz::ExecutionPolicy::Compatibility);
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip(
-                            "May finish on ArrayFire's CPU backend when the selected GPU is not verified,\n"
-                            "runs stages the placement plan does not put on the device, and dumps the\n"
-                            "first batch's debug samples.");
-                    }
-                    ImGui::SameLine();
-                    const bool strict_clicked = ImGui::RadioButton(
-                        "Strict residency##execution_policy",
-                        selected_policy ==
-                            cyxwiz::ExecutionPolicy::Strict);
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip(
-                            "Stays on the selected device: no ArrayFire CPU recovery, and the run is\n"
-                            "refused before training if any stage is not placed on the device.");
-                    }
+                    static const char* const kPolicies[] = {"Compatibility", "Strict residency"};
+                    int policy_index = selected_policy == cyxwiz::ExecutionPolicy::Strict ? 1 : 0;
+                    const bool policy_clicked =
+                        ui::SegmentedControl("##execution_policy", kPolicies, 2, &policy_index);
+                    const bool compatibility_clicked = policy_clicked && policy_index == 0;
+                    const bool strict_clicked = policy_clicked && policy_index == 1;
                     if (training_active) {
                         ImGui::EndDisabled();
                     }
+                    ImGui::TextDisabled(
+                        "%s",
+                        selected_policy == cyxwiz::ExecutionPolicy::Strict
+                            ? "Stays on the selected device: no ArrayFire CPU recovery, and the run is refused "
+                              "before training if any stage is not placed on the device."
+                            : "May finish on ArrayFire's CPU backend when the selected GPU is not verified, runs "
+                              "stages the placement plan does not put on the device, and dumps the first "
+                              "batch's debug samples.");
                     const auto persist_policy = [&](auto policy,
                                                     const char* description) {
                         std::string persistence_error;
@@ -1383,12 +1382,9 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         const size_t completed = progress.route_index *
                                                      progress.operation_count +
                                                  progress.operation_index;
-                        ImGui::ProgressBar(
-                            total == 0
-                                ? 0.0f
-                                : static_cast<float>(completed) /
-                                      static_cast<float>(total),
-                            ImVec2(-1.0f, 0.0f));
+                        ui::ProgressLine(total == 0 ? 0.0f
+                                                    : static_cast<float>(completed) / static_cast<float>(total),
+                                         t.accent);
                         ImGui::TextWrapped(
                             "Verifying %s device %d: %s (route %zu of %zu, operation %zu of %zu)",
                             progress.backend.c_str(), progress.device_id,
@@ -1535,6 +1531,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                 RenderRestoreDefaults(page);
             }
+            ImGui::PopTextWrapPos();
             ImGui::EndChild();
 
             // Every change is already saved: Close only
