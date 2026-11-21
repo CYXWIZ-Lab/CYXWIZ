@@ -7,6 +7,9 @@
 #include "main_window.h"
 
 #include "missing_values_view.h"
+#include "ui_buttons.h"
+#include "ui_widgets.h"
+#include "data_studio/data_studio_panel.h"
 #include "node_editor.h"
 #include "ui_tokens.h"
 #include "panels/training_plot_panel.h"
@@ -190,6 +193,30 @@ void MainWindow::RenderMissingValuesCards() {
             if (events.undo) RemoveMissingValuesSteps(i, label);
             if (!events.leave_out.empty()) LeaveColumnOut(i, events.leave_out);
         }
+        // The input and where to look at it (mockup board 1).
+        const auto& e = missing_values_[i];
+        const auto& t = cyxwiz::ui::CurrentTokens();
+        cyxwiz::ui::FlowRow links;
+        links.Next(ImGui::CalcTextSize(e.input_name.c_str()).x);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text_faint, "%s", e.input_name.c_str());
+        if (e.block.source_node_id >= 0 && node_editor_) {
+            links.Next(ImGui::CalcTextSize("Show on canvas").x);
+            if (cyxwiz::ui::LinkButton("Show on canvas")) {
+                node_editor_->FocusNode(e.block.source_node_id);
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        if (data_studio_panel_ && !e.source_dataset.empty()) {
+            const char* studio = "Open Data Studio (Explore > Missing)";
+            links.Next(ImGui::CalcTextSize(studio).x);
+            if (cyxwiz::ui::LinkButton(studio)) {
+                data_studio_panel_->SetVisible(true);
+                data_studio_panel_->ShowExplore(e.source_dataset, cyxwiz::DataStudioPanel::ExploreTab::Missing);
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::Dummy(ImVec2(0.0f, t.space_xs));
         ImGui::PopID();
     }
 }

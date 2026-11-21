@@ -24,7 +24,7 @@ MissingValuesGroupEvents MissingValuesGroup(const char* id, const missing_values
     MissingValuesGroupEvents events;
     if (!g.present) return events;
     const Tokens& t = CurrentTokens();
-    BeginCard(id);
+    BeginCard(id, /*raised=*/true);
     ImGui::TextColored(g.resolved ? t.success : t.error, "%s", g.resolved ? ICON_FA_CIRCLE_CHECK : ICON_FA_CIRCLE_XMARK);
     ImGui::SameLine();
     CardTitle(g.title.c_str(), g.subtitle.c_str());
@@ -83,7 +83,16 @@ MissingValuesGroupEvents MissingValuesGroup(const char* id, const missing_values
         }
         if (!g.note.empty()) WrappedText(t.text_faint, g.note);
     } else if (!g.done_text.empty()) {
-        WrappedText(t.success, g.done_text);
+        // What was added, with Undo after it on the line when it fits (mockup board 1).
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float needed = ImGui::CalcTextSize(g.done_text.c_str()).x + spacing + ImGui::CalcTextSize("Undo").x;
+        if (needed <= ImGui::GetContentRegionAvail().x) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(t.success, "%s", g.done_text.c_str());
+            ImGui::SameLine();
+        } else {
+            WrappedText(t.success, g.done_text);
+        }
         if (LinkButton("Undo")) events.undo = true;
     }
     EndCard();

@@ -2724,6 +2724,9 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     ui::Tooltip(header.where_tooltip.c_str());
     wrapped(c.text_dim, header.data);
     for (const std::string& warning : warnings) {
+        // A missing-values refusal has its card under the outcome: the
+        // task's copy of the raw message is not repeated (Run details keep it).
+        if (header.missing_values && warning.find("the data has missing values") != std::string::npos) continue;
         wrapped(c.caution, std::string(ICON_FA_TRIANGLE_EXCLAMATION " ") + warning);
     }
 

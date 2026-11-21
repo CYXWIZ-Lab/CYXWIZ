@@ -175,9 +175,10 @@ Card BuildCard(const Input& in) {
             f.note = "Drop removes the rows of " + where + " with an empty cell or NaN in these columns. Fill is "
                      "not offered here: it would need the values learned from the Train rows.";
         } else {
-            f.note = "Fill learns its values from the Train rows only. Text columns are filled with their most "
-                     "frequent value. Drop removes every row with an empty cell or NaN in these columns (at most " +
-                     Thousands(most) + ").";
+            f.note = std::string("Fill learns its values from the Train rows only.") +
+                     (texts.empty() ? "" : " Text columns are filled with their most frequent value.") +
+                     " Drop removes every row with an empty cell or NaN in these columns (at most " + Thousands(most) +
+                     ").";
         }
         if (!f.can_leave_out.empty())
             f.note += " " + NameList(f.can_leave_out) + (f.can_leave_out.size() == 1 ? " is" : " are") +

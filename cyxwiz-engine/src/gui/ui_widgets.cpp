@@ -54,14 +54,16 @@ void SectionHeader(const char* title, const char* subtitle) {
     ImGui::Spacing();
 }
 
-void BeginCard(const char* id) {
+void BeginCard(const char* id, bool raised) {
     const Tokens& t = CurrentTokens();
     ImGui::PushID(id);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, t.rounding_card);
     // A card is a tinted area, not an outline (owner rule 2026-10-01).
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, t.card_padding);
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
+    // Raised: halfway from the panel to the button tone (both the theme's).
+    const ImVec4 fill = raised ? Mix(t.bg_panel, t.bg_raised, 0.5f) : t.bg_panel;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, fill);
     ImGui::PushStyleColor(ImGuiCol_Border, t.border);
     // A card grows with its content and never scrolls: while it grows (a
     // fold opened, rows added) it neither flashes a scrollbar nor takes the

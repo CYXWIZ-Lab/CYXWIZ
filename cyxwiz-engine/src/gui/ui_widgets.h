@@ -32,8 +32,10 @@ void SectionHeader(const char* title, const char* subtitle = nullptr);
 
 // A card is a bordered child with window padding that grows with its
 // content. Always pair with EndCard. `id` must be a stable identity (a
-// device name, a pack id), never a loop index.
-void BeginCard(const char* id);
+// device name, a pack id), never a loop index. `raised`: a step lighter than a
+// popup's surface (a card inside a popup or a panel card, which would otherwise
+// share its tone).
+void BeginCard(const char* id, bool raised = false);
 void EndCard();
 // Header line inside a card: title, muted subtitle, optional status at the right.
 void CardHeader(const char* title, const char* subtitle = nullptr, const StatusStyle* status = nullptr);
