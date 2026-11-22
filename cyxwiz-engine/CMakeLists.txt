@@ -7830,6 +7830,18 @@ add_custom_target(copy_test_computation_truth_gradient_clipping_fixture
 )
 add_dependencies(test_computation_truth_gradient_clipping copy_test_computation_truth_gradient_clipping_fixture)
 
+# ===== Test: 50-step optimizer trajectories in which epsilon matters, vs PyTorch (TOFIX228 1.4, ORA-03) =====
+set(CYXWIZ_OPTIMIZER_TRAJECTORY_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/optimizer_trajectory_pytorch.json")
+add_executable(test_computation_truth_optimizer_trajectory
+    tests/computation_truth/test_computation_truth_optimizer_trajectory.cpp)
+target_link_libraries(test_computation_truth_optimizer_trajectory PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json)
+target_include_directories(test_computation_truth_optimizer_trajectory PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+target_compile_definitions(test_computation_truth_optimizer_trajectory PRIVATE
+    CYXWIZ_OPTIMIZER_TRAJECTORY_FIXTURE="${CYXWIZ_OPTIMIZER_TRAJECTORY_PYTORCH_FIXTURE}" NOMINMAX)
+set_target_properties(test_computation_truth_optimizer_trajectory PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: observation/reward normalisation vs Stable-Baselines3's VecNormalize (TOFIX195 S4.3a) =====
 add_executable(test_computation_truth_vec_normalize
     tests/test_computation_truth_vec_normalize.cpp
@@ -9249,6 +9261,7 @@ set(CYXWIZ_ORACLE_TESTS
     test_computation_truth_gradient_clipping
     test_computation_truth_linear_algebra
     test_computation_truth_optimization
+    test_computation_truth_optimizer_trajectory
     test_computation_truth_ppo
     test_computation_truth_recurrent
     test_computation_truth_roc_pr
