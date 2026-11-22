@@ -274,8 +274,8 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
 
         if (!undecided.empty()) {
             // Queue permission dialog — initialization will be deferred
-            if (permission_dialog_.RequestApproval(plugin->manifest, undecided,
-                    [this, plugin_id](const security::PermissionDialog::PendingApproval& approval) {
+            if (permission_requests_.RequestApproval(plugin->manifest, undecided,
+                    [this, plugin_id](const security::PermissionRequests::PendingApproval& approval) {
                         auto& store = security::PermissionStore::Instance();
                         for (size_t i = 0; i < approval.permissions.size(); ++i) {
                             store.SetDecision(
@@ -782,7 +782,7 @@ void PluginManager::UnloadPlugin(const std::string& plugin_id) {
     std::lock_guard lock(mutex_);
 
     // Clear any pending permission requests for this plugin
-    permission_dialog_.ClearPendingForPlugin(plugin_id);
+    permission_requests_.ClearPendingForPlugin(plugin_id);
 
     auto it = plugins_.find(plugin_id);
     if (it == plugins_.end()) return;
@@ -1066,12 +1066,8 @@ std::vector<std::string> PluginManager::TopologicalSortInternal(
 // Security — Permission Dialog Rendering
 // ============================================================================
 
-void PluginManager::RenderPermissionDialogs() {
-    permission_dialog_.Render();
-}
-
 bool PluginManager::IsAwaitingPermission(const std::string& plugin_id) const {
-    return permission_dialog_.IsPendingFor(plugin_id);
+    return permission_requests_.IsPendingFor(plugin_id);
 }
 
 } // namespace cyxwiz::plugin

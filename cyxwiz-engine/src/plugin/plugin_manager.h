@@ -3,7 +3,7 @@
 #include "plugin_types.h"
 #include "plugin_loader.h"
 #include "engine_plugin_context.h"
-#include "security/permission_dialog.h"
+#include "security/permission_requests.h"
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -134,8 +134,8 @@ public:
 
     // ===== Security =====
 
-    // Render permission approval dialogs (call from main render loop)
-    void RenderPermissionDialogs();
+    // The permission requests of starting plugins (gui/plugin_permission_request draws the shown one)
+    security::PermissionRequests& PermissionRequestQueue() { return permission_requests_; }
     // A permission request for this plugin is shown or waiting.
     bool IsAwaitingPermission(const std::string& plugin_id) const;
 
@@ -166,7 +166,7 @@ private:
     mutable std::mutex assistant_command_mutex_;
 
     // Permission approval dialog
-    security::PermissionDialog permission_dialog_;
+    security::PermissionRequests permission_requests_;
 
     // Why `plugin` cannot start now, from plugin.json "dependencies": one is
     // not installed, has a version outside the constraint, or failed (`wait`

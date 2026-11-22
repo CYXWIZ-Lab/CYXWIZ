@@ -105,6 +105,7 @@
 #include "../core/node_metadata.h"
 #include "panels/cloud_dataset_manager.h"
 #include "panels/plugin_manager_panel.h"
+#include "plugin_permission_request.h"
 #include "data_studio/data_studio_panel.h"
 #include "dashboard/dashboard_links.h"
 #include "../plugin/plugin_manager.h"
@@ -3060,7 +3061,7 @@ void MainWindow::Render() {
     }
 
     // Render permission approval dialogs
-    cyxwiz::plugin::PluginManager::Instance().RenderPermissionDialogs();
+    ::gui::RenderPluginPermissionRequest();
     cyxwiz::python_ui::RenderApprovalDialog();
 
     // Render original panels

@@ -138,7 +138,7 @@ add_library(cyxwiz-plugin-host STATIC
     src/plugin/registries/plugin_data_loader_registry.cpp
     src/plugin/registries/plugin_analytics_registry.cpp
     src/plugin/security/permission_store.cpp
-    src/plugin/security/permission_dialog.cpp
+    src/plugin/security/permission_requests.cpp
     src/plugin/security/plugin_signature.cpp
     src/plugin/security/safe_execute.cpp
     src/plugin/security/tweetnacl.c
@@ -634,6 +634,7 @@ set(ENGINE_SOURCES
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/gui/ui_widgets.cpp
+    src/gui/plugin_permission_request.cpp
     src/gui/plugin_ui_kit.cpp
     src/gui/frame_metrics.cpp
     src/gui/panel_memory.cpp

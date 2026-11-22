@@ -2,19 +2,20 @@
 
 #include "../plugin_types.h"
 #include "permission_store.h"
-#include <string>
-#include <vector>
-#include <queue>
-#include <optional>
 #include <functional>
 #include <mutex>
+#include <optional>
+#include <queue>
+#include <string>
+#include <vector>
 
 namespace cyxwiz::plugin::security {
 
-// The request a plugin makes when it starts with a dangerous permission the
-// user has not answered: one per plugin at a time, answered with "Allow
-// selected" or "Start without these" (also Esc). The plugin starts either way.
-class PermissionDialog {
+// The permission requests plugins make when they start with a dangerous
+// permission the user has not answered: one per plugin at a time, shown one
+// after another. No drawing here (the Engine's tools and tests link this
+// without a GUI): gui/plugin_permission_request draws the one shown.
+class PermissionRequests {
 public:
     struct PendingApproval;
     using DecisionCallback = std::function<void(const PendingApproval&)>;
@@ -30,21 +31,23 @@ public:
         DecisionCallback callback;                   // per-request callback
     };
 
-    // Queue a plugin for permission approval. Returns true when a request is
-    // shown or waiting for it (a plugin already asking is not asked twice).
+    // Queue a plugin's request. Returns true when a request is shown or
+    // waiting for it (a plugin already asking is not asked twice).
     bool RequestApproval(const PluginManifest& manifest,
                          const std::vector<PluginPermission>& undecided_perms,
                          DecisionCallback callback);
 
-    // Render the ImGui modal. Call from main render loop.
-    // Returns true if a decision was made this frame.
-    bool Render();
+    // The request to show now (the next queued one once the last is
+    // answered), copied; `first_time` is set on the frame it becomes shown.
+    std::optional<PendingApproval> Shown(bool* first_time = nullptr);
+    // The user ticked or unticked permissions of the shown request.
+    void SetChoices(const std::string& plugin_id, const std::vector<bool>& allowed);
+    // The user answered: the ticked permissions (`allow_selected`) or none.
+    // Runs the request's callback outside the lock.
+    void Answer(const std::string& plugin_id, bool allow_selected);
 
-    // Check if there's a pending dialog
-    bool HasPending() const;
     // A request for this plugin is shown or queued.
     bool IsPendingFor(const std::string& plugin_id) const;
-
     // Clear any pending request for a specific plugin (call on unload)
     void ClearPendingForPlugin(const std::string& plugin_id);
 
@@ -54,7 +57,7 @@ private:
     mutable std::mutex mutex_;
     std::queue<PendingApproval> pending_queue_;
     std::optional<PendingApproval> current_;
-    bool open_requested_ = false;
+    bool first_time_ = false;
 };
 
 } // namespace cyxwiz::plugin::security
