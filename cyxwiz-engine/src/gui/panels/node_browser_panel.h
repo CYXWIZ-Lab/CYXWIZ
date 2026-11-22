@@ -105,7 +105,20 @@ private:
     cyxwiz::nodes_panel::Filter filter_ = cyxwiz::nodes_panel::Filter::All;
     std::string provider_filter_;  // the Plugins group shows only this provider
     bool scroll_to_plugins_ = false;  // Apps > a plugin: bring the Plugins group into view
-    int examples_count_ = -1;         // the pattern library's size, counted once
+    // The shipped examples by category (My patterns stay in the Pattern
+    // Browser), rebuilt when the pattern library changes, not every frame.
+    struct ExampleEntry {
+        std::string id;
+        std::string name;
+        std::string description;
+    };
+    struct ExampleCategory {
+        std::string label;
+        std::vector<ExampleEntry> entries;
+    };
+    std::vector<ExampleCategory> examples_;
+    size_t examples_count_ = 0;
+    size_t examples_revision_ = static_cast<size_t>(-1);
 
     // Saved with the Engine settings (EngineConfig nodes_panel).
     bool settings_loaded_ = false;

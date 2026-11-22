@@ -778,6 +778,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- **The Nodes panel's Examples follow the pattern library.** The list and its
+  count update after a pattern is saved or deleted, and My patterns stay in the
+  Pattern Browser instead of mixing with the shipped examples.
 - **The Custom Node Editor keeps its definitions apart from My patterns.** They
   are saved in their own `custom_nodes` folder beside the settings and read back
   whole (pins, parameters, code and colour). Before, they sat in the patterns
