@@ -241,6 +241,11 @@ Batch ImageDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_si
 void ImageDatasetBatcher::Reset() {
     // The current phase's part; only train batches are shuffled.
     epoch_order_ = Part(current_phase_);
+    if (current_phase_ == BatcherPhase::Train && pending_epoch_seed_) {
+        rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_));
+        augmentation_rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_ ^ 0x9E3779B97F4A7C15ull));
+        pending_epoch_seed_.reset();
+    }
     if (current_phase_ == BatcherPhase::Train && shuffle_) cyxwiz::portable::Shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
     current_idx_ = 0;
 }

@@ -343,6 +343,10 @@ void AudioDatasetBatcher::Reset() {
     // validation and test metrics are reproducible across epochs.
     epoch_order_ = Part(current_phase_);
     if (current_phase_ == BatcherPhase::Train && dataset_) dataset_->SetAugmentationRound(++augmentation_round_);
+    if (current_phase_ == BatcherPhase::Train && pending_epoch_seed_) {
+        rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_));
+        pending_epoch_seed_.reset();
+    }
     if (current_phase_ == BatcherPhase::Train && shuffle_) cyxwiz::portable::Shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
     current_idx_ = 0;
 }

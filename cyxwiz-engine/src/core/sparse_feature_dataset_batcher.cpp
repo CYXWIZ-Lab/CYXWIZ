@@ -525,11 +525,19 @@ Batch SparseFeatureDatasetBatcher::AssembleBatch(const int64_t* rows, size_t act
         PopulateInspection(batch, rows, actual_batch_size);
     }
     batch.size = actual_batch_size;
+    // Each sample's dataset row, as the Arrow batcher gives it: a test run
+    // keeps them, and the level 3 oracle reads the epoch order from them.
+    batch.row_ids.assign(rows, rows + actual_batch_size);
     return batch;
 }
 
 void SparseFeatureDatasetBatcher::Reset() {
     current_index_ = 0;
+    if (pending_epoch_seed_) {
+        rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_));
+        balance_rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_ ^ 0x9E3779B97F4A7C15ull));
+        pending_epoch_seed_.reset();
+    }
     indices_ = base_indices_;
     RebuildBalancedIndices();
     if (shuffle_) {
