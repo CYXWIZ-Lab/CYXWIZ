@@ -73,7 +73,10 @@ inline double DeviceTolerance(double float64_tolerance, double float32_tolerance
 }
 
 // Activates exactly `device` (ActivateExact fails when ArrayFire makes another
-// backend or device active) and prints the device that runs.
+// backend or device active) and prints the device that runs. It is also
+// recorded as the process device: ArrayFire's active backend is per thread,
+// and a run started on another thread (a training worker) resolves to the
+// process device, not to ArrayFire's default backend (CUDA on a GPU machine).
 inline bool ActivateTestDevice(const RequestedTestDevice& device) {
     const auto result = Device(device.type, device.id).ActivateExact(true);
     if (!result.success) {
@@ -81,6 +84,7 @@ inline bool ActivateTestDevice(const RequestedTestDevice& device) {
                      result.message.c_str());
         return false;
     }
+    Device::RecordProcessDevice(device.type, device.id);
     std::printf("device: %s %d (%s)\n", NeuralDevicePlatformName(CaptureCurrentNeuralDeviceTarget().platform),
                 result.effective_device_id, af::isDoubleAvailable(af::getDevice()) ? "float64" : "float32");
     std::fflush(stdout);

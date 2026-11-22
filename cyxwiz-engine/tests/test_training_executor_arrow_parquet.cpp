@@ -3597,7 +3597,19 @@ void CheckPausedControlCase(
     if (!pause_requested.load() || !executor->IsPaused()) {
         executor->Stop();
         training_thread.join();
-        Check(false, label + " should reach the paused state after batch one");
+        std::string why = "after " + std::to_string(batch_callback_count.load()) + " batch callback(s)";
+        if (training_error) {
+            try {
+                std::rethrow_exception(training_error);
+            } catch (const std::exception& e) {
+                why += "; training threw: " + std::string(e.what());
+            } catch (...) {
+                why += "; training threw";
+            }
+        } else if (!executor->GetMetrics().terminal_reason.empty()) {
+            why += "; training ended: " + executor->GetMetrics().terminal_reason;
+        }
+        Check(false, label + " should reach the paused state after batch one (" + why + ")");
     }
     const auto paused_metrics = executor->GetMetrics();
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
