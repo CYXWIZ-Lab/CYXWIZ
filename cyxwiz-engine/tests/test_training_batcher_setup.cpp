@@ -1,3 +1,4 @@
+#include "oracle/oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/split_partitioning.h"
 #include "../src/core/classification_decision.h"
@@ -1015,6 +1016,7 @@ void TestLabelClassCount() {
 }
 
 int main(int argc, char** argv) {
+    if (!cyxwiz::test::BeginOracleTest("test_training_batcher_setup")) return 1;
     namespace fs = std::filesystem;
 
     const auto training_core_fixture = LoadTrainingCoreFixture(

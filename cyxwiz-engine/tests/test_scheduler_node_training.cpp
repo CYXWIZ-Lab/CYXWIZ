@@ -6,6 +6,7 @@
 // Reduce LR steps on the run's own validation losses, so the test replays them
 // through the backend ReduceLROnPlateau (held to torch by test_scheduler).
 // Also: the compiler's refusals, and resume continuing the schedule.
+#include "oracle/training_oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/debug_run_paths.h"
 #include "../src/core/execution_device_context.h"
@@ -211,21 +212,8 @@ void CheckRefused(const Graph& graph, const std::string& text, const std::string
     Check(!config.is_valid && reported, what + ": refused with '" + text + "'");
 }
 
-void SelectArrayFireCpu() {
-    const auto devices = cyxwiz::Device::GetAvailableDevices();
-    const auto cpu = std::find_if(devices.begin(), devices.end(), [](const cyxwiz::DeviceInfo& device) {
-        return device.type == cyxwiz::DeviceType::CPU;
-    });
-    Check(cpu != devices.end(), "an ArrayFire CPU route is required");
-    cyxwiz::test::InstallQualifiedRouteSnapshot(devices);
-    cyxwiz::ClearPendingExecutionDeviceSelection();
-    cyxwiz::SetPendingExecutionDeviceSelection(cyxwiz::DeviceType::CPU, cpu->device_id);
-    cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
-}
-
 cyxwiz::TrainingMetrics Train(cyxwiz::TrainingExecutor& executor, int epochs) {
-    SelectArrayFireCpu();
+    cyxwiz::test::PinTrainingDevice();
     cyxwiz::TrainingMetrics final_metrics;
     bool completed = false;
     executor.Train(epochs, 2, nullptr, nullptr, [&](const cyxwiz::TrainingMetrics& metrics) {
@@ -395,6 +383,7 @@ void CheckResume(const json& step_case, const std::shared_ptr<cyxwiz::ArrowDatas
 }  // namespace
 
 int main(int, char** argv) {
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_scheduler_node_training")) return 1;
     namespace fs = std::filesystem;
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
@@ -418,6 +407,8 @@ int main(int, char** argv) {
     CheckResume(fixture.at("cases").at(0), dataset, work_dir, tolerance);
 
     fs::remove_all(work_dir);
+    std::string device_error;
+    Check(cyxwiz::test::TrainedOnRequestedDevice(&device_error), "every run on the requested device: " + device_error);
     std::cout << "Scheduler nodes match PyTorch: " << fixture.at("cases").size() << " cases, plateau, resume\n";
     return 0;
 }

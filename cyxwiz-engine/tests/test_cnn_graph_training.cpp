@@ -11,7 +11,7 @@
 #include "../src/core/spatial_batch_layout.h"
 #include "../src/core/spatial_sequential_head.h"
 #include "../src/gui/loaders/data_loader.h"
-#include "computation_truth/test_device_selection.h"
+#include "oracle/oracle_test.h"
 
 #include <sstream>
 #include <filesystem>
@@ -749,7 +749,7 @@ void CheckPublishedNetworksAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
 
 int main() {
     // CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu picks the device (the oracle's convention).
-    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
+    Check(cyxwiz::test::BeginOracleTest("test_cnn_graph_training"), "requested test device");
     // The graph (ids 1..13); the Data Input is an image folder with a Resize.
     gui::MLNode data;
     data.id = 1;

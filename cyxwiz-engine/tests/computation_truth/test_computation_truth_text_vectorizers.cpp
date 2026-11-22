@@ -1,3 +1,4 @@
+#include "../oracle/oracle_test.h"
 #include "core/node_executors/count_vectorizer_operator.h"
 #include "core/node_executors/tfidf_vectorizer_operator.h"
 #include "core/preprocessing_state.h"
@@ -205,6 +206,7 @@ void CheckOperatorRangeValidation() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (!cyxwiz::test::BeginOracleTest("test_computation_truth_text_vectorizers")) return 1;
     CheckOperatorRangeValidation();
     const fs::path fixture_path = ResolveFixture(
         argc > 0 ? fs::path(argv[0]) : fs::path{},

@@ -1,3 +1,4 @@
+#include "oracle/oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/classification_decision.h"
 #include "../src/core/debug_run_paths.h"
@@ -5053,6 +5054,9 @@ int main(int argc, char** argv) {
     fs::create_directories(work_dir);
     const cyxwiz::ScopedDebugRunRootOverrideForTesting debug_root(
         work_dir / "debug_runs");
+    // The requested device when one is asked. Not pinned for every run: the
+    // route tests here set, clear and check the device selection themselves.
+    if (!cyxwiz::test::BeginOracleTest("test_training_executor_arrow_parquet")) return 1;
     cyxwiz::test::InstallQualifiedRouteSnapshot();
 
     if (argc >= 2 &&

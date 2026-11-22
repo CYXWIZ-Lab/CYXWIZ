@@ -7,6 +7,7 @@
 // (generate_regularization_node_fixtures.py). The start is the Engine's own
 // seeded initialisation, which the fixture records and the test checks first.
 // Also: the compiled coefficients and the compiler's refusals.
+#include "oracle/training_oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/debug_run_paths.h"
 #include "../src/core/execution_device_context.h"
@@ -211,26 +212,13 @@ void CheckRefused(const Graph& graph, const std::string& text, const std::string
     Check(!config.is_valid && reported, what + ": refused with '" + text + "'");
 }
 
-void SelectArrayFireCpu() {
-    const auto devices = cyxwiz::Device::GetAvailableDevices();
-    const auto cpu = std::find_if(devices.begin(), devices.end(), [](const cyxwiz::DeviceInfo& device) {
-        return device.type == cyxwiz::DeviceType::CPU;
-    });
-    Check(cpu != devices.end(), "an ArrayFire CPU route is required");
-    cyxwiz::test::InstallQualifiedRouteSnapshot(devices);
-    cyxwiz::ClearPendingExecutionDeviceSelection();
-    cyxwiz::SetPendingExecutionDeviceSelection(cyxwiz::DeviceType::CPU, cpu->device_id);
-    cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
-}
-
 // Trains and returns the model's parameters, flattened in the Engine's layout.
 // With `snapshots`, layer snapshots are taken on the schedule and handed back.
 Parameters TrainAndRead(const cyxwiz::TrainingConfiguration& config, const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
                         int epochs, const std::string& what,
                         const std::optional<cyxwiz::TrainingExecutor::LayerSnapshotSchedule>& snapshots = std::nullopt,
                         std::vector<cyxwiz::TrainingExecutor::LayerSnapshot>* taken = nullptr) {
-    SelectArrayFireCpu();
+    cyxwiz::test::PinTrainingDevice();
     cyxwiz::TrainingExecutor executor(config, dataset, "label");
     if (snapshots) executor.EnableLayerSnapshots(*snapshots);
     cyxwiz::TrainingMetrics final_metrics;
@@ -443,6 +431,7 @@ void CheckLayerSnapshots(const json& fixture, const std::shared_ptr<cyxwiz::Arro
 }
 
 int main(int, char** argv) {
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_regularization_node_training")) return 1;
     namespace fs = std::filesystem;
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
@@ -496,6 +485,8 @@ int main(int, char** argv) {
     CheckLayerSnapshots(fixture, dataset, learning_rate, batch_size, epochs, tolerance);
 
     fs::remove_all(work_dir);
+    std::string device_error;
+    Check(cyxwiz::test::TrainedOnRequestedDevice(&device_error), "every run on the requested device: " + device_error);
     std::cout << "Regularization nodes match PyTorch: " << fixture.at("cases").size() << " cases\n";
     return 0;
 }

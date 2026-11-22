@@ -30,6 +30,30 @@ an explicit skip, not a global computation-coverage blocker. A qualified route
 must pass with exact requested/effective identity and may never pass by
 silently selecting another backend.
 
+## Running an oracle test: which device, which build
+
+Every oracle test (the list is `CYXWIZ_ORACLE_TESTS` in
+`cyxwiz-engine/CMakeLists.txt`) starts with `tests/oracle/oracle_test.h` and
+prints two lines before anything else:
+
+```
+oracle: test_computation_truth_spatial_layers, commit d40e7b24f... (with uncommitted changes)
+device: cpu 0 (float64)
+```
+
+- `commit` is the commit the binary was built from (the `cyxwiz-build-info`
+  library, refreshed at every build), so a result from an old build tree is
+  visible as such.
+- `CYXWIZ_TEST_ARRAYFIRE_BACKEND=cpu|cuda|opencl|oneapi` picks the device
+  (`CYXWIZ_OPENCL_TEST_DEVICE=N` the OpenCL device). The test runs on exactly
+  that device or fails; unset, it says it uses the default device.
+- Tests that train through the training executor pin every run to that
+  device (CPU when nothing is asked) with the Strict policy, and check at the
+  end that every run bound it: `training device: every run (N) on arrayfire_cpu 0`.
+- Host-only oracles (text, utilities, VecNormalize) print `device: host`.
+- `test_computation_truth_tfidf_loss` goes over its devices itself (CPU, then
+  each CUDA / OpenCL route); with the variable set it checks only that device.
+
 Initial target cases:
 
 - TF-IDF bounded materialization values and shape.
@@ -43,7 +67,8 @@ Initial target cases:
 
 The broad tracking ticket is:
 
-`docs/Data Studio/done39.md`
+`internal/repository-private/engineering/Data Studio/Done work/done39.md`
+(the Engine 2.0 oracle harness: TOFIX228)
 
 ## Current tests
 

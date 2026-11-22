@@ -7,7 +7,7 @@
 // active ArrayFire backend (CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu),
 // once through the neural providers where they serve the case and once with
 // the providers off (the ArrayFire path).
-#include "test_device_selection.h"
+#include "../oracle/oracle_test.h"
 
 #include <cyxwiz/layers/recurrent.h>
 #include <cyxwiz/neural_provider.h>
@@ -143,7 +143,7 @@ std::filesystem::path FixturePath(const char* argv0) {
 }  // namespace
 
 int main(int, char** argv) {
-    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
+    Check(cyxwiz::test::BeginOracleTest("test_computation_truth_recurrent"), "requested test device");
     std::ifstream in(FixturePath(argv[0]));
     Check(static_cast<bool>(in), "cannot open the recurrent fixture");
     const json fixture = json::parse(in);

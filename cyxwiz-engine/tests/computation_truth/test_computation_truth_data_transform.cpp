@@ -4,7 +4,7 @@
 // fixtures/data_transform_pytorch.json (generate_data_transform_fixtures.py, which
 // also cross-checks scipy). Runs on the active ArrayFire backend
 // (CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu).
-#include "test_device_selection.h"
+#include "../oracle/oracle_test.h"
 
 #include <cyxwiz/data_transform.h>
 
@@ -247,7 +247,7 @@ void RunCase(const json& c, const std::string& name) {
 }  // namespace
 
 int main(int, char** argv) {
-    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
+    Check(cyxwiz::test::BeginOracleTest("test_computation_truth_data_transform"), "requested test device");
     std::ifstream in(FixturePath(argv[0]));
     Check(static_cast<bool>(in), "cannot open the data transform fixture");
     const json fixture = json::parse(in);

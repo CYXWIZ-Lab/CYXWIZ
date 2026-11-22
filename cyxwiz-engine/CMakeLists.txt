@@ -9269,6 +9269,79 @@ cyxwiz_enable_pch(test_prepared_data_cache)
 cyxwiz_enable_pch(test_engine_node_parity)
 cyxwiz_enable_pch(test_trial_runner)
 
+# ===== Oracle tests (Engine 2.0 core Phase 1, TOFIX228) =====
+# The tests that compare the Engine with PyTorch (or another reference) and
+# the training contracts they rest on. Each one starts with
+# tests/oracle/oracle_test.h (BeginOracleTest / BeginTrainingOracleTest): it
+# prints the commit it was built from (cyxwiz-build-info) and runs on exactly
+# the device CYXWIZ_TEST_ARRAYFIRE_BACKEND asks for.
+include(${CMAKE_SOURCE_DIR}/cmake/CyxWizBuildInfo.cmake)
+set(CYXWIZ_ORACLE_TESTS
+    test_computation_truth_classic_ml
+    test_computation_truth_clustering
+    test_computation_truth_cross_validation
+    test_computation_truth_data_transform
+    test_computation_truth_dimensionality_reduction
+    test_computation_truth_gradient_clipping
+    test_computation_truth_linear_algebra
+    test_computation_truth_optimization
+    test_computation_truth_ppo
+    test_computation_truth_recurrent
+    test_computation_truth_roc_pr
+    test_computation_truth_signal
+    test_computation_truth_spatial_layers
+    test_computation_truth_statistical_tests
+    test_computation_truth_text
+    test_computation_truth_text_vectorizers
+    test_computation_truth_tfidf_loss
+    test_computation_truth_time_series
+    test_computation_truth_transformer_primitives
+    test_computation_truth_utilities
+    test_computation_truth_vec_normalize
+    test_computation_truth_word_embeddings
+    test_device_random
+    test_transformer_constructor
+    test_transformer_dropout
+    test_fused_adam
+    test_fused_mlp
+    test_image_transforms
+    test_arrow_batcher_resident
+    test_arrow_batcher_chunking
+    test_branch_graph_training
+    test_cnn_graph_training
+    test_conv1d_graph_training
+    test_conv3d_training
+    test_cross_attention_graph_training
+    test_linear_attention_training
+    test_metric_graph_training
+    test_regularization_node_training
+    test_scheduler_node_training
+    test_engine_node_parity
+    test_graph_training_job
+    test_modality_batcher_drop_last
+    test_sparse_feature_dataset_batcher
+    test_sparse_training_executor
+    test_training_batcher_setup
+    test_training_executor_arrow_parquet
+)
+
+# Links the commit and passes the source root (tests read examples/ and
+# fixtures from it, not from the working directory: ORA-10).
+function(cyxwiz_oracle_test target)
+    target_link_libraries(${target} PRIVATE cyxwiz-build-info)
+    get_target_property(_defs ${target} COMPILE_DEFINITIONS)
+    if(NOT _defs MATCHES "CYXWIZ_SOURCE_ROOT")
+        target_compile_definitions(${target} PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+    endif()
+endfunction()
+
+foreach(_oracle_test IN LISTS CYXWIZ_ORACLE_TESTS)
+    if(NOT TARGET ${_oracle_test})
+        message(FATAL_ERROR "CYXWIZ_ORACLE_TESTS names ${_oracle_test}, which is not a target")
+    endif()
+    cyxwiz_oracle_test(${_oracle_test})
+endforeach()
+
 # Tests write their run records (training traces, crash envelopes, Studio
 # Debugger runs) under the build tree, never into the user's own debug-run
 # folder (CYXWIZ_DEBUG_RUN_ROOT, core/debug_run_paths.h).
