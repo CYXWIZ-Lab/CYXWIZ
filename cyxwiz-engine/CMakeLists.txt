@@ -9350,11 +9350,15 @@ function(cyxwiz_oracle_test target)
 endfunction()
 
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/oracle")
+# Builds only the oracle tests (and what they need): the per-push job
+# (.github/workflows/oracle-cpu.yml) builds this, not the whole Engine.
+add_custom_target(cyxwiz-oracle-tests)
 foreach(_oracle_test IN LISTS CYXWIZ_ORACLE_TESTS)
     if(NOT TARGET ${_oracle_test})
         message(FATAL_ERROR "CYXWIZ_ORACLE_TESTS names ${_oracle_test}, which is not a target")
     endif()
     cyxwiz_oracle_test(${_oracle_test})
+    add_dependencies(cyxwiz-oracle-tests ${_oracle_test})
 endforeach()
 foreach(_oracle_test IN LISTS CYXWIZ_ORACLE_HOST_TESTS)
     if(NOT _oracle_test IN_LIST CYXWIZ_ORACLE_TESTS)
