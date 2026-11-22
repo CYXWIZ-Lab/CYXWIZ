@@ -2524,22 +2524,14 @@ MainWindow::MainWindow()
 
     // Initialize Tutorial System
     auto& tutorial = cyxwiz::TutorialSystem::Instance();
+    // A step outlines its window only while that window is shown: not when it
+    // is closed, not drawn last frame or a tab behind another
     tutorial.SetWindowRectCallback([](const std::string& window_name) -> ImRect {
         ImGuiWindow* window = ImGui::FindWindowByName(window_name.c_str());
-        if (window) {
-            return ImRect(window->Pos, ImVec2(window->Pos.x + window->Size.x, window->Pos.y + window->Size.y));
-        }
-        return ImRect();
+        if (!window || !window->WasActive || window->Hidden) return ImRect();
+        if (window->DockIsActive && !window->DockTabIsVisible) return ImRect();
+        return ImRect(window->Pos, ImVec2(window->Pos.x + window->Size.x, window->Pos.y + window->Size.y));
     });
-    tutorial.LoadProgress();
-
-    // Check for first-launch welcome
-    if (tutorial.ShouldShowWelcome()) {
-        tutorial.MarkWelcomeShown();
-        tutorial.SaveProgress();
-        // Optionally start the getting started tutorial automatically
-        // tutorial.StartTutorial("getting_started");
-    }
 
     // Register panels with sidebar for hide/unhide toggles. Their state
     // now is the built-in default that Reset to Default returns to.

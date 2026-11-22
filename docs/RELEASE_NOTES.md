@@ -35,6 +35,15 @@ private Data Studio tickets (`tofix*/track*`).
   plugin.json, already installed) and a partial install show inside the
   dialog under the path you typed; before, an error popup replaced the
   dialog and the path was lost.
+- **Interactive Tutorials match today's Engine.** The step card sits beside
+  the window it points at, which is outlined only while it is shown (Training
+  Basics pointed at a "Node Editor" window that does not exist, and a closed
+  or hidden window could be outlined). The text names today's menus and keys
+  (F5 trains, the Data menu, the 12 menus). The list shows each description,
+  **Resume** for a tutorial closed before its end and **Reset progress...**;
+  Esc closes a tutorial and the arrow keys step. Progress is now kept in your
+  settings folder (`%APPDATA%\CyxWiz\tutorial_progress.json`); progress saved
+  next to the program before is not read.
 - **Preferences: "Restore this page's defaults" on every page with
   settings** (only Appearance and Search could go back before). It asks
   first and keeps what is yours (the Python interpreter, Favourite and Recent

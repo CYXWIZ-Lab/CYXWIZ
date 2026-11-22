@@ -309,6 +309,7 @@ set(ENGINE_SOURCES
     src/core/rl_playback_presentation.cpp
     src/core/rl_device_presentation.cpp
     src/core/task_list_presentation.cpp
+    src/core/tutorial_content.cpp
     src/core/rl_dashboard_presentation.cpp
     src/core/project_session.cpp
     src/core/python_package_list.cpp
@@ -7963,6 +7964,16 @@ if(WIN32)
     target_compile_definitions(test_task_list_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
 add_test(NAME task_list_presentation COMMAND test_task_list_presentation)
+
+# ===== Test: the built-in tutorials and their step card (TOFIX129 C6) =====
+add_executable(test_tutorial_content
+    tests/test_tutorial_content.cpp
+    src/core/tutorial_content.cpp
+)
+if(WIN32)
+    target_compile_definitions(test_tutorial_content PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME tutorial_content COMMAND test_tutorial_content)
 
 # ===== Test: the Policy Playback panel's words (TOFIX195 S5.3) =====
 add_executable(test_rl_playback_presentation

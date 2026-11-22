@@ -818,10 +818,7 @@ void ToolbarPanel::BuildActionHandlers() {
     };
 
     // Help
-    h["help.tutorial"] = [](const std::string& id) {
-        TutorialSystem::Instance().StartTutorial(id);
-        spdlog::info("Started tutorial: {}", id);
-    };
+    h["help.tutorial"] = [](const std::string& id) { TutorialSystem::Instance().StartTutorial(id); };
     h["help.browse_tutorials"] = [](const std::string&) { TutorialSystem::Instance().OpenTutorialBrowser(); };
     h["help.shortcuts"] = [this](const std::string&) { OpenPreferences("Shortcuts"); };
     h["help.report_issue"] = [](const std::string&) { ui::OpenUrl("https://github.com/CYXWIZ-Lab/CYXWIZ/issues"); };

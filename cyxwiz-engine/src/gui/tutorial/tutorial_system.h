@@ -1,45 +1,20 @@
 #pragma once
 
-#include <string>
-#include <vector>
+#include "../../core/tutorial_content.h"
 #include <functional>
 #include <map>
+#include <string>
+#include <vector>
 #include <imgui.h>
 #include <imgui_internal.h>
 
 namespace cyxwiz {
 
 /**
- * A single step in a tutorial sequence
- */
-struct TutorialStep {
-    std::string id;                    // Unique step identifier
-    std::string title;                 // Step title shown in tooltip
-    std::string description;           // Detailed description
-    std::string target_element;        // Window/element to highlight (e.g., "Node Editor", "Asset Browser")
-    std::string action_hint;           // What the user should do (e.g., "Click the Add Node button")
-    std::function<bool()> completion_condition;  // Returns true when step is complete
-    bool requires_interaction = true;  // If false, auto-advance after delay
-    float delay_seconds = 0.0f;        // Auto-advance delay (if !requires_interaction)
-    ImVec2 highlight_offset = ImVec2(0, 0);  // Offset for highlight position
-    ImVec2 highlight_size = ImVec2(0, 0);    // Size override for highlight (0 = auto)
-};
-
-/**
- * A complete tutorial sequence
- */
-struct Tutorial {
-    std::string id;                    // Tutorial identifier
-    std::string name;                  // Display name
-    std::string description;           // Brief description
-    std::string category;              // Category (e.g., "Getting Started", "Advanced")
-    std::vector<TutorialStep> steps;
-    bool completed = false;            // Has user completed this tutorial?
-};
-
-/**
- * Interactive Tutorial System
- * Provides guided walkthroughs with visual highlights and step-by-step instructions.
+ * Interactive Tutorials (Help > Interactive Tutorials): the list of tutorials
+ * and, while one runs, a step card beside the window it points at, that
+ * window outlined and the step dots. Content and placement come from
+ * core/tutorial_content. Progress is kept in the user's settings folder.
  */
 class TutorialSystem {
 public:
@@ -50,72 +25,45 @@ public:
     void StopTutorial();
     void NextStep();
     void PreviousStep();
-    void SkipTutorial();
 
-    // Render the tutorial overlay (call in main render loop)
+    // Render the list and the running tutorial (call in main render loop)
     void Render();
 
-    // State queries
-    bool IsActive() const { return is_active_; }
     bool IsTutorialComplete(const std::string& tutorial_id) const;
-    const Tutorial* GetCurrentTutorial() const { return current_tutorial_; }
-    int GetCurrentStepIndex() const { return current_step_index_; }
-    int GetTotalSteps() const;
+    const std::vector<tutorial::Tutorial>& GetAvailableTutorials() const { return tutorials_; }
 
-    // Tutorial management
-    void RegisterTutorial(Tutorial tutorial);
-    const std::vector<Tutorial>& GetAvailableTutorials() const { return tutorials_; }
-    const std::vector<std::string>& GetCompletedTutorials() const { return completed_tutorials_; }
-
-    // Show tutorial selection dialog
-    void ShowTutorialBrowser();
     void OpenTutorialBrowser() { show_browser_ = true; }
-    void CloseTutorialBrowser() { show_browser_ = false; }
 
-    // First-launch detection
-    bool ShouldShowWelcome() const { return !has_shown_welcome_; }
-    void MarkWelcomeShown() { has_shown_welcome_ = true; }
-
-    // Persistence
-    void SaveProgress();
-    void LoadProgress();
-
-    // Set window position callback (to get window rect for highlighting)
+    // The screen rectangle of a window that is shown now; empty when it is
+    // closed, a hidden tab or not drawn.
     using WindowRectCallback = std::function<ImRect(const std::string& window_name)>;
-    void SetWindowRectCallback(WindowRectCallback callback) { window_rect_callback_ = callback; }
+    void SetWindowRectCallback(WindowRectCallback callback) { window_rect_callback_ = std::move(callback); }
 
 private:
     TutorialSystem();
     ~TutorialSystem() = default;
 
-    // Rendering helpers
-    void RenderOverlay();
+    void SaveProgress();
+    void LoadProgress();
+    void ResetProgress();
+
+    void RenderBrowser();
+    void RenderStep();
     void RenderHighlight(const ImRect& target_rect);
-    void RenderStepTooltip(const TutorialStep& step, const ImRect& target_rect);
-    void RenderProgressBar();
+    void RenderStepDots();
 
-    // Built-in tutorials
-    void RegisterBuiltInTutorials();
-
-    // Tutorial registry
-    std::vector<Tutorial> tutorials_;
-    std::map<std::string, size_t> tutorial_index_;  // id -> index mapping
-
-    // Current state
-    bool is_active_ = false;
-    Tutorial* current_tutorial_ = nullptr;
-    int current_step_index_ = 0;
-    double step_start_time_ = 0.0;
-
-    // Progress tracking
+    std::vector<tutorial::Tutorial> tutorials_;
     std::vector<std::string> completed_tutorials_;
-    bool has_shown_welcome_ = false;
 
-    // UI state
+    // The tutorial that runs (index into tutorials_, -1: none) and its step
+    int current_ = -1;
+    int current_step_index_ = 0;
+    std::map<std::string, int> paused_;  // closed before the end: the step to resume on (this session)
+    bool focus_card_ = false;  // the card takes the keyboard after a start or a step
+    ImVec2 card_size_ = ImVec2(380.0f, 240.0f);  // measured last frame, for its place
+
     bool show_browser_ = false;
-    float highlight_pulse_ = 0.0f;  // Animation state
-
-    // Callbacks
+    float highlight_pulse_ = 0.0f;
     WindowRectCallback window_rect_callback_;
 };
 
