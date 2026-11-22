@@ -602,10 +602,13 @@ void CheckSaveSelectionRoundTrip() {
               error == "it needs a name",
           "a blank name is refused: " + error);
 
-    // Delete takes it out of the folder and the library; a shipped pattern is not deleted.
-    Check(library.DeleteUserPattern(id, &error), "one of My patterns is deleted: " + error);
-    Check(library.GetPattern(id) == nullptr && !std::filesystem::exists(dir / "dense-relu-dropout.cyxgraph"),
-          "the deleted pattern is gone from the library and the folder");
+    // Delete takes it out of the library; a shipped pattern is not deleted. The
+    // file is removed first, so the test never fills the developer's Recycle
+    // Bin: a pattern whose file is already gone still leaves My patterns.
+    std::filesystem::remove(dir / "dense-relu-dropout.cyxgraph");
+    Check(library.DeleteUserPattern(id, &error), "a pattern whose file is gone is deleted: " + error);
+    Check(library.GetPattern(id) == nullptr, "the deleted pattern is gone from the library");
+    Check(!library.DeleteUserPattern(id, &error), "it cannot be deleted twice");
     Check(!library.DeleteUserPattern("guard_dense", &error), "a shipped pattern is not deleted");
 
     library.SetUserPatternsDirectory(kept_dir);

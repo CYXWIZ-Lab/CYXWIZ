@@ -345,8 +345,16 @@ bool PatternLibrary::DeleteUserPattern(const std::string& id, std::string* error
         if (error) *error = "it is not one of My patterns";
         return false;
     }
-    if (!cyxwiz::MoveToRecycleBin(it->second.file_path, error)) return false;
-    spdlog::info("Moved pattern '{}' to the {}: {}", it->second.name, cyxwiz::RecycleBinName(), it->second.file_path);
+    std::error_code ec;
+    if (!fs::exists(it->second.file_path, ec) && !ec) {
+        // Its file was moved or deleted outside the Engine: only the entry is left.
+        spdlog::info("Pattern '{}' had no file left ({}); removed from My patterns", it->second.name,
+                     it->second.file_path);
+    } else {
+        if (!cyxwiz::MoveToRecycleBin(it->second.file_path, error)) return false;
+        spdlog::info("Moved pattern '{}' to the {}: {}", it->second.name, cyxwiz::RecycleBinName(),
+                     it->second.file_path);
+    }
     patterns_.erase(it);
     ++revision_;
     return true;

@@ -778,6 +778,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- **A pattern whose file was moved or deleted outside the Engine can be
+  deleted.** Delete takes it out of My patterns instead of refusing with "the
+  file is no longer there".
 - **A settings folder whose name Windows cannot spell in its code page no longer
   stops the Engine starting.** My patterns are off in that case, and a file in
   the patterns folder with such a name is skipped instead of stopping the load.
