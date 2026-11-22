@@ -135,6 +135,34 @@ py -3.12 cyxwiz-engine/tests/computation_truth/reference/generate_train_trajecto
 py -3.12 scripts/checks/check_oracle_fixtures.py . --update train_trajectory_pytorch.json
 ```
 
+## Level 3: a file through the Engine's data path against Python
+
+`test_oracle_data` (`tests/oracle/test_oracle_data.cpp`, ctest
+`oracle_oracle_data_<device>`), tabular: `fixtures/data_parity/tabular.csv`
+(53 rows, a text label) through Data Input -> StandardScaler with the
+training split (a pipeline run) -> `BuildArrowTrainingBatchers`, as a
+training run builds them, the Train batcher wrapped by a recording decorator
+-> `TrainingExecutor`, 2 epochs, shuffled. Compared with
+`fixtures/data_parity_tabular_pytorch.json`
+(`reference/generate_data_parity_fixtures.py`), which works it out in Python
+without the Engine:
+
+- every row's part: the split rule (`split_partitioning.h`) ported to Python
+  (`reference/portable_random.py`: std::mt19937 / mt19937_64, the bounded
+  draw and Fisher-Yates of `portable_random.h`);
+- the scaled columns: StandardScaler's formula fitted on the Train rows;
+- each epoch's order (`TrainingEpochSeed(dataloader seed, epoch)` into the
+  ported shuffle), every batch's values, class ids and size;
+- the training: a torch DataLoader with that order as its sampler runs the
+  model's own export (as level 2): every step's running loss, each epoch's
+  validation loss and every parameter;
+- scenario B: no preparation step, a Data Split that neither shuffles nor
+  stratifies: the batchers' rows against the rule unshuffled.
+
+After changing the model or the export: `test_oracle_data --write-exports
+<repo>/cyxwiz-engine/tests/computation_truth/fixtures/data_parity`, then the
+generator, then `check_oracle_fixtures.py . --update data_parity_tabular_pytorch.json`.
+
 Initial target cases:
 
 - TF-IDF bounded materialization values and shape.

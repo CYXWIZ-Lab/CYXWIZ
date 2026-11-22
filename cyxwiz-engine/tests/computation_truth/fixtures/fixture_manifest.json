@@ -52,6 +52,12 @@
    "generator_sha256": "62001d0b468da4f48d4f43997809d7bdad6880c848a110a53a69e4bef40384e0",
    "live_skip": "needs the Palmer penguins CSV (not committed): py -3.12 generate_cross_validation_fixtures.py path/to/penguins.csv"
   },
+  "data_parity_tabular_pytorch.json": {
+   "fixture_sha256": "1975c3df2dbaef3e57ba83e3a6a7453fde5428746638b979162f541e506dece9",
+   "generator": "reference/generate_data_parity_fixtures.py",
+   "generator_sha256": "d6b6f8f279ea9d983940ca8f5f05390ce9c87139ebcd4d45cd92c1ced2bf4ed0",
+   "note": "also writes data_parity/tabular.csv and tabular_mlp_init.pth; made from the committed export data_parity/tabular_mlp.py (test_oracle_data --write-exports)"
+  },
   "data_transform_pytorch.json": {
    "fixture_sha256": "98d24062b60b29194c2c14b37d4be2febd9f93b41640e7e5a4a05f3403de2d38",
    "generator": "reference/generate_data_transform_fixtures.py",
@@ -298,7 +304,7 @@
   "utilities_truth.json": {
    "fixture_sha256": "8834530b35ec7bd42cb8c31ca56f9dc546f5c32b45da2541af1293b56db36dfb",
    "generator": "reference/generate_utilities_fixtures.py",
-   "generator_sha256": "692523afd2db16bd6fe295186ef8858f7dcf1b4e543660d371f1fa5c815cc5e4"
+   "generator_sha256": "4f53ef4d2895e38603f874c7fd3e0b686267671ed0c104d0f7c87b57c7f5f269"
   },
   "vec_normalize_sb3.json": {
    "fixture_sha256": "6e1aca6c9cf08f6262a331410518fa4945b683f49815eeba4352728d1ad2d9e2",

@@ -2,9 +2,9 @@
  "schema_version": 2,
  "generated_by": "scripts/checks/check_oracle_coverage.py --write (from the headers and cyxwiz-engine/tests/computation_truth/oracle_coverage.json)",
  "counts": {
-  "covered": 47,
+  "covered": 49,
   "gap": 34,
-  "partial": 61
+  "partial": 59
  },
  "components": [
   {
@@ -65,8 +65,8 @@
    "component": "AdamOptimizer",
    "kind": "optimizer",
    "header": "cyxwiz-backend/include/cyxwiz/optimizers/adam.h",
-   "status": "partial",
-   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss; 3-step fixture; Adam after global-norm clipping (host, device, fused StepTogether) incl. NaN/Inf norms; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "status": "covered",
+   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss; 3-step fixture; Adam after global-norm clipping (host, device, fused StepTogether) incl. NaN/Inf norms; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
    "evidence": [
     {
      "test": "test_computation_truth_optimizer_trajectory",
@@ -94,16 +94,23 @@
       "adam/nan_norm_step",
       "adam/inf_norm_step"
      ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/gru_regressor"
+     ]
     }
    ],
-   "gap": "trajectories on a single 4x5 parameter only; no Adam trajectory through a multi-layer model vs PyTorch"
+   "gap": ""
   },
   {
    "component": "AdamWOptimizer",
    "kind": "optimizer",
    "header": "cyxwiz-backend/include/cyxwiz/optimizers/adam.h",
-   "status": "partial",
-   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss; 3-step fixture; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "status": "covered",
+   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss; 3-step fixture; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
    "evidence": [
     {
      "test": "test_computation_truth_optimizer_trajectory",
@@ -121,9 +128,16 @@
      "cases": [
       "cases/adam_family_multistep_f32/adamw"
      ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/transformer_classifier"
+     ]
     }
    ],
-   "gap": "single-parameter trajectories only; no trajectory through a model"
+   "gap": ""
   },
   {
    "component": "AdaptiveAvgPool2DLayer",
@@ -170,7 +184,7 @@
    "kind": "batcher",
    "header": "cyxwiz-engine/src/core/dataset_batcher.h",
    "status": "partial",
-   "checks": "class balancing: 4096 weighted draws, class probabilities vs torch.utils.data.WeightedRandomSampler (inverse frequency, within 0.03)",
+   "checks": "class balancing: 4096 weighted draws, class probabilities vs torch.utils.data.WeightedRandomSampler (inverse frequency, within 0.03); level 3: a CSV through Data Input, the split, a fitted scaler and these batchers vs the Python port of the split rule and the epoch shuffle and a torch DataLoader (order, values, labels, 2 epochs of training)",
    "evidence": [
     {
      "test": "test_training_batcher_setup",
@@ -178,9 +192,19 @@
      "cases": [
       "cases/weighted_sampler_inverse_frequency"
      ]
+    },
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_tabular_pytorch.json",
+     "cases": [
+      "partition",
+      "unshuffled_partition",
+      "epochs",
+      "steps"
+     ]
     }
    ],
-   "gap": "no batch content/order comparison with a PyTorch DataLoader; chunking/resident/drop_last tests are engine contracts (values vs source, host vs device path)"
+   "gap": "the copy budget (uploads / copies per batch) is not measured: no upload counter exists"
   },
   {
    "component": "AudioDatasetBatcher",
@@ -295,7 +319,7 @@
    "kind": "module",
    "header": "cyxwiz-backend/include/cyxwiz/sequential.h",
    "status": "partial",
-   "checks": "forward, input gradient, parameter gradients, running statistics after (train x2, eval x1) vs PyTorch (3 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); also in CNN graph cases incl. frozen BN",
+   "checks": "forward, input gradient, parameter gradients, running statistics after (train x2, eval x1) vs PyTorch (3 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); also in CNN graph cases incl. frozen BN; level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
    "evidence": [
     {
      "test": "test_computation_truth_spatial_layers",
@@ -316,16 +340,23 @@
       "cases/frozen_stem_keep",
       "cases/frozen_stem_update"
      ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/resnet_block"
+     ]
     }
    ],
-   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+   "gap": "small shapes, float32 only; one 5-step block trajectory"
   },
   {
    "component": "BatchNormModule",
    "kind": "module",
    "header": "cyxwiz-backend/include/cyxwiz/sequential.h",
    "status": "covered",
-   "checks": "BatchNorm 1D vs torch.nn.BatchNorm1d: 4 training batches in a row (output, input gradient, gamma/beta gradients, running mean/var after each), then evaluation; batch 2/7/64, eps 1e-3 + momentum 0.3, variance near eps (eps x10 must miss); device-selectable",
+   "checks": "BatchNorm 1D vs torch.nn.BatchNorm1d: 4 training batches in a row (output, input gradient, gamma/beta gradients, running mean/var after each), then evaluation; batch 2/7/64, eps 1e-3 + momentum 0.3, variance near eps (eps x10 must miss); device-selectable; level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
    "evidence": [
     {
      "test": "test_computation_truth_batchnorm1d",
@@ -336,6 +367,13 @@
       "cases/batch64_f4",
       "cases/eps1e-3_momentum0.3_batch7_f3",
       "cases/variance_near_eps_batch7_f4"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/mlp_batchnorm"
      ]
     }
    ],
@@ -446,7 +484,7 @@
    "kind": "module",
    "header": "cyxwiz-backend/include/cyxwiz/sequential.h",
    "status": "partial",
-   "checks": "forward, input gradient, parameter gradients vs PyTorch (7 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); also in 7 CNN graph cases (output, input gradient, parameter gradients)",
+   "checks": "forward, input gradient, parameter gradients vs PyTorch (7 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); also in 7 CNN graph cases (output, input gradient, parameter gradients); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
    "evidence": [
     {
      "test": "test_computation_truth_spatial_layers",
@@ -473,9 +511,16 @@
       "cases/frozen_stem_keep",
       "cases/frozen_stem_update"
      ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/resnet_block"
+     ]
     }
    ],
-   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+   "gap": "small shapes, float32 only; one 5-step block trajectory (stride 1, same padding)"
   },
   {
    "component": "Conv3DModule",
@@ -905,7 +950,7 @@
    "kind": "module",
    "header": "cyxwiz-backend/include/cyxwiz/sequential.h",
    "status": "partial",
-   "checks": "output, input gradient, every weight/bias gradient vs torch.nn.GRU (5 cases: uni/bi, 1-2 layers, hidden 8/16/64), provider and ArrayFire paths; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "checks": "output, input gradient, every weight/bias gradient vs torch.nn.GRU (5 cases: uni/bi, 1-2 layers, hidden 8/16/64), provider and ArrayFire paths; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
    "evidence": [
     {
      "test": "test_computation_truth_recurrent",
@@ -917,9 +962,16 @@
       "cases/gru_bi_h16_l2_last",
       "cases/gru_h64_l1_seq"
      ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/gru_regressor"
+     ]
     }
    ],
-   "gap": "no multi-step trajectory vs PyTorch (the 30-step SGD run only checks the loss halves)"
+   "gap": "the trajectory is unidirectional, one layer; Strict CUDA refuses the run (ORA-22)"
   },
   {
    "component": "GlobalAvgPool2DLayer",
@@ -1391,7 +1443,7 @@
    "kind": "module",
    "header": "cyxwiz-backend/include/cyxwiz/sequential.h",
    "status": "covered",
-   "checks": "graph Dense nodes: forward, per-pin backward, parameter gradients vs PyTorch in branched graphs; CNN graph Head gradients; transformer heads; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "checks": "graph Dense nodes: forward, per-pin backward, parameter gradients vs PyTorch in branched graphs; CNN graph Head gradients; transformer heads; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
    "evidence": [
     {
      "test": "test_branch_graph_training",
@@ -1423,6 +1475,16 @@
      "cases": [
       "cases/none",
       "cases/sgd_weight_decay"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/mlp_batchnorm",
+      "models/gru_regressor",
+      "models/transformer_classifier",
+      "models/resnet_block"
      ]
     }
    ],
@@ -1777,7 +1839,7 @@
    "kind": "optimizer",
    "header": "cyxwiz-backend/include/cyxwiz/optimizers/adaptive.h",
    "status": "covered",
-   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss; 3-step fixture; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss; 3-step fixture; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
    "evidence": [
     {
      "test": "test_computation_truth_optimizer_trajectory",
@@ -1794,6 +1856,13 @@
      "fixture": "training_core_pytorch.json",
      "cases": [
       "cases/adaptive_optimizer_multistep_f32/rmsprop"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/resnet_block"
      ]
     }
    ],
@@ -2022,7 +2091,7 @@
    "kind": "optimizer",
    "header": "cyxwiz-backend/include/cyxwiz/optimizers/sgd.h",
    "status": "covered",
-   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss (momentum; Nesterov + weight decay); 3-step momentum fixture; Linear/Dense SGD updates; regularization-node SGD runs (weight decay, Nesterov) through TrainingExecutor; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss (momentum; Nesterov + weight decay); 3-step momentum fixture; Linear/Dense SGD updates; regularization-node SGD runs (weight decay, Nesterov) through TrainingExecutor; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
    "evidence": [
     {
      "test": "test_computation_truth_optimizer_trajectory",
@@ -2053,6 +2122,13 @@
       "cases/sgd_weight_decay",
       "cases/sgd_nesterov",
       "cases/sgd_nesterov_decay_no_bias"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/mlp_batchnorm"
      ]
     }
    ],
@@ -2435,13 +2511,20 @@
    "kind": "module",
    "header": "cyxwiz-backend/include/cyxwiz/sequential.h",
    "status": "partial",
-   "checks": "one-block forward and two-block stack backward (input and parameter gradients) vs PyTorch, BERT head logits; inline reference: live LibTorch in Release builds with CYXWIZ_HAS_PYTORCH, else torch-derived constants; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "checks": "one-block forward and two-block stack backward (input and parameter gradients) vs PyTorch, BERT head logits; inline reference: live LibTorch in Release builds with CYXWIZ_HAS_PYTORCH, else torch-derived constants; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
    "evidence": [
     {
      "test": "test_computation_truth_transformer_primitives"
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/transformer_classifier"
+     ]
     }
    ],
-   "gap": "evidence inline (no fixture file); only the tiny cross-entropy step is trained, as a sanity check, not a trajectory"
+   "gap": "evidence for single blocks inline; the trajectory is one post-norm block, dropout 0"
   },
   {
    "component": "TripletLoss",

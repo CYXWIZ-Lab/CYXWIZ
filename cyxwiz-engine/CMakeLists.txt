@@ -8030,6 +8030,17 @@ add_executable(test_oracle_train
 )
 configure_training_executor_harness(test_oracle_train)
 
+# ===== Oracle level 3: tabular data end to end against Python (TOFIX228 1.6):
+# CSV -> Data Input -> StandardScaler with the training split -> the Arrow
+# batchers -> TrainingExecutor. Fixtures: tests/computation_truth/fixtures/
+# data_parity/ and data_parity_tabular_pytorch.json.
+add_executable(test_oracle_data
+    tests/oracle/test_oracle_data.cpp
+    ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+)
+configure_training_executor_harness(test_oracle_data)
+target_link_libraries(test_oracle_data PRIVATE duckdb ${OpenCV_LIBS})
+
 # ===== Benchmark: Conv2D provider vs ArrayFire/native (TOFIX140 A1b), not a ctest =====
 add_executable(benchmark_conv2d_provider
     tests/benchmarks_conv2d_provider.cpp
@@ -8446,7 +8457,7 @@ set_target_properties(test_large_text_file PROPERTIES
 foreach(data_convert_target IN ITEMS cyxwiz-engine test_data_convert_service
         test_excel_table_adapter test_data_convert_reload
         test_data_convert_pipeline_input test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins
-        test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_portfolio_weights bench_linear_steps cyxwiz-bench-out-of-core test_pipeline_run_release
+        test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_oracle_data test_portfolio_weights bench_linear_steps cyxwiz-bench-out-of-core test_pipeline_run_release
         test_text_arrow_materializer test_text_arrow_training_launch test_text_gui_training_launch)
     cyxwiz_target_data_convert(${data_convert_target})
 endforeach()
@@ -8503,7 +8514,7 @@ target_compile_features(test_archive_text_source PRIVATE cxx_std_20)
 target_include_directories(test_archive_text_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_archive_text_source PRIVATE Arrow::arrow_shared LibArchive::LibArchive cyxwiz-backend)
 foreach(archive_input_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
-        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_portfolio_weights bench_linear_steps
+        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_oracle_data test_portfolio_weights bench_linear_steps
         cyxwiz-bench-out-of-core test_text_arrow_materializer test_text_arrow_training_launch
         test_text_gui_training_launch)
     target_sources(${archive_input_target} PRIVATE src/core/archive_text_source.cpp)
@@ -8513,7 +8524,7 @@ set_target_properties(test_archive_text_source PROPERTIES RUNTIME_OUTPUT_DIRECTO
 
 # Optional HTML provider is shared by all executables owning pipeline execution.
 foreach(html_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
-        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_portfolio_weights bench_linear_steps
+        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_oracle_data test_portfolio_weights bench_linear_steps
         cyxwiz-bench-out-of-core test_text_arrow_materializer test_text_arrow_training_launch
         test_text_gui_training_launch)
     cyxwiz_target_html_parser(${html_target})
@@ -9277,6 +9288,7 @@ cyxwiz_enable_pch(test_trial_runner)
 include(${CMAKE_SOURCE_DIR}/cmake/CyxWizBuildInfo.cmake)
 set(CYXWIZ_ORACLE_TESTS
     test_oracle_train
+    test_oracle_data
     test_computation_truth_batchnorm1d
     test_computation_truth_classic_ml
     test_computation_truth_clustering
