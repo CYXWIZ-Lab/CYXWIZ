@@ -143,7 +143,7 @@ void PluginsView::Render(const ExploreContext& context) {
         }
         if (rows_total_ > 0)
             ImGui::ProgressBar(static_cast<float>(read) / static_cast<float>(rows_total_), ImVec2(420.0f, 6.0f), "");
-        Faint("Task View shows the run. Cancel stops the rows, and the plugin's partial answer is dropped.");
+        Faint("Background Tasks shows the run. Cancel stops the rows, and the plugin's partial answer is dropped.");
         return;
     }
     if (asked_key_.empty()) return;

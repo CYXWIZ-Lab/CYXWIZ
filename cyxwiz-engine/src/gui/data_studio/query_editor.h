@@ -3,7 +3,7 @@
 // Data Studio Explore > Query (TOFIX134 P3.3; TOFIX148 step 3): scratch SQL
 // over the datasets by their real names in the SQL Workbench's editor pane
 // (highlighting, completion with the picked dataset's columns, find,
-// Format), run by the session query service in the background (Task View,
+// Format), run by the session query service in the background (Background Tasks,
 // Cancel); the result in the table grid, opened in the Table Viewer or the
 // Plot window, added to a dashboard, saved as a dataset, or turned into an
 // SQL step of the graph.

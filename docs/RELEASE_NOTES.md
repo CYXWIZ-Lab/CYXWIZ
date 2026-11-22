@@ -7,6 +7,16 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Background Tasks, redesigned.** One name everywhere (messages that said
+  "Task View" now say Background Tasks). Running tasks are listed first in
+  the order they started, then the last 20 finished on their own count, so
+  ten running tasks no longer hide every finished one. With **Show finished**
+  off the window says how many are hidden instead of going blank; its
+  default is in Preferences > Tools. **Cancel all** is off, with the reason,
+  when nothing can be cancelled. The last training run is one line (outcome,
+  device, time) with **Open in Training Dashboard**, where its placement and
+  residency already are; the developer codes left this window. The status
+  bar shows *N tasks running* once (its width now fits the text).
 - **Preferences: "Restore this page's defaults" on every page with
   settings** (only Appearance and Search could go back before). It asks
   first and keeps what is yours (the Python interpreter, Favourite and Recent

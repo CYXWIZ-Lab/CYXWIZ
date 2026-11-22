@@ -505,28 +505,25 @@ std::vector<TaskInfo> AsyncTaskManager::GetActiveTasks() const {
     for (const auto& [id, task] : active_tasks_) {
         infos.push_back(task->GetInfo());
     }
+    // Ids grow with every task: by id is the order they were started in
+    std::sort(infos.begin(), infos.end(), [](const TaskInfo& a, const TaskInfo& b) { return a.id < b.id; });
 
     return infos;
 }
 
-std::vector<TaskInfo> AsyncTaskManager::GetRecentTasks(size_t count) const {
+std::vector<TaskInfo> AsyncTaskManager::GetFinishedTasks(size_t count) const {
     std::lock_guard<std::mutex> lock(tasks_mutex_);
 
     std::vector<TaskInfo> infos;
-
-    // First add active tasks
-    for (const auto& [id, task] : active_tasks_) {
-        infos.push_back(task->GetInfo());
-    }
-
-    // Then add completed tasks (most recent first)
-    size_t completed_to_add = count > infos.size() ? count - infos.size() : 0;
-    for (size_t i = 0; i < completed_to_add && i < completed_tasks_.size(); ++i) {
-        size_t idx = completed_tasks_.size() - 1 - i;
-        infos.push_back(completed_tasks_[idx]->GetInfo());
-    }
-
+    infos.reserve(std::min(count, completed_tasks_.size()));
+    for (size_t i = 0; i < count && i < completed_tasks_.size(); ++i)
+        infos.push_back(completed_tasks_[completed_tasks_.size() - 1 - i]->GetInfo());
     return infos;
+}
+
+size_t AsyncTaskManager::GetFinishedTaskCount() const {
+    std::lock_guard<std::mutex> lock(tasks_mutex_);
+    return completed_tasks_.size();
 }
 
 bool AsyncTaskManager::HasActiveTasks() const {

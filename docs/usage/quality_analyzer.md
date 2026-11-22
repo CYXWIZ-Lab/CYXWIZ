@@ -20,7 +20,7 @@ image files, with class subfolders or a labels CSV).
 1. Load the images in the Data Input and add a **Resize** node.
 2. Double-click the Quality Analyzer (or **Open Dialog** in Properties).
 3. Click **Analyze**. Every image is decoded at the Resize size, as the model
-   sees it, and measured once on the GPU. The work also shows in Task View,
+   sees it, and measured once on the GPU. The work also shows in Background Tasks,
    so you can close the dialog and keep working; **Stop** ends it.
 4. The dialog shows how many images pass, a row per reason with the worst
    examples, a histogram per measurement with the cut marked, and a warning

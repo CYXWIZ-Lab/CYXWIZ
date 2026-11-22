@@ -20,7 +20,7 @@ bool ExploreProfileReady(const ExploreContext& context, const char* empty_hint) 
     }
     if (context.profile) return true;
     if (context.profiling) {
-        ImGui::TextColored(t.info, ICON_FA_SPINNER " Profiling %s (Task View shows the steps)", context.shown.c_str());
+        ImGui::TextColored(t.info, ICON_FA_SPINNER " Profiling %s (Background Tasks shows the steps)", context.shown.c_str());
     } else if (!context.error.empty()) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(t.error, "%s", context.error.c_str());

@@ -68,7 +68,7 @@ public:
     // Returns the run it changed (nullptr when no run matches). `now` is the
     // caller's clock in seconds, so a view can run the time on between events.
     const WordVectorRun* Record(const OperatorFigures& event, double now);
-    // The step's live progress (Task View's status), between figure events.
+    // The step's live progress (Background Tasks's status), between figure events.
     void Progress(int node_id, float step_share, const std::string& message);
     void SetUsedBy(int number, const std::string& used_by);
     // The run's task ended before its last figure: failed or cancelled.

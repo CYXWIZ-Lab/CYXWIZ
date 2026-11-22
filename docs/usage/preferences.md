@@ -156,5 +156,7 @@ before; each window also has "Save as my default"):
   the unit category, the hash, the JSON indent, the regex flags.
 - **Monitoring**: how often it samples, how long it keeps readings (5 min,
   15 min, 1 hour) and the tab it opens on.
+- **Background Tasks**: whether it lists the finished tasks
+  ([Background Tasks](background_tasks.md)).
 - **Diagnostics**: log frame-rate changes, log every Python command, and the
   frame time overlay; on at once and kept.

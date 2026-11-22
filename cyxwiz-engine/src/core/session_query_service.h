@@ -4,7 +4,7 @@
 // L2): the one place the Engine's UI (Data Studio Query / Profile /
 // Visualize, dashboards) runs SQL. Tables are named as the dataset catalog
 // names them ("Spotify", "MNIST"); the ones a query names are attached
-// before it runs. Every query runs off the UI thread as a task (Task View
+// before it runs. Every query runs off the UI thread as a task (Background Tasks
 // shows it, Cancel stops it) and its result comes back on the UI thread as
 // an Arrow table. A few queries run side by side (SessionQueryEngine's
 // connections); each has its own stop.

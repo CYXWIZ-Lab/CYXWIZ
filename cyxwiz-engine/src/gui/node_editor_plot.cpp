@@ -241,7 +241,7 @@ void NodeEditor::DrawPlotNodeHeader(int node_id) {
         plot_lane_->Refresh(node_id, g.nodes, g.links, task_owner_token_);
     }
     if (ImGui::IsItemHovered() && !running && can_refresh && st.needs_run)
-        ImGui::SetTooltip("Runs the %d node(s) above the plot (progress in Task View).", st.run_node_count);
+        ImGui::SetTooltip("Runs the %d node(s) above the plot (progress in Background Tasks).", st.run_node_count);
 
     // Banners: running, out of date, unavailable, failed.
     const auto banner = [&](const ImVec4& tint, const std::function<void()>& body) {

@@ -210,7 +210,7 @@ bool HasActiveTaskNamed(const std::string& name) {
 
 std::string LatestFailedTaskError() {
     for (const auto& task :
-         cyxwiz::AsyncTaskManager::Instance().GetRecentTasks(10)) {
+         cyxwiz::AsyncTaskManager::Instance().GetFinishedTasks(10)) {
         if (task.state == cyxwiz::TaskState::Failed) {
             return task.error_message;
         }
@@ -429,7 +429,7 @@ void CheckMissingValuesFoundByTheLaunchTask(cyxwiz::DataRegistry& registry) {
     WaitFor([&] { return ended.load(); }, std::chrono::milliseconds(500));
     Check(!dispatched.load() && !ended.load(), "nothing is dispatched, and the canvas is not told a run ended");
     const auto last_launch_state = [] {
-        for (const auto& task : cyxwiz::AsyncTaskManager::Instance().GetRecentTasks(10))
+        for (const auto& task : cyxwiz::AsyncTaskManager::Instance().GetFinishedTasks(10))
             if (task.name == "Prepare graph training") return task.state;
         return cyxwiz::TaskState::Pending;
     };

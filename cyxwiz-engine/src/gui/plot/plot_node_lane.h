@@ -3,7 +3,7 @@
 // The Plot node's result lane (TOFIX134 P2 step 2.3b, approved boards 4-5):
 // gets each Plot node the table at its position. A loaded Data Input is read
 // directly (and again when it changes); otherwise only the nodes above the
-// plot run, in the background through the task system (Task View shows the
+// plot run, in the background through the task system (Background Tasks shows the
 // progress, Cancel stops it), on Refresh. An edit above a plot marks its
 // data out of date; nothing re-runs by itself. UI thread only.
 

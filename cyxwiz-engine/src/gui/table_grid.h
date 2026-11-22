@@ -92,7 +92,7 @@ public:
     void ComputeColumnKinds();
 
     // Sorting, filtering and the Find counts read every row: a small table in
-    // the frame, a large one in a task (the Task viewer lists it) while the
+    // the frame, a large one in a task (Background Tasks lists it) while the
     // grid keeps its current rows and shows the progress with Cancel.
     // Sort by `column` (-1: the table's own order, reversed when descending).
     void SetOrder(int column, bool ascending);

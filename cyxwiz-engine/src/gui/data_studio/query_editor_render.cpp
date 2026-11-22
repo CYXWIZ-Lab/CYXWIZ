@@ -97,9 +97,9 @@ void QueryEditor::RenderEditor() {
     if (ui::SecondaryButton("Format")) pane_.Format();
     next(button_w("Clear"));
     if (ui::GhostButton("Clear")) SetQuery("");
-    next(ImGui::CalcTextSize(running ? ICON_FA_SPINNER " Running... 00.0 s (Task View shows it)" : "Ctrl+Enter").x);
+    next(ImGui::CalcTextSize(running ? ICON_FA_SPINNER " Running... 00.0 s (Background Tasks shows it)" : "Ctrl+Enter").x);
     if (running) {
-        ImGui::TextColored(t.info, ICON_FA_SPINNER " Running... %.1f s (Task View shows it)", ImGui::GetTime() - started_at_);
+        ImGui::TextColored(t.info, ICON_FA_SPINNER " Running... %.1f s (Background Tasks shows it)", ImGui::GetTime() - started_at_);
     } else {
         ImGui::TextColored(t.text_faint, "Ctrl+Enter");
     }

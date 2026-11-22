@@ -391,7 +391,7 @@ void DashboardWindow::Render() {
     DrawFilters();
     if (!profile_) {
         ImGui::TextColored(profile_error_.empty() ? t.info : t.error, "%s",
-                           profile_error_.empty() ? ICON_FA_SPINNER " Looking at the data (profile in Task View)..." : profile_error_.c_str());
+                           profile_error_.empty() ? ICON_FA_SPINNER " Looking at the data (profile in Background Tasks)..." : profile_error_.c_str());
         ImGui::End();
         return;
     }
@@ -1096,7 +1096,7 @@ void DashboardWindow::RenderEmbedded() {
     DrawVisualizeToolbar();
     if (!profile_) {
         ImGui::TextColored(profile_error_.empty() ? t.info : t.error, "%s",
-                           profile_error_.empty() ? ICON_FA_SPINNER " Looking at the data (profile in Task View)..." : profile_error_.c_str());
+                           profile_error_.empty() ? ICON_FA_SPINNER " Looking at the data (profile in Background Tasks)..." : profile_error_.c_str());
         return;
     }
     if (spec_.widgets.empty()) {

@@ -99,7 +99,7 @@ constexpr PreferencePage kPreferencePages[] = {
     {"Studio Debugger", ICON_FA_BUG, "TRAINING", "debugger layer capture views"},
     {"Simulation", ICON_FA_WAVE_SQUARE, "TRAINING", "mujoco simulation viewport watch ppo policy stress test"},
     {"Devices", ICON_FA_MICROCHIP, "TRAINING", "gpu cpu cuda opencl oneapi device arrayfire backend packs execution policy"},
-    {"Tools", ICON_FA_TOOLBOX, "TOOLS", "utilities calculator units hash json regex monitoring sample readings diagnostics frame rate overlay python commands log"},
+    {"Tools", ICON_FA_TOOLBOX, "TOOLS", "utilities calculator units hash json regex monitoring sample readings background tasks finished diagnostics frame rate overlay python commands log"},
 };
 
 std::string Lower(std::string text) {

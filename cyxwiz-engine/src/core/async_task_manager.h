@@ -183,8 +183,13 @@ public:
 
     // Get task info
     std::shared_ptr<AsyncTask> GetTask(uint64_t task_id);
+    // Running and pending tasks, oldest first (a steady order on screen).
     std::vector<TaskInfo> GetActiveTasks() const;
-    std::vector<TaskInfo> GetRecentTasks(size_t count = 10) const;
+    // The `count` most recently finished tasks (completed, failed or
+    // cancelled), newest first; running tasks never take their places.
+    std::vector<TaskInfo> GetFinishedTasks(size_t count) const;
+    // How many finished tasks the history holds (it keeps the last 100).
+    size_t GetFinishedTaskCount() const;
 
     // Check if any tasks are running
     bool HasActiveTasks() const;
@@ -208,7 +213,7 @@ public:
                       CompletionCallback completion_cb = nullptr,
                       std::weak_ptr<const void> owner = {});
 
-    // Runs `func` now on the calling thread, listed in the Task viewer like
+    // Runs `func` now on the calling thread, listed in Background Tasks like
     // any task: for work that must stay on a thread of its own (the Python
     // worker's variable reads). Returns how it ended.
     TaskState RunHere(const std::string& name, std::function<void(LambdaTask&)> func, bool cancellable = true);

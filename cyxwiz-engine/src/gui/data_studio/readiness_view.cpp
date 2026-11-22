@@ -366,7 +366,7 @@ void ReadinessView::Render() {
     ImGui::PushTextWrapPos(0.0f);
     if (!set.note.empty()) ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION " %s", set.note.c_str());
     ImGui::PopTextWrapPos();
-    if (IsRunning()) ImGui::TextColored(t.info, ICON_FA_SPINNER " Comparing the splits (Task View shows the steps)");
+    if (IsRunning()) ImGui::TextColored(t.info, ICON_FA_SPINNER " Comparing the splits (Background Tasks shows the steps)");
     if (!error_.empty()) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(t.error, "%s", error_.c_str());

@@ -17,7 +17,7 @@ namespace gui {
 
 // Quality Analyzer (TOFIX140): the checks on the left; on the right the
 // verdict of the cached analysis (or "Not analyzed yet", or the progress of
-// an analysis running in Task View). The presentation model words it all;
+// an analysis running in Background Tasks). The presentation model words it all;
 // this file only draws it.
 class QualityAnalyzerDialog : public NodeConfigDialog {
 public:

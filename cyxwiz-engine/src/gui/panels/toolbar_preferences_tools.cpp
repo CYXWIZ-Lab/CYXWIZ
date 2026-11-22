@@ -131,6 +131,18 @@ void ToolbarPanel::RenderToolsPreferences() {
         ImGui::TextDisabled("How Tools > Monitoring opens when the Engine starts.");
     }
 
+    // ---- Background Tasks (TOFIX129 C6)
+    Heading("Background Tasks");
+    {
+        core::MonitorConfig m = engine_config.GetMonitor();
+        Label("List", column);
+        if (ImGui::Checkbox("Show finished tasks##tasks_finished", &m.show_finished_tasks)) {
+            engine_config.SetMonitor(m);
+            engine_config.Save();
+        }
+        ImGui::TextDisabled("How Background Tasks opens when the Engine starts.");
+    }
+
     // ---- Tools > Diagnostics: on at once, and kept
     Heading("Diagnostics");
     {

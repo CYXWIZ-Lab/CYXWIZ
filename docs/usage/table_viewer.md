@@ -14,7 +14,7 @@ four.
 - **The Asset Browser**: double-click a table file (or right-click it,
   **Open in Table Viewer**). A file a Data Input loaded opens as that
   dataset; any other opens its first 200,000 rows, read from the file in a
-  task (the Task viewer and the viewer show it; Cancel takes effect once
+  task (Background Tasks and the viewer show it; Cancel takes effect once
   the file is read, before its rows are converted), and nothing is
   registered. Files over 1 GB are refused with a note; a Data
   Input reads them from disk.
@@ -24,7 +24,7 @@ four.
 - **View data** on a Python value in the Variable Explorer: the tab shows
   where the value comes from, **Read again**, and for arrays with more than
   two axes which slice is shown (Up / Down step the first index). The read
-  runs on the Python worker and is listed in the Task viewer as *Read <name>
+  runs on the Python worker and is listed in Background Tasks as *Read <name>
   from Python* (200,000 rows of a list: 0.7 s); **Save as CSV** is listed as
   *Save <name> as CSV*. A Python call cannot be stopped part way, so neither
   has Cancel.
@@ -37,7 +37,7 @@ Each table keeps its own column widths.
 A dataset or a result is read in the background, so the Engine keeps
 working while a large one opens: under the toolbar the viewer shows
 *Opening <name>* with how far it is (*40,000 of 100,000 rows*) and
-**Cancel**, and the same task is in the **Task viewer** (*Open <name> in
+**Cancel**, and the same task is in **Background Tasks** (*Open <name> in
 the Table Viewer*). The tab opens when the rows are read; a read that fails
 or is cancelled says so in the status bar. MNIST's test set (10,000 rows,
 785 columns) opens in about 3 seconds.
@@ -57,7 +57,7 @@ or is cancelled says so in the status bar. MNIST's test set (10,000 rows,
   Empty number cells sort last either way; equal values keep their order.
 - **Large tables work in the background.** Sorting, Hide and Find's count
   read every row. Up to 200,000 cells this happens at once; past that it is
-  a task (in the Task viewer as *Sorting by <column> in <table>*,
+  a task (in Background Tasks as *Sorting by <column> in <table>*,
   *Filtering for "<text>" in <table>* or *Finding "<text>" in <table>*).
   The grid keeps its rows while the task runs. A line over the grid shows
   its progress, and **Cancel** keeps the rows and the header's arrow as they
@@ -87,7 +87,7 @@ the query's rows (Query).
 | Control | What it does |
 |---|---|
 | Open dataset | Another loaded dataset, in a new tab: click it, set the rows, **Open** (or double-click it). |
-| Stats | The Stats sidebar: the selected column's rows, missing, distinct, empty texts; numbers add min, max, mean, std, quartiles and a histogram (**Plot** opens it in the Plot window); text adds its most common values. Computed in the background (in the Task viewer as *Profile <name>*), again after an edit. It is the same profile as Data Studio's **Profile** tab: a tab showing a whole loaded dataset, unedited, is profiled exactly as Data Studio profiles it, and the answers either one saved serve the other (MNIST: 62 s the first time, 1.3 s for the other). A tab with part of a dataset, a result or an edited table is profiled on its own rows. |
+| Stats | The Stats sidebar: the selected column's rows, missing, distinct, empty texts; numbers add min, max, mean, std, quartiles and a histogram (**Plot** opens it in the Plot window); text adds its most common values. Computed in the background (in Background Tasks as *Profile <name>*), again after an edit. It is the same profile as Data Studio's **Profile** tab: a tab showing a whole loaded dataset, unedited, is profiled exactly as Data Studio profiles it, and the answers either one saved serve the other (MNIST: 62 s the first time, 1.3 s for the other). A tab with part of a dataset, a result or an edited table is profiled on its own rows. |
 | Data Bars | A bar in each number cell, its length the value within the column's range. |
 | Line # | The row-number column. |
 | Rows per page | 10 to 1,000 (100). Past one page the pager is under the grid: first, previous, page, next, last, and which rows are shown. |

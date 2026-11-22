@@ -44,7 +44,7 @@ struct QueryRequest {
     std::vector<QueryParam> params;   // bound to ? / $1 in order
     std::vector<std::string> inputs;  // tables to attach first (the service adds the ones the SQL names)
     size_t row_limit = 0;             // 0: all rows
-    std::string label;                // shown in Task View ("Query: Spotify")
+    std::string label;                // shown in Background Tasks ("Query: Spotify")
     bool cache = false;               // the result may be saved and read back (query_result_cache.h)
     // Set: the rows go to this Parquet file instead of the result (DuckDB
     // writes them itself, every column type kept); the result has one row

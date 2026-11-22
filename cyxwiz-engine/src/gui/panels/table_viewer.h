@@ -50,7 +50,7 @@ public:
     void Clear();
 
     // A loaded dataset's first `max_rows` rows in a new tab (TOFIX140). Read
-    // in a task (TOFIX159: shown in the Task viewer, with progress and
+    // in a task (TOFIX159: shown in Background Tasks, with progress and
     // Cancel; the viewer shows it too), so the Engine keeps drawing; the tab
     // opens when the rows are read. The dataset stays where its Data Input
     // put it (in memory or on disk).

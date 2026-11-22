@@ -92,6 +92,18 @@ int main() {
     config.SetWatchTraining(0, 20);
     Check(config.Load(path), "the watch default should reload");
     Check(config.WatchTrainingMode() == 1 && config.WatchTrainingEvery() == 25, "the watch default survives a round trip");
+    // Preferences > Tools > Background Tasks (TOFIX129 C6): finished tasks listed by default
+    cyxwiz::core::MonitorConfig monitor = config.GetMonitor();
+    Check(monitor.show_finished_tasks, "Background Tasks lists finished tasks by default");
+    monitor.show_finished_tasks = false;
+    config.SetMonitor(monitor);
+    Check(config.Save(path), "the Background Tasks default should persist");
+    monitor.show_finished_tasks = true;
+    config.SetMonitor(monitor);
+    Check(config.Load(path), "the Background Tasks default should reload");
+    Check(!config.GetMonitor().show_finished_tasks, "the Background Tasks default survives a round trip");
+    monitor.show_finished_tasks = true;
+    config.SetMonitor(monitor);
     // Preferences > General (TOFIX129 B9): how the Engine starts and closes
     Check(!config.StartWithLastProject() && config.RecentProjectsKept() == EngineConfig::kDefaultRecentProjects &&
               !config.AskBeforeClosingAlways(),

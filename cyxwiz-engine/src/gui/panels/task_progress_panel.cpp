@@ -1,424 +1,262 @@
 #include "task_progress_panel.h"
-#include "core/execution_policy.h"
-#include "core/training_trace_collector.h"
+#include "core/async_task_manager.h"
+#include "core/engine_config.h"
+#include "core/training_manager.h"
 #include "gui/icons.h"
+#include "gui/ui_buttons.h"
 #include "gui/ui_tokens.h"
+#include "gui/ui_widgets.h"
 #include <imgui.h>
-#include <cmath>
-#include <sstream>
-#include <iomanip>
+#include <algorithm>
+#include <cstdint>
+#include <string>
 
 namespace cyxwiz {
+namespace {
 
-// ============================================================================
-// TaskProgressPanel Implementation
-// ============================================================================
+task_list::State StateOf(TaskState s) {
+    switch (s) {
+        case TaskState::Pending: return task_list::State::Pending;
+        case TaskState::Running: return task_list::State::Running;
+        case TaskState::Completed: return task_list::State::Completed;
+        case TaskState::Failed: return task_list::State::Failed;
+        case TaskState::Cancelled: return task_list::State::Cancelled;
+    }
+    return task_list::State::Pending;
+}
+
+const char* IconOf(task_list::Mark m) {
+    switch (m) {
+        case task_list::Mark::Waiting: return ICON_FA_CLOCK;
+        case task_list::Mark::Running: return ICON_FA_SPINNER;
+        case task_list::Mark::Done: return ICON_FA_CIRCLE_CHECK;
+        case task_list::Mark::Failed: return ICON_FA_TRIANGLE_EXCLAMATION;
+        case task_list::Mark::Cancelled: return ICON_FA_CIRCLE_XMARK;
+    }
+    return ICON_FA_CLOCK;
+}
+
+ImVec4 ColourOf(task_list::Mark m) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    switch (m) {
+        case task_list::Mark::Waiting: return t.pending;
+        case task_list::Mark::Running: return t.running;
+        case task_list::Mark::Done: return t.success;
+        case task_list::Mark::Failed: return t.caution;
+        case task_list::Mark::Cancelled: return t.warning;
+    }
+    return t.text;
+}
+
+task_list::TaskFacts FactsOf(const TaskInfo& info, std::chrono::steady_clock::time_point steady_now,
+                             std::chrono::system_clock::time_point wall_now) {
+    task_list::TaskFacts f;
+    f.id = info.id;
+    f.name = info.name;
+    f.message = info.status_message;
+    f.error = info.error_message;
+    f.state = StateOf(info.state);
+    f.progress = info.progress;
+    f.cancellable = info.cancellable;
+    using std::chrono::duration_cast;
+    using std::chrono::milliseconds;
+    const bool finished = info.state == TaskState::Completed || info.state == TaskState::Failed ||
+                          info.state == TaskState::Cancelled;
+    if (info.state == TaskState::Running) {
+        f.elapsed_ms = duration_cast<milliseconds>(steady_now - info.start_time).count();
+    } else if (finished) {
+        f.elapsed_ms = duration_cast<milliseconds>(info.end_time - info.start_time).count();
+        const auto ago = duration_cast<std::chrono::system_clock::duration>(steady_now - info.end_time);
+        f.ended_at = std::chrono::system_clock::to_time_t(wall_now - ago);
+    }
+    return f;
+}
+
+void Heading(const char* text) {
+    ImGui::Spacing();
+    ImGui::TextColored(ui::CurrentTokens().text_dim, "%s", text);
+}
+
+}  // namespace
 
 TaskProgressPanel::TaskProgressPanel()
-    : Panel("Tasks", false) {
+    : Panel("Background Tasks", false),
+      show_finished_(core::EngineConfig::Instance().GetMonitor().show_finished_tasks) {}
+
+task_list::Input TaskProgressPanel::ReadTasks() {
+    auto& manager = AsyncTaskManager::Instance();
+    const auto steady_now = std::chrono::steady_clock::now();
+    const auto wall_now = std::chrono::system_clock::now();
+    task_list::Input in;
+    in.now = std::chrono::system_clock::to_time_t(wall_now);
+    in.show_finished = show_finished_;
+    for (const TaskInfo& info : manager.GetActiveTasks()) in.running.push_back(FactsOf(info, steady_now, wall_now));
+    in.finished_total = manager.GetFinishedTaskCount();
+    if (show_finished_)
+        for (const TaskInfo& info : manager.GetFinishedTasks(task_list::kFinishedShown))
+            in.finished.push_back(FactsOf(info, steady_now, wall_now));
+
+    if (steady_now - trace_read_at_ > std::chrono::milliseconds(500)) {
+        trace_ = TrainingTraceCollector::LatestTrace();
+        trace_read_at_ = steady_now;
+    }
+    if (trace_.available)
+        in.last_run = task_list::RunFacts{trace_.status, trace_.effective_backend, trace_.effective_device_name,
+                                          trace_.latest_timestamp, TrainingManager::Instance().IsTrainingActive()};
+    return in;
 }
 
 void TaskProgressPanel::Render() {
-    if (!visible_) {
+    if (!visible_) return;
+
+    ImGui::SetNextWindowSize(ImVec2(520, 360), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin(GetName(), &visible_)) {
+        ImGui::End();
         return;
     }
+    const ui::Tokens& t = ui::CurrentTokens();
+    const task_list::View view = task_list::Build(ReadTasks());
 
-    ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
+    // Summary, then Show finished and Cancel all at the right
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_bright, "%s", view.summary.c_str());
+    const char* kShow = "Show finished";
+    const float box = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(kShow).x;
+    const float cancel = ui::ButtonWidth("Cancel all", ui::ButtonSize::Small);
+    ui::SameLineRight(box + ImGui::GetStyle().ItemSpacing.x * 2.0f + cancel);
+    ImGui::Checkbox(kShow, &show_finished_);
+    ui::Tooltip("Your default is in Preferences > Tools > Background Tasks");
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+    if (ui::DangerButton("Cancel all", view.cancel_all_enabled, view.cancel_all_tooltip.c_str()))
+        AsyncTaskManager::Instance().CancelAll();
+    if (view.cancel_all_enabled) ui::Tooltip(view.cancel_all_tooltip.c_str());
 
-    if (ImGui::Begin("Background Tasks", &visible_, ImGuiWindowFlags_None)) {
-        auto& manager = AsyncTaskManager::Instance();
+    if (view.last_run.shown) {
+        ImGui::Spacing();
+        RenderRunLine(view.last_run);
+    }
 
-        RenderTrainingTraceSummary();
+    Heading("Running");
+    if (!view.running_empty.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "%s", view.running_empty.c_str());
+        ImGui::PopTextWrapPos();
+    } else {
+        RenderRows("##running", view.running, true);
+    }
 
-        // Toolbar
-        if (ImGui::Button(ICON_FA_STOP " Cancel All")) {
-            manager.CancelAll();
-        }
-        ImGui::SameLine();
-        ImGui::Checkbox("Show Completed", &show_completed_);
-
-        ImGui::Separator();
-
-        // Get tasks
-        auto tasks = manager.GetRecentTasks(max_recent_tasks_);
-
-        if (tasks.empty()) {
-            ImGui::TextDisabled("No active tasks");
-        } else {
-            // Active tasks first
-            bool has_active = false;
-            for (const auto& task : tasks) {
-                if (task.state == TaskState::Running || task.state == TaskState::Pending) {
-                    if (!has_active) {
-                        ImGui::Text("Active Tasks:");
-                        ImGui::Separator();
-                        has_active = true;
-                    }
-                    RenderTaskItem(task);
-                }
-            }
-
-            // Completed tasks
-            if (show_completed_) {
-                bool has_completed = false;
-                for (const auto& task : tasks) {
-                    if (task.state == TaskState::Completed ||
-                        task.state == TaskState::Failed ||
-                        task.state == TaskState::Cancelled) {
-                        if (!has_completed) {
-                            if (has_active) {
-                                ImGui::Spacing();
-                            }
-                            ImGui::Text("Recent Tasks:");
-                            ImGui::Separator();
-                            has_completed = true;
-                        }
-                        RenderTaskItem(task);
-                    }
-                }
-            }
-        }
+    if (show_finished_) {
+        Heading(view.finished_heading.c_str());
+        if (!view.finished_empty.empty())
+            ImGui::TextColored(t.text_dim, "%s", view.finished_empty.c_str());
+        else
+            RenderRows("##finished", view.finished, false);
+    } else if (!view.hidden_note.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(t.text_dim, "%s", view.hidden_note.c_str());
     }
     ImGui::End();
 }
 
-void TaskProgressPanel::RenderTrainingTraceSummary() {
-    const auto trace = TrainingTraceCollector::LatestTrace();
-    if (!trace.available || trace.effective_backend.empty()) {
-        return;
-    }
-
-    ImGui::Text(trace.status == "running"
-                    ? "Current Training Run"
-                    : "Last Training Run");
-    ImGui::Separator();
-    ImGui::Text("Status: %s", trace.status.c_str());
-    ImGui::Text("Requested: %s", trace.requested_backend.empty()
-        ? "not recorded" : trace.requested_backend.c_str());
-    ImGui::Text("Effective: %s", trace.effective_backend.c_str());
-    if (!trace.effective_device_name.empty()) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("(%s)", trace.effective_device_name.c_str());
-    }
-    if (!trace.execution_policy.empty()) {
-        ImGui::Text("Policy: %s",
-                    RecordedExecutionPolicyDisplayName(trace.execution_policy));
-    }
-    ImGui::Text("Placement: %s", trace.placement_fingerprint.empty()
-        ? "not recorded" : trace.placement_fingerprint.c_str());
-    ImGui::SameLine();
-    ImGui::TextDisabled("(%llu entries)",
-                        static_cast<unsigned long long>(
-                            trace.placement_entry_count));
-    ImGui::Text("Residency: %s", trace.residency_verdict.empty()
-        ? "not recorded" : trace.residency_verdict.c_str());
-    ImGui::Text("Transfers: %llu events, %llu known bytes",
-                static_cast<unsigned long long>(trace.transfer_event_count),
-                static_cast<unsigned long long>(trace.transfer_known_bytes));
-    ImGui::Text("Syncs: %llu events, %llu known bytes",
-                static_cast<unsigned long long>(trace.synchronization_event_count),
-                static_cast<unsigned long long>(trace.synchronization_known_bytes));
-    ImGui::Separator();
-}
-
-void TaskProgressPanel::RenderTaskItem(const TaskInfo& info) {
-    ImGui::PushID(static_cast<int>(info.id));
-
-    // State icon and color
-    ImVec4 color = GetStateColor(info.state);
-    ImGui::PushStyleColor(ImGuiCol_Text, color);
-
-    const char* icon = ICON_FA_CIRCLE;
-    switch (info.state) {
-        case TaskState::Pending: icon = ICON_FA_CLOCK; break;
-        case TaskState::Running: icon = ICON_FA_SPINNER; break;
-        case TaskState::Completed: icon = ICON_FA_CIRCLE_CHECK; break;
-        case TaskState::Failed: icon = ICON_FA_CIRCLE_XMARK; break;
-        case TaskState::Cancelled: icon = ICON_FA_CIRCLE_XMARK; break;
-    }
-
-    ImGui::Text("%s", icon);
-    ImGui::PopStyleColor();
-
-    ImGui::SameLine();
-
-    // Task name and status
-    ImGui::BeginGroup();
-    ImGui::Text("%s", info.name.c_str());
-
-    if (!info.status_message.empty()) {
-        ImGui::TextDisabled("%s", info.status_message.c_str());
-    }
-
-    // Progress bar for running tasks
-    if (info.state == TaskState::Running) {
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80);
-        RenderProgressBar(info.progress, ImVec2(-80, 0));
-
-        ImGui::SameLine();
-        ImGui::Text("%.0f%%", info.progress * 100.0f);
-    }
-
-    // Duration
-    if (info.state != TaskState::Pending) {
-        auto end = info.state == TaskState::Running ?
-                   std::chrono::steady_clock::now() : info.end_time;
-        std::string duration = FormatDuration(info.start_time, end);
-        ImGui::TextDisabled("Duration: %s", duration.c_str());
-    }
-
-    ImGui::EndGroup();
-
-    // Cancel button for running/pending tasks
-    if ((info.state == TaskState::Running || info.state == TaskState::Pending) &&
-        info.cancellable) {
-        ImGui::SameLine(ImGui::GetWindowWidth() - 40);
-        if (ImGui::Button(ICON_FA_XMARK)) {
-            AsyncTaskManager::Instance().Cancel(info.id);
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Cancel task");
-        }
-    }
-
-    // Error message
-    if (info.state == TaskState::Failed && !info.error_message.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().error);
-        ImGui::TextWrapped("Error: %s", info.error_message.c_str());
-        ImGui::PopStyleColor();
-    }
-
-    ImGui::Separator();
-    ImGui::PopID();
-}
-
-void TaskProgressPanel::RenderProgressBar(float progress, const ImVec2& size) {
-    ImGui::ProgressBar(progress, size, "");
-}
-
-std::string TaskProgressPanel::FormatDuration(
-    std::chrono::steady_clock::time_point start,
-    std::chrono::steady_clock::time_point end) const {
-
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    auto ms = duration.count();
-
-    std::ostringstream oss;
-
-    if (ms < 1000) {
-        oss << ms << "ms";
-    } else if (ms < 60000) {
-        oss << std::fixed << std::setprecision(1) << (ms / 1000.0) << "s";
-    } else {
-        auto minutes = ms / 60000;
-        auto seconds = (ms % 60000) / 1000;
-        oss << minutes << "m " << seconds << "s";
-    }
-
-    return oss.str();
-}
-
-std::string TaskProgressPanel::GetStateString(TaskState state) const {
-    switch (state) {
-        case TaskState::Pending: return "Pending";
-        case TaskState::Running: return "Running";
-        case TaskState::Completed: return "Completed";
-        case TaskState::Failed: return "Failed";
-        case TaskState::Cancelled: return "Cancelled";
-        default: return "Unknown";
-    }
-}
-
-ImVec4 TaskProgressPanel::GetStateColor(TaskState state) const {
+void TaskProgressPanel::RenderRunLine(const task_list::RunLine& line) {
     const ui::Tokens& t = ui::CurrentTokens();
-    switch (state) {
-        case TaskState::Pending: return t.pending;
-        case TaskState::Running: return t.running;
-        case TaskState::Completed: return t.success;
-        case TaskState::Failed: return t.error;
-        case TaskState::Cancelled: return t.warning;
-        default: return t.text;
+    ui::BeginCard("##last_run");
+    ImGui::TextColored(ColourOf(line.mark), "%s", IconOf(line.mark));
+    ImGui::SameLine();
+    ImGui::TextColored(t.text_bright, "%s", line.text.c_str());
+    if (!line.detail.empty()) {
+        ImGui::SameLine();
+        ImGui::TextColored(t.text_dim, "%s", line.detail.c_str());
     }
-}
-
-bool TaskProgressPanel::HasActiveTasks() const {
-    return AsyncTaskManager::Instance().HasActiveTasks();
-}
-
-size_t TaskProgressPanel::GetActiveTaskCount() const {
-    return AsyncTaskManager::Instance().GetActiveTaskCount();
-}
-
-std::string TaskProgressPanel::GetStatusSummary() const {
-    auto count = GetActiveTaskCount();
-    if (count == 0) {
-        return "";
-    } else if (count == 1) {
-        return "1 task running";
-    } else {
-        return std::to_string(count) + " tasks running";
+    if (open_training_dashboard_) {
+        const char* kOpen = "Open in Training Dashboard";
+        ui::SameLineRight(ui::ButtonWidth(kOpen, ui::ButtonSize::Small));
+        if (ui::LinkButton(kOpen)) open_training_dashboard_();
     }
+    ui::EndCard();
+}
+
+void TaskProgressPanel::RenderRows(const char* id, const std::vector<task_list::Row>& rows, bool running) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const float icon_w = ImGui::GetFrameHeight();
+    const float right_w = running ? 260.0f : ImGui::CalcTextSize("cancelled after 59 min 59 s").x;
+    const float end_w = running ? ImGui::GetFrameHeight() : ImGui::CalcTextSize("00 Nov 00:00").x;
+    if (!ImGui::BeginTable(id, 4, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) return;
+    ImGui::TableSetupColumn("icon", ImGuiTableColumnFlags_WidthFixed, icon_w);
+    ImGui::TableSetupColumn("task", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    ImGui::TableSetupColumn("time", ImGuiTableColumnFlags_WidthFixed, right_w);
+    ImGui::TableSetupColumn("end", ImGuiTableColumnFlags_WidthFixed, end_w);
+    for (const task_list::Row& row : rows) {
+        ImGui::PushID(reinterpret_cast<const void*>(static_cast<uintptr_t>(row.id)));
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextColored(ColourOf(row.mark), "%s", IconOf(row.mark));
+        ImGui::TableNextColumn();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text, "%s", row.name.c_str());
+        if (!row.message.empty()) ImGui::TextColored(t.text_dim, "%s", row.message.c_str());
+        if (!row.error.empty()) ImGui::TextColored(t.caution, "%s", row.error.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::TableNextColumn();
+        if (row.show_progress) {
+            const float text_w = ImGui::CalcTextSize("100% \xC2\xB7 59 min 59 s").x;
+            ui::ProgressLine(row.progress, t.accent, std::max(40.0f, right_w - text_w - 8.0f));
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_dim, "%s", row.progress_text.c_str());
+        } else {
+            ImGui::TextColored(t.text_dim, "%s", row.took.c_str());
+        }
+        ImGui::TableNextColumn();
+        if (running) {
+            if (row.can_cancel &&
+                ui::GhostButton(ICON_FA_XMARK, true, nullptr, false, ui::ButtonSize::Small, &t.error))
+                AsyncTaskManager::Instance().Cancel(row.id);
+            if (row.can_cancel) ui::Tooltip(("Cancel " + row.name).c_str());
+        } else {
+            ImGui::TextColored(t.text_dim, "%s", row.clock.c_str());
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndTable();
 }
 
 // ============================================================================
-// TaskStatusIndicator Implementation
+// TaskStatusIndicator
 // ============================================================================
+
+namespace {
+std::string RunningSummary(size_t count) {
+    return count == 1 ? std::string("1 task running") : std::to_string(count) + " tasks running";
+}
+}  // namespace
+
+float TaskStatusIndicator::Width() {
+    const size_t count = AsyncTaskManager::Instance().GetActiveTaskCount();
+    if (count == 0) return 0.0f;
+    return ImGui::CalcTextSize(ICON_FA_SPINNER).x + ImGui::GetStyle().ItemSpacing.x +
+           ImGui::CalcTextSize(RunningSummary(count).c_str()).x;
+}
 
 bool TaskStatusIndicator::Render() {
-    auto& manager = AsyncTaskManager::Instance();
-    auto count = manager.GetActiveTaskCount();
-
-    if (count == 0) {
-        return false;
-    }
-
-    bool clicked = false;
-
-    // Get active tasks for tooltip
-    auto tasks = manager.GetActiveTasks();
-
-    // Spinner + count
-    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().running);
-
-    // Use spinner icon
-    ImGui::Text(ICON_FA_SPINNER);
-    ImGui::PopStyleColor();
-
+    const auto tasks = AsyncTaskManager::Instance().GetActiveTasks();
+    if (tasks.empty()) return false;
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::BeginGroup();
+    ImGui::TextColored(t.running, "%s", ICON_FA_SPINNER);
     ImGui::SameLine();
-    ImGui::Text("%zu", count);
-
-    // Make it clickable
-    ImVec2 min = ImGui::GetItemRectMin();
-    ImVec2 max = ImGui::GetItemRectMax();
-    min.x -= 20;  // Include spinner
-
-    if (ImGui::IsMouseHoveringRect(min, max)) {
+    ImGui::TextColored(t.running, "%s", RunningSummary(tasks.size()).c_str());
+    ImGui::EndGroup();
+    bool clicked = false;
+    if (ImGui::IsItemHovered()) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-
-        // Tooltip with task list
         ImGui::BeginTooltip();
-        ImGui::Text("Active Tasks:");
-        ImGui::Separator();
-        for (const auto& task : tasks) {
+        for (const TaskInfo& task : tasks)
             ImGui::Text("%s: %.0f%%", task.name.c_str(), task.progress * 100.0f);
-        }
-        ImGui::Separator();
-        ImGui::TextDisabled("Click to view all tasks");
+        ImGui::TextColored(t.text_dim, "Click to open Background Tasks");
         ImGui::EndTooltip();
-
-        if (ImGui::IsMouseClicked(0)) {
-            clicked = true;
-        }
+        clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
     }
-
     return clicked;
 }
 
-void TaskStatusIndicator::RenderSpinner(float radius) {
-    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    ImVec2 pos = ImGui::GetCursorScreenPos();
-    ImVec2 center = ImVec2(pos.x + radius, pos.y + radius);
-
-    float time = static_cast<float>(ImGui::GetTime());
-    int num_segments = 12;
-    float start_angle = time * 4.0f;
-
-    for (int i = 0; i < num_segments; ++i) {
-        float angle = start_angle + (i * 2.0f * 3.14159f / num_segments);
-        float alpha = static_cast<float>(i) / num_segments;
-
-        ImVec2 p1 = ImVec2(
-            center.x + cosf(angle) * (radius * 0.5f),
-            center.y + sinf(angle) * (radius * 0.5f)
-        );
-        ImVec2 p2 = ImVec2(
-            center.x + cosf(angle) * radius,
-            center.y + sinf(angle) * radius
-        );
-
-        ImU32 line_color = ImGui::GetColorU32(ui::WithAlpha(ui::CurrentTokens().running, alpha));
-        draw_list->AddLine(p1, p2, line_color, 2.0f);
-    }
-
-    ImGui::Dummy(ImVec2(radius * 2, radius * 2));
-}
-
-// ============================================================================
-// ProgressDialog Implementation
-// ============================================================================
-
-ProgressDialog::ProgressDialog(const std::string& title)
-    : title_(title) {
-}
-
-ProgressDialog::~ProgressDialog() {
-    Close();
-}
-
-void ProgressDialog::Show(const std::string& message, float progress) {
-    message_ = message;
-    progress_ = progress;
-    is_open_ = true;
-    cancelled_ = false;
-}
-
-void ProgressDialog::SetMessage(const std::string& message) {
-    message_ = message;
-}
-
-void ProgressDialog::SetProgress(float progress) {
-    progress_ = progress;
-}
-
-void ProgressDialog::Close() {
-    is_open_ = false;
-}
-
-void ProgressDialog::Render() {
-    if (!is_open_) {
-        return;
-    }
-
-    ImGui::OpenPopup(title_.c_str());
-
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(400, 0), ImGuiCond_Always);
-
-    if (ImGui::BeginPopupModal(title_.c_str(), nullptr,
-                                ImGuiWindowFlags_AlwaysAutoResize |
-                                ImGuiWindowFlags_NoMove)) {
-
-        // Message
-        ImGui::TextWrapped("%s", message_.c_str());
-        ImGui::Spacing();
-
-        // Progress bar
-        if (progress_ >= 0.0f) {
-            // Determinate progress
-            ImGui::ProgressBar(progress_, ImVec2(-1, 0), "");
-            ImGui::Text("%.0f%% complete", progress_ * 100.0f);
-        } else {
-            // Indeterminate progress (animated)
-            float time = static_cast<float>(ImGui::GetTime());
-            float fake_progress = (sinf(time * 2.0f) + 1.0f) * 0.5f;
-            ImGui::ProgressBar(fake_progress, ImVec2(-1, 0), "");
-            ImGui::TextDisabled("Please wait...");
-        }
-
-        ImGui::Spacing();
-
-        // Cancel button
-        if (show_cancel_) {
-            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-                cancelled_ = true;
-                is_open_ = false;
-                ImGui::CloseCurrentPopup();
-            }
-        }
-
-        ImGui::EndPopup();
-    }
-}
-
-} // namespace cyxwiz
+}  // namespace cyxwiz

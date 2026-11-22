@@ -773,7 +773,7 @@ void PrepareView::RenderResult(const studio::GraphNode& node) {
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Spacing();
     if (editor_->IsDataPipelineRunning()) {
-        ImGui::TextColored(t.info, ICON_FA_SPINNER " Running (Task View shows the steps)");
+        ImGui::TextColored(t.info, ICON_FA_SPINNER " Running (Background Tasks shows the steps)");
         return;
     }
     if (!node.error.empty()) {

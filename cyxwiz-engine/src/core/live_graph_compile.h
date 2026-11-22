@@ -8,7 +8,7 @@
 // (skipped while training runs).
 //
 // Not an AsyncTaskManager task on purpose: a compile per edit would flood
-// Task View. Update() is called from the UI thread every frame.
+// Background Tasks. Update() is called from the UI thread every frame.
 
 #include "compiled_node_presentation.h"
 #include "graph_compiler.h"

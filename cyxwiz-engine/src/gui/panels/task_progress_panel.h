@@ -1,78 +1,45 @@
 #pragma once
 
 #include "gui/panel.h"
-#include "core/async_task_manager.h"
-#include <imgui.h>
-#include <vector>
-#include <string>
+#include "core/task_list_presentation.h"
+#include "core/training_trace_collector.h"
+#include <chrono>
+#include <functional>
 
 namespace cyxwiz {
 
-// Panel that displays active and recent tasks with progress
+// Background Tasks: the running tasks, the finished ones and the last
+// training run in one line. Worded by core/task_list_presentation.
 class TaskProgressPanel : public Panel {
 public:
     TaskProgressPanel();
     ~TaskProgressPanel() override = default;
 
     void Render() override;
-    const char* GetName() const override { return "Tasks"; }
+    const char* GetName() const override { return "Background Tasks"; }
 
-    // Get status for status bar display
-    bool HasActiveTasks() const;
-    size_t GetActiveTaskCount() const;
-    std::string GetStatusSummary() const;
+    // "Open in Training Dashboard" on the last-run line.
+    void SetOpenTrainingDashboard(std::function<void()> open) { open_training_dashboard_ = std::move(open); }
 
 private:
-    void RenderTrainingTraceSummary();
-    void RenderTaskItem(const TaskInfo& info);
-    void RenderProgressBar(float progress, const ImVec2& size);
-    std::string FormatDuration(std::chrono::steady_clock::time_point start,
-                               std::chrono::steady_clock::time_point end) const;
-    std::string GetStateString(TaskState state) const;
-    ImVec4 GetStateColor(TaskState state) const;
+    task_list::Input ReadTasks();
+    void RenderRunLine(const task_list::RunLine& line);
+    void RenderRows(const char* id, const std::vector<task_list::Row>& rows, bool running);
 
-    bool show_completed_ = true;
-    size_t max_recent_tasks_ = 10;
+    bool show_finished_ = true;
+    std::function<void()> open_training_dashboard_;
+    // LatestTrace copies the whole trace and may read it from disk: at most every 500 ms
+    TrainingTraceSummary trace_;
+    std::chrono::steady_clock::time_point trace_read_at_{};
 };
 
-// Inline progress indicator for status bar
+// The status bar's task indicator: a spinner and "N tasks running" while
+// tasks run, the task list on hover. Returns true when clicked.
 class TaskStatusIndicator {
 public:
-    // Render a small status indicator (for toolbar/status bar)
-    // Returns true if clicked (to open TaskProgressPanel)
     static bool Render();
-
-    // Render a spinner animation
-    static void RenderSpinner(float radius = 8.0f);
+    // Its width, to place it at the right of the status bar (0: nothing runs).
+    static float Width();
 };
 
-// Modal progress dialog for blocking operations (optional use)
-class ProgressDialog {
-public:
-    ProgressDialog(const std::string& title);
-    ~ProgressDialog();
-
-    // Show/update the dialog
-    void Show(const std::string& message, float progress = -1.0f);
-    void SetMessage(const std::string& message);
-    void SetProgress(float progress);
-    void Close();
-
-    // Check if user clicked cancel
-    bool WasCancelled() const { return cancelled_; }
-
-    // Render (call each frame while visible)
-    void Render();
-
-    bool IsOpen() const { return is_open_; }
-
-private:
-    std::string title_;
-    std::string message_;
-    float progress_ = -1.0f;  // -1 = indeterminate
-    bool is_open_ = false;
-    bool cancelled_ = false;
-    bool show_cancel_ = true;
-};
-
-} // namespace cyxwiz
+}  // namespace cyxwiz

@@ -18,7 +18,7 @@ widgets*, *Out of date*.
 The line at the top says where the data comes from ("Data at Spotify ·
 8,582 rows × 15 columns · read 15:53"), with **Refresh** (or **Cancel**
 while reading). Only the nodes above the dashboard run, in the background
-(Task View); a loaded Data Input is read directly, and a Preparation Recipe
+(Background Tasks); a loaded Data Input is read directly, and a Preparation Recipe
 runs as its steps (the dashboard reads the recipe's result). When a node above
 changes, the dashboard says it is out of date until you refresh; a node that
 runs only inside training says so instead of showing old charts.
@@ -69,7 +69,7 @@ texts of that many words; the other widgets and the KPIs follow. A widget's
 settings choose what it shows, the text column and the class column.
 
 The words are split once per text column, in the background ("Dashboard:
-words of <column>" in Task View; the text cards wait for it), and saved in
+words of <column>" in Background Tasks; the text cards wait for it), and saved in
 the project's `cache/dashboard_words` folder. Every card and filter reads
 them, and a reopened dashboard loads them instead of splitting again; a
 changed source file (new size or time) splits again. Deleting the folder is
@@ -83,7 +83,7 @@ Example: `p3_text.cyxgraph` (test project): the mental-health statements
 
 A Dashboard below a **Count Vectorizer** or **TF-IDF** node with **Output
 format: sparse** shows the sparse matrix itself (it runs the vectorizer the
-way training does, in the background; Task View shows it):
+way training does, in the background; Background Tasks shows it):
 
 - KPIs: rows, features, non-zero values, density, memory, labels;
 - **Labels**: rows per class (click a bar to keep that class's rows in every
@@ -204,7 +204,7 @@ A card's query runs once per data and filter. Its result is saved in the
 project (`cache/query_results`, Parquet, kept under 512 MB, least recently
 used first), so reopening the dashboard on the same data shows every card
 at once, and a filter you have used before comes back without a query. The
-Task View marks such a result "(saved)". A result changes when the data does:
+Background Tasks marks such a result "(saved)". A result changes when the data does:
 the key holds the query, its values and the content of every table it reads
 (the file for a disk-backed dataset), so an edited file or a new load runs
 again. Deleting the folder is safe.

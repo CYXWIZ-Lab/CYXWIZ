@@ -149,7 +149,7 @@ void DashboardWindow::DrawSparse() {
     if (sparse_dirty_) StartSparseSummary();
     if (!sparse_summary_) {
         ImGui::TextColored(sparse_error_.empty() ? t.info : t.error, "%s",
-                           sparse_error_.empty() ? ICON_FA_SPINNER " Reading the sparse features (Task View)..." : sparse_error_.c_str());
+                           sparse_error_.empty() ? ICON_FA_SPINNER " Reading the sparse features (Background Tasks)..." : sparse_error_.c_str());
         return;
     }
     const SparseSummary& s = *sparse_summary_;

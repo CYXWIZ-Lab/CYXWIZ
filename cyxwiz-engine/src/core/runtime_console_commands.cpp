@@ -810,7 +810,7 @@ RuntimeConsoleCommandService::Registry() {
           "Runs pip only from the active project's virtual environment "
           "(<project>/python), never the system Python. Output streams to the "
           "Console while the Engine stays responsive, and the task can be "
-          "cancelled from the header (Cancel pip) or the Task View. Needs an "
+          "cancelled from the header (Cancel pip) or Background Tasks. Needs an "
           "open project whose environment has finished setting up.\n"
           "Usage:\n"
           "  pip list  Packages installed in the project environment\n"

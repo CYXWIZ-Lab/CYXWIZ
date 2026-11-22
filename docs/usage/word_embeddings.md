@@ -34,18 +34,18 @@ finds them.
    tabs: **Source**, **Vocabulary**, **Nearest words**, **Map**, **Outputs**.
 3. Choose the source:
    - **Pretrained file**: choose the vector file. The dialog reads it at once
-     (in Task View) and shows its format, size and read time, e.g.
+     (in Background Tasks) and shows its format, size and read time, e.g.
      "word2vec / fastText text · 16,334 words · 100 values each · read 0.5 s".
      **Read at most** limits a large file to its first words (0 reads all).
    - **Train word2vec**: choose the text column (**Load inputs** runs the
      steps before it so the dialog can list the columns and rows), the model
      (Skip-gram or CBOW) and its settings, then **Train**. Training runs as a
-     task (Task View); the dialog shows the epoch, the progress and the time
+     task (Background Tasks); the dialog shows the epoch, the progress and the time
      left, **Cancel training** stops it, and **Show in Training Dashboard**
      opens the run's live view (below), where the loss per epoch is drawn.
    - **Train GloVe**: the same text column, then vector size, window, minimum
      count, epochs and seed (Advanced: count cap, weighting power, learning
-     rate, batch). Training runs in two stages, both in Task View: counting
+     rate, batch). Training runs in two stages, both in Background Tasks: counting
      the word pairs ("Counting word pairs"), then the epochs ("Training GloVe,
      epoch 4 of 25, cost 0.01603"). The dialog shows the counted pairs and the
      time left ("Counted 8,024,345 word pairs · about 3 min 11 s left"); the

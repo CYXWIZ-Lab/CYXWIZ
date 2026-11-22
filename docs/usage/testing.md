@@ -17,7 +17,7 @@ graph's Data Split changed since, the log says so and the test still reads
 the part the model never saw. A checkpoint saved before 2026-10-30 has no
 split recorded and is tested with the graph's current one.
 
-The test runs in the background (Task View) and, when it ends, Data Studio
+The test runs in the background (Background Tasks) and, when it ends, Data Studio
 opens **Results > Test** on it. **Train > Test > View Test Results** opens it
 again later.
 

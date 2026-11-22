@@ -10,7 +10,7 @@
 namespace scripting {
 
 namespace {
-// The variable a path names, for the Task viewer: its last key (`df`, `x[3]`
+// The variable a path names, for Background Tasks: its last key (`df`, `x[3]`
 // shows as `3`), or "a value".
 std::string PathLabel(const std::string& path_json) {
     const auto path = nlohmann::json::parse(path_json.empty() ? "[]" : path_json, nullptr, false);
@@ -93,7 +93,7 @@ void VariablesService::Run() {
         result.scope = request.scope;
         if (request.kind == Kind::Table) {
             ScriptingEngine::VariableTable table;
-            // A table read can take a while: the Task viewer lists it (it runs
+            // A table read can take a while: Background Tasks lists it (it runs
             // here, on the Python worker; a Python call cannot be stopped).
             cyxwiz::AsyncTaskManager::Instance().RunHere(
                 "Read " + PathLabel(request.path_json) + " from Python",

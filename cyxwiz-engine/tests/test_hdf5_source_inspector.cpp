@@ -167,14 +167,14 @@ private:
 
 void TestRestoreSettingsWithoutTasks() {
     auto& manager = cyxwiz::AsyncTaskManager::Instance();
-    const auto recent_before = manager.GetRecentTasks();
+    const auto recent_before = manager.GetFinishedTasks(10);
     const auto active_before = manager.GetActiveTaskCount();
     const auto check_idle = [&](const gui::Hdf5SourceInspector& inspector) {
         Check(!inspector.Busy() && !inspector.Page().ok && inspector.Page().rows.empty(),
               "restoring settings must not load a preview or schedule inspection");
         Check(manager.GetActiveTaskCount() == active_before,
               "restoring settings must not add active tasks");
-        const auto recent = manager.GetRecentTasks();
+        const auto recent = manager.GetFinishedTasks(10);
         Check(recent.size() == recent_before.size() &&
                   (recent.empty() || recent.front().id == recent_before.front().id),
               "restoring settings must not run a task to completion");

@@ -180,6 +180,7 @@ struct MonitorConfig {
     bool log_frame_rate = false;     // one log line when the Engine slows or speeds its frames
     bool log_python_commands = false;  // every command sent to Python, with its duration
     bool frame_overlay = false;      // the frame time overlay
+    bool show_finished_tasks = true;  // Background Tasks lists the finished tasks
 
     bool operator==(const MonitorConfig&) const = default;
 };

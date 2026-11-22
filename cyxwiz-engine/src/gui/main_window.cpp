@@ -624,6 +624,12 @@ MainWindow::MainWindow()
     p2p_training_panel_ = std::make_unique<cyxwiz::P2PTrainingPanel>();
     wallet_panel_ = std::make_unique<gui::WalletPanel>();
     task_progress_panel_ = std::make_unique<cyxwiz::TaskProgressPanel>();
+    // Background Tasks' last-run line: the run's details are in the Training Dashboard
+    task_progress_panel_->SetOpenTrainingDashboard([this]() {
+        if (!training_plot_panel_) return;
+        training_plot_panel_->SetVisible(true);
+        ::gui::BringToFront(training_plot_panel_->GetName());
+    });
     pattern_browser_ = std::make_unique<cyxwiz::PatternBrowserPanel>();
     query_console_ = std::make_unique<cyxwiz::QueryConsolePanel>();
     custom_node_editor_ = std::make_unique<gui::CustomNodeEditorPanel>();
@@ -3442,7 +3448,7 @@ void MainWindow::RegisterPanelsWithSidebar() {
     if (node_editor_)
         dock_style.RegisterPanel("Policy Playback", ICON_FA_PLAY, node_editor_->GetPolicyPlaybackVisiblePtr(), nullptr,
                                  "Training", "", false);
-    add("Tasks", ICON_FA_HOURGLASS_HALF, task_progress_panel_, "Training");
+    add("Background Tasks", ICON_FA_HOURGLASS_HALF, task_progress_panel_, "Training");
 
     // Network
     add("Jobs", ICON_FA_LIST_CHECK, job_status_panel_, "Network");
@@ -6458,21 +6464,13 @@ void MainWindow::RenderStatusBar() {
             ImGui::TextUnformatted(toolbar_->StatusHint().c_str());
         }
 
-        // Right side: Task indicator (if tasks are running)
-        if (task_progress_panel_ && task_progress_panel_->HasActiveTasks()) {
-            // Calculate position for right-aligned content
-            std::string status = task_progress_panel_->GetStatusSummary();
-            float text_width = ImGui::CalcTextSize(status.c_str()).x + 30; // + icon width
-
-            ImGui::SameLine(ImGui::GetWindowWidth() - text_width - 16);
-
-            // Show task indicator that opens the task panel when clicked
+        // Right side: the running tasks (a click opens Background Tasks), else Ready
+        if (const float tasks_width = cyxwiz::TaskStatusIndicator::Width(); tasks_width > 0.0f && task_progress_panel_) {
+            ImGui::SameLine(ImGui::GetWindowWidth() - tasks_width - 16);
             if (cyxwiz::TaskStatusIndicator::Render()) {
                 task_progress_panel_->Show();
+                ::gui::BringToFront(task_progress_panel_->GetName());
             }
-
-            ImGui::SameLine();
-            ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_CheckMark), "%s", status.c_str());
         } else {
             // Show ready status on the right
             float text_width = ImGui::CalcTextSize("Ready").x + 20;

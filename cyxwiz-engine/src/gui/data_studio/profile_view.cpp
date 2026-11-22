@@ -259,7 +259,7 @@ void ProfileView::RenderOverview() {
     if (ui::SecondaryButton(ICON_FA_ROTATE " Profile again", !IsRunning(), "Profiling now")) Reprofile();
     if (IsRunning()) {
         ImGui::SameLine();
-        ImGui::TextColored(t.info, ICON_FA_SPINNER " Profiling (Task View shows the steps)");
+        ImGui::TextColored(t.info, ICON_FA_SPINNER " Profiling (Background Tasks shows the steps)");
     }
     if (!error_.empty()) {
         ImGui::PushTextWrapPos(0.0f);

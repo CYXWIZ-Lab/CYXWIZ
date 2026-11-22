@@ -6299,7 +6299,7 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     const uint64_t memory_limit = data_budget > 0 && safe_budget > 0 ? std::min(data_budget, safe_budget)
                                                                       : std::max(data_budget, safe_budget);
     // A long step (word2vec training, a vectorizer) reports its own progress:
-    // Task View shows it as the run's status, the run's share unchanged.
+    // Background Tasks shows it as the run's status, the run's share unchanged.
     op->SetProgressCallback([this, id = node.id, name = node.name, memory_baseline, memory_limit,
                              read_memory](const PipelineOperatorProgress& event) {
         if (memory_limit > 0 && memory_baseline.detected) {

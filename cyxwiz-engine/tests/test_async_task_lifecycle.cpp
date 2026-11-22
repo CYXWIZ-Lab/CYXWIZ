@@ -332,7 +332,7 @@ void RunHereIsListedOnTheCallingThread() {
     Check(listed, "RunHere's task is listed while it runs");
     Check(state == TaskState::Completed, "RunHere completes a body that does not mark itself");
     bool recent = false;
-    for (const auto& info : manager.GetRecentTasks(5)) recent = recent || info.name == "read df from Python";
+    for (const auto& info : manager.GetFinishedTasks(5)) recent = recent || info.name == "read df from Python";
     Check(recent, "RunHere's task is in the history after");
     const TaskState failed = manager.RunHere("fails", [](LambdaTask& task) { task.MarkFailed("no"); });
     Check(failed == TaskState::Failed, "RunHere returns a failed end state");

@@ -181,7 +181,7 @@ ORDER BY tracks DESC
   **Format** (keywords upper case). Until you type, it follows the dataset
   you pick.
 - **Run** (or **Ctrl+Enter** while the editor has focus) runs the query in
-  the background: the Engine stays responsive, Task View shows it, and
+  the background: the Engine stays responsive, Background Tasks shows it, and
   **Cancel** stops it. One query runs at a time.
 - Several tables in one query: `JOIN "Spotify" s ... JOIN "World countries" w`.
   Large datasets kept on disk (Parquet) can be queried too. How large tables are kept and read: [big_data.md](big_data.md).
@@ -453,7 +453,7 @@ Profile; the link under the summary goes there).
 
 The counts come from Profile's profile, so switching tabs does not compute
 them again; complete rows, the mixes and the row pages are SQL on the
-dataset (tables kept on disk work the same way) and show in Task View.
+dataset (tables kept on disk work the same way) and show in Background Tasks.
 
 ## Outliers
 
@@ -747,7 +747,7 @@ says so and has **Open Plugin Manager**.
   plugin's code and may read every row. Beside it: *reads 14 rows of 2
   columns*, or why Run is off (too few or too many columns, or *Example Data
   Formats is not loaded*, with **Open Plugin Manager**).
-- While it runs, the rows read so far and **Cancel**; Task View shows the run.
+- While it runs, the rows read so far and **Cancel**; Background Tasks shows the run.
   The chosen columns go to the plugin in batches, every row: a table kept on
   disk is read one row group at a time, so it does not have to fit in memory.
   The plugin sees only those columns.
@@ -947,7 +947,7 @@ make, from the canvas graph's compile: a card per part, each class in each
 part with its share, whether the shares match the whole set's, and what was
 counted. Nothing is queried (see image_split.md).
 
-**When.** Opening the job compares the splits in the background (Task View
+**When.** Opening the job compares the splits in the background (Background Tasks
 shows it); so do a change to a split's data and **Check again**. The tab's
 line then says what it found (*no leakage*, *leakage found*, *not
 checked*).
@@ -1122,7 +1122,7 @@ prepared table is trained once per fold:
 - each fold is scored by the test code: accuracy, macro F1 and loss (numbers:
   MAE, RMSE, R²).
 
-It runs in the background (Task View shows *Cross-validation: fold 3 of 5*)
+It runs in the background (Background Tasks shows *Cross-validation: fold 3 of 5*)
 with the folds listed as they finish, and **Cancel** stops it. It does not
 touch the trained model in use, its checkpoints or the Training Dashboard;
 Train waits while it runs, and it waits while Train runs.

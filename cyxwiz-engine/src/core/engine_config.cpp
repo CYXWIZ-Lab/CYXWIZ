@@ -578,6 +578,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             loaded.log_frame_rate = m.value("log_frame_rate", loaded.log_frame_rate);
             loaded.log_python_commands = m.value("log_python_commands", loaded.log_python_commands);
             loaded.frame_overlay = m.value("frame_overlay", loaded.frame_overlay);
+            loaded.show_finished_tasks = m.value("show_finished_tasks", loaded.show_finished_tasks);
             monitor_ = loaded;
         } catch (const std::exception& e) {
             spdlog::warn("Engine settings: the monitor defaults could not be read ({}); using the shipped ones", e.what());
@@ -860,7 +861,8 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"keep_seconds", monitor_.keep_seconds},
             {"log_frame_rate", monitor_.log_frame_rate},
             {"log_python_commands", monitor_.log_python_commands},
-            {"frame_overlay", monitor_.frame_overlay}
+            {"frame_overlay", monitor_.frame_overlay},
+            {"show_finished_tasks", monitor_.show_finished_tasks}
         };
 
         config["nodes_panel"] = {

@@ -23,7 +23,7 @@ namespace gui {
 // Word Embeddings (TOFIX152, mockups approved 2026-10-14; GloVe the same day): tabs Source,
 // Vocabulary, Nearest words and Outputs. A pretrained file is read here on a
 // task worker (its format, size and how the vocabulary lines up); training
-// runs the step through the graph (Task View), and the dialog shows its
+// runs the step through the graph (Background Tasks), and the dialog shows its
 // progress and the result. Without a run in this session it shows the saved
 // training (the record beside the vectors file) and looks words up in it.
 class WordEmbeddingsDialog : public NodeConfigDialog {

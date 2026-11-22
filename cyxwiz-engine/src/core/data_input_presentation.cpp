@@ -80,7 +80,7 @@ Strip BuildStrip(const StripInput& in) {
         s.tone = LoadTone::Loading;
         s.state = in.loading_message.empty() ? "Loading" : "Loading: " + in.loading_message;
         s.detail = FormatSeconds(in.loading_seconds);
-        s.note = "Runs in the background (Task View shows it). Close the dialog or switch tabs freely; OK and "
+        s.note = "Runs in the background (Background Tasks shows it). Close the dialog or switch tabs freely; OK and "
                  "Apply wait for it.";
         return s;
     }
