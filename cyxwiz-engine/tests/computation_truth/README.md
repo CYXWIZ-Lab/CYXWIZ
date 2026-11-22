@@ -62,6 +62,23 @@ ctest -C Release -L oracle                 # every registered device
 ctest -C Release -L oracle -L cpu          # one device
 ```
 
+Two checks run with them (Python only, no torch; labels `oracle;cpu;host`):
+
+- `oracle_coverage` (`scripts/checks/check_oracle_coverage.py`): every public
+  layer, module, activation, loss, optimizer, scheduler and batcher (read from
+  the headers) has a row in `oracle_coverage.json` naming the oracle test,
+  fixture and case that check it, or the gap and why; every evidence item must
+  exist. `coverage_inventory.json` is generated from both (`--write`); a new
+  component without a row fails.
+- `oracle_fixture_manifest` (`scripts/checks/check_oracle_fixtures.py`): every
+  fixture is recorded in `fixtures/fixture_manifest.json` with the generator
+  that writes it and both hashes; a changed generator without its fixture, or
+  a hand-edited fixture, fails. After re-running a generator:
+  `check_oracle_fixtures.py . --update <fixture>`.
+
+The per-push job is `.github/workflows/oracle-cpu.yml` (ArrayFire CPU, Windows
+and Linux); the lab machines' nightly is `scripts/oracle/nightly_oracle.py`.
+
 Each test is registered once per device as `oracle_<test>_<device>` (labels
 `oracle;<device>`, the variable set for it); the host-only ones once, as
 `oracle_<test>` (labels `oracle;cpu;host`). The devices come from the CMake

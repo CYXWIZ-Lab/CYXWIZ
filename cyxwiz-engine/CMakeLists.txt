@@ -9383,6 +9383,22 @@ foreach(_oracle_test IN LISTS CYXWIZ_ORACLE_TESTS)
     cyxwiz_oracle_test(${_oracle_test})
     add_dependencies(cyxwiz-oracle-tests ${_oracle_test})
 endforeach()
+# The oracle's own checks (Python only, no torch): every public component has
+# an oracle row whose evidence exists (ORA-09), and every committed fixture
+# matches the generator that wrote it. The interpreter is found here too when
+# Python scripting is off (the per-push job).
+if(NOT Python3_EXECUTABLE)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+endif()
+if(Python3_EXECUTABLE)
+    add_test(NAME oracle_coverage
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/checks/check_oracle_coverage.py" "${CMAKE_SOURCE_DIR}")
+    add_test(NAME oracle_fixture_manifest
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/checks/check_oracle_fixtures.py" "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(oracle_coverage oracle_fixture_manifest PROPERTIES LABELS "oracle;cpu;host")
+else()
+    message(WARNING "No Python interpreter: the oracle coverage and fixture checks are not registered")
+endif()
 foreach(_oracle_test IN LISTS CYXWIZ_ORACLE_HOST_TESTS)
     if(NOT _oracle_test IN_LIST CYXWIZ_ORACLE_TESTS)
         message(FATAL_ERROR "CYXWIZ_ORACLE_HOST_TESTS names ${_oracle_test}, which is not in CYXWIZ_ORACLE_TESTS")
