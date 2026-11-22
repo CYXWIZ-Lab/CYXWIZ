@@ -581,6 +581,22 @@ int main() {
           "known dense loss/metric/optimizer stages should pass executable preflight");
     Check(dense_cpu_plan.IsStrictlyExecutable(),
           "ArrayFire CPU dense plan should not be classified as native CPU fallback");
+    {
+        // A branched graph's Add is a graph-runtime op on the active ArrayFire
+        // backend: Strict accepts it on the CPU (it blocked every branched graph).
+        auto branched_config = dense_config;
+        cyxwiz::BackendPlacementEntry add;
+        add.node_id = 51;
+        add.node_name = "Add";
+        add.node_type = "Add";
+        add.status = cyxwiz::BackendPlacementStatus::Gpu;
+        add.reason_code = cyxwiz::BackendPlacementReason::GraphRuntimeArrayFire;
+        branched_config.backend_placements.push_back(add);
+        const auto branched_plan = cyxwiz::BuildExecutionPlacementPlan(branched_config, cpu_context);
+        Check(branched_plan.IsExecutable() && branched_plan.IsStrictlyExecutable(),
+              "a graph-runtime Add runs on the bound ArrayFire CPU under Strict: " +
+                  branched_plan.StrictBlockerSummary());
+    }
     size_t dense_forward_entries = 0;
     bool saw_gradient_accumulation = false;
     bool saw_gradient_averaging = false;

@@ -305,8 +305,15 @@ inline ExecutionPlacementPlan BuildExecutionPlacementPlan(
             placement.node_type.rfind("ModelForward.", 0) != 0) {
             placement.node_type = "ModelForward." + placement.node_type;
         }
-        if (placement.reason_code ==
-                BackendPlacementReason::ArrayFireTensorOpCapable &&
+        // Layers that ArrayFire runs, and the graph-runtime tensor ops of a
+        // branched graph (Add, Concat, Split, ...; they too run on the active
+        // ArrayFire backend, CPU included), execute on the bound device. Left
+        // as the compiler's "gpu", a graph-runtime op blocked every branched
+        // graph under the Strict policy, on every device.
+        if ((placement.reason_code ==
+                 BackendPlacementReason::ArrayFireTensorOpCapable ||
+             placement.reason_code ==
+                 BackendPlacementReason::GraphRuntimeArrayFire) &&
             (placement.status == BackendPlacementStatus::Cpu ||
              placement.status == BackendPlacementStatus::Gpu)) {
             placement.requested_backend = context.requested_backend.empty()
