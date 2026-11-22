@@ -812,7 +812,10 @@ void ToolbarPanel::BuildActionHandlers() {
     h["apps.plugin"] = [this](const std::string& plugin_id) {
         if (show_plugin_nodes_callback_) show_plugin_nodes_callback_(plugin_id);
     };
-    h["apps.plugin_manager"] = [](const std::string&) { ShowSidebarPanel("Plugin Manager", false); };
+    h["apps.plugin_manager"] = [this](const std::string& plugin_id) {
+        if (show_plugin_manager_callback_) show_plugin_manager_callback_(plugin_id);
+        else ShowSidebarPanel("Plugin Manager", false);
+    };
 
     // Help
     h["help.tutorial"] = [](const std::string& id) {

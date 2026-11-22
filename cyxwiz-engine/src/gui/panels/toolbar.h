@@ -234,6 +234,8 @@ public:
     void SetOpenServingCallback(std::function<void()> cb) { open_serving_callback_ = cb; }
     // Apps > a loaded plugin: show its nodes in the Node Browser (TOFIX125).
     void SetShowPluginNodesCallback(std::function<void(const std::string&)> cb) { show_plugin_nodes_callback_ = std::move(cb); }
+    // Apps > Plugin Manager, or Apps > a plugin with no nodes (its id; empty for the window alone)
+    void SetShowPluginManagerCallback(std::function<void(const std::string&)> cb) { show_plugin_manager_callback_ = std::move(cb); }
 
     // Clustering callbacks (Phase 6A)
     void SetOpenKMeansCallback(std::function<void()> cb) { open_kmeans_callback_ = cb; }
@@ -701,6 +703,7 @@ private:
     std::function<void()> open_nas_callback_;
     std::function<void()> open_serving_callback_;
     std::function<void(const std::string&)> show_plugin_nodes_callback_;
+    std::function<void(const std::string&)> show_plugin_manager_callback_;
 
     // Clustering callbacks (Phase 6A)
     std::function<void()> open_kmeans_callback_;

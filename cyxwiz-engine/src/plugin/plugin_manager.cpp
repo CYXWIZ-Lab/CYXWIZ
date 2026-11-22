@@ -1070,4 +1070,8 @@ void PluginManager::RenderPermissionDialogs() {
     permission_dialog_.Render();
 }
 
+bool PluginManager::IsAwaitingPermission(const std::string& plugin_id) const {
+    return permission_dialog_.IsPendingFor(plugin_id);
+}
+
 } // namespace cyxwiz::plugin

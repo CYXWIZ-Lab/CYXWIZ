@@ -62,4 +62,61 @@ std::string PluginAddsLine(const PluginContribution& contribution);
 // The Apps menu entry's note: "2 nodes", "2 windows, 5 nodes", "1 format, 1 analytic".
 std::string PluginMenuDetail(const PluginContribution& contribution);
 
+// ---- The Plugin Manager card (TOFIX129 C6, approved mockup "Plugin Manager")
+
+enum class PluginRunState { Loaded, Running, Failed, Disabled, Unloaded };
+
+struct PluginCardFacts {
+    std::string id;
+    std::string name;
+    PluginRunState state = PluginRunState::Loaded;
+    std::string error;          // the manager's message: why it failed, or "waits for X, which ..."
+    bool awaiting_answer = false;  // a permission request for it is open or queued
+};
+
+enum class PluginTone { Good, Waiting, Problem, Off };
+enum class PluginAction { None, Disable, Start, TryAgain, Enable };
+
+struct PluginCardView {
+    std::string state_word;  // "Active", "Not started", "Waiting", "Failed", "Disabled", "Unloaded"
+    PluginTone tone = PluginTone::Off;
+    std::string reason;      // the sentence under the description; empty when Active
+    PluginAction action = PluginAction::None;
+    std::string action_label;
+};
+
+PluginCardView DescribePluginCard(const PluginCardFacts& facts);
+
+// The list in name order (case-insensitive, then id), so a card keeps its
+// place when another plugin loads or unloads.
+std::vector<size_t> PluginCardOrder(const std::vector<PluginCardFacts>& cards);
+
+// "1 plugin: 1 active", "3 plugins: 1 active, 1 waiting, 1 failed"; every
+// state that has a plugin, in a fixed order; "No plugins" for none.
+std::string PluginFooter(const std::vector<PluginCardFacts>& cards);
+
+// What a plugin asked for and what the user answered.
+enum class PermissionAnswer { NotAsked, Allowed, Denied };
+
+struct PluginPermissionFacts {
+    std::string name;          // "Training Hooks"
+    std::string description;   // "Hook into the training pipeline"
+    bool needs_answer = false; // a dangerous permission: the user decides
+    PermissionAnswer answer = PermissionAnswer::NotAsked;
+};
+
+struct PluginPermissionRow {
+    std::string name;
+    std::string description;
+    std::string answer;  // "Allowed", "Denied", "Not asked yet", "Allowed (low risk, not asked)"
+    bool can_change = false;
+};
+
+std::vector<PluginPermissionRow> PluginPermissionRows(const std::vector<PluginPermissionFacts>& permissions);
+// The card's link: "Permissions (2 allowed)", "Permissions (1 allowed, 1 denied)"; empty when it asks for none.
+std::string PluginPermissionsLink(const std::vector<PluginPermissionFacts>& permissions);
+
+// The Unload confirmation: what closes and what stops working.
+std::string PluginUnloadQuestion(const std::string& name, const PluginContribution& contribution);
+
 }  // namespace cyxwiz

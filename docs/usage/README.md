@@ -63,6 +63,7 @@ To write your own nodes in Python or C++, see
 | [Signal processing](signal_processing.md) | Explore > Signal: spectrum, spectrogram, filters, wavelets |
 | [Text](text.md) | Explore > Text: words, TF-IDF terms, VADER sentiment, tokens, word vectors and the word map |
 | [Linear algebra](linear_algebra.md) | Tools > Linear Algebra (matrices typed, pasted or from tables; into the graph), the PCA, Truncated SVD, Whitening, Linear Solve and Linear Projection nodes |
+| [Plugin Manager](plugin_manager.md) | Every plugin and Python node bundle: its state and why, Start / Disable / Enable, Load when the Engine starts, its permissions and your answers, Install, Unload |
 | [Background Tasks](background_tasks.md) | The work running off the screen (loads, profiles, caches, training launches), the finished tasks and the last training run in one line; Cancel all |
 | [Monitoring and diagnostics](monitoring.md) | Tools > Monitoring: the Monitor window (system, the Engine's memory over time, loaded data, frame times), Clear Caches, Free Unused Memory; Tools > Diagnostics: the frame-rate and Python command logs, the frame overlay |
 | [Utilities](utilities.md) | Tools > Utilities: calculator, exact unit conversion, seeded random values and UUIDs, hashes of text and files, JSON check and tree, regex with multiline and replace |

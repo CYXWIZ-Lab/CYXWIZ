@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -137,6 +138,93 @@ int main() {
               "a listed pack loads from its active folder, not the recorded one");
         Equal(pack_load[1].id, "com.example.new", "a newly installed pack loads at startup");
         Check(cyxwiz::PluginsToLoadAtStartup(packs_list).size() == 1, "without packs the list is unchanged");
+    }
+
+    // The Plugin Manager card (TOFIX129 C6): state words, reasons, actions, order, footer
+    {
+        using cyxwiz::PluginRunState;
+        cyxwiz::PluginCardFacts mujoco_card{kMuJoCo, "MuJoCo Simulation", PluginRunState::Running, "", false};
+        const auto active = cyxwiz::DescribePluginCard(mujoco_card);
+        Check(active.state_word == "Active" && active.reason.empty() && active.action_label == "Disable",
+              "an active plugin: no reason, Disable");
+
+        cyxwiz::PluginCardFacts waits{kActivation, "Activation nodes", PluginRunState::Loaded,
+                                      "waits for com.cyxwiz.simulation.mujoco_card, which has not started yet", false};
+        const auto waiting = cyxwiz::DescribePluginCard(waits);
+        Equal(waiting.state_word, "Waiting", "a plugin waiting for another says Waiting");
+        Equal(waiting.reason,
+              "Waits for com.cyxwiz.simulation.mujoco_card, which has not started yet. It starts by itself when that one does.",
+              "and why, in a sentence (today the card hid it)");
+        Check(waiting.action_label == "Start", "Start is still offered");
+
+        cyxwiz::PluginCardFacts asked{kActivation, "Activation nodes", PluginRunState::Loaded, "", true};
+        const auto answer = cyxwiz::DescribePluginCard(asked);
+        Check(answer.state_word == "Waiting" && answer.action == cyxwiz::PluginAction::None,
+              "waiting for a permission answer: no button that would ask again");
+
+        cyxwiz::PluginCardFacts fresh{kActivation, "Activation nodes", PluginRunState::Loaded, "", false};
+        Equal(cyxwiz::DescribePluginCard(fresh).state_word, "Not started", "loaded, not started");
+
+        cyxwiz::PluginCardFacts failed{kMuJoCo, "MuJoCo Simulation", PluginRunState::Failed, "mujoco.dll was not found", false};
+        const auto bad = cyxwiz::DescribePluginCard(failed);
+        Equal(bad.reason, "Failed to start: Mujoco.dll was not found.", "a failure says why");
+        Check(bad.action_label == "Try again" && bad.tone == cyxwiz::PluginTone::Problem, "Try again, problem tone");
+        failed.error.clear();
+        Equal(cyxwiz::DescribePluginCard(failed).reason, "Failed to start; the Console has the details.",
+              "a failure without a message points to the Console");
+
+        cyxwiz::PluginCardFacts off{kMuJoCo, "MuJoCo Simulation", PluginRunState::Disabled, "", false};
+        Check(cyxwiz::DescribePluginCard(off).action_label == "Enable", "disabled: Enable");
+
+        const std::vector<cyxwiz::PluginCardFacts> cards = {
+            {"com.z", "mujoco_card Simulation", PluginRunState::Running, "", false},
+            {"com.a", "Activation nodes", PluginRunState::Loaded, "", false},
+            {"com.b", "MuJoCo Simulation", PluginRunState::Failed, "x", false}};
+        const auto order = cyxwiz::PluginCardOrder(cards);
+        Check(order.size() == 3 && order[0] == 1 && order[1] == 2 && order[2] == 0,
+              "cards by name ignoring case, then by id");
+        Equal(cyxwiz::PluginFooter(cards), "3 plugins: 1 active, 1 not started, 1 failed",
+              "the footer counts every state a plugin is in (today it left out loaded ones)");
+        Equal(cyxwiz::PluginFooter({mujoco_card}), "1 plugin: 1 active", "one active plugin");
+        Equal(cyxwiz::PluginFooter({}), "No plugins", "none");
+    }
+    // Permissions on the card. MuJoCo asks for Training Hooks and UI Modification, both low
+    // risk: allowed without a question, nothing to change.
+    {
+        using cyxwiz::PermissionAnswer;
+        const std::vector<cyxwiz::PluginPermissionFacts> mujoco_perms = {
+            {"Training Hooks", "Hook into the training pipeline", false, PermissionAnswer::NotAsked},
+            {"UI Modification", "Add custom panels and nodes to the UI", false, PermissionAnswer::NotAsked}};
+        Equal(cyxwiz::PluginPermissionsLink(mujoco_perms), "Permissions (2 allowed)", "MuJoCo's two low-risk permissions");
+        Check(!cyxwiz::PluginPermissionRows(mujoco_perms)[0].can_change, "a low-risk permission has nothing to answer");
+        // A plugin asking for File System and Network (they need the user's answer)
+        std::vector<cyxwiz::PluginPermissionFacts> perms = {
+            {"File System", "Read and write files on your computer", true, PermissionAnswer::Allowed},
+            {"Network Access", "Make network connections", true, PermissionAnswer::Allowed}};
+        Equal(cyxwiz::PluginPermissionsLink(perms), "Permissions (2 allowed)", "both allowed");
+        perms[1].answer = PermissionAnswer::Denied;
+        Equal(cyxwiz::PluginPermissionsLink(perms), "Permissions (1 allowed, 1 denied)", "one denied");
+        perms[1].answer = PermissionAnswer::NotAsked;
+        Equal(cyxwiz::PluginPermissionsLink(perms), "Permissions (1 allowed, 1 not asked yet)", "one not asked yet");
+        perms.push_back({"GPU Compute", "Access GPU compute resources", false, PermissionAnswer::NotAsked});
+        const auto rows = cyxwiz::PluginPermissionRows(perms);
+        Check(rows.size() == 3 && rows[0].answer == "Allowed" && rows[0].can_change, "an answered one can change");
+        Check(rows[1].answer == "Not asked yet", "an unanswered one says so");
+        Check(rows[2].answer == "Allowed (low risk, not asked)" && !rows[2].can_change,
+              "a low-risk one is allowed without a question and has nothing to change");
+        Check(cyxwiz::PluginPermissionsLink({}).empty(), "no permissions: no link");
+    }
+    // The Unload question names what goes
+    {
+        cyxwiz::PluginContribution mujoco_adds;
+        mujoco_adds.windows = 2;
+        mujoco_adds.simulation_nodes = 5;
+        Equal(cyxwiz::PluginUnloadQuestion("MuJoCo Simulation", mujoco_adds),
+              "Unload MuJoCo Simulation? Its 2 windows close. Graphs that use its nodes cannot run until it is loaded again.",
+              "MuJoCo's windows and nodes");
+        cyxwiz::PluginContribution one_window;
+        one_window.windows = 1;
+        Equal(cyxwiz::PluginUnloadQuestion("X", one_window), "Unload X? Its 1 window closes.", "one window");
     }
 
     std::cout << "test_plugin_presentation: all checks passed\n";

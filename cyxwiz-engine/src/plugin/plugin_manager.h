@@ -136,6 +136,8 @@ public:
 
     // Render permission approval dialogs (call from main render loop)
     void RenderPermissionDialogs();
+    // A permission request for this plugin is shown or waiting.
+    bool IsAwaitingPermission(const std::string& plugin_id) const;
 
 private:
     PluginManager() = default;

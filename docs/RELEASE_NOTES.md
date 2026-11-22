@@ -17,6 +17,24 @@ private Data Studio tickets (`tofix*/track*`).
   device, time) with **Open in Training Dashboard**, where its placement and
   residency already are; the developer codes left this window. The status
   bar shows *N tasks running* once (its width now fits the text).
+- **Plugin Manager, redesigned.** Plugins and Python node bundles share one
+  card. Each card says its state and why: a plugin waiting for another one
+  now says so (it only offered Initialize before), a failure says why. One
+  main button for the state (Disable, Start, Try again, Enable); **Actions**
+  holds Open the plugin folder, Copy its id and **Unload...**, which says
+  what goes and asks first. Cards are in name order and keep their place.
+  The footer counts every state. **Apps > a plugin** opens its card.
+- **Plugin permissions you can see and change.** A card's **Permissions**
+  lists what the plugin asked for and your answer; the ones that need an
+  answer can be set to Allowed, Denied or Ask again. The request when a
+  plugin starts says the plugin starts either way, opens once per plugin
+  (a second Start no longer stacked a second request whose answer overwrote
+  the first), keeps **Allow selected** off until something is ticked (it did
+  the same as Deny All before) and takes Esc as Start without these.
+- **Install a plugin keeps its dialog.** A problem (no folder, no
+  plugin.json, already installed) and a partial install show inside the
+  dialog under the path you typed; before, an error popup replaced the
+  dialog and the path was lost.
 - **Preferences: "Restore this page's defaults" on every page with
   settings** (only Appearance and Search could go back before). It asks
   first and keeps what is yours (the Python interpreter, Favourite and Recent

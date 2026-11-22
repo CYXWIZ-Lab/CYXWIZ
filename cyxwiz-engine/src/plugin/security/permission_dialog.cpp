@@ -1,8 +1,15 @@
 #include "permission_dialog.h"
+#include "../../gui/ui_tokens.h"
+#include "../../gui/ui_widgets.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
+#include <algorithm>
 
 namespace cyxwiz::plugin::security {
+
+namespace {
+constexpr const char* kPopupId = "###PluginPermDialog";
+}
 
 bool PermissionDialog::RequestApproval(
     const PluginManifest& manifest,
@@ -10,6 +17,11 @@ bool PermissionDialog::RequestApproval(
     DecisionCallback callback)
 {
     if (undecided_perms.empty()) return false;
+
+    std::lock_guard lock(mutex_);
+    // One request per plugin: a second Start or Refresh while it asks waits
+    // for the same answer instead of opening another dialog over it.
+    if (IsPendingForLocked(manifest.id)) return true;
 
     PendingApproval pending;
     pending.plugin_id = manifest.id;
@@ -19,11 +31,7 @@ bool PermissionDialog::RequestApproval(
     pending.permissions = undecided_perms;
     pending.allowed.resize(undecided_perms.size(), false);
     pending.callback = std::move(callback);
-
-    {
-        std::lock_guard lock(mutex_);
-        pending_queue_.push(std::move(pending));
-    }
+    pending_queue_.push(std::move(pending));
 
     spdlog::info("PermissionDialog: Queued approval for plugin '{}' ({} permissions)",
                  manifest.name, undecided_perms.size());
@@ -33,6 +41,21 @@ bool PermissionDialog::RequestApproval(
 bool PermissionDialog::HasPending() const {
     std::lock_guard lock(mutex_);
     return (current_.has_value() && !current_->resolved) || !pending_queue_.empty();
+}
+
+bool PermissionDialog::IsPendingFor(const std::string& plugin_id) const {
+    std::lock_guard lock(mutex_);
+    return IsPendingForLocked(plugin_id);
+}
+
+bool PermissionDialog::IsPendingForLocked(const std::string& plugin_id) const {
+    if (current_.has_value() && !current_->resolved && current_->plugin_id == plugin_id) return true;
+    std::queue<PendingApproval> copy = pending_queue_;
+    while (!copy.empty()) {
+        if (copy.front().plugin_id == plugin_id) return true;
+        copy.pop();
+    }
+    return false;
 }
 
 void PermissionDialog::ClearPendingForPlugin(const std::string& plugin_id) {
@@ -57,7 +80,10 @@ void PermissionDialog::ClearPendingForPlugin(const std::string& plugin_id) {
 }
 
 bool PermissionDialog::Render() {
-    // Advance queue if no current dialog
+    // The request shown this frame, copied under the lock: an unload may clear
+    // it meanwhile, and the answer's callback may queue another request.
+    std::optional<PendingApproval> shown;
+    bool open_now = false;
     {
         std::lock_guard lock(mutex_);
         if ((!current_.has_value() || current_->resolved) && !pending_queue_.empty()) {
@@ -65,99 +91,70 @@ bool PermissionDialog::Render() {
             pending_queue_.pop();
             open_requested_ = true;
         }
-    }
-
-    if (!current_.has_value() || current_->resolved) return false;
-
-    if (open_requested_) {
-        ImGui::OpenPopup("Plugin Permissions###PluginPermDialog");
+        if (!current_.has_value() || current_->resolved) return false;
+        shown = *current_;
+        open_now = open_requested_;
         open_requested_ = false;
     }
 
-    bool decision_made = false;
+    const std::string title = shown->plugin_name + " asks for permission" + kPopupId;
+    if (open_now) ImGui::OpenPopup(title.c_str());
 
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Appearing);
+    ui::DialogOptions options;
+    options.size = ImVec2(560.0f, 380.0f);
+    options.min_size = ImVec2(460.0f, 300.0f);
+    if (!ui::BeginDialog(title.c_str(), options)) return false;
 
-    if (ImGui::BeginPopupModal("Plugin Permissions###PluginPermDialog", nullptr,
-                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        auto& pending = *current_;
-
-        // Header
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Plugin Permission Request");
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // Plugin info
-        ImGui::Text("Plugin: %s", pending.plugin_name.c_str());
-        if (!pending.plugin_author.empty())
-            ImGui::Text("Author: %s", pending.plugin_author.c_str());
-        ImGui::Text("Version: %s", pending.plugin_version.c_str());
-        ImGui::Spacing();
-
-        ImGui::TextWrapped("This plugin requests the following permissions:");
-        ImGui::Spacing();
-
-        // Permission checkboxes
-        for (size_t i = 0; i < pending.permissions.size(); ++i) {
-            auto perm = pending.permissions[i];
-            const char* name = PermissionStore::PermissionDisplayName(perm);
-            const char* desc = PermissionStore::PermissionDescription(perm);
-
-            // std::vector<bool> uses proxy refs; need a temp bool for ImGui
-            bool checked = pending.allowed[i];
-            ImGui::Checkbox(name, &checked);
-            pending.allowed[i] = checked;
-
-            ImGui::SameLine();
-            ImGui::TextDisabled("(?)");
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::TextUnformatted(desc);
-                ImGui::EndTooltip();
-            }
+    const ui::Tokens& t = ui::CurrentTokens();
+    std::string who = shown->plugin_id + "  \xC2\xB7  v" + shown->plugin_version;
+    if (!shown->plugin_author.empty()) who += "  \xC2\xB7  " + shown->plugin_author;
+    ImGui::TextColored(t.text_dim, "%s", who.c_str());
+    ImGui::Spacing();
+    ImGui::TextUnformatted("To work fully it wants to:");
+    ImGui::Spacing();
+    bool changed = false;
+    for (size_t i = 0; i < shown->permissions.size(); ++i) {
+        const PluginPermission perm = shown->permissions[i];
+        ImGui::PushID(static_cast<int>(static_cast<uint32_t>(perm)));
+        bool checked = shown->allowed[i];  // std::vector<bool> hands out proxies
+        if (ImGui::Checkbox(PermissionStore::PermissionDisplayName(perm), &checked)) {
+            shown->allowed[i] = checked;
+            changed = true;
         }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // Buttons
-        float button_width = 140.0f;
-        float spacing = ImGui::GetStyle().ItemSpacing.x;
-        float total = button_width * 2 + spacing;
-        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - total) * 0.5f);
-
-        if (ImGui::Button("Allow Selected", ImVec2(button_width, 0))) {
-            pending.accepted = true;
-            pending.resolved = true;
-            decision_made = true;
-            spdlog::info("PermissionDialog: User allowed selected permissions for '{}'",
-                         pending.plugin_name);
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Deny All", ImVec2(button_width, 0))) {
-            pending.accepted = false;
-            pending.resolved = true;
-            std::fill(pending.allowed.begin(), pending.allowed.end(), false);
-            decision_made = true;
-            spdlog::info("PermissionDialog: User denied all permissions for '{}'",
-                         pending.plugin_name);
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
+        ImGui::Indent(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x);
+        ImGui::TextColored(t.text_dim, "%s", PermissionStore::PermissionDescription(perm));
+        ImGui::Unindent(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x);
+        ImGui::PopID();
     }
+    ImGui::Spacing();
+    ui::NoticeLine("The plugin starts either way. Without a permission, the parts that need it stay off. "
+                   "Your answer is kept; change it later on the plugin's card in Plugin Manager.",
+                   t.text_dim);
 
-    if (decision_made && current_->callback) {
-        current_->callback(*current_);
+    const bool any = std::any_of(shown->allowed.begin(), shown->allowed.end(), [](bool b) { return b; });
+    const ui::DialogResult result =
+        ui::EndDialog("Allow selected", "Start without these", any, "Tick at least one, or choose Start without these");
+
+    PendingApproval answer;
+    bool decided = false;
+    {
+        std::lock_guard lock(mutex_);
+        if (!current_.has_value() || current_->plugin_id != shown->plugin_id || current_->resolved) return false;
+        if (changed) current_->allowed = shown->allowed;
+        if (result != ui::DialogResult::None) {
+            if (result == ui::DialogResult::Secondary)
+                std::fill(current_->allowed.begin(), current_->allowed.end(), false);
+            current_->resolved = true;
+            answer = *current_;
+            decided = true;
+        }
     }
-
-    return decision_made;
+    if (!decided) return false;
+    spdlog::info("PermissionDialog: '{}' {}", answer.plugin_name,
+                 result == ui::DialogResult::Primary ? "starts with the selected permissions"
+                                                     : "starts without the permissions it asked for");
+    if (answer.callback) answer.callback(answer);
+    return true;
 }
 
 } // namespace cyxwiz::plugin::security

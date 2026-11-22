@@ -2024,6 +2024,12 @@ MainWindow::MainWindow()
         }
     });
 
+    toolbar_->SetShowPluginManagerCallback([this](const std::string& plugin_id) {
+        if (!plugin_manager_panel_) return;
+        if (plugin_id.empty()) plugin_manager_panel_->SetVisible(true);
+        else plugin_manager_panel_->ShowPlugin(plugin_id);
+        ::gui::BringToFront(plugin_manager_panel_->GetName());
+    });
     toolbar_->SetShowPluginNodesCallback([this](const std::string& plugin_id) {
         if (node_browser_panel_) node_browser_panel_->ShowPluginNodes(plugin_id);
     });
