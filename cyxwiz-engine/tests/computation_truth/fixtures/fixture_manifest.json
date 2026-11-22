@@ -49,7 +49,8 @@
   "cross_validation_pytorch.json": {
    "fixture_sha256": "41f5abc4fd2e8733006ec0e3b216215bbf633d6828c4ea260a7c696d7be4a917",
    "generator": "reference/generate_cross_validation_fixtures.py",
-   "generator_sha256": "62001d0b468da4f48d4f43997809d7bdad6880c848a110a53a69e4bef40384e0"
+   "generator_sha256": "62001d0b468da4f48d4f43997809d7bdad6880c848a110a53a69e4bef40384e0",
+   "live_skip": "needs the Palmer penguins CSV (not committed): py -3.12 generate_cross_validation_fixtures.py path/to/penguins.csv"
   },
   "data_transform_pytorch.json": {
    "fixture_sha256": "98d24062b60b29194c2c14b37d4be2febd9f93b41640e7e5a4a05f3403de2d38",
@@ -110,12 +111,14 @@
    "fixture_sha256": "22bfd1d23ef0ed6a9f086b9832ba8afee530f11536ad3a103f9cccfb0587b87a",
    "generator": "reference/generate_pretrained_network_fixtures.py",
    "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66",
+   "live_skip": "needs the published ImageNet weight files (not committed): --imagenet DIR",
    "note": "written with --imagenet DIR (the published weights, not committed)"
   },
   "mobilenet_v2_imagenet_pytorch.json": {
    "fixture_sha256": "e1d1ef5a41dfba4e7134f76c3909f0d86dd49da7a2ac3d3e390ec08036ab09e1",
    "generator": "reference/generate_pretrained_network_fixtures.py",
    "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66",
+   "live_skip": "needs the published ImageNet weight files (not committed): --imagenet DIR",
    "note": "written with --imagenet DIR (the published weights, not committed)"
   },
   "mobilenet_v2_thin.cyxgraph": {
@@ -132,12 +135,14 @@
    "fixture_sha256": "9cd965d962243bbaceac90c35d6a28f2165b40ff36e0133b5eca23148ac16729",
    "generator": "reference/generate_pretrained_network_fixtures.py",
    "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66",
+   "live_skip": "needs the published ImageNet weight files (not committed): --imagenet DIR",
    "note": "written with --imagenet DIR (the published weights, not committed)"
   },
   "mobilenet_v3_small_imagenet_pytorch.json": {
    "fixture_sha256": "0226983718f4949cb81fe1c46d7b922726764ca8c1c1be3dfa34404f50e8d61b",
    "generator": "reference/generate_pretrained_network_fixtures.py",
    "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66",
+   "live_skip": "needs the published ImageNet weight files (not committed): --imagenet DIR",
    "note": "written with --imagenet DIR (the published weights, not committed)"
   },
   "mobilenet_v3_small_thin.cyxgraph": {
@@ -199,12 +204,14 @@
    "fixture_sha256": "13ae686185378c6fbe235e2d44888ba67af0b4651a165d8a57493607e0358f85",
    "generator": "reference/generate_pretrained_network_fixtures.py",
    "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66",
+   "live_skip": "needs the published ImageNet weight files (not committed): --imagenet DIR",
    "note": "written with --imagenet DIR (the published weights, not committed)"
   },
   "resnet18_imagenet_pytorch.json": {
    "fixture_sha256": "ed9334a487e3fe692f746e9d70fd1990d2dc3c122ea04b111611423180924398",
    "generator": "reference/generate_pretrained_network_fixtures.py",
    "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66",
+   "live_skip": "needs the published ImageNet weight files (not committed): --imagenet DIR",
    "note": "written with --imagenet DIR (the published weights, not committed)"
   },
   "resnet18_thin.cyxgraph": {

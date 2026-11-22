@@ -95,7 +95,13 @@ def live_fixtures(clone: Path, python: str, report: Report, logs: Path) -> None:
     """Re-run every generator in the clone; compare each rewritten fixture with
     the committed one."""
     manifest = json.loads((clone / FIXTURES / "fixture_manifest.json").read_text(encoding="utf-8"))["fixtures"]
-    generators = sorted({entry["generator"] for name, entry in manifest.items() if "imagenet" not in name})
+    # A generator whose fixture needs data that is not committed is listed, not run.
+    skipped = {entry["generator"]: entry["live_skip"] for entry in manifest.values() if entry.get("live_skip")}
+    runnable = {entry["generator"] for entry in manifest.values() if not entry.get("live_skip")}
+    generators = sorted(runnable - set(skipped))
+    for generator, why in sorted(skipped.items()):
+        if generator not in runnable:
+            report.lines.append(f"  - skipped {generator}: {why}")
     failed_generators = []
     for generator in generators:
         script = clone / "cyxwiz-engine/tests/computation_truth" / generator

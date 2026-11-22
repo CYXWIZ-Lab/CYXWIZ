@@ -19,6 +19,11 @@ What one run does:
    scikit-learn / scipy installed here and lists the committed fixtures that
    no longer reproduce, with the largest numeric difference.
 
+The live step needs the generators' packages: `py -3.12 -m pip install -r
+scripts/oracle/requirements-live.txt`. Fixtures whose generator needs data that
+is not committed (the penguins CSV, the ImageNet weights) carry `live_skip` in
+`fixture_manifest.json` and are listed, not run.
+
 Report: `<reports>/<date>_<time>_<machine>/report.md`, `oracle-junit.xml` and
 `logs/` (configure, build, ctest, LastTest.log, live generators). Exit code 0
 only when every step passed.
