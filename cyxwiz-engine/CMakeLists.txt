@@ -8037,9 +8037,13 @@ configure_training_executor_harness(test_oracle_train)
 add_executable(test_oracle_data
     tests/oracle/test_oracle_data.cpp
     ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+    src/core/audio_dataset_batcher.cpp
+    src/core/image_dataset_batcher.cpp
+    src/core/prepared_image_set.cpp
+    src/core/formats/audio_dataset.cpp
 )
 configure_training_executor_harness(test_oracle_data)
-target_link_libraries(test_oracle_data PRIVATE duckdb ${OpenCV_LIBS})
+target_link_libraries(test_oracle_data PRIVATE duckdb cyxwiz-image-cv ${OpenCV_LIBS})
 
 # ===== Benchmark: Conv2D provider vs ArrayFire/native (TOFIX140 A1b), not a ctest =====
 add_executable(benchmark_conv2d_provider

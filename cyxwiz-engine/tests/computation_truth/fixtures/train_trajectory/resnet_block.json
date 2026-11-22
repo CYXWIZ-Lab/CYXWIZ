@@ -36,5 +36,6 @@
   ],
   "rows": 40,
   "summary": "6 x 5 x 2 images, Conv 4 + ReLU, [Conv 4 no bias, BN, ReLU, Conv 4 no bias, BN] + skip, ReLU, Flatten, Dense 3; cross-entropy; RMSprop momentum clip",
-  "task": "classification"
+  "task": "classification",
+  "token_ids": 0
 }

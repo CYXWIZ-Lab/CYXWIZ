@@ -77,7 +77,10 @@ def split_export(code: str) -> tuple[str, str]:
 
 def make_rows(spec: dict[str, Any], generator: torch.Generator) -> tuple[torch.Tensor, torch.Tensor]:
     rows = spec["rows"]
-    x = torch.randn(rows, *spec["input_shape"], generator=generator)
+    if spec.get("token_ids"):  # token ids: the Engine reads them as numbers, torch as integers
+        x = torch.randint(0, spec["token_ids"], (rows, *spec["input_shape"]), generator=generator).to(torch.float32)
+    else:
+        x = torch.randn(rows, *spec["input_shape"], generator=generator)
     if spec["task"] == "classification":
         y = torch.randint(0, spec["classes"], (rows,), generator=generator)
     else:
@@ -136,6 +139,8 @@ def run_model(name: str, steps: int) -> dict[str, Any]:
     # Image rows are [H, W, C] for the Engine; torch takes images channels
     # first, as image data reaches a torch model.
     torch_x = x.permute(0, 3, 1, 2).contiguous() if spec.get("image_rows") else x
+    if spec.get("token_ids"):
+        torch_x = x.long()
     model.eval()
     with torch.no_grad():
         model(torch_x[: spec["batch_size"]])  # materialises the lazy layers

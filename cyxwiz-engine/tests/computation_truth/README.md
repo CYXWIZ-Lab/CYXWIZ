@@ -123,8 +123,9 @@ writes), so the export is tested too:
   absolute 1e-3; everything else to atol 2e-5, rtol 2e-4.
 - Zoo: an MLP with BatchNorm (SGD, momentum, Nesterov, decay, clipping), a
   GRU regressor after a Reshape (MSE, Adam with warm-up), a transformer encoder
-  classifier (AdamW, warm-up + cosine, clipping) and a residual block on image
-  rows (RMSprop, momentum, clipping). Image rows are height, width, channel for
+  classifier (AdamW, warm-up + cosine, clipping), a residual block on image
+  rows (RMSprop, momentum, clipping) and a bidirectional LSTM classifier on
+  token ids after an embedding (Adam, clipping; torch gets the ids as integers). Image rows are height, width, channel for
   the Engine; the generator gives torch the same rows channels first.
 
 After changing a zoo model or the export:
@@ -158,6 +159,31 @@ without the Engine:
   validation loss and every parameter;
 - scenario B: no preparation step, a Data Split that neither shuffles nor
   stratifies: the batchers' rows against the rule unshuffled.
+
+The other kinds, batch level (`reference/generate_data_parity_kinds.py`,
+`fixtures/data_parity_<kind>.json`): each kind's batchers are read as a
+training run reads them (the epoch's seed, then Reset; Validation and Test
+once) and every Train epoch's order, the Validation and Test rows, and every
+row's values and label are compared with Python reading the same files:
+
+- text: `text.csv` through TextTokenizer (Word tokens, the vocabulary from
+  the Train rows by count then token, ids padded / truncated);
+- series: `series.csv` through TimeSeriesWindow and TimeSeriesSplit (the
+  value window then each feature's, chronological parts);
+- image: PNG class folders (RGB, grey, RGBA, an 8 x 8 shrunk by its block
+  means) at 4 x 4, u8 / 255 in height, width, channel order;
+- audio: WAV class folders, the magnitude spectrogram (centred, symmetric
+  Hann) z-scored per clip;
+- sparse: `text.csv` through TFIDFVectorizer (vocabulary and idf from the
+  Train rows, l2 rows), the CSR batches compared as dense rows; then a
+  linear model (`sparse_linear.py`) trained 2 epochs on those batches against
+  PyTorch running its export on the dense rows in the same order.
+
+The copy budget (tabular): the same training run with nothing reading the
+model, and the trace's device-to-host reads per training batch: at most three
+scalars (the running loss and accuracy, the report window's weight). Reads
+with no recorded reason are printed (ORA-30). Host-to-device uploads have no
+counter yet.
 
 After changing the model or the export: `test_oracle_data --write-exports
 <repo>/cyxwiz-engine/tests/computation_truth/fixtures/data_parity`, then the

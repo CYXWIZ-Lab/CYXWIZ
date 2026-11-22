@@ -22,5 +22,6 @@
   ],
   "rows": 40,
   "summary": "Dense 16, BatchNorm, ReLU, Dropout 0, Dense 4; cross-entropy; SGD momentum Nesterov decay clip",
-  "task": "classification"
+  "task": "classification",
+  "token_ids": 0
 }

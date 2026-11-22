@@ -18,5 +18,6 @@
   ],
   "rows": 40,
   "summary": "Reshape 6 x 8, transformer encoder (d 8, 2 heads, ff 16), Flatten, Dense 3; cross-entropy; AdamW, warm-up + cosine per update, clip",
-  "task": "classification"
+  "task": "classification",
+  "token_ids": 0
 }

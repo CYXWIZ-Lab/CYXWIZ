@@ -3,8 +3,8 @@
  "generated_by": "scripts/checks/check_oracle_coverage.py --write (from the headers and cyxwiz-engine/tests/computation_truth/oracle_coverage.json)",
  "counts": {
   "covered": 49,
-  "gap": 34,
-  "partial": 59
+  "gap": 31,
+  "partial": 62
  },
  "components": [
   {
@@ -184,7 +184,7 @@
    "kind": "batcher",
    "header": "cyxwiz-engine/src/core/dataset_batcher.h",
    "status": "partial",
-   "checks": "class balancing: 4096 weighted draws, class probabilities vs torch.utils.data.WeightedRandomSampler (inverse frequency, within 0.03); level 3: a CSV through Data Input, the split, a fitted scaler and these batchers vs the Python port of the split rule and the epoch shuffle and a torch DataLoader (order, values, labels, 2 epochs of training)",
+   "checks": "class balancing: 4096 weighted draws, class probabilities vs torch.utils.data.WeightedRandomSampler (inverse frequency, within 0.03); level 3: a CSV through Data Input, the split, a fitted scaler and these batchers vs the Python port of the split rule and the epoch shuffle and a torch DataLoader (order, values, labels, 2 epochs of training); level 3 batch level: every Train epoch's order, the Validation / Test rows, every row's values and label vs Python reading the same files (text, series)",
    "evidence": [
     {
      "test": "test_training_batcher_setup",
@@ -202,6 +202,24 @@
       "epochs",
       "steps"
      ]
+    },
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_text.json",
+     "cases": [
+      "epochs",
+      "values",
+      "labels"
+     ]
+    },
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_series.json",
+     "cases": [
+      "epochs",
+      "values",
+      "labels"
+     ]
     }
    ],
    "gap": "the copy budget (uploads / copies per batch) is not measured: no upload counter exists"
@@ -210,10 +228,20 @@
    "component": "AudioDatasetBatcher",
    "kind": "batcher",
    "header": "cyxwiz-engine/src/core/audio_dataset_batcher.h",
-   "status": "gap",
-   "checks": "",
-   "evidence": [],
-   "gap": "no torchaudio / librosa reference; test_modality_batcher_drop_last is an engine contract"
+   "status": "partial",
+   "checks": "; level 3 batch level: every Train epoch's order, the Validation / Test rows, every row's values and label vs Python reading the same files (audio)",
+   "evidence": [
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_audio.json",
+     "cases": [
+      "epochs",
+      "values",
+      "labels"
+     ]
+    }
+   ],
+   "gap": "batch level only; the spectrogram (Mel / MFCC not yet against Python)"
   },
   {
    "component": "AvgPool2DLayer",
@@ -817,7 +845,7 @@
    "kind": "module",
    "header": "cyxwiz-backend/include/cyxwiz/sequential.h",
    "status": "covered",
-   "checks": "lookup forward and weight gradient vs torch.nn.Embedding (inline reference: live LibTorch in Release builds with CYXWIZ_HAS_PYTORCH, else torch-derived constants); conv1d graph cases with an Embedding front (output, parameter gradients); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "checks": "lookup forward and weight gradient vs torch.nn.Embedding (inline reference: live LibTorch in Release builds with CYXWIZ_HAS_PYTORCH, else torch-derived constants); conv1d graph cases with an Embedding front (output, parameter gradients); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: a bidirectional LSTM after an embedding, 5 steps vs PyTorch running the Engine's export (Adam, clip)",
    "evidence": [
     {
      "test": "test_computation_truth_transformer_primitives"
@@ -828,6 +856,13 @@
      "cases": [
       "cases/embedding_global_avg_pool",
       "cases/embedding_global_max_pool"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/bilstm_classifier"
      ]
     }
    ],
@@ -1175,10 +1210,20 @@
    "component": "ImageDatasetBatcher",
    "kind": "batcher",
    "header": "cyxwiz-engine/src/core/image_dataset_batcher.h",
-   "status": "gap",
-   "checks": "",
-   "evidence": [],
-   "gap": "no reference for decode, batch assembly and normalisation order; transforms alone are checked vs torchvision in test_image_transforms, drop_last in test_modality_batcher_drop_last is an engine contract"
+   "status": "partial",
+   "checks": "; level 3 batch level: every Train epoch's order, the Validation / Test rows, every row's values and label vs Python reading the same files (image)",
+   "evidence": [
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_image.json",
+     "cases": [
+      "epochs",
+      "values",
+      "labels"
+     ]
+    }
+   ],
+   "gap": "batch level only (no training trajectory); 4 x 4 PNG, Exact resize, no augmentation"
   },
   {
    "component": "InstanceNorm2DLayer",
@@ -1319,7 +1364,7 @@
    "kind": "module",
    "header": "cyxwiz-backend/include/cyxwiz/sequential.h",
    "status": "partial",
-   "checks": "output, input gradient, every weight/bias gradient vs torch.nn.LSTM (5 cases: uni/bi, 1-2 layers, hidden 8/16/64), provider and ArrayFire paths; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "checks": "output, input gradient, every weight/bias gradient vs torch.nn.LSTM (5 cases: uni/bi, 1-2 layers, hidden 8/16/64), provider and ArrayFire paths; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: a bidirectional LSTM after an embedding, 5 steps vs PyTorch running the Engine's export (Adam, clip)",
    "evidence": [
     {
      "test": "test_computation_truth_recurrent",
@@ -1330,6 +1375,13 @@
       "cases/lstm_bi_h8_l1_seq",
       "cases/lstm_bi_h16_l2_last",
       "cases/lstm_h64_l1_seq"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/bilstm_classifier"
      ]
     }
    ],
@@ -1443,7 +1495,7 @@
    "kind": "module",
    "header": "cyxwiz-backend/include/cyxwiz/sequential.h",
    "status": "covered",
-   "checks": "graph Dense nodes: forward, per-pin backward, parameter gradients vs PyTorch in branched graphs; CNN graph Head gradients; transformer heads; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
+   "checks": "graph Dense nodes: forward, per-pin backward, parameter gradients vs PyTorch in branched graphs; CNN graph Head gradients; transformer heads; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export; level 3: on CSR rows from the sparse batcher, 2 epochs vs PyTorch on the dense rows",
    "evidence": [
     {
      "test": "test_branch_graph_training",
@@ -1485,6 +1537,13 @@
       "models/gru_regressor",
       "models/transformer_classifier",
       "models/resnet_block"
+     ]
+    },
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_sparse.json",
+     "cases": [
+      "training"
      ]
     }
    ],
@@ -2265,10 +2324,20 @@
    "component": "SparseFeatureDatasetBatcher",
    "kind": "batcher",
    "header": "cyxwiz-engine/src/core/sparse_feature_dataset_batcher.h",
-   "status": "gap",
-   "checks": "",
-   "evidence": [],
-   "gap": "no reference comparison at batch level; test_sparse_feature_dataset_batcher checks engine contracts"
+   "status": "partial",
+   "checks": "; level 3 batch level: every Train epoch's order, the Validation / Test rows, every row's values and label vs Python reading the same files (sparse)",
+   "evidence": [
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_sparse.json",
+     "cases": [
+      "epochs",
+      "values",
+      "labels"
+     ]
+    }
+   ],
+   "gap": "batch level only; TF-IDF without stop words"
   },
   {
    "component": "SquaredReLUActivation",

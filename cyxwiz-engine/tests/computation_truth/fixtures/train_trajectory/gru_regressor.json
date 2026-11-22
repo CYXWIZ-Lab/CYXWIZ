@@ -18,5 +18,6 @@
   ],
   "rows": 40,
   "summary": "Reshape 6 x 3, GRU 5 (last state), Dense 1; mean squared error; Adam, linear warm-up per update",
-  "task": "regression"
+  "task": "regression",
+  "token_ids": 0
 }

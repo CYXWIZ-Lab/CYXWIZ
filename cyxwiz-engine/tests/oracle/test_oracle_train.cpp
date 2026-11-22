@@ -82,6 +82,7 @@ struct ZooModel : cyxwiz::test::TrainGraph {
     std::string summary;
     std::vector<size_t> input_shape;  // one row, as the Data node gives it
     bool image_rows = false;          // rows are [H, W, C] images; torch takes them [C, H, W]
+    int token_ids = 0;                // > 0: rows are token ids below it (torch takes them as integers)
     std::string task;                 // "classification" (integer labels) or "regression"
     int classes = 0;                  // classification
     int rows = 0;
@@ -220,8 +221,34 @@ ZooModel ResNetBlock() {
     return With(g, model);
 }
 
+// Token ids (8 per row, a vocabulary of 20; torch gets them as integers, as
+// text reaches a torch embedding), an embedding, a bidirectional LSTM whose
+// last time step goes to a 3-class head; cross-entropy; Adam with clipping.
+ZooModel BiLstmClassifier() {
+    GraphBuilder g;
+    const int data = g.Data({8});
+    const int last = g.Chain(data, {g.Add(NodeType::Embedding, "Tokens", {{"num_embeddings", "20"}, {"embedding_dim", "6"}}),
+                                    g.Add(NodeType::LSTM, "Recurrent",
+                                          {{"input_size", "6"}, {"hidden_size", "5"}, {"bidirectional", "true"},
+                                           {"return_sequences", "false"}}),
+                                    g.Add(NodeType::Dense, "Head", {{"units", "3"}})});
+    const int loss = g.Add(NodeType::CrossEntropyLoss, "Loss");
+    const int adam = g.Add(NodeType::Adam, "Adam", {{"learning_rate", "0.01"}, {"grad_clip_norm", "1.0"}});
+    g.Finish(data, last, loss, adam);
+    ZooModel model;
+    model.name = "bilstm_classifier";
+    model.summary = "Embedding 20 x 6, bidirectional LSTM 5 (last step), Dense 3; cross-entropy; Adam clip";
+    model.input_shape = {8};
+    model.token_ids = 20;
+    model.task = "classification";
+    model.classes = 3;
+    model.rows = 40;
+    model.batch_size = 8;
+    return With(g, model);
+}
+
 std::vector<ZooModel> Zoo() {
-    return {MlpBatchNorm(), GruRegressor(), TransformerClassifier(), ResNetBlock()};
+    return {MlpBatchNorm(), GruRegressor(), TransformerClassifier(), ResNetBlock(), BiLstmClassifier()};
 }
 
 // ------------------------------------------------------------- the export --
@@ -235,7 +262,7 @@ json Spec(const ZooModel& model, const cyxwiz::GraphCodeExport& exported) {
             if (node.id == module.node_id) modules.push_back({{"node", node.name}, {"module", module.name}});
     }
     return {{"model", model.name},     {"summary", model.summary}, {"input_shape", model.input_shape},
-            {"image_rows", model.image_rows},
+            {"image_rows", model.image_rows},  {"token_ids", model.token_ids},
             {"task", model.task},      {"classes", model.classes}, {"rows", model.rows},
             {"batch_size", model.batch_size}, {"modules", modules}};
 }

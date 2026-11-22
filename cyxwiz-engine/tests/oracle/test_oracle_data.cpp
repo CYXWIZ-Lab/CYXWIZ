@@ -24,6 +24,10 @@
 #include "training_oracle_test.h"
 #include "train_oracle_support.h"
 #include "../../src/core/arrow_dataset.h"
+#include "../../src/core/audio_dataset_batcher.h"
+#include "../../src/core/image_dataset_batcher.h"
+#include "../../src/core/prepared_image_set.h"
+#include "../../src/core/sample_split.h"
 #include "../../src/core/data_registry.h"
 #include "../../src/core/debug_run_paths.h"
 #include "../../src/core/graph_compiler.h"
@@ -32,6 +36,8 @@
 #include "../../src/core/split_partitioning.h"
 #include "../../src/core/training_batcher_setup.h"
 #include "../../src/core/training_executor.h"
+#include "../../src/core/training_resume_checkpoint.h"
+#include "../../src/core/training_trace_collector.h"
 
 #include <arrow/api.h>
 
@@ -81,6 +87,24 @@ cyxwiz::test::TrainGraph Model() {
     return g.Take();
 }
 
+// The sparse model: 10 TF-IDF features straight into a Dense 3 head (the
+// Engine routes CSR rows into its first Linear); cross-entropy; plain SGD.
+cyxwiz::test::TrainGraph SparseModel() {
+    cyxwiz::test::GraphBuilder g;
+    const int data = g.Data({10}, "oracle_sparse");
+    const int last = g.Chain(data, {g.Add(gui::NodeType::Dense, "Head", {{"units", "3"}})});
+    const int loss = g.Add(gui::NodeType::CrossEntropyLoss, "Loss");
+    const int sgd = g.Add(gui::NodeType::SGD, "SGD", {{"learning_rate", "0.5"}, {"momentum", "0"}});
+    g.Finish(data, last, loss, sgd);
+    return g.Take();
+}
+
+void WriteExport(const fs::path& dir, const std::string& name, const cyxwiz::test::TrainGraph& graph) {
+    const auto exported = cyxwiz::test::UnstampedPyTorchExport(graph);
+    std::ofstream(dir / (name + ".py"), std::ios::binary) << exported.code;
+    std::cout << "wrote " << (dir / (name + ".py")).string() << "\n";
+}
+
 int WriteExports(const fs::path& dir) {
     fs::create_directories(dir);
     const auto graph = Model();
@@ -96,6 +120,7 @@ int WriteExports(const fs::path& dir) {
                .dump(2)
         << "\n";
     std::cout << "wrote " << (dir / (std::string(kModel) + ".py")).string() << "\n";
+    WriteExport(dir, "sparse_linear", SparseModel());
     return 0;
 }
 
@@ -207,6 +232,86 @@ private:
     std::vector<Epoch> epochs_;
     std::optional<uint64_t> pending_seed_;
 };
+
+// A training run against a fixture's "steps" (each step's running loss) and
+// "epochs" (each epoch's validation loss and every parameter, torch names and
+// layouts, put in the Engine's by its weight matcher).
+struct RunCheck {
+    Difference loss, epoch;
+    std::string layout_problem, status, reason;
+    size_t steps = 0;
+};
+
+RunCheck TrainAgainst(const cyxwiz::TrainingConfiguration& config, cyxwiz::ResolvedExternalBatchers resolved,
+                      const json& steps, const json& epochs, double atol, double rtol) {
+    RunCheck out;
+    cyxwiz::test::PinTrainingDevice();
+    cyxwiz::TrainingExecutor executor(config, std::move(resolved));
+    int epoch_index = 0;
+    executor.Train(
+        config.epochs, config.batch_size,
+        [&](int, int, int, float loss, float) {
+            if (out.steps < steps.size())
+                Compare({loss}, {steps.at(out.steps).at("running_loss").get<float>()}, atol, rtol,
+                        "step " + std::to_string(out.steps + 1) + " running loss", out.loss);
+            ++out.steps;
+        },
+        [&](int, float, float, float val_loss, float, float) {
+            if (epoch_index >= static_cast<int>(epochs.size())) return;
+            const json& expected = epochs.at(epoch_index);
+            const std::string at = "epoch " + std::to_string(epoch_index + 1);
+            Compare({val_loss}, {expected.at("val_loss").get<float>()}, atol, rtol, at + " validation loss",
+                    out.epoch);
+            if (cyxwiz::IExecutableModel* built = executor.GetExecutableModel()) {
+                std::string problem;
+                const auto want = cyxwiz::test::ExpectedInEngineLayout(expected.at("parameters"), *built,
+                                                                       executor.GetModuleProvenance(), problem);
+                if (!problem.empty() && out.layout_problem.empty()) out.layout_problem = problem;
+                const auto have = built->GetParameters();
+                for (const auto& [key, values] : want) {
+                    const auto it = have.find(key);
+                    if (it == have.end()) continue;
+                    const float* data = it->second.ReadData<float>();
+                    Compare(std::vector<float>(data, data + it->second.NumElements()), values, atol, rtol,
+                            at + " " + key, out.epoch);
+                }
+            }
+            ++epoch_index;
+        });
+    const auto metrics = executor.GetMetrics();
+    out.status = metrics.terminal_status;
+    out.reason = metrics.terminal_reason;
+    return out;
+}
+
+// The copy budget (design step 5): the same training run with nothing
+// reading the model in between, and the device-to-host reads it made per
+// training batch, by kind (the trace's host-synchronization groups).
+// Host-to-device uploads have no counter yet (follow-up in the ticket).
+struct CopyCount {
+    uint64_t total = 0, unknown = 0;
+    std::map<std::string, uint64_t> by_group;  // "category / operation" -> reads
+};
+
+CopyCount CountCopies(const cyxwiz::TrainingConfiguration& config, const std::shared_ptr<cyxwiz::ArrowDataset>& rows,
+                      size_t& batches) {
+    auto resolved = cyxwiz::TakeResolvedExternalBatchers(cyxwiz::BuildArrowTrainingBatchers(config, rows, "segment", kBatch));
+    cyxwiz::test::PinTrainingDevice();
+    cyxwiz::TrainingExecutor executor(config, std::move(resolved));
+    batches = 0;
+    executor.Train(kEpochs, kBatch, [&](int, int, int, float, float) { ++batches; });
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    CopyCount out;
+    for (const auto& group : trace.arrayfire_host_sync_groups) {
+        out.total += group.event_count;
+        if (group.category == "unknown") out.unknown += group.event_count;
+        std::string shape;
+        for (size_t d : group.shape) shape += (shape.empty() ? "" : "x") + std::to_string(d);
+        out.by_group[group.category + " / " + group.operation + " (" + group.reason + "; " + group.dtype + " " + shape +
+                     ")"] += group.event_count;
+    }
+    return out;
+}
 
 std::string PipelineJson(const fs::path& csv) {
     json j;
@@ -324,49 +429,15 @@ void Run(const json& fixture) {
     auto recorder = std::make_shared<RecordingBatcher>(resolved.train);
     resolved.train = recorder;
 
-    const json& steps = fixture.at("steps");
     const json& epochs = fixture.at("epochs");
-    const double atol = tol.at("atol").get<double>();
-    const double rtol = tol.at("rtol").get<double>();
-    cyxwiz::test::PinTrainingDevice();
-    cyxwiz::TrainingExecutor executor(config, std::move(resolved));
-    size_t step = 0;
-    int epoch_index = 0;
-    Difference loss_worst, epoch_worst;
-    std::string layout_problem;
-    executor.Train(
-        kEpochs, kBatch,
-        [&](int, int, int, float loss, float) {
-            if (step < steps.size())
-                Compare({loss}, {steps.at(step).at("running_loss").get<float>()}, atol, rtol,
-                        "step " + std::to_string(step + 1) + " running loss", loss_worst);
-            ++step;
-        },
-        [&](int, float, float, float val_loss, float, float) {
-            if (epoch_index >= static_cast<int>(epochs.size())) return;
-            const json& expected = epochs.at(epoch_index);
-            const std::string at = "epoch " + std::to_string(epoch_index + 1);
-            Compare({val_loss}, {expected.at("val_loss").get<float>()}, atol, rtol, at + " validation loss",
-                    epoch_worst);
-            if (cyxwiz::IExecutableModel* built = executor.GetExecutableModel()) {
-                std::string problem;
-                const auto want = cyxwiz::test::ExpectedInEngineLayout(expected.at("parameters"), *built,
-                                                                       executor.GetModuleProvenance(), problem);
-                if (!problem.empty() && layout_problem.empty()) layout_problem = problem;
-                const auto have = built->GetParameters();
-                for (const auto& [key, values] : want) {
-                    const auto it = have.find(key);
-                    if (it == have.end()) continue;
-                    const float* data = it->second.ReadData<float>();
-                    Compare(std::vector<float>(data, data + it->second.NumElements()), values, atol, rtol,
-                            at + " " + key, epoch_worst);
-                }
-            }
-            ++epoch_index;
-        });
-    const auto metrics = executor.GetMetrics();
-    Check(metrics.terminal_status == "completed",
-          "the run completes (" + metrics.terminal_status + ": " + metrics.terminal_reason + ")");
+    const RunCheck run = TrainAgainst(config, std::move(resolved), fixture.at("steps"), epochs,
+                                      tol.at("atol").get<double>(), tol.at("rtol").get<double>());
+    Check(run.status == "completed", "the run completes (" + run.status + ": " + run.reason + ")");
+    const size_t step = run.steps;
+    const json& steps = fixture.at("steps");
+    const Difference& loss_worst = run.loss;
+    const Difference& epoch_worst = run.epoch;
+    const std::string& layout_problem = run.layout_problem;
 
     // 3. What the Train batcher served, epoch by epoch.
     const auto served = recorder->Epochs();
@@ -410,6 +481,25 @@ void Run(const json& fixture) {
     Check(layout_problem.empty(), "every layer takes the fixture's values: " + layout_problem);
     Check(epoch_worst.excess <= 1.0, "every epoch's validation loss and parameters are PyTorch's (worst " +
                                          std::to_string(epoch_worst.excess) + " tolerances at " + epoch_worst.where + ")");
+
+    size_t batches = 0;
+    const CopyCount copies = CountCopies(config, scaled, batches);
+    std::cout << "    copies: " << copies.total << " device-to-host reads over " << batches << " training batches\n";
+    for (const auto& [group, reads] : copies.by_group) std::cout << "      " << reads << "  " << group << "\n";
+    // The training loop's own reads: the epoch's running loss and accuracy and
+    // the report window's weight, one scalar each per batch (log_interval 1);
+    // no batch-sized read. The validation / test passes read their scalars too.
+    uint64_t per_batch = 0;
+    for (const auto& [group, reads] : copies.by_group)
+        if (group.find("TrainingExecutor::ReadAccumulated") != std::string::npos ||
+            group.find("TrainingExecutor::ReportWindowWeight") != std::string::npos)
+            per_batch += reads;
+    Check(batches > 0 && per_batch <= 3 * batches,
+          "copy budget: at most 3 scalar reads per training batch (" + std::to_string(per_batch) + " over " +
+              std::to_string(batches) + " batches)");
+    // Reads with no recorded reason (ORA-30, open): printed, not failed.
+    if (copies.unknown > 0)
+        std::cout << "    copies: " << copies.unknown << " device-to-host reads have no recorded reason (ORA-30)\n";
     fs::remove_all(work);
 }
 
@@ -469,6 +559,349 @@ void RunUnshuffledSplit(const json& fixture) {
     }
 }
 
+// ------------------------------------------------- batch-level, other kinds --
+// A kind's batchers read as a training run reads them (TOFIX228 1.6, P4):
+// before each epoch the epoch's seed (TrainingEpochSeed(dataloader seed,
+// epoch)), then Reset, then every batch; Validation and Test once.
+
+struct PartRead {
+    std::vector<std::vector<int64_t>> epochs;  // Train: each epoch's rows in order
+    std::map<int64_t, std::vector<double>> values;  // row -> its values as served
+    std::map<int64_t, double> labels;               // row -> its class id / target
+    std::vector<int64_t> rows;                      // Validation / Test: rows in order
+};
+
+void ReadInto(cyxwiz::IBatcher& batcher, PartRead& out, std::vector<int64_t>& rows) {
+    while (!batcher.IsEpochComplete()) {
+        const cyxwiz::Batch batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) break;
+        // A sparse batch serves CSR rows (the first layer reads them as
+        // they are); each is compared as its dense row.
+        std::vector<double> data;
+        if (batch.HasSparseFeatures()) {
+            const auto& csr = *batch.sparse_features;
+            data.assign(csr.rows * csr.columns, 0.0);
+            for (size_t r = 0; r < csr.rows; ++r)
+                for (int32_t k = csr.row_offsets[r]; k < csr.row_offsets[r + 1]; ++k)
+                    data[r * csr.columns + static_cast<size_t>(csr.column_indices[static_cast<size_t>(k)])] =
+                        csr.values[static_cast<size_t>(k)];
+        } else {
+            data = Values(batch.data);
+        }
+        const auto labels = Values(batch.labels);
+        const size_t width = batch.size ? data.size() / batch.size : 0;
+        const size_t per_label = batch.size ? labels.size() / batch.size : 0;
+        for (size_t i = 0; i < batch.size && i < batch.row_ids.size(); ++i) {
+            const int64_t row = batch.row_ids[i];
+            rows.push_back(row);
+            out.values[row].assign(data.begin() + static_cast<std::ptrdiff_t>(i * width),
+                                   data.begin() + static_cast<std::ptrdiff_t>((i + 1) * width));
+            if (per_label <= 1) {
+                out.labels[row] = labels.at(i);
+            } else {  // one-hot: its largest entry
+                const auto first = labels.begin() + static_cast<std::ptrdiff_t>(i * per_label);
+                out.labels[row] = static_cast<double>(
+                    std::max_element(first, first + static_cast<std::ptrdiff_t>(per_label)) - first);
+            }
+        }
+    }
+}
+
+PartRead ReadTrain(cyxwiz::IBatcher& batcher, int epochs, int loader_seed, bool& seeded) {
+    PartRead out;
+    seeded = true;
+    for (int epoch = 1; epoch <= epochs; ++epoch) {
+        seeded = batcher.SetEpochShuffleSeed(cyxwiz::TrainingEpochSeed(static_cast<uint64_t>(loader_seed), epoch)) &&
+                 seeded;
+        batcher.Reset();
+        out.epochs.emplace_back();
+        ReadInto(batcher, out, out.epochs.back());
+    }
+    return out;
+}
+
+PartRead ReadOnce(cyxwiz::IBatcher* batcher) {
+    PartRead out;
+    if (!batcher) return out;
+    batcher->Reset();
+    ReadInto(*batcher, out, out.rows);
+    return out;
+}
+
+// The kind's fixture: "epochs" (Train rows per epoch), "val_rows",
+// "test_rows", "values" (row -> its values) and "labels" (row -> its label).
+void CheckParts(const std::string& kind, const json& f, const PartRead& train, const PartRead& val,
+                const PartRead& test, bool seeded) {
+    Check(seeded, kind + ": the Train batcher takes the epoch's seed (SetEpochShuffleSeed), so a resumed run "
+                         "replays its order");
+    const auto& epochs = f.at("epochs");
+    for (size_t e = 0; e < epochs.size(); ++e) {
+        const auto want = epochs.at(e).get<std::vector<int64_t>>();
+        const auto got = e < train.epochs.size() ? train.epochs[e] : std::vector<int64_t>();
+        std::cout << "    " << kind << " epoch " << (e + 1) << ": first rows";
+        for (size_t i = 0; i < std::min<size_t>(6, got.size()); ++i) std::cout << " " << got[i];
+        std::cout << " (Python:";
+        for (size_t i = 0; i < std::min<size_t>(6, want.size()); ++i) std::cout << " " << want[i];
+        std::cout << ")\n";
+        Check(got == want, kind + ": epoch " + std::to_string(e + 1) + " serves the Train rows in the Python port's "
+                                                                       "order (" + std::to_string(got.size()) +
+                               " rows, Python " + std::to_string(want.size()) + ")");
+    }
+    Check(val.rows == f.at("val_rows").get<std::vector<int64_t>>(),
+          kind + ": the Validation rows (" + std::to_string(val.rows.size()) + ")");
+    Check(test.rows == f.at("test_rows").get<std::vector<int64_t>>(),
+          kind + ": the Test rows (" + std::to_string(test.rows.size()) + ")");
+    const json& tol = f.at("tolerance");
+    Difference worst;
+    size_t label_mismatch = 0, missing = 0;
+    for (const PartRead* part : {&train, &val, &test}) {
+        for (const auto& [row, values] : part->values) {
+            const std::string key = std::to_string(row);
+            if (!f.at("values").contains(key)) {
+                ++missing;
+                continue;
+            }
+            std::vector<float> got(values.size());
+            std::transform(values.begin(), values.end(), got.begin(), [](double v) { return static_cast<float>(v); });
+            Compare(got, f.at("values").at(key).get<std::vector<float>>(), tol.at("atol").get<double>(),
+                    tol.at("rtol").get<double>(), "row " + key, worst);
+            if (std::abs(part->labels.at(row) - f.at("labels").at(key).get<double>()) > 1e-6) ++label_mismatch;
+        }
+    }
+    Check(missing == 0, kind + ": every served row is one the Python side has (" + std::to_string(missing) +
+                            " are not)");
+    Check(worst.excess <= 1.0, kind + ": every row's values as Python reads them (worst " +
+                                   std::to_string(worst.excess) + " tolerances at " + worst.where + ")");
+    Check(label_mismatch == 0, kind + ": every row's label (" + std::to_string(label_mismatch) + " differ)");
+}
+
+json LoadKind(const std::string& name) {
+    std::ifstream in(FixtureRoot() / ("data_parity_" + name + ".json"));
+    if (!in) throw std::runtime_error("data_parity_" + name + ".json is not readable");
+    return json::parse(in);
+}
+
+// Text: Data Input -> TextTokenizer (Word tokens, vocabulary fitted on the
+// Train rows) with the training split -> the Arrow batchers.
+void RunText() {
+    const json f = LoadKind("text");
+    std::cout << "text: " << f.at("summary").get<std::string>() << "\n";
+    json j;
+    j["nodes"] = json::array(
+        {{{"id", 1}, {"type", "DataInput"}, {"name", "Reviews"},
+          {"parameters", {{"source_type", "file"}, {"file_path", (ModelDir() / "text.csv").string()}, {"type", "csv"},
+                          {"has_header", "true"}, {"delimiter", ","}, {"label_column", "label"},
+                          {"force_disk_backed", "false"}}}},
+         {{"id", 2}, {"type", "TextTokenizer"}, {"name", "Tokens"},
+          {"parameters", f.at("tokenizer")}}});
+    j["links"] = json::array({{{"start_node", 1}, {"end_node", 2}}});
+    j["training_split"] = f.at("training_split");
+    cyxwiz::PipelineExecutor pipeline;
+    const bool ran = pipeline.ExecutePipeline(j.dump());
+    Check(ran, "text: the pipeline tokenizes the CSV: " + pipeline.GetLastError());
+    if (!ran) return;
+    const auto tokens = cyxwiz::DataRegistry::Instance().GetArrowDataset(pipeline.NodeResults().at(2));
+    Check(tokens && tokens->GetArrowTable(), "text: the token rows are in memory");
+    if (!tokens) return;
+    cyxwiz::TrainingConfiguration config;
+    config.has_data_split = true;
+    config.shuffle = true;
+    config.stratified = true;
+    config.train_ratio = 0.7f;
+    config.val_ratio = 0.15f;
+    config.test_ratio = 0.15f;
+    config.dataloader_seed = kLoaderSeed;
+    config.num_workers = 0;
+    config.output_size = f.at("classes").get<size_t>();
+    auto set = cyxwiz::BuildArrowTrainingBatchers(config, tokens, "y", f.at("batch_size").get<int>());
+    bool seeded = false;
+    const PartRead train = ReadTrain(*set.train, 2, kLoaderSeed, seeded);
+    CheckParts("text", f, train, ReadOnce(set.val), ReadOnce(set.test), seeded);
+}
+
+// Time series: Data Input -> TimeSeriesWindow -> TimeSeriesSplit
+// (chronological) -> the Arrow batchers.
+void RunSeries() {
+    const json f = LoadKind("series");
+    std::cout << "series: " << f.at("summary").get<std::string>() << "\n";
+    json j;
+    j["nodes"] = json::array(
+        {{{"id", 1}, {"type", "DataInput"}, {"name", "Readings"},
+          {"parameters", {{"source_type", "file"}, {"file_path", (ModelDir() / "series.csv").string()}, {"type", "csv"},
+                          {"has_header", "true"}, {"delimiter", ","}, {"force_disk_backed", "false"}}}},
+         {{"id", 2}, {"type", "TimeSeriesWindow"}, {"name", "Windows"}, {"parameters", f.at("window")}},
+         {{"id", 3}, {"type", "TimeSeriesSplit"}, {"name", "Split"}, {"parameters", f.at("split")}}});
+    j["links"] = json::array({{{"start_node", 1}, {"end_node", 2}}, {{"start_node", 2}, {"end_node", 3}}});
+    cyxwiz::PipelineExecutor pipeline;
+    const bool ran = pipeline.ExecutePipeline(j.dump());
+    Check(ran, "series: the pipeline windows and splits the CSV: " + pipeline.GetLastError());
+    if (!ran) return;
+    const auto windows = cyxwiz::DataRegistry::Instance().GetArrowDataset(pipeline.NodeResults().at(3));
+    Check(windows && windows->GetArrowTable(), "series: the windows are in memory");
+    if (!windows) return;
+    std::cout << "    series columns:";
+    for (const auto& field : windows->GetArrowTable()->schema()->fields()) std::cout << " " << field->name();
+    std::cout << "\n";
+    cyxwiz::TrainingConfiguration config;
+    config.is_time_series = true;
+    config.loss_type = gui::NodeType::MSELoss;  // a forecast: continuous targets
+    config.has_data_split = true;
+    config.shuffle = true;
+    config.dataloader_seed = kLoaderSeed;
+    config.num_workers = 0;
+    auto set = cyxwiz::BuildArrowTrainingBatchers(config, windows, "y", f.at("batch_size").get<int>());
+    bool seeded = false;
+    const PartRead train = ReadTrain(*set.train, 2, kLoaderSeed, seeded);
+    CheckParts("series", f, train, ReadOnce(set.val), ReadOnce(set.test), seeded);
+}
+
+// One batcher serves an image / audio set's three parts (SetPhase), as the
+// executor uses it.
+void ReadPhases(const std::string& kind, const json& f, cyxwiz::IBatcher& batcher) {
+    bool seeded = false;
+    batcher.SetPhase(cyxwiz::BatcherPhase::Train);
+    const PartRead train = ReadTrain(batcher, 2, kLoaderSeed, seeded);
+    batcher.SetPhase(cyxwiz::BatcherPhase::Val);
+    const PartRead val = ReadOnce(&batcher);
+    batcher.SetPhase(cyxwiz::BatcherPhase::Test);
+    const PartRead test = ReadOnce(&batcher);
+    CheckParts(kind, f, train, val, test, seeded);
+}
+
+cyxwiz::SampleSplitSettings SplitOf(const json& f) {
+    const json& s = f.at("split");
+    return {s.at("train").get<float>(), s.at("val").get<float>(), s.at("test").get<float>(),
+            s.at("stratified").get<bool>(), s.at("seed").get<uint32_t>()};
+}
+
+// Images: a class-per-folder set (PNG: RGB, grey, RGBA, one 8 x 8 to shrink)
+// prepared at 4 x 4 and served by ImageDatasetBatcher.
+void RunImage() {
+    const json f = LoadKind("image");
+    std::cout << "image: " << f.at("summary").get<std::string>() << "\n";
+    cyxwiz::DataRegistry::ImageDatasetEntry entry;
+    entry.folder_path = (ModelDir() / "images").string();
+    entry.layout = 0;
+    entry.num_images = f.at("rows").get<int>();
+    entry.num_classes = f.at("classes").get<int>();
+    cyxwiz::ImagePreprocessingConfig preprocessing;
+    preprocessing.resize_mode = cyxwiz::ResizeMode::Exact;
+    preprocessing.target_width = f.at("size").get<int>();
+    preprocessing.target_height = f.at("size").get<int>();
+    const auto prepared = cyxwiz::PrepareImageSet(entry, cyxwiz::PreparedImageSpecFrom(preprocessing));
+    Check(prepared.set != nullptr, "image: the set is prepared");
+    if (!prepared.set) return;
+    cyxwiz::ImageDatasetBatcher batcher(prepared.set, f.at("batch_size").get<int>(), SplitOf(f), true, kLoaderSeed);
+    ReadPhases("image", f, batcher);
+}
+
+// Audio: a class-per-folder set of 16-bit mono WAVs, the magnitude
+// spectrogram (n_fft 64, hop 32), served by AudioDatasetBatcher.
+void RunAudio() {
+    const json f = LoadKind("audio");
+    std::cout << "audio: " << f.at("summary").get<std::string>() << "\n";
+    cyxwiz::DataRegistry::AudioDatasetEntry entry;
+    entry.folder_path = (ModelDir() / "audio").string();
+    entry.labeled_subdirs = true;
+    entry.target_sr = f.at("sample_rate").get<int>();
+    entry.max_duration = f.at("seconds").get<float>();
+    entry.num_samples = f.at("rows").get<int>();
+    entry.num_classes = f.at("classes").get<int>();
+    cyxwiz::AudioPreprocessingConfig preprocessing;
+    preprocessing.has_feature_node = true;
+    preprocessing.feature_type = cyxwiz::AudioFeatureType::Spectrogram;
+    preprocessing.n_fft = f.at("n_fft").get<int>();
+    preprocessing.hop_length = f.at("hop").get<int>();
+    cyxwiz::AudioDatasetBatcher batcher(entry, preprocessing, f.at("batch_size").get<int>(), SplitOf(f), true, 0,
+                                        kLoaderSeed);
+    Check(batcher.GetNumSamples() > 0, "audio: the clips load");
+    ReadPhases("audio", f, batcher);
+}
+
+// Sparse: the text CSV through TFIDFVectorizer (sparse output, vocabulary
+// and idf from the Train rows) with the training split ->
+// BuildSparseTrainingBatchers.
+void RunSparse() {
+    const json f = LoadKind("sparse");
+    std::cout << "sparse: " << f.at("summary").get<std::string>() << "\n";
+    json j;
+    j["nodes"] = json::array(
+        {{{"id", 1}, {"type", "DataInput"}, {"name", "Reviews"},
+          {"parameters", {{"source_type", "file"}, {"file_path", (ModelDir() / "text.csv").string()}, {"type", "csv"},
+                          {"has_header", "true"}, {"delimiter", ","}, {"label_column", "label"},
+                          {"force_disk_backed", "false"}}}},
+         {{"id", 2}, {"type", "TFIDFVectorizer"}, {"name", "Terms"}, {"parameters", f.at("vectorizer")}}});
+    j["links"] = json::array({{{"start_node", 1}, {"end_node", 2}}});
+    j["training_split"] = f.at("training_split");
+    cyxwiz::PipelineExecutor pipeline;
+    const bool ran = pipeline.ExecutePipeline(j.dump());
+    Check(ran, "sparse: the pipeline vectorizes the CSV: " + pipeline.GetLastError());
+    if (!ran) return;
+    const auto features = cyxwiz::DataRegistry::Instance().GetSparseFeatureDataset(pipeline.NodeResults().at(2));
+    Check(features != nullptr, "sparse: the sparse rows are registered");
+    if (!features) return;
+    cyxwiz::TrainingConfiguration config;
+    config.has_data_split = true;
+    config.shuffle = true;
+    config.stratified = true;
+    config.train_ratio = 0.7f;
+    config.val_ratio = 0.15f;
+    config.test_ratio = 0.15f;
+    config.dataloader_seed = kLoaderSeed;
+    config.num_workers = 0;
+    config.output_size = f.at("classes").get<size_t>();
+    auto set = cyxwiz::BuildSparseTrainingBatchers(config, features, f.at("batch_size").get<int>());
+    bool seeded = false;
+    const PartRead train = ReadTrain(*set.train, 2, kLoaderSeed, seeded);
+    CheckParts("sparse", f, train, ReadOnce(set.val), ReadOnce(set.test), seeded);
+
+    // Training on those batches: a linear model on the CSR rows against
+    // PyTorch running its export on the dense rows in the same order.
+    const json& run = f.at("training");
+    const auto graph = SparseModel();
+    const auto exported = cyxwiz::test::UnstampedPyTorchExport(graph);
+    const std::string committed = cyxwiz::test::ReadText(ModelDir() / "sparse_linear.py");
+    Check(exported.code == committed, "sparse: the model's PyTorch export is the committed one");
+    Check(run.at("export_sha256") == cyxwiz::test::Sha256Text(committed), "sparse: the fixture was made from it");
+    const auto named = cyxwiz::test::NamedAfterModules(graph, exported);
+    cyxwiz::GraphCompiler compiler;
+    cyxwiz::TrainingConfiguration model_config = compiler.Compile(named.nodes, named.links, true);
+    Check(model_config.is_valid, "sparse: the model compiles");
+    if (!model_config.is_valid) return;
+    const fs::path work = fs::temp_directory_path() / "cyxwiz_oracle_data_sparse";
+    fs::remove_all(work);
+    fs::create_directories(work);
+    model_config.has_data_split = true;
+    model_config.shuffle = true;
+    model_config.stratified = true;
+    model_config.train_ratio = 0.7f;
+    model_config.val_ratio = 0.15f;
+    model_config.test_ratio = 0.15f;
+    model_config.dataloader_seed = kLoaderSeed;
+    model_config.num_workers = 0;
+    model_config.batch_size = f.at("batch_size").get<int>();
+    model_config.epochs = kEpochs;
+    model_config.validation_freq = 1;
+    model_config.save_best_checkpoint = false;
+    model_config.early_stopping_patience = 0;
+    model_config.log_interval = 1;
+    model_config.checkpoint_dir = (work / "checkpoints").string();
+    model_config.initialize_from_weights_file = (ModelDir() / run.at("init_weights").get<std::string>()).string();
+    auto resolved = cyxwiz::TakeResolvedExternalBatchers(
+        cyxwiz::BuildSparseTrainingBatchers(model_config, features, model_config.batch_size));
+    const RunCheck check = TrainAgainst(model_config, std::move(resolved), run.at("steps"), run.at("epochs"),
+                                        run.at("tolerance").at("atol").get<double>(),
+                                        run.at("tolerance").at("rtol").get<double>());
+    Check(check.status == "completed", "sparse: the run completes (" + check.status + ": " + check.reason + ")");
+    Check(check.steps == run.at("steps").size(), "sparse: " + std::to_string(check.steps) + " steps");
+    Check(check.layout_problem.empty(), "sparse: the head takes the fixture's weights: " + check.layout_problem);
+    Check(check.loss.excess <= 1.0, "sparse: every step's running loss is PyTorch's (worst " +
+                                        std::to_string(check.loss.excess) + " tolerances at " + check.loss.where + ")");
+    Check(check.epoch.excess <= 1.0, "sparse: every epoch's validation loss and weights are PyTorch's (worst " +
+                                         std::to_string(check.epoch.excess) + " tolerances at " + check.epoch.where + ")");
+    fs::remove_all(work);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -488,6 +921,13 @@ int main(int argc, char** argv) {
                   << fixture.at("numpy_version").get<std::string>() << "\n";
         Run(fixture);
         RunUnshuffledSplit(fixture);
+        for (const auto& kind : {RunText, RunSeries, RunImage, RunAudio, RunSparse}) {
+            try {
+                kind();
+            } catch (const std::exception& e) {
+                Check(false, std::string("exception: ") + e.what());
+            }
+        }
         const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
         Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     } catch (const std::exception& e) {
