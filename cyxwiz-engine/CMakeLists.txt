@@ -7842,6 +7842,15 @@ target_compile_definitions(test_computation_truth_optimizer_trajectory PRIVATE
 set_target_properties(test_computation_truth_optimizer_trajectory PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# ===== Test: BatchNorm 1D over several training batches, vs PyTorch (TOFIX228 1.4) =====
+add_executable(test_computation_truth_batchnorm1d tests/computation_truth/test_computation_truth_batchnorm1d.cpp)
+target_link_libraries(test_computation_truth_batchnorm1d PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json)
+target_include_directories(test_computation_truth_batchnorm1d PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+target_compile_definitions(test_computation_truth_batchnorm1d PRIVATE
+    CYXWIZ_BATCHNORM1D_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/batchnorm1d_pytorch.json"
+    NOMINMAX)
+set_target_properties(test_computation_truth_batchnorm1d PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: observation/reward normalisation vs Stable-Baselines3's VecNormalize (TOFIX195 S4.3a) =====
 add_executable(test_computation_truth_vec_normalize
     tests/test_computation_truth_vec_normalize.cpp
@@ -9253,6 +9262,7 @@ cyxwiz_enable_pch(test_trial_runner)
 # build folder with: ctest -C Release -L oracle (one device: -L oracle -L cpu).
 include(${CMAKE_SOURCE_DIR}/cmake/CyxWizBuildInfo.cmake)
 set(CYXWIZ_ORACLE_TESTS
+    test_computation_truth_batchnorm1d
     test_computation_truth_classic_ml
     test_computation_truth_clustering
     test_computation_truth_cross_validation
