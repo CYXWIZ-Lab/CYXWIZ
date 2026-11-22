@@ -82,7 +82,7 @@ Each refusal is reported on the scheduler node.
 
 ## Checked against PyTorch
 
-`scheduler_node_pytorch_parity` compiles a graph with each node, trains it and
+`oracle_scheduler_node_training_cpu` compiles a graph with each node, trains it and
 compares the learning rate after every epoch with torch's
 (`tests/computation_truth/fixtures/scheduler_node_pytorch.json`). It also
 checks Reduce LR against the run's own validation losses and a resumed run

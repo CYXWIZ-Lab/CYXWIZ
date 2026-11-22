@@ -470,7 +470,7 @@ frequencies.
   in Studio.
 - They work on image Data Inputs (folders of image files). Tabular pixel rows
   do not go through them.
-- Checked against torchvision: `image_transforms_torchvision_parity` compares
+- Checked against torchvision: `oracle_image_transforms_cpu` compares
   every node with `torchvision.transforms.functional` on CUDA, OpenCL and the
   ArrayFire CPU backend, including 90-degree rotation on even sizes, bilinear
   rotation, every Color Jitter order, one-channel images, padded Random Crop,

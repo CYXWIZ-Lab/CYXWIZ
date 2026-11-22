@@ -49,10 +49,26 @@ device: cpu 0 (float64)
   that device or fails; unset, it says it uses the default device.
 - Tests that train through the training executor pin every run to that
   device (CPU when nothing is asked) with the Strict policy, and check at the
-  end that every run bound it: `training device: every run (N) on arrayfire_cpu 0`.
+  end that every training and test run bound it, Strict:
+  `training device: every run (N) on arrayfire_cpu 0, strict`.
 - Host-only oracles (text, utilities, VecNormalize) print `device: host`.
 - `test_computation_truth_tfidf_loss` goes over its devices itself (CPU, then
   each CUDA / OpenCL route); with the variable set it checks only that device.
+
+Run the whole set from the build folder with ctest:
+
+```
+ctest -C Release -L oracle                 # every registered device
+ctest -C Release -L oracle -L cpu          # one device
+```
+
+Each test is registered once per device as `oracle_<test>_<device>` (labels
+`oracle;<device>`, the variable set for it); the host-only ones once, as
+`oracle_<test>` (labels `oracle;cpu;host`). The devices come from the CMake
+cache variable `CYXWIZ_ORACLE_DEVICES`: `cpu` by default, and a machine with
+GPUs configures `-DCYXWIZ_ORACLE_DEVICES="cpu;cuda;opencl"`. GPU entries run
+one at a time per device. `test_transformer_dropout` gets its device and an
+output file (`<build>/oracle/transformer_dropout_<device>.json`) as arguments.
 
 Initial target cases:
 
@@ -430,7 +446,7 @@ final partial accumulation flush.
 The graph scheduler nodes (Step, Cosine, Exponential, Warmup, Reduce LR) bind
 into this boundary (TOFIX140 A3): GraphCompiler turns the node fed by the
 training optimizer into `TrainingConfiguration::scheduler`, and
-`scheduler_node_pytorch_parity` (test_scheduler_node_training.cpp, fixture from
+`oracle_scheduler_node_training_cpu` (test_scheduler_node_training.cpp, fixture from
 generate_scheduler_node_fixtures.py) trains a compiled graph per node and
 matches torch's learning rate after every epoch, replays Reduce LR's
 validation losses through the backend scheduler, and resumes a run from its
@@ -440,7 +456,7 @@ The regularization nodes (L1, L2, Elastic Net; TOFIX140 A4) sit between the
 loss and the optimizer. GraphCompiler turns the one on that wire into
 `TrainingConfiguration::regularization_l1/l2`, and TrainingExecutor adds
 `l1 x sign(w) + 2 x l2 x w` to each trainable parameter's gradient once per
-optimizer step, before clipping. `regularization_node_pytorch_parity`
+optimizer step, before clipping. `oracle_regularization_node_training_cpu`
 (test_regularization_node_training.cpp, fixture from
 generate_regularization_node_fixtures.py) first checks that the Engine's
 model_seed 52 initialisation is the fixture's start, then trains a compiled
@@ -451,7 +467,7 @@ PPO (cyxwiz/rl/ppo.h; TOFIX195 S4.1) has no autograd either: the loss of
 Stable-Baselines3 2.7 (normalised advantages, clipped surrogate, optional
 clipped value, entropy bonus) writes its gradients with respect to the
 policy's means or logits, the log standard deviation and the values by
-hand. `ppo_pytorch_parity` (test_computation_truth_ppo.cpp, fixture from
+hand. `oracle_computation_truth_ppo_cpu` (test_computation_truth_ppo.cpp, fixture from
 generate_ppo_fixtures.py, which copies SB3's PPO.train on
 torch.distributions) matches the losses, approximate KL, clip fraction and
 every gradient for Gaussian and categorical policies under three settings
@@ -465,7 +481,7 @@ Gradient clipping by the global norm has three implementations: the host
 clip (ClipGradientsByGlobalNorm, the optimizer nodes' Gradient clip norm),
 the device clip (ClipGradientsByGlobalNormOnDevice, PPO's per-tensor path)
 and the clip inside the fused Adam kernel (AdamOptimizer::StepTogether, PPO
-on the NVIDIA provider). `gradient_clipping_pytorch_parity`
+on the NVIDIA provider). `oracle_computation_truth_gradient_clipping_cpu`
 (test_computation_truth_gradient_clipping.cpp, fixture from
 generate_gradient_clipping_fixtures.py) matches each of them against
 torch.nn.utils.clip_grad_norm_ with its default error_if_nonfinite=False,
@@ -478,7 +494,7 @@ runs it.
 
 The PPO trainer's observation and reward normalisation (core/rl/vec_normalize,
 TOFIX195 S4.3a) is checked against Stable-Baselines3's own VecNormalize:
-`vec_normalize_sb3_parity` (test_computation_truth_vec_normalize.cpp, fixture
+`oracle_computation_truth_vec_normalize` (test_computation_truth_vec_normalize.cpp, fixture
 from generate_vec_normalize_fixtures.py) replays a recorded stream of three
 copies through it and matches the normalised observations, the scaled and
 clipped rewards, the final observations of ended episodes and the running

@@ -69,7 +69,7 @@ follow-up.
   train it in Studio.
 - Older graphs that used the `favor+` feature map (random features, never
   implemented) are refused at compile: pick `elu` or `relu`.
-- Checked against PyTorch: `linear_attention_pytorch_parity` (forward, input
+- Checked against PyTorch: `oracle_linear_attention_training_cpu` (forward, input
   gradient and every parameter gradient; elu and relu, causal and not, one to
   four heads, with and without bias). The reference computes the full kernel
   matrix, so it also confirms the summary form gives the same numbers.
