@@ -155,7 +155,6 @@ grpc::Status JobExecutionServiceImpl::ConnectToNode(
     spdlog::info("  Job ID: {}", request->job_id());
     spdlog::info("  Engine Version: {}", request->engine_version());
     spdlog::info("  Peer Address: {}", context->peer());
-    spdlog::info("  Auth Token: {}...", request->auth_token().substr(0, 40));
     spdlog::info("========================================");
 
     // Verify auth token

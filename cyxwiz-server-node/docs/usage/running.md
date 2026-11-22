@@ -129,6 +129,11 @@ docs/usage/server-address.md) when less than 2 hours remain, so a node can run
 for days. If renewal fails after the token has expired, sign in again in the
 GUI. There is no wallet sign-in.
 
+Logs carry no token text. The daemon logs the job id, the Engine's version and
+the peer address of a connecting Engine, and whether its token was accepted;
+the Engine logs the node it was given and when the token ends. A token is a
+credential until it expires, so a log file can be shared without one in it.
+
 Live check against a running central server and web API:
 
 ```powershell

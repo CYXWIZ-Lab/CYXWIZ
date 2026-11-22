@@ -133,7 +133,6 @@ void JobManager::Update() {
                     spdlog::info("  Job ID: {}", job.job_id);
                     spdlog::info("  Assigned Node ID: {}", assignment.node_id());
                     spdlog::info("  Node Endpoint: {}", assignment.node_endpoint());
-                    spdlog::info("  JWT Token: {}...", assignment.auth_token().substr(0, 40));
                     spdlog::info("  Token Expires: {} (Unix timestamp)", assignment.token_expires_at());
                     spdlog::info("========================================");
 
