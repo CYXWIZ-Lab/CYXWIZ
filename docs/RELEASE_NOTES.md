@@ -778,6 +778,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- **A settings folder whose name Windows cannot spell in its code page no longer
+  stops the Engine starting.** My patterns are off in that case, and a file in
+  the patterns folder with such a name is skipped instead of stopping the load.
 - **The Nodes panel's Examples follow the pattern library.** The list and its
   count update after a pattern is saved or deleted, and My patterns stay in the
   Pattern Browser instead of mixing with the shipped examples.

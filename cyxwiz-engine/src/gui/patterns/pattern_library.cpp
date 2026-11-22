@@ -10,6 +10,7 @@
 #include <fstream>
 #include <filesystem>
 #include <spdlog/spdlog.h>
+#include <system_error>
 #include <regex>
 #include <algorithm>
 #include <set>
@@ -120,8 +121,12 @@ void PatternLibrary::LoadUserPatterns(const std::string& directory) {
 
     spdlog::info("Loading user patterns from: {}", directory);
     for (const auto& entry : fs::directory_iterator(directory)) {
-        if (entry.path().extension() == ".cyxgraph") {
+        if (entry.path().extension() != ".cyxgraph") continue;
+        try {
             LoadPatternFile(entry.path().string(), true);
+        } catch (const std::system_error&) {
+            // A name the system code page cannot spell: skip that file, keep the rest.
+            spdlog::warn("Skipped a pattern file in {}: its name cannot be used", directory);
         }
     }
 }
