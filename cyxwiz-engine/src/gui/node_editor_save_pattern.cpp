@@ -100,7 +100,11 @@ void NodeEditor::DrawSavePatternDialog() {
     const bool named = name.find_first_not_of(" \t") != std::string::npos;
     const std::filesystem::path file = library.UserPatternFile(name);
     std::error_code ec;
-    if (named && std::filesystem::exists(file, ec)) Wrapped(pb::NameTakenText(name), t.warning);
+    if (named && std::filesystem::exists(file, ec)) {
+        // Different names can share a file ("Foo Bar", "foo-bar"): name the one Save replaces.
+        const auto* existing = library.GetPattern("user:" + file.stem().string());
+        Wrapped(pb::NameTakenText(existing ? existing->name : name), t.warning);
+    }
 
     ui::FieldLabel("Description");
     ImGui::InputTextMultiline("##description", save_pattern_.description, sizeof(save_pattern_.description),

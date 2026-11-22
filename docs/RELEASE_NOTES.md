@@ -778,6 +778,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- **Save selection as pattern names the pattern it would replace.** Two names
+  that share a file ("Foo Bar" and "foo-bar") now warn with the existing
+  pattern's name.
 - **A pattern whose file was moved or deleted outside the Engine can be
   deleted.** Delete takes it out of My patterns instead of refusing with "the
   file is no longer there".
