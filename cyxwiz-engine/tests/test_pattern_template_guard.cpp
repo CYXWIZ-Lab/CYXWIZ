@@ -795,15 +795,19 @@ int main() {
     Check(nodes.empty() && links.empty(), "Dense-encoded NER parameter rejection should leave no partial graph");
     Check(creator_calls == calls_before_refusals, "a refused pattern calls the node creator for none of its nodes");
 
-    Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "NERSequenceBuilder"),
+    const auto placeholder_name = [](gui::NodeType type, const std::string& name) {
+        std::string marker;
+        return gui::detail::IsDenseEncodedSequencePlaceholderName(type, name, marker);
+    };
+    Check(placeholder_name(gui::NodeType::Dense, "NERSequenceBuilder"),
           "Dense-encoded NERSequenceBuilder placeholder should be rejected");
-    Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "Sentence Sequences"),
+    Check(placeholder_name(gui::NodeType::Dense, "Sentence Sequences"),
           "Dense-encoded friendly NER placeholder name should be rejected");
-    Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "TokenCrossEntropyLoss"),
+    Check(placeholder_name(gui::NodeType::Dense, "TokenCrossEntropyLoss"),
           "Dense-encoded token loss placeholder should be rejected");
-    Check(!gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "Dense (128)"),
+    Check(!placeholder_name(gui::NodeType::Dense, "Dense (128)"),
           "ordinary Dense layer names should not be rejected");
-    Check(!gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Embedding, "NERSequenceBuilder"),
+    Check(!placeholder_name(gui::NodeType::Embedding, "NERSequenceBuilder"),
           "first-class non-Dense node types should not be rejected by the Dense placeholder guard");
 
     gui::MLNode dense_encoded_ner;

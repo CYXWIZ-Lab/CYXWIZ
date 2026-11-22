@@ -13,7 +13,6 @@
 
 #include <imgui.h>
 
-#include <cstring>
 #include <filesystem>
 
 namespace gui {

@@ -247,12 +247,4 @@ inline bool IsDenseEncodedSequencePlaceholder(const MLNode& node,
                matched_marker);
 }
 
-inline bool IsDenseEncodedSequencePlaceholder(NodeType node_type,
-                                              const std::string& node_name) {
-    std::string matched_marker;
-    return IsDenseEncodedSequencePlaceholderName(node_type,
-                                                 node_name,
-                                                 matched_marker);
-}
-
 } // namespace gui::detail
