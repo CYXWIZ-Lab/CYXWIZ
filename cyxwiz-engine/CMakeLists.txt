@@ -8022,6 +8022,14 @@ add_custom_target(copy_test_conv1d_graph_training_fixture
 )
 add_dependencies(test_conv1d_graph_training copy_test_conv1d_graph_training_fixture)
 
+# ===== Oracle level 2: a model trained a few steps against PyTorch running
+# the Engine's own export of the graph (TOFIX228 1.5b). Fixtures and the
+# committed exports: tests/computation_truth/fixtures/train_trajectory/.
+add_executable(test_oracle_train
+    tests/oracle/test_oracle_train.cpp
+)
+configure_training_executor_harness(test_oracle_train)
+
 # ===== Benchmark: Conv2D provider vs ArrayFire/native (TOFIX140 A1b), not a ctest =====
 add_executable(benchmark_conv2d_provider
     tests/benchmarks_conv2d_provider.cpp
@@ -9268,6 +9276,7 @@ cyxwiz_enable_pch(test_trial_runner)
 # build folder with: ctest -C Release -L oracle (one device: -L oracle -L cpu).
 include(${CMAKE_SOURCE_DIR}/cmake/CyxWizBuildInfo.cmake)
 set(CYXWIZ_ORACLE_TESTS
+    test_oracle_train
     test_computation_truth_batchnorm1d
     test_computation_truth_classic_ml
     test_computation_truth_clustering

@@ -87,6 +87,54 @@ GPUs configures `-DCYXWIZ_ORACLE_DEVICES="cpu;cuda;opencl"`. GPU entries run
 one at a time per device. `test_transformer_dropout` gets its device and an
 output file (`<build>/oracle/transformer_dropout_<device>.json`) as arguments.
 
+## Level 2: a model trained against its own PyTorch export
+
+`test_oracle_train` (`tests/oracle/test_oracle_train.cpp`, ctest
+`oracle_oracle_train_<device>`) trains small zoo models for a few steps and
+compares every step with PyTorch running the Engine's own PyTorch export of
+the same graph (`core/code_export`, the code Studio's Generate / Save as .py
+writes), so the export is tested too:
+
+- `fixtures/train_trajectory/<model>.py` is the graph's unstamped export and
+  `<model>.json` its spec (input shape, rows, batch size, task, which node is
+  which `self.layerN`). The test fails when a fresh export differs from the
+  committed one.
+- `reference/generate_train_trajectory_fixtures.py` runs each export as a
+  user would: its setup (model, criterion, optimizer, scheduler, with the
+  `total_updates = 1000` placeholder set to the run's updates), one forward
+  pass in eval mode to materialise the lazy layers, the starting weights saved
+  as `<model>_init.pth`, then the example training loop uncommented over the
+  rows in order. It records per step the epoch's running loss and every
+  parameter and buffer (`fixtures/train_trajectory_pytorch.json`).
+- The test names the parameter nodes after the export's modules, starts the
+  run from `<model>_init.pth` the way a user's run does
+  (`initialize_from_weights_file`), trains one epoch through the
+  `TrainingExecutor` with shuffle off, and after each step compares the
+  running loss and every parameter, converted to the Engine's layouts by the
+  same weight matcher. The same run with the learning rate x 1.1 must miss by
+  more than ten tolerances (the comparison can fail).
+- Dropouts in the zoo are 0: torch's and the Engine's masks come from
+  different generators (the mask is level 1's, `test_transformer_dropout`).
+
+- Elements no gradient reaches (an attention key bias, a bias a BatchNorm
+  takes the mean of) move only by rounding noise, which Adam and RMSprop scale
+  up to steps on either side. The generator finds them (|gradient| < 1e-6 at
+  every step, `noise_mask` in the fixture) and the test holds them to an
+  absolute 1e-3; everything else to atol 2e-5, rtol 2e-4.
+- Zoo: an MLP with BatchNorm (SGD, momentum, Nesterov, decay, clipping), a
+  GRU regressor after a Reshape (MSE, Adam with warm-up), a transformer encoder
+  classifier (AdamW, warm-up + cosine, clipping) and a residual block on image
+  rows (RMSprop, momentum, clipping). Image rows are height, width, channel for
+  the Engine; the generator gives torch the same rows channels first.
+
+After changing a zoo model or the export:
+
+```
+build/bin/Release/test_oracle_train --write-exports <repo>/cyxwiz-engine/tests/computation_truth/fixtures/train_trajectory
+py -3.12 cyxwiz-engine/tests/computation_truth/reference/generate_train_trajectory_fixtures.py
+py -3.12 scripts/checks/check_oracle_fixtures.py . --update train_trajectory_pytorch.json
+```
+
 Initial target cases:
 
 - TF-IDF bounded materialization values and shape.

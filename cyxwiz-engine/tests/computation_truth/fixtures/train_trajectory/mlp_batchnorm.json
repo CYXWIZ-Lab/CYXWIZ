@@ -1,0 +1,26 @@
+{
+  "batch_size": 8,
+  "classes": 4,
+  "image_rows": false,
+  "input_shape": [
+    12
+  ],
+  "model": "mlp_batchnorm",
+  "modules": [
+    {
+      "module": "layer0",
+      "node": "Hidden"
+    },
+    {
+      "module": "layer1",
+      "node": "Norm"
+    },
+    {
+      "module": "layer2",
+      "node": "Head"
+    }
+  ],
+  "rows": 40,
+  "summary": "Dense 16, BatchNorm, ReLU, Dropout 0, Dense 4; cross-entropy; SGD momentum Nesterov decay clip",
+  "task": "classification"
+}

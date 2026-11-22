@@ -279,6 +279,12 @@
    "generator": "reference/generate_time_series_fixtures.py",
    "generator_sha256": "079aee832c7fb114f96a2ca42c8398821eff198a2322d694b639aaab8b672e0e"
   },
+  "train_trajectory_pytorch.json": {
+   "fixture_sha256": "a05f9502300f92d507e249637c185530bf89bbd11e6b992a120ba750f61cf53e",
+   "generator": "reference/generate_train_trajectory_fixtures.py",
+   "generator_sha256": "eb41ddf88c2fda9132569f4a47634eb4ebb5dc54bf182c120c28c6e7ccf8b262",
+   "note": "made from the committed exports in train_trajectory/ (test_oracle_train --write-exports); the test checks a fresh export equals them and the fixture's export_sha256"
+  },
   "training_core_pytorch.json": {
    "fixture_sha256": "5b5574b5a53cb9084eee149d4d2e7b08313979a699b7337745e2f24d5eb4bacb",
    "generator": "reference/generate_training_core_fixtures.py",
