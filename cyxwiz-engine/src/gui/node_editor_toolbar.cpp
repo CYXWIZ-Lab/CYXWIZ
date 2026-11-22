@@ -247,7 +247,7 @@ void NodeEditor::DrawViewItems() {
 void NodeEditor::DrawFrameworkItems() {
     for (int i = 0; i < 4; ++i)
         if (ImGui::MenuItem(kFrameworks[i], nullptr, static_cast<int>(selected_framework_) == i)) {
-            selected_framework_ = static_cast<CodeFramework>(i);
+            selected_framework_ = static_cast<cyxwiz::CodeFramework>(i);
             code_result_.clear();
             spdlog::info("Code generation framework: {}", kFrameworks[i]);
         }

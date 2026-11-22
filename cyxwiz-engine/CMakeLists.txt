@@ -3146,6 +3146,12 @@ set_target_properties(test_extension_node_registry PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: graph code export, GUI-free (TOFIX228 1.5a) =====
+add_executable(test_code_export tests/test_code_export.cpp)
+target_link_libraries(test_code_export PRIVATE cyxwiz-training-core)
+set_target_properties(test_code_export PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME code_export COMMAND test_code_export)
+
 # ===== Test: Extension node identity and creation (TOFIX125) =====
 add_executable(test_extension_node_factory
     tests/test_extension_node_factory.cpp

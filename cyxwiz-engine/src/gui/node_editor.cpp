@@ -172,7 +172,7 @@ NodeEditor::NodeEditor()
       show_context_menu_(false),
       context_menu_node_id_(-1),
       selected_node_id_(-1),
-      selected_framework_(CodeFramework::PyTorch),
+      selected_framework_(cyxwiz::CodeFramework::PyTorch),
       execution_mode_(ExecutionMode::CodeGeneration),  // Unified Canvas Phase 2: Default to code generation
       editor_context_(nullptr),
       script_editor_(nullptr),
