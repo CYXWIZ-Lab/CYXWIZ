@@ -7,6 +7,7 @@
 #include "graph_compiler.h"
 #include "pipeline_runtime_capabilities.h"
 #include "rl_graph_compile.h"
+#include "spatial_layer_shapes.h"
 
 #include <spdlog/spdlog.h>
 
@@ -128,6 +129,98 @@ std::string BlockedCodegenConfiguration(
         "raise ValueError('" + escaped_error + "')\n";
 }
 
+// The Engine hands the next layer the last time step of a recurrent layer
+// unless it returns sequences (return_sequences, false by default).
+std::string RecurrentLastStepLine(const MLNode& node) {
+    if (PythonBoolLiteral(GetParamOrDefault(node, "return_sequences", "false")) == "True") return {};
+    return "        x = x[:, -1, :]  # return_sequences=false: the last time step\n";
+}
+
+bool IsLossNode(NodeType type) {
+    switch (type) {
+        case NodeType::MSELoss: case NodeType::CrossEntropyLoss: case NodeType::FocalLoss:
+        case NodeType::BCELoss: case NodeType::BCEWithLogits: case NodeType::L1Loss:
+        case NodeType::SmoothL1Loss: case NodeType::HuberLoss: case NodeType::NLLLoss:
+        case NodeType::SoftDiceLoss: case NodeType::TverskyLoss: case NodeType::JaccardLoss:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// The example loop's criterion: its setup line and its call's arguments.
+struct PyTorchCriterion {
+    std::string setup;
+    std::string arguments = "output, target";
+};
+
+PyTorchCriterion PyTorchCriterionFor(const MLNode* node) {
+    PyTorchCriterion out;
+    if (!node) {
+        out.setup = "    criterion = nn.CrossEntropyLoss()  # no loss node in the graph\n";
+        return out;
+    }
+    const std::string reduction = "reduction='" + GetParamOrDefault(*node, "reduction", "mean") + "'";
+    // Regression losses compare like shapes: a [batch, 1] output with a
+    // [batch] target would broadcast to [batch, batch].
+    const std::string regression = "output, target.view_as(output)";
+    switch (node->type) {
+        case NodeType::CrossEntropyLoss: {
+            out.setup = "    criterion = nn.CrossEntropyLoss(" + reduction + ", ignore_index=" +
+                        GetParamOrDefault(*node, "ignore_index", "-100") + ", label_smoothing=" +
+                        GetParamOrDefault(*node, "label_smoothing", "0.0") + ")\n";
+            const std::string weights = GetParamOrDefault(*node, "class_weight", "none");
+            if (weights != "none")
+                out.setup += "    # class_weight=" + weights + ": pass the per-class weights as weight=torch.tensor([...])\n";
+            break;
+        }
+        case NodeType::NLLLoss:
+            out.setup = "    criterion = nn.NLLLoss(" + reduction + ", ignore_index=" +
+                        GetParamOrDefault(*node, "ignore_index", "-100") + ")\n";
+            break;
+        case NodeType::MSELoss:
+            out.setup = "    criterion = nn.MSELoss(" + reduction + ")\n";
+            out.arguments = regression;
+            break;
+        case NodeType::L1Loss:
+            out.setup = "    criterion = nn.L1Loss(" + reduction + ")\n";
+            out.arguments = regression;
+            break;
+        case NodeType::SmoothL1Loss:
+            out.setup = "    criterion = nn.SmoothL1Loss(" + reduction + ", beta=" + GetParamOrDefault(*node, "beta", "1.0") +
+                        ")\n";
+            out.arguments = regression;
+            break;
+        case NodeType::HuberLoss:
+            out.setup = "    criterion = nn.HuberLoss(" + reduction + ", delta=" + GetParamOrDefault(*node, "beta", "1.0") +
+                        ")\n";
+            out.arguments = regression;
+            break;
+        case NodeType::BCELoss:
+        case NodeType::BCEWithLogits: {
+            const bool logits = node->type == NodeType::BCEWithLogits;
+            const std::string pos_weight = GetParamOrDefault(*node, "pos_weight", "1.0");
+            out.setup = std::string("    criterion = nn.") + (logits ? "BCEWithLogitsLoss(" : "BCELoss(") + reduction +
+                        (logits && std::strtod(pos_weight.c_str(), nullptr) != 1.0
+                             ? ", pos_weight=torch.tensor(" + pos_weight + ")"
+                             : std::string()) +
+                        ")\n";
+            const std::string smoothing = GetParamOrDefault(*node, "label_smoothing", "0.0");
+            if (std::strtod(smoothing.c_str(), nullptr) != 0.0)
+                out.setup += "    label_smoothing = " + smoothing + "  # targets t * (1 - e) + e / 2, as CyxWiz trains\n";
+            out.arguments = std::strtod(smoothing.c_str(), nullptr) != 0.0
+                                ? "output, (target.view_as(output) * (1 - label_smoothing) + label_smoothing / 2)"
+                                : "output, target.view_as(output).float()";
+            break;
+        }
+        default:
+            out.setup = "    criterion = None  # " + EffectiveNodeName(*node) +
+                        ": PyTorch has no built-in loss for it; write it here\n";
+            break;
+    }
+    return out;
+}
+
 
 // One export: the graph it reads and the options; the members are the Node
 // Editor's former generators, unchanged.
@@ -147,6 +240,7 @@ private:
     std::string GeneratePyTorchCode(const std::vector<int>& sorted_ids);
     // PyTorch export of the optimizer node's training recipe (tofix112).
     const MLNode* FindExportOptimizerNode() const;
+    const MLNode* FindExportLossNode() const;
     const MLNode* FindExportSchedulerNode() const;
     std::string PyTorchOptimizerSetup() const;
     std::string PyTorchPenaltyLines() const;
@@ -165,6 +259,9 @@ private:
     // hidden size - doubled when bidirectional - or dense units); empty when
     // it cannot be read from the graph (TOFIX112 export harness).
     std::string InferredInputWidth(const MLNode& node) const;
+    // True when `node` reads a feature map (a convolution or pool before it,
+    // or rows reshaped to an image, through shape-keeping layers).
+    bool ReadsFeatureMap(const MLNode& node) const;
     std::string NodeTypeToTensorFlowLayer(const MLNode& node, int layer_idx);
     std::string NodeTypeToKerasLayer(const MLNode& node);
     std::string NodeTypeToPyCyxWizLayer(const MLNode& node);
@@ -665,12 +762,109 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
         }
     }
 
+    // Branches (TOFIX228 1.5c, ORA-20): the forward carries `x` along the
+    // chain; a node whose output is read again later (by two layers, by a
+    // merge, or not by the very next layer) keeps it as v<id>, a layer that
+    // reads another node's output takes it back, and Add / Multiply / Average
+    // / Concatenate combine their inputs. A plain chain writes none of this,
+    // so its code is as before. Graphs with the word + POS fusion or several
+    // inputs keep the chain form.
+    const auto is_merge = [](NodeType type) {
+        return type == NodeType::Add || type == NodeType::Multiply || type == NodeType::Average ||
+               type == NodeType::Concatenate;
+    };
+    const auto is_model_node = [&](const MLNode& n) {
+        if (IsLossNode(n.type) || n.type == NodeType::Output || n.type == NodeType::SequenceTagOutput) return false;
+        switch (n.type) {
+            case NodeType::SGD: case NodeType::Adam: case NodeType::AdamW: case NodeType::RMSprop:
+            case NodeType::Adagrad: case NodeType::NAdam: case NodeType::StepLR: case NodeType::CosineAnnealing:
+            case NodeType::ReduceOnPlateau: case NodeType::ExponentialLR: case NodeType::WarmupScheduler:
+            case NodeType::L1Regularization: case NodeType::L2Regularization: case NodeType::ElasticNet:
+                return false;
+            default:
+                return true;
+        }
+    };
+    std::vector<int> model_order;  // model nodes in forward order
+    for (const int id : sorted_ids)
+        if (const MLNode* n = FindNodeById(id); n && is_model_node(*n)) model_order.push_back(id);
+    std::map<int, size_t> model_position;
+    for (size_t i = 0; i < model_order.size(); ++i) model_position[model_order[i]] = i;
+    // The node feeding input `index` of `n` (0 when none).
+    const auto source_of = [&](const MLNode& n, size_t index) {
+        if (index >= n.inputs.size()) return 0;
+        for (const auto& link : links_)
+            if (link.to_node == n.id && link.to_pin == n.inputs[index].id) return link.from_node;
+        return 0;
+    };
+    std::map<int, std::vector<int>> model_consumers;  // node -> the model nodes reading it
+    size_t source_nodes = 0;
+    for (const int id : model_order) {
+        const MLNode* n = FindNodeById(id);
+        bool has_source = false;
+        for (size_t i = 0; i < n->inputs.size(); ++i) {
+            const int from = source_of(*n, i);
+            if (from && model_position.count(from)) {
+                model_consumers[from].push_back(id);
+                has_source = true;
+            }
+        }
+        if (!has_source) ++source_nodes;
+    }
+    const bool follow_branches = fusion_embedding_layer.empty() && source_nodes <= 1;
+    std::set<int> saved;  // nodes whose output is kept as v<id>
+    if (follow_branches) {
+        for (const auto& [from, readers] : model_consumers) {
+            bool keep = readers.size() > 1;
+            for (const int reader : readers) {
+                if (is_merge(FindNodeById(reader)->type)) keep = true;
+                if (model_position[reader] != model_position[from] + 1) keep = true;
+            }
+            if (keep) saved.insert(from);
+        }
+    }
+    const auto var = [](int id) { return "v" + std::to_string(id); };
+    int current = 0;       // the node whose output `x` holds
+    int pending_save = 0;  // a node to keep as v<id> before the next line
+
     // Forward pass
     code += "    def forward(self, x):\n";
     layer_idx = 0;
     for (int node_id : sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
+
+        if (follow_branches && model_position.count(node->id)) {
+            if (pending_save) {
+                code += "        " + var(pending_save) + " = x\n";
+                pending_save = 0;
+            }
+            if (is_merge(node->type)) {
+                std::vector<std::string> parts;
+                for (size_t i = 0; i < node->inputs.size(); ++i) {
+                    const int from = source_of(*node, i);
+                    if (from) parts.push_back(saved.count(from) ? var(from) : std::string("x"));
+                }
+                std::string expr;
+                if (node->type == NodeType::Concatenate) {
+                    expr = "torch.cat([";
+                    for (size_t i = 0; i < parts.size(); ++i) expr += (i ? ", " : "") + parts[i];
+                    expr += "], dim=" + GetParamOrDefault(*node, "dim", "1") + ")";
+                } else {
+                    const std::string op = node->type == NodeType::Multiply ? " * " : " + ";
+                    for (size_t i = 0; i < parts.size(); ++i) expr += (i ? op : std::string()) + parts[i];
+                    if (node->type == NodeType::Average) expr = "(" + expr + ") / " + std::to_string(parts.size());
+                }
+                code += "        x = " + expr + "\n";
+                current = node->id;
+                if (saved.count(node->id)) pending_save = node->id;
+                continue;
+            }
+            const int from = source_of(*node, 0);
+            if (from && from != current && saved.count(from)) code += "        x = " + var(from) + "\n";
+            current = node->id;
+            if (saved.count(node->id)) pending_save = node->id;
+        }
 
         if (node->type == NodeType::Embedding && fusion_embedding_layer.count(node->id)) {
             fusion_embedding_layer[node->id] = layer_idx++;  // applied at the Concatenate
@@ -716,6 +910,26 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
                 code += "        x = torch.flatten(x, 1)\n";
                 break;
 
+            // The node's shape is per sample: the batch stays first. Rows the
+            // Engine reads as an image are height, width, channel; torch's
+            // layers take channels first.
+            case NodeType::Reshape:
+            case NodeType::View: {
+                const std::string shape = CsvToPythonListLiteral(GetParamOrDefault(*node, "shape", "-1"), "-1");
+                bool image = std::count(shape.begin(), shape.end(), ',') == 2;
+                if (image) {
+                    image = false;
+                    for (const int reader : model_consumers[node->id]) {
+                        const MLNode* next = FindNodeById(reader);
+                        if (next && (spatial::IsSpatialLayer(next->type) || spatial::IsGlobalPoolLayer(next->type)))
+                            image = true;
+                    }
+                }
+                code += "        x = x.reshape(x.size(0), *" + shape + ")" +
+                        (image ? ".permute(0, 3, 1, 2)  # rows are height, width, channel" : "") + "\n";
+                break;
+            }
+
             case NodeType::Output:
             case NodeType::SequenceTagOutput:
                 code += "        # Output layer\n";
@@ -737,11 +951,13 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
             // ===== RNN Layers =====
             case NodeType::LSTM:
                 code += "        x, (h_n, c_n) = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                code += RecurrentLastStepLine(*node);
                 break;
 
             case NodeType::GRU:
             case NodeType::RNN:
                 code += "        x, h_n = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                code += RecurrentLastStepLine(*node);
                 break;
 
             // ===== Normalization Layers =====
@@ -829,7 +1045,12 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
             case NodeType::PPO:
                 break;
 
+            // Every other node with a module in __init__ (Conv2D, the pools,
+            // ...) is called on x. Without this the forward left them out and
+            // the layers after them called the wrong self.layerN (ORA-26).
             default:
+                if (node->type != NodeType::PluginCustom && !NodeTypeToPythonLayer(*node).empty())
+                    code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
                 break;
         }
     }
@@ -842,8 +1063,9 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
     code += "    model = GeneratedModel()\n";
     code += "    print(model)\n\n";
 
-    code += "    # Loss and optimizer (from the graph's optimizer node)\n";
-    code += "    criterion = nn.CrossEntropyLoss()\n";
+    const PyTorchCriterion criterion = PyTorchCriterionFor(FindExportLossNode());
+    code += "    # Loss (from the graph's loss node) and optimizer (from its optimizer node)\n";
+    code += criterion.setup;
     code += PyTorchOptimizerSetup();
 
     code += "    # TODO: Add your training data here\n";
@@ -852,7 +1074,7 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
     code += "    #     for batch_idx, (data, target) in enumerate(train_loader):\n";
     code += "    #         optimizer.zero_grad()\n";
     code += "    #         output = model(data)\n";
-    code += "    #         loss = criterion(output, target)\n";
+    code += "    #         loss = criterion(" + criterion.arguments + ")\n";
     code += PyTorchPenaltyLines();
     code += "    #         loss.backward()\n";
     code += PyTorchStepLines();
@@ -863,6 +1085,13 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
 // Training recipe in PyTorch terms, read from the first optimizer node
 // (tofix112): optimizer + hyperparameters, AdamW no-decay groups, per-update
 // warmup/decay LambdaLR matching WarmupDecayLR, and global-norm clipping.
+// The graph's loss node (the first one), or nullptr.
+const MLNode* GraphCodeExporter::FindExportLossNode() const {
+    for (const auto& node : nodes_)
+        if (IsLossNode(node.type)) return &node;
+    return nullptr;
+}
+
 const MLNode* GraphCodeExporter::FindExportOptimizerNode() const {
     for (const auto& node : nodes_) {
         switch (node.type) {
@@ -1753,6 +1982,27 @@ std::string GraphCodeExporter::GeneratePyCyxWizCode(const std::vector<int>& sort
     return code;
 }
 
+bool GraphCodeExporter::ReadsFeatureMap(const MLNode& node) const {
+    const MLNode* at = &node;
+    for (size_t guard = 0; guard < nodes_.size(); ++guard) {
+        if (at->inputs.empty()) return false;
+        const MLNode* source = nullptr;
+        for (const auto& link : links_)
+            if (link.to_node == at->id && link.to_pin == at->inputs.front().id) source = FindNodeById(link.from_node);
+        if (!source) return false;
+        if (spatial::IsSpatialLayer(source->type)) return true;
+        if (source->type == NodeType::Reshape || source->type == NodeType::View) {
+            const auto shape = source->parameters.find("shape");
+            return shape != source->parameters.end() && std::count(shape->second.begin(), shape->second.end(), ',') == 2;
+        }
+        if (!spatial::IsShapePreservingLayer(source->type) && source->type != NodeType::BatchNorm &&
+            source->type != NodeType::Dropout && source->type != NodeType::Add)
+            return false;
+        at = source;
+    }
+    return false;
+}
+
 std::string GraphCodeExporter::InferredInputWidth(const MLNode& node) const {
     if (node.inputs.empty()) return {};
     const int input_pin = node.inputs.front().id;
@@ -1830,16 +2080,27 @@ std::string GraphCodeExporter::NodeTypeToPythonLayer(const MLNode& node) {
             break;
         }
 
-        case NodeType::Conv2D:
-            code = "nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3)";
+        // The node's own settings; padding as the Engine resolves it ("same"
+        // is (k - 1) / 2 a side at any stride, "valid" 0, a number itself).
+        case NodeType::Conv2D: {
+            const std::string kernel = GetParamOrDefault(node, "kernel_size", "3");
+            const std::string padding = GetParamOrDefault(node, "padding", "same");
+            const int k = std::atoi(kernel.c_str());
+            const std::string pad = padding == "same" ? std::to_string((k - 1) / 2) : padding == "valid" ? "0" : padding;
+            code = "nn.LazyConv2d(out_channels=" + GetParamOrDefault(node, "filters", "32") + ", kernel_size=" + kernel +
+                   ", stride=" + GetParamOrDefault(node, "stride", "1") + ", padding=" + pad +
+                   ", bias=" + PythonBoolLiteral(GetParamOrDefault(node, "use_bias", "true")) + ")";
             break;
+        }
 
         case NodeType::MaxPool2D:
-            code = "nn.MaxPool2d(kernel_size=2)";
+            code = "nn.MaxPool2d(kernel_size=" + GetParamOrAliases(node, {"pool_size", "kernel_size"}, "2") +
+                   ", stride=" + GetParamOrDefault(node, "stride", "2") + ", padding=" +
+                   GetParamOrDefault(node, "padding", "0") + ")";
             break;
 
         case NodeType::BatchNorm:
-            code = "nn.LazyBatchNorm1d(eps=" +
+            code = std::string(ReadsFeatureMap(node) ? "nn.LazyBatchNorm2d(eps=" : "nn.LazyBatchNorm1d(eps=") +
                    GetParamOrAliases(node, {"eps", "epsilon"}, "1e-5") +
                    ", momentum=" +
                    GetParamOrDefault(node, "momentum", "0.1") + ")";
