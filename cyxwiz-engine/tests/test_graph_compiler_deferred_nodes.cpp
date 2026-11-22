@@ -1123,6 +1123,31 @@ int main() {
     // Attention runs on ArrayFire only (TOFIX140), so this is a GPU graph:
     // pin_memory is requested but the batchers have no pinned transfer yet.
     config = compiler.Compile(nodes, links, true);
+    {
+        // What a remote job trains with is read without compiling, and it is
+        // what Compile takes.
+        auto loop = compiler.ReadLoopSettings(nodes, links);
+        Check(loop.from_data_loader && loop.data_loader_name == "Pinned DataLoader",
+              "the loop settings name the Data Loader node Compile reads");
+        Check(loop.batch_size == config.batch_size && loop.batch_size == 8,
+              "the loop settings carry the Data Loader's batch size");
+        Check(loop.epochs == config.epochs, "an unset epochs keeps Compile's default");
+
+        auto with_epochs = nodes;
+        with_epochs[1].parameters["epochs"] = "50";
+        loop = compiler.ReadLoopSettings(with_epochs, links);
+        Check(loop.epochs == 50 && loop.epochs == compiler.Compile(with_epochs, links, true).epochs,
+              "the loop settings carry the Data Loader's epochs");
+
+        with_epochs[1].parameters["epochs"] = "many";
+        Check(compiler.ReadLoopSettings(with_epochs, links).epochs == cyxwiz::TrainingConfiguration{}.epochs,
+              "an epochs value that is not a number keeps the default");
+
+        const auto no_loader = compiler.ReadLoopSettings({self_mha_data, self_mha, loss, optimizer}, {
+            Link(1, 1, 101, 38, 3801), Link(2, 38, 3803, 4, 401), Link(3, 1, 102, 4, 402), Link(4, 4, 403, 5, 501)});
+        Check(!no_loader.from_data_loader && no_loader.batch_size == cyxwiz::TrainingConfiguration{}.batch_size,
+              "a graph without a Data Loader reports the defaults");
+    }
     Check(config.is_valid,
           "pin_memory attention graph should compile with a warning");
     Check(HasIssueText(config, "pin_memory=true is unsupported by current batchers"),

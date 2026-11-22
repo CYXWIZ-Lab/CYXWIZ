@@ -69,6 +69,7 @@ void ConnectionDialog::Render() {
         ImGui::Separator();
 
         if (client_ && client_->IsConnected()) {
+            RefreshGraph();
             // Errors show in every state (TOFIX118: they were hidden while a
             // reservation was active).
             RenderReservationError();
@@ -744,8 +745,9 @@ void ConnectionDialog::StartP2PTraining() {
     spdlog::info("Starting P2P training (direct to Server Node)...");
     spdlog::info("  Model definition: {} chars", graph_json.size());
     spdlog::info("  Dataset URI: {}", dataset_uri_);
-    spdlog::info("  Epochs: {}", reservation_epochs_);
-    spdlog::info("  Batch Size: {}", reservation_batch_size_);
+    const cyxwiz::GraphLoopSettings loop = cyxwiz::GraphJobLoopSettings(graph_json);
+    spdlog::info("  Epochs: {} (from the graph)", loop.epochs);
+    spdlog::info("  Batch Size: {} (from the graph)", loop.batch_size);
 
     // Build JobConfig for P2P transmission to Server Node
     // Note: No wallet/payment_address needed - escrow was handled during reservation
@@ -755,8 +757,10 @@ void ConnectionDialog::StartP2PTraining() {
     config.set_priority(cyxwiz::protocol::PRIORITY_NORMAL);
     config.set_model_definition(graph_json);
     config.set_dataset_uri(dataset_uri_);
-    config.set_batch_size(reservation_batch_size_);  // From user input
-    config.set_epochs(reservation_epochs_);          // From user input
+    // The graph's Data Loader node owns these; the job carries the same
+    // numbers so the node's records and the panel agree with the graph.
+    config.set_batch_size(loop.batch_size);
+    config.set_epochs(loop.epochs);
     config.set_required_device(cyxwiz::protocol::DEVICE_CUDA);
     // The Engine's measurement; the node's admission compares it with its
     // device (TOFIX118 P4b). 0 = not measured, the node skips the check.
@@ -819,8 +823,8 @@ void ConnectionDialog::StartP2PTraining() {
         // Store training config for .cyxmodel export
         p2p_training_panel_->SetTrainingConfig(
             graph_json,
-            reservation_epochs_,
-            reservation_batch_size_,
+            loop.epochs,
+            loop.batch_size,
             0.001f  // Default learning rate
         );
 
@@ -963,8 +967,9 @@ void ConnectionDialog::StartNewP2PTraining(const std::string& resume_job_id) {
     spdlog::info("Starting NEW P2P training within existing reservation...");
     spdlog::info("  Model definition: {} chars", graph_json.size());
     spdlog::info("  Dataset URI: {}", dataset_uri_);
-    spdlog::info("  Epochs: {}", reservation_epochs_);
-    spdlog::info("  Batch Size: {}", reservation_batch_size_);
+    const cyxwiz::GraphLoopSettings loop = cyxwiz::GraphJobLoopSettings(graph_json);
+    spdlog::info("  Epochs: {} (from the graph)", loop.epochs);
+    spdlog::info("  Batch Size: {} (from the graph)", loop.batch_size);
 
     // Build new JobConfig for the new training run
     // Generate a new job ID for this run (within same reservation)
@@ -979,8 +984,8 @@ void ConnectionDialog::StartNewP2PTraining(const std::string& resume_job_id) {
     config.set_priority(cyxwiz::protocol::PRIORITY_NORMAL);
     config.set_model_definition(graph_json);
     config.set_dataset_uri(dataset_uri_);
-    config.set_batch_size(reservation_batch_size_);
-    config.set_epochs(reservation_epochs_);
+    config.set_batch_size(loop.batch_size);
+    config.set_epochs(loop.epochs);
     config.set_required_device(cyxwiz::protocol::DEVICE_CUDA);
     config.set_estimated_memory(static_cast<int64_t>(CurrentJobFitCard().estimated_memory));
 
@@ -1102,8 +1107,8 @@ void ConnectionDialog::StartNewP2PTraining(const std::string& resume_job_id) {
         // Store training config for .cyxmodel export
         p2p_training_panel_->SetTrainingConfig(
             graph_json,
-            reservation_epochs_,
-            reservation_batch_size_,
+            loop.epochs,
+            loop.batch_size,
             0.001f  // Default learning rate
         );
 

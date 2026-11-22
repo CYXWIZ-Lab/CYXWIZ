@@ -74,7 +74,7 @@ struct ActiveReservationInputs {
     std::string node_id;
     std::string current_job_id;
     long long access_until = 0;      // P2P token expiry
-    int epochs_setting = 0;
+    int epochs_setting = 0;  // the graph's Data Loader values (0 = no graph yet)
     int batch_setting = 0;
 };
 
@@ -171,6 +171,12 @@ struct ReconnectRow {
 std::vector<ReconnectRow> BuildReconnectRows(std::vector<ActiveReservationListing> listings, long long now);
 
 // ---- Shared words ----------------------------------------------------------
+
+// The line that says what the graph trains with; these are set on the graph's
+// Data Loader node, not on the reservation.
+// "10 epochs · batch 32 · from the graph's Data Loader node" /
+// "... · defaults (the graph has no Data Loader node)" / "" with no graph.
+std::string TrainingLoopLine(int epochs, int batch_size, bool from_data_loader);
 
 std::string FormatCountdown(long long seconds);        // "1:12:40", "4:12", "0:05"
 std::string FormatReservationLength(int minutes);      // "2 h 00 min", "45 min"

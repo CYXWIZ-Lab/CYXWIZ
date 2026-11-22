@@ -762,6 +762,15 @@ cyxwiz::image::ImageShape DecodedImageShape(const TrainingConfiguration& config)
 // (Train, the live compile's parameter count) calls it; empty root: no change.
 void ResolveProjectRelativePaths(TrainingConfiguration& config, const std::string& project_root);
 
+// How a graph iterates its training data (see GraphCompiler::ReadLoopSettings).
+struct GraphLoopSettings {
+    int batch_size = TrainingConfiguration{}.batch_size;
+    int epochs = TrainingConfiguration{}.epochs;
+    bool from_data_loader = false;  // false: the graph has no Data Loader node, these are the defaults
+    int data_loader_node_id = 0;    // the node the values come from
+    std::string data_loader_name;
+};
+
 class GraphCompiler {
 public:
     GraphCompiler() = default;
@@ -796,6 +805,14 @@ public:
     // The data domain of a preprocessing node the trainer applies itself
     // (Normalize, image transforms, audio features...), or nullopt.
     static std::optional<PreprocessingDomain> GetPreprocessingNodeDomain(gui::NodeType type);
+
+    // The batch size and epochs Compile takes for this graph, without
+    // compiling it: the values of the Data Loader node Compile reads, else
+    // the defaults. A value that is not a number keeps its default (Compile
+    // reports it).
+    GraphLoopSettings ReadLoopSettings(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links) const;
 
 private:
     // An RL graph: Environment -> layers -> Policy Head / Value Head -> PPO (rl_graph_compile.cpp)

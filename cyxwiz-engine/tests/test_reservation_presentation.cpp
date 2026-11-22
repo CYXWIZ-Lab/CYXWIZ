@@ -98,6 +98,12 @@ int main() {
     active.batch_setting = 32;
     active.access_until = start + 7200 + 300;
 
+    Check(TrainingLoopLine(50, 16, true) == "50 epochs · batch 16 · from the graph's Data Loader node",
+          "the loop line names the Data Loader node: " + TrainingLoopLine(50, 16, true));
+    Check(TrainingLoopLine(1, 32, false) == "1 epoch · batch 32 · defaults (the graph has no Data Loader node)",
+          "the loop line says when the values are defaults: " + TrainingLoopLine(1, 32, false));
+    Check(TrainingLoopLine(0, 32, true).empty(), "no loop line without a graph");
+
     const auto local_card = BuildActiveReservationCard(active);
     Check(local_card.time_left == "1:13:00" && local_card.urgency == ReservationUrgency::Normal,
           "time left from the end time before a heartbeat: " + local_card.time_left);
@@ -108,7 +114,7 @@ int main() {
     Check(local_card.title == "dell-pc" && local_card.connection == "Connected to node", "name, not the endpoint");
     Check(!local_card.warn, "no warning with over an hour left");
     Check(Detail(local_card.details, "Endpoint") == "192.168.1.222:50052" &&
-              Detail(local_card.details, "Epochs / batch") == "10 / 32",
+              Detail(local_card.details, "Epochs / batch (from the graph)") == "10 / 32",
           "details keep the endpoint and settings");
 
     auto heartbeat = active;

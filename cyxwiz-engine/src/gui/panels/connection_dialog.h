@@ -172,8 +172,14 @@ private:
     bool reservation_details_open_ = false;
     bool receipt_details_open_ = false;
     int reservation_duration_minutes_ = 60;
-    int reservation_epochs_ = 10;           // Default training epochs
-    int reservation_batch_size_ = 32;       // Default batch size
+    // The open graph and what its Data Loader node says, re-read once a
+    // second (serializing the graph every frame is wasteful).
+    void RefreshGraph();
+    void RenderTrainingLoopLine() const;
+    std::string graph_json_;
+    cyxwiz::GraphLoopSettings graph_loop_;
+    bool graph_known_ = false;
+    double graph_next_check_ = 0.0;
     bool reserving_ = false;
     std::string reservation_error_;
     network::ReservationInfo active_reservation_;
@@ -202,7 +208,6 @@ private:
     cyxwiz::JobEstimateState estimate_state_ = cyxwiz::JobEstimateState::NotStarted;
     std::size_t estimate_key_ = 0;
     std::string estimate_device_;
-    double estimate_next_check_ = 0.0;
     std::string last_rejection_reason_;  // the node's words for the last refusal
     bool fit_details_open_ = false;
 

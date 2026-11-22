@@ -132,6 +132,11 @@ bool PlanGraphJobDatasets(const std::string& graph_json, GraphJobDatasetPlan& pl
 // are left out.
 std::map<std::string, std::string> DataInputFiles(const std::string& graph_json, const std::string& project_root);
 
+// The batch size and epochs the job trains with: the graph's Data Loader
+// node owns them (GraphCompiler::ReadLoopSettings). The defaults for a graph
+// that does not parse; the job itself reports that.
+GraphLoopSettings GraphJobLoopSettings(const std::string& graph_json);
+
 // The job's graph with each shipped Data Input reading its local file and the
 // `drop` inputs (with their links) removed. Every remaining Data Input needs
 // a file. The rest of the document is unchanged.

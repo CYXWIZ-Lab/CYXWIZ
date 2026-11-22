@@ -471,6 +471,13 @@ std::map<std::string, std::string> DataInputFiles(const std::string& graph_json,
     return files;
 }
 
+GraphLoopSettings GraphJobLoopSettings(const std::string& graph_json) {
+    GraphDocument graph;
+    std::string error;
+    if (!ParseGraphDocument(graph_json, graph, error)) return {};
+    return GraphCompiler().ReadLoopSettings(graph.nodes, graph.links);
+}
+
 bool PlanGraphJobDatasets(const std::string& graph_json, GraphJobDatasetPlan& plan, std::string& error) {
     plan = {};
     GraphDocument graph;

@@ -36,23 +36,37 @@ ImVec4 KindColor(RemoteStatusKind kind) {
 
 }  // namespace
 
+void ConnectionDialog::RefreshGraph() {
+    if (!node_editor_) return;
+    const double now = ImGui::GetTime();
+    if (now < graph_next_check_) return;
+    graph_next_check_ = now + 1.0;
+
+    std::string graph_json = node_editor_->GetGraphJson();
+    if (graph_json == graph_json_ && graph_known_) return;
+    graph_known_ = !graph_json.empty() && graph_json != "{}";
+    graph_json_ = std::move(graph_json);
+    graph_loop_ = graph_known_ ? cyxwiz::GraphJobLoopSettings(graph_json_) : cyxwiz::GraphLoopSettings{};
+}
+
+void ConnectionDialog::RenderTrainingLoopLine() const {
+    const std::string line = graph_known_
+        ? TrainingLoopLine(graph_loop_.epochs, graph_loop_.batch_size, graph_loop_.from_data_loader)
+        : std::string("Open a graph to train: its Data Loader node sets the epochs and the batch size.");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(kNotYet, "%s", line.c_str());
+    ImGui::PopTextWrapPos();
+}
+
 void ConnectionDialog::UpdateJobEstimate() {
     if (estimate_future_.valid() &&
         estimate_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
         estimate_result_ = estimate_future_.get();
         estimate_state_ = estimate_result_.ok ? JobEstimateState::Ready : JobEstimateState::Failed;
     }
-    if (!node_editor_ || estimate_future_.valid()) return;
+    if (!graph_known_ || estimate_future_.valid()) return;
 
-    // Serializing the graph every frame is wasteful; once a second is enough
-    // to notice an edit.
-    const double now = ImGui::GetTime();
-    if (now < estimate_next_check_) return;
-    estimate_next_check_ = now + 1.0;
-
-    std::string graph_json = node_editor_->GetGraphJson();
-    if (graph_json.empty() || graph_json == "{}") return;
-    const std::size_t key = std::hash<std::string>{}(graph_json) ^ (static_cast<std::size_t>(reservation_batch_size_) << 1);
+    const std::size_t key = std::hash<std::string>{}(graph_json_);
     if (key == estimate_key_ && estimate_state_ != JobEstimateState::NotStarted) return;
 
     estimate_key_ = key;
@@ -62,8 +76,7 @@ void ConnectionDialog::UpdateJobEstimate() {
         estimate_device_ = Device(selected->type, selected->device_id).GetInfo().name;
     }
     GraphTrainingJobRequest request;
-    request.graph_json = std::move(graph_json);
-    request.batch_size_override = reservation_batch_size_;
+    request.graph_json = graph_json_;
     // Graphs save Data Input paths project-relative; the probe reads them
     // resolved, as the node reads its own copies.
     request.dataset_files =

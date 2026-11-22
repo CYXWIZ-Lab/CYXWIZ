@@ -100,8 +100,8 @@ ActiveReservationInputs ConnectionDialog::CurrentReservationInputs() const {
     in.reservation_id = active_reservation_.reservation_id;
     in.node_id = reserved_node_.node_id;
     in.access_until = active_reservation_.p2p_token_expires;
-    in.epochs_setting = reservation_epochs_;
-    in.batch_setting = reservation_batch_size_;
+    in.epochs_setting = graph_known_ ? graph_loop_.epochs : 0;
+    in.batch_setting = graph_known_ ? graph_loop_.batch_size : 0;
     return in;
 }
 
@@ -149,14 +149,7 @@ void ConnectionDialog::RenderReservationPanel() {
         ImGui::SliderInt("##duration", &reservation_duration_minutes_, 10, 480, "");
         ImGui::SameLine();
         ImGui::TextUnformatted(quote.duration.c_str());
-        ImGui::SameLine(0.0f, 28.0f);
-        ImGui::SetNextItemWidth(110.0f);
-        ImGui::InputInt("Epochs", &reservation_epochs_);
-        reservation_epochs_ = std::clamp(reservation_epochs_, 1, 1000);
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(110.0f);
-        ImGui::InputInt("Batch size", &reservation_batch_size_);
-        reservation_batch_size_ = std::clamp(reservation_batch_size_, 1, 512);
+        RenderTrainingLoopLine();
 
         ImGui::Separator();
         KeyValueTable("##money",
@@ -306,13 +299,7 @@ void ConnectionDialog::RenderTrainingOnNodePanel() {
             const auto fit = CurrentJobFitCard();
             if (waiting) {
                 ImGui::TextColored(kVerified, ICON_FA_CIRCLE_CHECK " Job finished: ready for the next one");
-                ImGui::SetNextItemWidth(110.0f);
-                ImGui::InputInt("Epochs##next", &reservation_epochs_);
-                reservation_epochs_ = std::clamp(reservation_epochs_, 1, 1000);
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(110.0f);
-                ImGui::InputInt("Batch size##next", &reservation_batch_size_);
-                reservation_batch_size_ = std::clamp(reservation_batch_size_, 1, 512);
+                RenderTrainingLoopLine();
                 if (ui::PrimaryButton(ICON_FA_PLAY " Start new training", fit.start_enabled, fit.start_note.c_str())) {
                     StartNewP2PTraining();
                 }

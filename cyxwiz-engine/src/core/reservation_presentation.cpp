@@ -33,6 +33,14 @@ std::string Minutes(long long minutes) {
 
 }  // namespace
 
+std::string TrainingLoopLine(int epochs, int batch_size, bool from_data_loader) {
+    if (epochs <= 0 || batch_size <= 0) return {};
+    std::string line = std::to_string(epochs) + (epochs == 1 ? " epoch" : " epochs") + " · batch " + std::to_string(batch_size);
+    line += from_data_loader ? " · from the graph's Data Loader node"
+                             : " · defaults (the graph has no Data Loader node)";
+    return line;
+}
+
 std::string FormatCountdown(long long seconds) {
     if (seconds < 0) seconds = 0;
     const long long h = seconds / 3600;
@@ -186,7 +194,7 @@ ActiveReservationCard BuildActiveReservationCard(const ActiveReservationInputs& 
     add("Endpoint", in.endpoint);
     add("Current job", in.current_job_id);
     if (in.epochs_setting > 0) {
-        add("Epochs / batch", std::to_string(in.epochs_setting) + " / " + std::to_string(in.batch_setting));
+        add("Epochs / batch (from the graph)", std::to_string(in.epochs_setting) + " / " + std::to_string(in.batch_setting));
     }
     if (in.access_until > 0) add("Access valid until", FormatClockTime(in.access_until) + " (end + 5 min)");
     return card;

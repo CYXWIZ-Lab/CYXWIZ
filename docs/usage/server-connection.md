@@ -23,8 +23,11 @@ would be working for free.
    your CyxWiz account (the same one as the website).
 2. **Pick a node** in the Available Compute Nodes table. Its device, memory, price
    and reputation are in the row; the card under the table repeats them.
-3. **Reserve**: choose the length, epochs and batch size, check the quote
-   (price, reserved time, your balance after the hold) and press **Reserve**.
+3. **Reserve**: choose the length, check the quote (price, reserved time,
+   your balance after the hold) and press **Reserve**. Epochs and batch size
+   are not asked here: the card shows what the graph's Data Loader node says
+   ("50 epochs · batch 16 · from the graph's Data Loader node") and the node
+   trains with exactly that. Change them on the Data Loader node.
 4. **Connect to node**: the card shows the reservation with its countdown
    (from the central server's heartbeat, "checked N s ago") and **Connected to
    node** once the link is up.

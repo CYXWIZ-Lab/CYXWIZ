@@ -6784,6 +6784,31 @@ std::vector<int> GraphCompiler::GetInputNodes(
     return inputs;
 }
 
+GraphLoopSettings GraphCompiler::ReadLoopSettings(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links) const {
+    GraphLoopSettings settings;
+    const gui::MLNode* dataset_node = FindDatasetInputNode(nodes, links);
+    if (!dataset_node) return settings;
+    const gui::MLNode* loader = FindFirstReachableNodeOfType(
+        nodes, CollectReachableNodeIds(dataset_node->id, links), gui::NodeType::DataLoader);
+    if (!loader) return settings;
+    settings.from_data_loader = true;
+    settings.data_loader_node_id = loader->id;
+    settings.data_loader_name = loader->name;
+    const auto read = [&](const char* key, int& value) {
+        const auto it = loader->parameters.find(key);
+        if (it == loader->parameters.end()) return;
+        try {
+            value = std::stoi(it->second);
+        } catch (const std::exception&) {
+        }
+    };
+    read("batch_size", settings.batch_size);
+    read("epochs", settings.epochs);
+    return settings;
+}
+
 const gui::MLNode* GraphCompiler::FindDatasetInputNode(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links) const {
