@@ -866,6 +866,10 @@ void GraphExecutableModel::SetParameters(const std::map<std::string, Tensor>& pa
     model_->SetParameters(params);
 }
 
+std::vector<ModelStateEntry> GraphExecutableModel::GetState() {
+    return model_->GetState();
+}
+
 std::map<std::string, Tensor> GraphExecutableModel::GetGradients() {
     return model_->GetGradients();
 }

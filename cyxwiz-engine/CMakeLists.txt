@@ -4003,6 +4003,33 @@ set_target_properties(test_executable_model_wrapper PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Model State Layout =====
+add_executable(test_model_state_layout
+    tests/test_model_state_layout.cpp
+)
+target_link_libraries(test_model_state_layout PRIVATE cyxwiz-training-core)
+
+target_include_directories(test_model_state_layout PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_model_state_layout PRIVATE
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_model_state_layout PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_model_state_layout PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Graph Executable Model =====
 add_executable(test_graph_executable_model
     tests/test_graph_executable_model.cpp

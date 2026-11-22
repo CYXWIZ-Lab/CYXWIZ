@@ -32,6 +32,7 @@ public:
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override;
+    std::vector<std::string> StatisticNames() const override;
     std::string GetName() const override;
     void SetTraining(bool training) override;
 

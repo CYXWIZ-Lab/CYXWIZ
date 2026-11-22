@@ -111,6 +111,8 @@ std::map<std::string, Tensor> GuardedExtensionModule::GetGradients() {
 
 bool GuardedExtensionModule::HasParameters() const { return inner_->HasParameters(); }
 
+std::vector<std::string> GuardedExtensionModule::StatisticNames() const { return inner_->StatisticNames(); }
+
 std::string GuardedExtensionModule::GetName() const { return inner_->GetName(); }
 
 void GuardedExtensionModule::SetTraining(bool training) {

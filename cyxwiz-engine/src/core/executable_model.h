@@ -8,6 +8,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -42,6 +43,9 @@ public:
     virtual void SetParameters(const std::map<std::string, Tensor>& params) = 0;
     virtual std::map<std::string, Tensor> GetGradients() = 0;
     virtual void UpdateParameters(Optimizer* optimizer) = 0;
+    // Every stored value, frozen layers and statistics included, in layer
+    // order (SequentialModel::GetState). SetParameters accepts these names.
+    virtual std::vector<ModelStateEntry> GetState() = 0;
     // Layers that hold parameters (graph operations such as Add are not counted).
     virtual size_t LayerCount() const = 0;
 
@@ -70,6 +74,7 @@ public:
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
     void UpdateParameters(Optimizer* optimizer) override;
+    std::vector<ModelStateEntry> GetState() override;
     size_t LayerCount() const override { return model_->Size(); }
 
     SequentialModel* AsSequentialModel() override { return model_.get(); }

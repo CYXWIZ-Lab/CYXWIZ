@@ -44,6 +44,7 @@ public:
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
     void UpdateParameters(Optimizer* optimizer) override;
+    std::vector<ModelStateEntry> GetState() override;
     size_t LayerCount() const override { return layer_node_ids_.size(); }
 
     const CompiledGraphPlan& Plan() const { return plan_; }

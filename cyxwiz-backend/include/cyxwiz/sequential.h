@@ -26,6 +26,19 @@
 
 namespace cyxwiz {
 
+// What a stored value of a model is to training (SequentialModel::GetState).
+enum class ModelStateRole {
+    Trainable,  // has a gradient; the optimizer updates it
+    Statistic,  // changes in training without a gradient (Module::StatisticNames)
+    Frozen      // belongs to a layer that is not trainable
+};
+
+struct ModelStateEntry {
+    std::string name;  // "layer<i>.<parameter>", as in GetParameters
+    Tensor value;
+    ModelStateRole role = ModelStateRole::Trainable;
+};
+
 /**
  * @brief Module types that can be added to a SequentialModel
  */
@@ -190,6 +203,11 @@ public:
     virtual size_t InputCount() const { return 1; }
     virtual Tensor ForwardInputs(const std::vector<Tensor>& inputs) { return Forward(inputs.at(0)); }
     virtual std::vector<Tensor> BackwardInputs(const Tensor& grad_output) { return {Backward(grad_output)}; }
+
+    // The names in GetParameters() that training changes without a gradient
+    // (BatchNorm's running mean and variance). They belong to the model's
+    // state but an optimizer never sees them.
+    virtual std::vector<std::string> StatisticNames() const { return {}; }
 
 protected:
     bool is_training_ = true;
@@ -1433,6 +1451,7 @@ public:
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
+    std::vector<std::string> StatisticNames() const override { return {"running_mean", "running_var"}; }
     std::string GetName() const override;
 
 private:
@@ -1556,6 +1575,7 @@ public:
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
+    std::vector<std::string> StatisticNames() const override { return {"running_mean", "running_var"}; }
     std::string GetName() const override;
 
 private:
@@ -1649,6 +1669,13 @@ public:
      * @param params Map of "layer_idx.param_name" -> tensor
      */
     void SetParameters(const std::map<std::string, Tensor>& params);
+
+    /**
+     * @brief Every stored value of the model: frozen layers too, which
+     * GetParameters leaves out. In layer order, then parameter name.
+     * SetParameters accepts all of these names.
+     */
+    std::vector<ModelStateEntry> GetState();
 
     /**
      * @brief Get all parameter gradients

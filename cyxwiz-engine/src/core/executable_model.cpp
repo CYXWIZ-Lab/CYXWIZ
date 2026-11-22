@@ -46,6 +46,10 @@ void SequentialExecutableModel::SetParameters(const std::map<std::string, Tensor
     model_->SetParameters(params);
 }
 
+std::vector<ModelStateEntry> SequentialExecutableModel::GetState() {
+    return model_->GetState();
+}
+
 std::map<std::string, Tensor> SequentialExecutableModel::GetGradients() {
     return model_->GetGradients();
 }

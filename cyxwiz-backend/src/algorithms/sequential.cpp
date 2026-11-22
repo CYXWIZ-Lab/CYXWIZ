@@ -267,6 +267,29 @@ std::map<std::string, Tensor> SequentialModel::GetParameters() {
     return all_params;
 }
 
+std::vector<ModelStateEntry> SequentialModel::GetState() {
+    std::vector<ModelStateEntry> state;
+    for (size_t i = 0; i < modules_.size(); ++i) {
+        Module& module = *modules_[i];
+        if (!module.HasParameters()) continue;
+        const std::vector<std::string> statistics = module.StatisticNames();
+        // A statistic stays one in a frozen layer: a training forward pass
+        // still moves it.
+        for (auto& [key, tensor] : module.GetParameters()) {
+            ModelStateEntry entry;
+            entry.name = "layer" + std::to_string(i) + "." + key;
+            entry.value = tensor;
+            if (std::find(statistics.begin(), statistics.end(), key) != statistics.end()) {
+                entry.role = ModelStateRole::Statistic;
+            } else if (!module.IsTrainable()) {
+                entry.role = ModelStateRole::Frozen;
+            }
+            state.push_back(std::move(entry));
+        }
+    }
+    return state;
+}
+
 void SequentialModel::SetParameters(const std::map<std::string, Tensor>& params) {
     // Group parameters by layer index
     std::map<size_t, std::map<std::string, Tensor>> layer_params;
