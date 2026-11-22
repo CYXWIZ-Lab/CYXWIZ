@@ -177,9 +177,11 @@ int main() {
         Check(cyxwiz::DescribePluginCard(off).action_label == "Enable", "disabled: Enable");
 
         const std::vector<cyxwiz::PluginCardFacts> cards = {
-            {"com.z", "mujoco_card Simulation", PluginRunState::Running, "", false},
-            {"com.a", "Activation nodes", PluginRunState::Loaded, "", false},
+            {"com.z", "mujoco simulation", PluginRunState::Running, "", false},
+            {"com.a", "activation nodes", PluginRunState::Loaded, "", false},
             {"com.b", "MuJoCo Simulation", PluginRunState::Failed, "x", false}};
+        // Case-sensitive it would be MuJoCo, activation, mujoco; ignoring case the two
+        // MuJoCo names tie and go by id (com.b before com.z)
         const auto order = cyxwiz::PluginCardOrder(cards);
         Check(order.size() == 3 && order[0] == 1 && order[1] == 2 && order[2] == 0,
               "cards by name ignoring case, then by id");

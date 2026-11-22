@@ -219,6 +219,7 @@ void PluginManagerPanel::RenderToolbar() {
     ImGui::SameLine();
     if (ui::SecondaryButton(kInstall)) {
         open_install_ = true;
+        close_install_ = false;  // a success of an install closed earlier must not shut this one
         install_path_buf_[0] = '\0';
         install_message_.clear();
         install_tone_ = InstallTone::None;
@@ -234,7 +235,8 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin& p, const P
     auto& mgr = plugin::PluginManager::Instance();
     const std::string plugin_id = p.manifest.id;  // copied: an action below may change the plugin
     const PluginCardView view = DescribePluginCard(facts);
-    const PluginContribution& contribution = ContributionOf(plugin_id);
+    // A copy: the main action below clears the cache this would point into
+    const PluginContribution contribution = ContributionOf(plugin_id);
 
     ImGui::PushID(plugin_id.c_str());
     if (scroll_to_ == plugin_id) {
@@ -452,7 +454,8 @@ void PluginManagerPanel::StartInstall() {
             is_installing_plugin_ = false;
             install_task_id_ = 0;
             if (!success) {
-                install_message_ = error.empty() ? "The install failed; the Console has the details." : error;
+                // An install cancelled before it loaded ends without an error message
+                install_message_ = error.empty() ? "The install was cancelled." : error;
                 install_tone_ = InstallTone::Problem;
                 return;
             }

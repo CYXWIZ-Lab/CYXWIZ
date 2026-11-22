@@ -23,7 +23,7 @@ private Data Studio tickets (`tofix*/track*`).
   main button for the state (Disable, Start, Try again, Enable); **Actions**
   holds Open the plugin folder, Copy its id and **Unload...**, which says
   what goes and asks first. Cards are in name order and keep their place.
-  The footer counts every state. **Apps > a plugin** opens its card.
+  The footer counts every state. **Apps > a plugin** with no nodes opens its card.
 - **Plugin permissions you can see and change.** A card's **Permissions**
   lists what the plugin asked for and your answer; the ones that need an
   answer can be set to Allowed, Denied or Ask again. The request when a
@@ -41,7 +41,8 @@ private Data Studio tickets (`tofix*/track*`).
   or hidden window could be outlined). The text names today's menus and keys
   (F5 trains, the Data menu, the 12 menus). The list shows each description,
   **Resume** for a tutorial closed before its end and **Reset progress...**;
-  Esc closes a tutorial and the arrow keys step. Progress is now kept in your
+  while the step card has the focus, Esc closes the tutorial and the arrow
+  keys step. Progress is now kept in your
   settings folder (`%APPDATA%\CyxWiz\tutorial_progress.json`); progress saved
   next to the program before is not read.
 - **Preferences: "Restore this page's defaults" on every page with

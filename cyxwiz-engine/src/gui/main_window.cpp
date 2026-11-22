@@ -6464,9 +6464,11 @@ void MainWindow::RenderStatusBar() {
         }
 
         // Right side: the running tasks (a click opens Background Tasks), else Ready
-        if (const float tasks_width = cyxwiz::TaskStatusIndicator::Width(); tasks_width > 0.0f && task_progress_panel_) {
+        const auto running_tasks = cyxwiz::AsyncTaskManager::Instance().GetActiveTasks();
+        if (const float tasks_width = cyxwiz::TaskStatusIndicator::Width(running_tasks);
+            tasks_width > 0.0f && task_progress_panel_) {
             ImGui::SameLine(ImGui::GetWindowWidth() - tasks_width - 16);
-            if (cyxwiz::TaskStatusIndicator::Render()) {
+            if (cyxwiz::TaskStatusIndicator::Render(running_tasks)) {
                 task_progress_panel_->Show();
                 ::gui::BringToFront(task_progress_panel_->GetName());
             }

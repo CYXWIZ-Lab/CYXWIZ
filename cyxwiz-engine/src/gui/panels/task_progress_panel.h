@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gui/panel.h"
+#include "core/async_task_manager.h"
 #include "core/task_list_presentation.h"
 #include "core/training_trace_collector.h"
 #include <chrono>
@@ -37,9 +38,10 @@ private:
 // tasks run, the task list on hover. Returns true when clicked.
 class TaskStatusIndicator {
 public:
-    static bool Render();
+    // `tasks`: AsyncTaskManager::GetActiveTasks(), read once for the frame.
+    static bool Render(const std::vector<TaskInfo>& tasks);
     // Its width, to place it at the right of the status bar (0: nothing runs).
-    static float Width();
+    static float Width(const std::vector<TaskInfo>& tasks);
 };
 
 }  // namespace cyxwiz

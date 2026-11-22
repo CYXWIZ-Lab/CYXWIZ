@@ -91,10 +91,11 @@ task_list::Input TaskProgressPanel::ReadTasks() {
     in.now = std::chrono::system_clock::to_time_t(wall_now);
     in.show_finished = show_finished_;
     for (const TaskInfo& info : manager.GetActiveTasks()) in.running.push_back(FactsOf(info, steady_now, wall_now));
-    in.finished_total = manager.GetFinishedTaskCount();
     if (show_finished_)
         for (const TaskInfo& info : manager.GetFinishedTasks(task_list::kFinishedShown))
             in.finished.push_back(FactsOf(info, steady_now, wall_now));
+    // Read apart from the list: a task may finish in between, never fewer than listed
+    in.finished_total = std::max(manager.GetFinishedTaskCount(), in.finished.size());
 
     if (steady_now - trace_read_at_ > std::chrono::milliseconds(500)) {
         trace_ = TrainingTraceCollector::LatestTrace();
@@ -230,15 +231,13 @@ std::string RunningSummary(size_t count) {
 }
 }  // namespace
 
-float TaskStatusIndicator::Width() {
-    const size_t count = AsyncTaskManager::Instance().GetActiveTaskCount();
-    if (count == 0) return 0.0f;
+float TaskStatusIndicator::Width(const std::vector<TaskInfo>& tasks) {
+    if (tasks.empty()) return 0.0f;
     return ImGui::CalcTextSize(ICON_FA_SPINNER).x + ImGui::GetStyle().ItemSpacing.x +
-           ImGui::CalcTextSize(RunningSummary(count).c_str()).x;
+           ImGui::CalcTextSize(RunningSummary(tasks.size()).c_str()).x;
 }
 
-bool TaskStatusIndicator::Render() {
-    const auto tasks = AsyncTaskManager::Instance().GetActiveTasks();
+bool TaskStatusIndicator::Render(const std::vector<TaskInfo>& tasks) {
     if (tasks.empty()) return false;
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::BeginGroup();

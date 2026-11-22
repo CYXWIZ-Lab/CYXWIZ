@@ -22,22 +22,19 @@ bool PermissionRequests::RequestApproval(const PluginManifest& manifest,
     pending.permissions = undecided_perms;
     pending.allowed.resize(undecided_perms.size(), false);
     pending.callback = std::move(callback);
-    pending_queue_.push(std::move(pending));
+    pending_queue_.push_back(std::move(pending));
 
     spdlog::info("PermissionRequests: Queued approval for plugin '{}' ({} permissions)", manifest.name,
                  undecided_perms.size());
     return true;
 }
 
-std::optional<PermissionRequests::PendingApproval> PermissionRequests::Shown(bool* first_time) {
+std::optional<PermissionRequests::PendingApproval> PermissionRequests::Shown() {
     std::lock_guard lock(mutex_);
     if ((!current_.has_value() || current_->resolved) && !pending_queue_.empty()) {
         current_ = std::move(pending_queue_.front());
-        pending_queue_.pop();
-        first_time_ = true;
+        pending_queue_.pop_front();
     }
-    if (first_time) *first_time = first_time_;
-    first_time_ = false;
     if (!current_.has_value() || current_->resolved) return std::nullopt;
     return current_;
 }
@@ -71,27 +68,16 @@ bool PermissionRequests::IsPendingFor(const std::string& plugin_id) const {
 
 bool PermissionRequests::IsPendingForLocked(const std::string& plugin_id) const {
     if (current_.has_value() && !current_->resolved && current_->plugin_id == plugin_id) return true;
-    std::queue<PendingApproval> copy = pending_queue_;
-    while (!copy.empty()) {
-        if (copy.front().plugin_id == plugin_id) return true;
-        copy.pop();
-    }
-    return false;
+    return std::any_of(pending_queue_.begin(), pending_queue_.end(),
+                       [&plugin_id](const PendingApproval& p) { return p.plugin_id == plugin_id; });
 }
 
 void PermissionRequests::ClearPendingForPlugin(const std::string& plugin_id) {
     std::lock_guard lock(mutex_);
-    if (current_.has_value() && current_->plugin_id == plugin_id) {
-        current_.reset();
-        first_time_ = false;
-    }
-    std::queue<PendingApproval> filtered;
-    while (!pending_queue_.empty()) {
-        auto item = std::move(pending_queue_.front());
-        pending_queue_.pop();
-        if (item.plugin_id != plugin_id) filtered.push(std::move(item));
-    }
-    pending_queue_ = std::move(filtered);
+    if (current_.has_value() && current_->plugin_id == plugin_id) current_.reset();
+    pending_queue_.erase(std::remove_if(pending_queue_.begin(), pending_queue_.end(),
+                                        [&plugin_id](const PendingApproval& p) { return p.plugin_id == plugin_id; }),
+                         pending_queue_.end());
 }
 
 } // namespace cyxwiz::plugin::security

@@ -45,6 +45,7 @@ void TutorialSystem::StartTutorial(const std::string& tutorial_id) {
         return;
     }
     const int index = static_cast<int>(it - tutorials_.begin());
+    if (current_ >= 0 && current_ != index) paused_[tutorials_[current_].id] = current_step_index_;
     if (current_ != index) {
         // Resume: the step it was closed on; a new start from the first
         const auto paused = paused_.find(tutorial_id);
@@ -106,7 +107,7 @@ void TutorialSystem::RenderStep() {
     if (!step.target.empty() && window_rect_callback_) target = window_rect_callback_(step.target);
     const bool has_target = target.GetWidth() > 0.0f && target.GetHeight() > 0.0f;
     // Nothing is drawn over a modal dialog
-    const bool modal_open = ImGui::GetTopMostPopupModal() != nullptr;
+    const bool modal_open = ImGui::GetTopMostAndVisiblePopupModal() != nullptr;
     if (has_target && !modal_open) RenderHighlight(target);
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -256,9 +257,10 @@ void TutorialSystem::RenderBrowser() {
     ImGui::Spacing();
     const char* kReset = "Reset progress...";
     ui::SameLineRight(ui::ButtonWidth(kReset, ui::ButtonSize::Small));
-    if (ui::DangerButton(kReset, !completed_tutorials_.empty(), "No tutorial is done yet"))
+    if (ui::DangerButton(kReset, !completed_tutorials_.empty() || !paused_.empty(), "No tutorial is done or started yet"))
         ImGui::OpenPopup(kResetTitle);
-    if (ui::ConfirmDialog(kResetTitle, "Every tutorial reads as not done again. The Engine and your projects are not changed.",
+    if (ui::ConfirmDialog(kResetTitle,
+                          "Every tutorial reads as not done and not started again. The Engine and your projects are not changed.",
                           "Reset progress", true) == ui::DialogResult::Primary)
         ResetProgress();
     ImGui::End();

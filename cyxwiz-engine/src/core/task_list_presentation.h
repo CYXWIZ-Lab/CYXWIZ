@@ -55,7 +55,7 @@ struct Row {
     std::string error;        // failed tasks: "Failed: <why>"
     bool show_progress = false;
     float progress = 0.0f;
-    std::string progress_text;  // "42% · 3 s"
+    std::string progress_text;  // "42%, 3 s" (a middle dot between)
     std::string took;           // finished: "took 12.6 s"; waiting: "waiting to start"
     std::string clock;          // finished: "08:11" (another day: "21 Nov 08:11")
     bool can_cancel = false;
@@ -65,7 +65,7 @@ struct RunLine {
     bool shown = false;
     Mark mark = Mark::Done;
     std::string text;    // "Last training run: cancelled"
-    std::string detail;  // "on CUDA, NVIDIA GeForce GTX 1050 Ti · 08:05"
+    std::string detail;  // "on CUDA, NVIDIA GeForce GTX 1050 Ti", a middle dot, "08:05"
 };
 
 struct View {

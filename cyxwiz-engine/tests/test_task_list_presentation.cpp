@@ -130,7 +130,8 @@ void CheckRunning() {
 void CheckFailedAndCount() {
     Input in;
     in.now = ParseUtc("2026-11-22T04:12:00Z");
-    TaskFacts bad = Finished(9, "Profile reviews_20k", "", 800, in.now - 10);
+    // MarkFailed sets the message to "Failed: <error>" too (async_task_manager.cpp)
+    TaskFacts bad = Finished(9, "Profile reviews_20k", "Failed: the file is locked", 800, in.now - 10);
     bad.state = State::Failed;
     bad.error = "the file is locked";
     TaskFacts stop = Finished(8, "Sorting by rating", "", 2500, in.now - 20);
@@ -140,6 +141,7 @@ void CheckFailedAndCount() {
     const View v = Build(in);
     Check(v.finished[0].mark == Mark::Failed && v.finished[0].error == "Failed: the file is locked",
           "a failed task says why");
+    Check(v.finished[0].message.empty(), "and only once (its message is the same failure)");
     Check(v.finished[1].mark == Mark::Cancelled && v.finished[1].took == "cancelled after 2.5 s",
           "a cancelled task says when it stopped");
     Check(v.finished_heading == "Finished" + kDot + "last 2 of 57", "the heading counts the shown of the held: " +

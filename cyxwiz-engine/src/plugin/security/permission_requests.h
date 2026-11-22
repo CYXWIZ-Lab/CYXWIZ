@@ -1,11 +1,10 @@
 #pragma once
 
 #include "../plugin_types.h"
-#include "permission_store.h"
 #include <functional>
 #include <mutex>
 #include <optional>
-#include <queue>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -37,9 +36,8 @@ public:
                          const std::vector<PluginPermission>& undecided_perms,
                          DecisionCallback callback);
 
-    // The request to show now (the next queued one once the last is
-    // answered), copied; `first_time` is set on the frame it becomes shown.
-    std::optional<PendingApproval> Shown(bool* first_time = nullptr);
+    // The request to show now (the next queued one once the last is answered), copied.
+    std::optional<PendingApproval> Shown();
     // The user ticked or unticked permissions of the shown request.
     void SetChoices(const std::string& plugin_id, const std::vector<bool>& allowed);
     // The user answered: the ticked permissions (`allow_selected`) or none.
@@ -55,9 +53,8 @@ private:
     bool IsPendingForLocked(const std::string& plugin_id) const;
 
     mutable std::mutex mutex_;
-    std::queue<PendingApproval> pending_queue_;
+    std::deque<PendingApproval> pending_queue_;
     std::optional<PendingApproval> current_;
-    bool first_time_ = false;
 };
 
 } // namespace cyxwiz::plugin::security

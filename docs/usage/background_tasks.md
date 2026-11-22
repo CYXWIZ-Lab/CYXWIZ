@@ -11,14 +11,18 @@ windows that start such work say "Background Tasks shows it".
 
 ## What it shows
 
-- **The summary** at the top: how many tasks run and how many finished in
-  this session, e.g. *1 running, 2 finished*.
+- **The summary** at the top: how many tasks run and how many finished ones
+  the Engine holds (it keeps the last 100 of this session), e.g. *1 running,
+  2 finished*.
 - **The last training run**, in one line: its outcome (*finished*, *stopped
   early*, *cancelled*, *failed*, or *Training now*), where it ran (*on CUDA,
   NVIDIA GeForce GTX 1050 Ti*) and when it ended. **Open in Training
-  Dashboard** shows the run itself; its placement, residency, transfers and
-  synchronisations are under Run details > Where it ran there.
-- **Running**: the tasks in the order they started. Each shows its name, its
+  Dashboard** opens that window; the run's placement, residency, transfers
+  and synchronisations are under Run details > Where it ran there. A run
+  saved as running while nothing trains in this Engine reads *no end
+  recorded* (it ended without a record, or runs in another Engine).
+- **Running**: the tasks in the order they were started (a task waiting for a
+  worker is listed in its place). Each shows its name, its
   latest message, a progress bar with the percentage and the time so far, and
   a cancel button when the task can stop. A task that waits for a worker
   says *waiting to start*. With nothing running the list says so.
@@ -34,7 +38,7 @@ windows that start such work say "Background Tasks shows it".
 | Show finished | Shows or hides the finished list for this session. Hidden, the window says how many are hidden. Your default is in **Preferences > Tools > Background Tasks**. |
 | Cancel all | Asks every task that can stop to stop. Off, with the reason on hover, when nothing running can be cancelled. Cancelling is cooperative: a task stops at its next check. |
 | Cancel (x) on a row | Cancels that one task. |
-| Open in Training Dashboard | Opens the Training Dashboard on the last run. |
+| Open in Training Dashboard | Opens the Training Dashboard (its Run details show where the run ran). |
 
 The status bar shows a spinner and *N tasks running* while anything runs;
 hover it for each task's progress, click it to open Background Tasks.

@@ -51,7 +51,10 @@ Row MakeRow(const TaskFacts& t, std::time_t now) {
                                                    : Mark::Cancelled;
             row.took = (t.state == State::Cancelled ? "cancelled after " : "took ") + Duration(t.elapsed_ms);
             if (t.ended_at != 0) row.clock = Clock(t.ended_at, now);
-            if (t.state == State::Failed && !t.error.empty()) row.error = "Failed: " + t.error;
+            if (t.state == State::Failed && !t.error.empty()) {
+                row.error = "Failed: " + t.error;
+                row.message.clear();  // the task's message already reads "Failed: <error>"
+            }
             break;
     }
     row.can_cancel = t.cancellable && (t.state == State::Pending || t.state == State::Running);

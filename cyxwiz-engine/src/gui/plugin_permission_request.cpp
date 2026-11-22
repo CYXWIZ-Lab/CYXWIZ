@@ -13,13 +13,14 @@ void RenderPluginPermissionRequest() {
     using cyxwiz::plugin::security::PermissionStore;
     namespace ui = cyxwiz::ui;
     auto& requests = cyxwiz::plugin::PluginManager::Instance().PermissionRequestQueue();
-    bool first_time = false;
-    auto shown = requests.Shown(&first_time);
+    auto shown = requests.Shown();
     if (!shown) return;
 
-    // The title names the plugin; the ###id keeps one popup across plugins
+    // The title names the plugin; the ###id keeps one popup across plugins.
+    // Opened again whenever it is not open: another dialog opened at the same
+    // level closes it, and an unanswered request must not stay hidden.
     const std::string title = shown->plugin_name + " asks for permission###PluginPermDialog";
-    if (first_time) ImGui::OpenPopup(title.c_str());
+    if (!ImGui::IsPopupOpen(title.c_str())) ImGui::OpenPopup(title.c_str());
 
     ui::DialogOptions options;
     options.size = ImVec2(560.0f, 380.0f);
