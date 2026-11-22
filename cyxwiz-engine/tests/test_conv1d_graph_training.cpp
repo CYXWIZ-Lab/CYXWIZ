@@ -449,8 +449,8 @@ int main(int, char** argv) {
     CheckTraining(work_dir);
 
     fs::remove_all(work_dir);
-    std::string device_error;
-    Check(cyxwiz::test::TrainedOnRequestedDevice(&device_error), "every run on the requested device: " + device_error);
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     std::cout << "Conv1D graphs match PyTorch and train\n";
     return 0;
 }

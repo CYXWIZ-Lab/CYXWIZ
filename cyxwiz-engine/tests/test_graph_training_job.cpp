@@ -667,8 +667,8 @@ int main() {
 
     fs::remove_all(work, ec);
     cyxwiz::SetGraphDatasetCatalog({});
-    std::string device_error;
-    Check(cyxwiz::test::TrainedOnRequestedDevice(&device_error), "every run on the requested device: " + device_error);
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     if (g_failures > 0) {
         std::cout << g_failures << " check(s) failed\n";
         return EXIT_FAILURE;

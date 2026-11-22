@@ -6,7 +6,7 @@
 // is not enough: a test asked for CPU trained on CUDA. This pins the run to
 // the requested device (CPU when nothing is asked, so a training test runs
 // on a known device) with the Strict policy, which fails instead of falling
-// back, and TrainedOnRequestedDevice() checks the device the run bound.
+// back, and TrainingDeviceProblem() checks the device the run bound.
 
 #include "oracle_test.h"
 
@@ -59,10 +59,11 @@ inline bool BeginTrainingOracleTest(const char* name) {
     return true;
 }
 
-// Whether every training run of this test bound the pinned device (their
-// "ExecutionDeviceContext.Bind" events; at least one). Prints the count;
-// `why` says which run bound what otherwise.
-inline bool TrainedOnRequestedDevice(std::string* why = nullptr) {
+// What is wrong with this test's training and test runs, or "" when every one
+// bound the pinned device with the Strict policy (their
+// "ExecutionDeviceContext.Bind" events; at least one). Prints the count when
+// all is well. Call it before building the failure message from its result.
+inline std::string TrainingDeviceProblem() {
     const RequestedTestDevice device = TrainingTestDevice();
     const std::string backend = ExecutionDeviceSelectionBackendName(device.type);
     RuntimeLogSnapshotRequest all;
@@ -72,19 +73,19 @@ inline bool TrainedOnRequestedDevice(std::string* why = nullptr) {
     for (const auto& event : snapshot.events) {
         if (event.event_name != "ExecutionDeviceContext.Bind") continue;
         ++runs;
-        if (event.backend != backend || event.device_id != device.id) {
-            if (why)
-                *why = "asked for " + backend + " " + std::to_string(device.id) + ", run " + std::to_string(runs) +
-                       " bound " + event.backend + " " + std::to_string(event.device_id);
-            return false;
-        }
+        const std::string run = "run " + std::to_string(runs) + " (" + event.source + ")";
+        if (event.backend != backend || event.device_id != device.id)
+            return "asked for " + backend + " " + std::to_string(device.id) + ", " + run + " bound " + event.backend +
+                   " " + std::to_string(event.device_id);
+        std::string policy;
+        for (const auto& [key, value] : event.details)
+            if (key == "execution_policy") policy = value;
+        if (policy != ExecutionPolicyName(ExecutionPolicy::Strict))
+            return run + " ran with the " + (policy.empty() ? std::string("unknown") : policy) + " policy, not strict";
     }
-    if (runs == 0) {
-        if (why) *why = "no training run bound a device";
-        return false;
-    }
-    std::printf("training device: every run (%zu) on %s %d\n", runs, backend.c_str(), device.id);
-    return true;
+    if (runs == 0) return "no training run bound a device";
+    std::printf("training device: every run (%zu) on %s %d, strict\n", runs, backend.c_str(), device.id);
+    return {};
 }
 
 }  // namespace cyxwiz::test

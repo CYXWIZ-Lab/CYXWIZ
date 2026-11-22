@@ -236,8 +236,8 @@ int main() {
         Check(stored && built.metadata.tokenizer_sha256 == stored->Sha256(), "metadata names the stored tokenizer");
     }
 
-    std::string device_error;
-    Check(cyxwiz::test::TrainedOnRequestedDevice(&device_error), "every run on the requested device: " + device_error);
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     fs::remove_all(work, ec);
     if (g_failures > 0) {
         std::cout << g_failures << " check(s) failed\n";

@@ -979,8 +979,8 @@ int main(int, char** argv) {
               std::string("a saved ") + name + " node is refused with a message naming its replacement: " + error);
     }
 
-    std::string device_error;
-    Check(cyxwiz::test::TrainedOnRequestedDevice(&device_error), "every run on the requested device: " + device_error);
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     std::cout << "Branched graphs match PyTorch: " << fixture.at("cases").size() << " cases\n";
     return 0;
 }

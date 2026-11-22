@@ -335,8 +335,8 @@ int main() {
     }
 
     fs::remove_all(work, ec);
-    std::string device_error;
-    Check(cyxwiz::test::TrainedOnRequestedDevice(&device_error), "every fold on the requested device: " + device_error);
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every fold on the requested device: " + device_problem);
     std::cout << (g_failures == 0 ? "cross-validation truth: OK\n" : "cross-validation truth: FAILED\n");
     return g_failures == 0 ? 0 : 1;
 }

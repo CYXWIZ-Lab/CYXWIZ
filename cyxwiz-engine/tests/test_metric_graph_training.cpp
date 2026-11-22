@@ -734,8 +734,8 @@ int RunChecks(char** argv) {
     }
 
     fs::remove_all(work_dir);
-    std::string device_error;
-    Check(cyxwiz::test::TrainedOnRequestedDevice(&device_error), "every run on the requested device: " + device_error);
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     std::cout << "Metric learning matches PyTorch: " << fixture.at("cases").size() << " cases\n";
     return 0;
 }

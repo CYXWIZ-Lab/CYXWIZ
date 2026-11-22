@@ -485,8 +485,8 @@ int main(int, char** argv) {
     CheckLayerSnapshots(fixture, dataset, learning_rate, batch_size, epochs, tolerance);
 
     fs::remove_all(work_dir);
-    std::string device_error;
-    Check(cyxwiz::test::TrainedOnRequestedDevice(&device_error), "every run on the requested device: " + device_error);
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     std::cout << "Regularization nodes match PyTorch: " << fixture.at("cases").size() << " cases\n";
     return 0;
 }
