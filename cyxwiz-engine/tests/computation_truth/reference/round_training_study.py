@@ -23,6 +23,17 @@ repeat (`--rows 2000000`) and short rounds, does a group beat one of its own
 nodes? Equal nodes, the lab mix and six nodes, rounds of 30, 100 and 300 s.
 
     py -3.12 round_training_study.py --many-rounds --rows 2000000 --model-mb 40
+
+`--contract` runs the third: the questions the design review left open. For
+each seed, with data that does not repeat and 30 s rounds: the best single
+node; that node alone with the outer step (the control: how much of a group's
+gain is the outer step and not the extra nodes); equal nodes; a group inside
+the group contract (speeds within a factor of 4) and one outside it (10/1/1);
+one whole-vector table against a table per segment. It prints the final loss
+with its spread over the seeds, and the time each case needs to reach the
+loss the best single node ends at.
+
+    py -3.12 round_training_study.py --contract --rows 2000000 --model-mb 40 --seeds 1 2 3 4 5
 """
 
 from __future__ import annotations
@@ -155,7 +166,8 @@ def run_rounds(seed: int, speeds: list[float], budget: float, link: Link, data, 
                round_seconds: float, int8: bool, method: str = "trimmed_mean",
                screen: bool = True, miss: dict[int, float] | None = None,
                bad: set[int] | None = None,
-               outer_lr: float = ref.OUTER_LR, outer_mu: float = ref.OUTER_MOMENTUM) -> dict:
+               outer_lr: float = ref.OUTER_LR, outer_mu: float = ref.OUTER_MOMENTUM,
+               per_segment: bool = False) -> dict:
     """Rounds on a simulated clock. `miss[i]` is worker i's chance of missing a
     round; a worker in `bad` reports 50x a random update instead of its own."""
     x, y, hx, hy = data
@@ -164,6 +176,8 @@ def run_rounds(seed: int, speeds: list[float], budget: float, link: Link, data, 
     torch.manual_seed(seed)
     template = Student()
     theta = ref.flatten(list(template.parameters()))
+    # One table for the whole vector, or the wire format: a table per segment.
+    layout = ref.model_state(template)[0] if per_segment else None
     queue = WorkQueue(TRAIN_ROWS, seed)
     chance = torch.Generator().manual_seed(seed + 7)
     workers = []
@@ -191,7 +205,7 @@ def run_rounds(seed: int, speeds: list[float], budget: float, link: Link, data, 
                 report.delta = torch.randn(theta.shape, generator=chance) * report.delta.norm() * 50.0 / math.sqrt(theta.numel())
             reports.append(report)
         result = ref.coordinator_round(theta, reports, outer, int8=int8, method=method,
-                                       norm_factor=3.0 if screen else float("inf"))
+                                       norm_factor=3.0 if screen else float("inf"), layout=layout)
         rejected += len(result.rejected)
         theta = result.theta
         if not bool(torch.isfinite(theta).all()):
@@ -238,6 +252,48 @@ def many_rounds(args: argparse.Namespace) -> None:
                                encoding="utf-8")
 
 
+def contract_study(args: argparse.Namespace) -> None:
+    link = Link(args.model_mb[0], args.mbit)
+    cases = [
+        ("one node 10 steps/s (best single node)", None, {}),
+        ("one node 10 steps/s + outer step (control)", [10.0], {}),
+        ("one node 3 steps/s", None, {"speed": 3.0}),
+        ("one node 3 steps/s + outer step (control)", [3.0], {}),
+        ("equal 3/3/3", [3.0, 3.0, 3.0], {}),
+        ("inside the contract 8/4/2", [8.0, 4.0, 2.0], {}),
+        ("inside the contract 8/4/2, table per segment", [8.0, 4.0, 2.0], {"per_segment": True}),
+        ("outside the contract 10/1/1", [10.0, 1.0, 1.0], {}),
+        ("outside the contract 10/1/1, table per segment", [10.0, 1.0, 1.0], {"per_segment": True}),
+    ]
+    curves: dict[str, list] = {name: [] for name, _, _ in cases}
+    rejected: dict[str, int] = {name: 0 for name, _, _ in cases}
+    for seed in args.seeds:
+        data = make_data(100 + seed)
+        for name, speeds, options in cases:
+            if speeds is None:
+                curve = run_single(seed, options.get("speed", 10.0), args.budget, data)
+            else:
+                run = run_rounds(seed, speeds, args.budget, link, data, round_seconds=30.0, int8=True,
+                                 method="weighted_mean", **options)
+                curve = run["curve"]
+                rejected[name] += run["rejected"]
+            curves[name].append(curve)
+            print(f"seed {seed} {name:50s} final {curve[-1][1]:.4f}", flush=True)
+    targets = [curve[-1][1] for curve in curves[cases[0][0]]]
+    print()
+    print(f"{'case':52s} {'final (mean)':>12s} {'spread':>8s} {'rejected':>8s}  time to the best single node's final loss, per seed")
+    for name, _, _ in cases:
+        finals = [curve[-1][1] for curve in curves[name]]
+        mean = sum(finals) / len(finals)
+        spread = max(finals) - min(finals)
+        times = [time_to(curve, target) for curve, target in zip(curves[name], targets)]
+        shown = " ".join("never" if t is None else f"{t:5.0f}" for t in times)
+        print(f"{name:52s} {mean:12.4f} {spread:8.4f} {rejected[name]:8d}  {shown}", flush=True)
+    if args.output:
+        args.output.write_text(json.dumps({"budget": args.budget, "mbit": args.mbit, "seeds": args.seeds,
+                                           "curves": curves, "rejected": rejected}, indent=1), encoding="utf-8")
+
+
 def main() -> None:
     global TRAIN_ROWS
     parser = argparse.ArgumentParser(description=__doc__)
@@ -249,12 +305,17 @@ def main() -> None:
     parser.add_argument("--rows", type=int, default=TRAIN_ROWS, help="training rows")
     parser.add_argument("--many-rounds", action="store_true",
                         help="short rounds on data that does not repeat (see the module text)")
+    parser.add_argument("--contract", action="store_true",
+                        help="the review's open questions (see the module text)")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     torch.set_num_threads(1)
     TRAIN_ROWS = args.rows
     if args.many_rounds:
         many_rounds(args)
+        return
+    if args.contract:
+        contract_study(args)
         return
 
     lab = [10.0, 3.0, 1.0]       # steps per second: fast, middle, slow (about 10x apart)

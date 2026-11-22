@@ -50,6 +50,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/spatial_batch_layout.cpp
     ${_cyxwiz_engine_src}/core/executable_model.cpp
     ${_cyxwiz_engine_src}/core/model_state_layout.cpp
+    ${_cyxwiz_engine_src}/core/round_update_codec.cpp
     ${_cyxwiz_engine_src}/core/graph_executable_model.cpp
     ${_cyxwiz_engine_src}/core/parquet_backed_dataset.cpp
     ${_cyxwiz_engine_src}/core/cache_prune.cpp

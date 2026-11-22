@@ -4030,6 +4030,38 @@ set_target_properties(test_model_state_layout PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Round Update Codec (PyTorch reference fixtures) =====
+add_executable(test_round_update_codec
+    tests/test_round_update_codec.cpp
+)
+target_link_libraries(test_round_update_codec PRIVATE cyxwiz-training-core)
+
+target_include_directories(test_round_update_codec PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_round_update_codec PRIVATE
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+target_compile_definitions(test_round_update_codec PRIVATE
+    CYXWIZ_ROUND_TRAINING_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/round_training_pytorch.json"
+)
+
+if(WIN32)
+    target_compile_definitions(test_round_update_codec PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_round_update_codec PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Graph Executable Model =====
 add_executable(test_graph_executable_model
     tests/test_graph_executable_model.cpp
