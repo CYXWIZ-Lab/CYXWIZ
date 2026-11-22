@@ -75,6 +75,7 @@
 #include "panels/pattern_browser.h"
 #include "panels/query_console.h"
 #include "panels/custom_node_editor.h"
+#include "patterns/pattern_library.h"
 #include "panels/theme_editor.h"
 #include "panels/monitor_panel.h"
 #include "panels/variable_explorer.h"

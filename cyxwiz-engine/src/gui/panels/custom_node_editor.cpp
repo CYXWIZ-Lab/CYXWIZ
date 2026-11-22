@@ -1,4 +1,5 @@
 #include "custom_node_editor.h"
+#include "../../core/engine_config.h"
 #include "../icons.h"
 #include "../ui_tokens.h"
 #include <imgui.h>
@@ -13,6 +14,148 @@ namespace gui {
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
+
+namespace {
+
+using Definition = CustomNodeEditorPanel::CustomNodeDefinition;
+
+constexpr const char* kDefinitionExtension = ".json";
+
+// The definition as its file holds it.
+json DefinitionToJson(const Definition& def) {
+    json j;
+    j["id"] = def.id;
+    j["name"] = def.name;
+    j["category"] = def.category;
+    j["description"] = def.description;
+    j["custom_node"] = true;  // Mark as custom node
+
+    // Color
+    j["color"] = {
+        {"r", def.color.x},
+        {"g", def.color.y},
+        {"b", def.color.z},
+        {"a", def.color.w}
+    };
+
+    // Inputs
+    j["inputs"] = json::array();
+    for (const auto& pin : def.inputs) {
+        json pin_j;
+        pin_j["name"] = pin.name;
+        pin_j["type"] = static_cast<int>(pin.type);
+        pin_j["description"] = pin.description;
+        pin_j["default_shape"] = pin.default_shape;
+        pin_j["optional"] = pin.is_optional;
+        j["inputs"].push_back(pin_j);
+    }
+
+    // Outputs
+    j["outputs"] = json::array();
+    for (const auto& pin : def.outputs) {
+        json pin_j;
+        pin_j["name"] = pin.name;
+        pin_j["type"] = static_cast<int>(pin.type);
+        pin_j["description"] = pin.description;
+        pin_j["default_shape"] = pin.default_shape;
+        pin_j["optional"] = pin.is_optional;
+        j["outputs"].push_back(pin_j);
+    }
+
+    // Parameters
+    j["parameters"] = json::array();
+    for (const auto& param : def.parameters) {
+        json param_j;
+        param_j["name"] = param.name;
+        param_j["type"] = param.type;
+        param_j["default_value"] = param.default_value;
+        param_j["description"] = param.description;
+        param_j["min_value"] = param.min_value;
+        param_j["max_value"] = param.max_value;
+        param_j["options"] = param.choices;
+        j["parameters"].push_back(param_j);
+    }
+
+    // Code templates
+    j["code_templates"] = {
+        {"pytorch", def.pytorch_template},
+        {"tensorflow", def.tensorflow_template},
+        {"cyxwiz", def.cyxwiz_template}
+    };
+
+    if (!def.validation_code.empty()) {
+        j["validation_code"] = def.validation_code;
+    }
+
+    return j;
+}
+
+// A definition file read back; false when the file is not a custom node.
+bool DefinitionFromJson(const json& j, Definition& def) {
+    if (!j.is_object() || !j.value("custom_node", false)) return false;
+    Definition d;
+    d.id = j.value("id", std::string());
+    d.name = j.value("name", std::string());
+    d.category = j.value("category", std::string("Custom"));
+    d.description = j.value("description", std::string());
+    if (const auto colour = j.find("color"); colour != j.end() && colour->is_object()) {
+        d.color = ImVec4(colour->value("r", d.color.x), colour->value("g", d.color.y),
+                         colour->value("b", d.color.z), colour->value("a", d.color.w));
+    }
+    const auto read_pins = [&j](const char* key, std::vector<CustomNodeEditorPanel::PinDefinition>& pins) {
+        const auto list = j.find(key);
+        if (list == j.end() || !list->is_array()) return;
+        for (const auto& p : *list) {
+            CustomNodeEditorPanel::PinDefinition pin;
+            pin.name = p.value("name", std::string());
+            pin.type = static_cast<PinType>(p.value("type", static_cast<int>(PinType::Tensor)));
+            pin.description = p.value("description", std::string());
+            pin.default_shape = p.value("default_shape", std::string());
+            pin.is_optional = p.value("optional", false);
+            pins.push_back(pin);
+        }
+    };
+    read_pins("inputs", d.inputs);
+    read_pins("outputs", d.outputs);
+    if (const auto list = j.find("parameters"); list != j.end() && list->is_array()) {
+        for (const auto& p : *list) {
+            CustomNodeEditorPanel::ParameterDefinition param;
+            param.name = p.value("name", std::string());
+            param.type = p.value("type", std::string("string"));
+            param.default_value = p.value("default_value", std::string());
+            param.description = p.value("description", std::string());
+            param.min_value = p.value("min_value", std::string());
+            param.max_value = p.value("max_value", std::string());
+            param.choices = p.value("options", std::vector<std::string>());
+            d.parameters.push_back(param);
+        }
+    }
+    if (const auto code = j.find("code_templates"); code != j.end() && code->is_object()) {
+        d.pytorch_template = code->value("pytorch", std::string());
+        d.tensorflow_template = code->value("tensorflow", std::string());
+        d.cyxwiz_template = code->value("cyxwiz", std::string());
+    }
+    d.validation_code = j.value("validation_code", std::string());
+    def = std::move(d);
+    return true;
+}
+
+// The definitions in the folder, by file, with the name each one shows.
+std::vector<std::pair<fs::path, std::string>> ListDefinitions(const fs::path& directory) {
+    std::vector<std::pair<fs::path, std::string>> found;
+    std::error_code ec;
+    for (fs::directory_iterator it(directory, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->path().extension() != kDefinitionExtension) continue;
+        std::ifstream file(it->path());
+        const json j = json::parse(file, nullptr, false);
+        Definition def;
+        if (DefinitionFromJson(j, def)) found.emplace_back(it->path(), def.name);
+    }
+    std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+    return found;
+}
+
+}  // namespace
 
 // Category options (display name, internal value)
 const std::vector<std::pair<std::string, std::string>> CustomNodeEditorPanel::kCategoryOptions = {
@@ -44,7 +187,8 @@ Examples:
 )";
 
 CustomNodeEditorPanel::CustomNodeEditorPanel()
-    : Panel("Custom Node Editor", false)  // Hidden by default
+    : Panel("Custom Node Editor", false),  // Hidden by default
+      directory_(cyxwiz::core::EngineConfig::Instance().GetUserConfigDir() / "custom_nodes")
 {
     CreateNewDefinition();
 }
@@ -75,18 +219,19 @@ void CustomNodeEditorPanel::CreateNewDefinition() {
     current_def_.cyxwiz_template = "# CyxWiz implementation\n# Implement using cyxwiz operations";
 
     has_unsaved_changes_ = false;
-    loaded_pattern_id_.clear();
 }
 
-bool CustomNodeEditorPanel::LoadDefinition(const std::string& pattern_id) {
-    auto* pattern = patterns::PatternLibrary::Instance().GetPattern(pattern_id);
-    if (!pattern) {
-        spdlog::error("Pattern not found: {}", pattern_id);
+bool CustomNodeEditorPanel::LoadDefinition(const fs::path& file) {
+    std::ifstream in(file);
+    const json j = json::parse(in, nullptr, false);
+    Definition def;
+    if (!DefinitionFromJson(j, def)) {
+        spdlog::error("Not a custom node definition: {}", file.string());
         return false;
     }
-
-    LoadFromPattern(*pattern);
-    loaded_pattern_id_ = pattern_id;
+    // The file name is the definition's id: a save goes back to the same file.
+    def.id = file.stem().string();
+    current_def_ = std::move(def);
     has_unsaved_changes_ = false;
     return true;
 }
@@ -103,20 +248,13 @@ bool CustomNodeEditorPanel::SaveDefinition() {
         current_def_.id = GenerateUniqueId(current_def_.name);
     }
 
-    // Convert to pattern
-    patterns::Pattern pattern = ConvertToPattern();
-
-    // Save to user patterns directory
-    auto& library = patterns::PatternLibrary::Instance();
-    std::string save_dir = library.GetUserPatternsDirectory();
-
-    // Create directory if needed
-    if (!fs::exists(save_dir)) {
-        fs::create_directories(save_dir);
+    std::error_code ec;
+    fs::create_directories(directory_, ec);
+    if (ec) {
+        spdlog::error("Could not create {}: {}", directory_.string(), ec.message());
+        return false;
     }
-
-    std::string save_path = (fs::path(save_dir) / (current_def_.id + ".cyxgraph")).string();
-    return SaveDefinitionAs(save_path);
+    return SaveDefinitionAs((directory_ / (current_def_.id + kDefinitionExtension)).string());
 }
 
 bool CustomNodeEditorPanel::SaveDefinitionAs(const std::string& path) {
@@ -131,81 +269,7 @@ bool CustomNodeEditorPanel::SaveDefinitionAs(const std::string& path) {
         current_def_.id = GenerateUniqueId(current_def_.name);
     }
 
-    // Build JSON
-    json j;
-    j["id"] = current_def_.id;
-    j["name"] = current_def_.name;
-    j["category"] = current_def_.category;
-    j["description"] = current_def_.description;
-    j["custom_node"] = true;  // Mark as custom node
-
-    // Color
-    j["color"] = {
-        {"r", current_def_.color.x},
-        {"g", current_def_.color.y},
-        {"b", current_def_.color.z},
-        {"a", current_def_.color.w}
-    };
-
-    // Inputs
-    j["inputs"] = json::array();
-    for (const auto& pin : current_def_.inputs) {
-        json pin_j;
-        pin_j["name"] = pin.name;
-        pin_j["type"] = static_cast<int>(pin.type);
-        pin_j["description"] = pin.description;
-        pin_j["default_shape"] = pin.default_shape;
-        pin_j["optional"] = pin.is_optional;
-        j["inputs"].push_back(pin_j);
-    }
-
-    // Outputs
-    j["outputs"] = json::array();
-    for (const auto& pin : current_def_.outputs) {
-        json pin_j;
-        pin_j["name"] = pin.name;
-        pin_j["type"] = static_cast<int>(pin.type);
-        pin_j["description"] = pin.description;
-        pin_j["default_shape"] = pin.default_shape;
-        pin_j["optional"] = pin.is_optional;
-        j["outputs"].push_back(pin_j);
-    }
-
-    // Parameters
-    j["parameters"] = json::array();
-    for (const auto& param : current_def_.parameters) {
-        json param_j;
-        param_j["name"] = param.name;
-        param_j["type"] = param.type;
-        param_j["default_value"] = param.default_value;
-        param_j["description"] = param.description;
-        param_j["min_value"] = param.min_value;
-        param_j["max_value"] = param.max_value;
-        param_j["options"] = param.choices;
-        j["parameters"].push_back(param_j);
-    }
-
-    // Code templates
-    j["code_templates"] = {
-        {"pytorch", current_def_.pytorch_template},
-        {"tensorflow", current_def_.tensorflow_template},
-        {"cyxwiz", current_def_.cyxwiz_template}
-    };
-
-    if (!current_def_.validation_code.empty()) {
-        j["validation_code"] = current_def_.validation_code;
-    }
-
-    // Create a simple single-node pattern for the nodes array
-    j["nodes"] = json::array();
-    json node_j;
-    node_j["id"] = "node_1";
-    node_j["type"] = "Custom";
-    node_j["name"] = "{{" + current_def_.name + "}}";
-    node_j["position"] = {{"x", 0}, {"y", 0}};
-    j["nodes"].push_back(node_j);
-
-    j["links"] = json::array();
+    const json j = DefinitionToJson(current_def_);
 
     // Write to file
     std::ofstream file(path);
@@ -217,11 +281,7 @@ bool CustomNodeEditorPanel::SaveDefinitionAs(const std::string& path) {
     file << j.dump(2);
     file.close();
 
-    // Reload patterns to include the new one
-    patterns::PatternLibrary::Instance().LoadPatternFromFile(path);
-
     has_unsaved_changes_ = false;
-    loaded_pattern_id_ = current_def_.id;
     spdlog::info("Saved custom node: {} to {}", current_def_.name, path);
     return true;
 }
@@ -249,14 +309,16 @@ void CustomNodeEditorPanel::Render() {
                 }
                 ImGui::Separator();
                 if (ImGui::BeginMenu("Load Existing")) {
-                    auto patterns = patterns::PatternLibrary::Instance().GetByCategory(patterns::PatternCategory::Custom);
-                    if (patterns.empty()) {
+                    const auto definitions = ListDefinitions(directory_);
+                    if (definitions.empty()) {
                         ImGui::TextDisabled("No custom nodes found");
                     }
-                    for (const auto& pattern : patterns) {
-                        if (ImGui::MenuItem(pattern.name.c_str())) {
-                            LoadDefinition(pattern.id);
+                    for (const auto& [file, name] : definitions) {
+                        ImGui::PushID(file.string().c_str());
+                        if (ImGui::MenuItem(name.c_str())) {
+                            LoadDefinition(file);
                         }
+                        ImGui::PopID();
                     }
                     ImGui::EndMenu();
                 }
@@ -975,116 +1037,15 @@ std::string CustomNodeEditorPanel::GenerateUniqueId(const std::string& name) {
     // Add prefix
     id = "custom_" + id;
 
-    // Check for uniqueness
-    auto& library = patterns::PatternLibrary::Instance();
+    // Unique among the definitions saved: a new one never overwrites another's file.
     std::string base_id = id;
     int counter = 1;
-    while (library.GetPattern(id) != nullptr) {
+    std::error_code ec;
+    while (fs::exists(directory_ / (id + kDefinitionExtension), ec)) {
         id = base_id + "_" + std::to_string(counter++);
     }
 
     return id;
-}
-
-patterns::Pattern CustomNodeEditorPanel::ConvertToPattern() const {
-    patterns::Pattern pattern;
-    pattern.id = current_def_.id;
-    pattern.name = current_def_.name;
-    pattern.description = current_def_.description;
-    pattern.category = patterns::PatternCategory::Custom;
-
-    // Convert parameters
-    for (const auto& param : current_def_.parameters) {
-        patterns::PatternParameter pp;
-        pp.name = param.name;
-        pp.default_value = param.default_value;
-        pp.description = param.description;
-        pp.min_value = param.min_value;
-        pp.max_value = param.max_value;
-        pp.options = param.choices;
-
-        if (param.type == "int") {
-            pp.type = patterns::ParameterType::Int;
-        } else if (param.type == "float") {
-            pp.type = patterns::ParameterType::Float;
-        } else if (param.type == "bool") {
-            pp.type = patterns::ParameterType::Bool;
-        } else if (param.type == "choice") {
-            // For choice type, use NodeType which supports options dropdown
-            pp.type = patterns::ParameterType::NodeType;
-        } else {
-            pp.type = patterns::ParameterType::String;
-        }
-
-        pattern.parameters.push_back(pp);
-    }
-
-    // Create a single node for the pattern
-    patterns::PatternNode node;
-    node.id = "node_1";
-    node.type = "Custom";
-    node.name = current_def_.name;
-    node.pos_x = 0.0f;
-    node.pos_y = 0.0f;
-    pattern.template_data.nodes.push_back(node);
-
-    return pattern;
-}
-
-void CustomNodeEditorPanel::LoadFromPattern(const patterns::Pattern& pattern) {
-    // A user pattern is known as "user:<file name>": the definition keeps the file name.
-    current_def_.id = pattern.user ? fs::path(pattern.file_path).stem().string() : pattern.id;
-    current_def_.name = pattern.name;
-    current_def_.description = pattern.description;
-
-    switch (pattern.category) {
-        case patterns::PatternCategory::Custom: current_def_.category = "Custom"; break;
-        case patterns::PatternCategory::Basic: current_def_.category = "Layers"; break;
-        case patterns::PatternCategory::CNN: current_def_.category = "Layers"; break;
-        case patterns::PatternCategory::RNN: current_def_.category = "Layers"; break;
-        case patterns::PatternCategory::Transformer: current_def_.category = "Attention"; break;
-        case patterns::PatternCategory::Generative: current_def_.category = "Custom"; break;
-        case patterns::PatternCategory::ReinforcementLearning: current_def_.category = "Custom"; break;
-        case patterns::PatternCategory::BuildingBlocks: current_def_.category = "Utility"; break;
-        default: current_def_.category = "Custom"; break;
-    }
-
-    // Load parameters
-    current_def_.parameters.clear();
-    for (const auto& pp : pattern.parameters) {
-        ParameterDefinition param;
-        param.name = pp.name;
-        param.default_value = pp.default_value;
-        param.description = pp.description;
-        param.min_value = pp.min_value;
-        param.max_value = pp.max_value;
-        param.choices = pp.options;
-
-        switch (pp.type) {
-            case patterns::ParameterType::Int: param.type = "int"; break;
-            case patterns::ParameterType::Float: param.type = "float"; break;
-            case patterns::ParameterType::Bool: param.type = "bool"; break;
-            case patterns::ParameterType::NodeType: param.type = "choice"; break;  // NodeType has options dropdown
-            default: param.type = "string"; break;
-        }
-
-        current_def_.parameters.push_back(param);
-    }
-
-    // Default pins if not specified
-    if (current_def_.inputs.empty()) {
-        PinDefinition input;
-        input.name = "input";
-        input.type = PinType::Tensor;
-        current_def_.inputs.push_back(input);
-    }
-
-    if (current_def_.outputs.empty()) {
-        PinDefinition output;
-        output.name = "output";
-        output.type = PinType::Tensor;
-        current_def_.outputs.push_back(output);
-    }
 }
 
 } // namespace gui

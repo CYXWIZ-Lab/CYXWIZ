@@ -2,7 +2,7 @@
 
 #include "../panel.h"
 #include "../node_editor.h"
-#include "../patterns/pattern_library.h"
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <memory>
@@ -12,7 +12,8 @@ namespace gui {
 /**
  * Custom Node Editor Panel
  * Allows users to create custom node types with configurable pins, parameters, and code templates.
- * Custom nodes are saved as patterns and registered with the PatternLibrary.
+ * A definition is a JSON file in the user's custom_nodes folder (beside the
+ * settings), apart from My patterns: it describes a node type, not a graph.
  */
 class CustomNodeEditorPanel : public cyxwiz::Panel {
 public:
@@ -61,8 +62,8 @@ public:
     // Create a new empty definition
     void CreateNewDefinition();
 
-    // Load an existing definition for editing
-    bool LoadDefinition(const std::string& pattern_id);
+    // Load a definition file for editing
+    bool LoadDefinition(const std::filesystem::path& file);
 
     // Save the current definition
     bool SaveDefinition();
@@ -103,14 +104,10 @@ private:
     bool ValidateDefinition(std::string& error_message);
     std::string GenerateUniqueId(const std::string& name);
 
-    // Convert to/from pattern format
-    patterns::Pattern ConvertToPattern() const;
-    void LoadFromPattern(const patterns::Pattern& pattern);
-
     // Current editing state
     CustomNodeDefinition current_def_;
     bool has_unsaved_changes_ = false;
-    std::string loaded_pattern_id_;  // Empty if new
+    std::filesystem::path directory_;  // the user's custom_nodes folder
 
     // UI state
     int current_tab_ = 0;
