@@ -2522,7 +2522,7 @@ void CheckHeldOutTestOfPhaseCountedSet(const std::shared_ptr<cyxwiz::ArrowDatase
                    [](int, float, float, float, float, float) {},
                    [&](const cyxwiz::TrainingMetrics& metrics) { final_metrics = metrics; });
     // It was skipped: the gate read the count outside the test phase (0).
-    Check(final_metrics.has_test_metrics && final_metrics.test_sample_count == 2,
+    Check(final_metrics.has_test_metrics && final_metrics.test_sample_count == 1,
           "a test set counted only in its phase is still scored after training");
 }
 
@@ -2610,9 +2610,12 @@ void CheckExternalResolvedRoleLifecycleCase(
         validation_epochs,
         static_cast<int>(expected_epochs.size()),
         case_name + " plugin epoch-end callback");
+    // The shared split rule's counts for 6 rows at 0.5 / 0.25 / 0.25:
+    // 3 / 2 / 1 (the half row left over goes to Validation first; TOFIX228
+    // 1.6, ORA-23: the batchers' floor slicing gave 3 / 1 / 2).
     Check(final_metrics.train_sample_count == 3 &&
-              final_metrics.val_sample_count == 1 &&
-              final_metrics.test_sample_count == 2,
+              final_metrics.val_sample_count == 2 &&
+              final_metrics.test_sample_count == 1,
           case_name + " should retain resolved external role sample counts");
     Check(final_metrics.last_executed_epoch == expected_epochs.back() &&
               final_metrics.loss_history.size() == expected_epochs.size() &&
@@ -2833,9 +2836,10 @@ void CheckSharedPhaseExternalLifecycleCase(
         validation_epochs,
         static_cast<int>(expected_epochs.size()),
         case_name + " plugin epoch-end callback");
+    // One Train reset per epoch started, at its start with its seed
+    // (TOFIX228 1.6, ORA-21; it was at each epoch's end).
     Check(phase_tracking_batcher->TrainResetCount() ==
-              static_cast<int>(expected_epochs.size()) -
-                  (expected_terminal_status == "early_stopped" ? 1 : 0) &&
+              static_cast<int>(expected_epochs.size()) &&
               phase_tracking_batcher->ValResetCount() ==
                   expected_val_batches,
           case_name + " must reset once per executed semantic boundary");
@@ -3154,9 +3158,10 @@ void CheckParquetLifecycleCase(
         validation_epochs,
         static_cast<int>(expected_epochs.size()),
         case_name + " plugin epoch-end callback");
+    // The shared split rule on disk as in memory: 3 / 2 / 1 (ORA-23).
     Check(final_metrics.train_sample_count == 3 &&
-              final_metrics.val_sample_count == 1 &&
-              final_metrics.test_sample_count == 2 &&
+              final_metrics.val_sample_count == 2 &&
+              final_metrics.test_sample_count == 1 &&
               final_metrics.has_test_metrics &&
               std::isfinite(final_metrics.test_loss) &&
               final_metrics.test_accuracy >= 0.0f &&

@@ -1914,7 +1914,8 @@ void TrainingExecutor::Train(
                         100.0 * static_cast<double>(sampler.RowsLeftOut()) /
                             static_cast<double>(std::max<size_t>(sampler.RowsSeen(), 1)));
                 }
-                active_train_ibatcher->Reset();
+                // The Train batcher is reset at the start of the next epoch
+                // (RunTrainingEpochArrow), with that epoch's seed.
                 if (active_val_ibatcher != active_train_ibatcher) {
                     active_val_ibatcher->Reset();
                 }
@@ -3293,6 +3294,13 @@ void TrainingExecutor::RunTrainingEpochArrow(
     // it impossible to tell "alive but slow" from "hung". This is
     // the fix for the tofix.md entry "Training logs silent mid-epoch".
     const auto epoch_start_time = std::chrono::steady_clock::now();
+
+    // The epoch's order comes from its own seed (set just before, from
+    // (run seed, epoch)), as in RunTrainingEpochSequence. Without this Reset
+    // the seed took effect only at the epoch's end: epoch 1 trained in the
+    // batcher's construction order and epoch k in epoch k-1's, so a resumed
+    // run did not replay its data order (TOFIX228 1.6, the level 3 oracle).
+    batcher.Reset();
 
     spdlog::debug("RunTrainingEpochArrow: Entering batch loop");
     while (!batcher.IsEpochComplete()) {

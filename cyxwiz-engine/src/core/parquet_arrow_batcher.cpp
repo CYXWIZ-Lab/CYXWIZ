@@ -331,7 +331,8 @@ bool AppendLabelClasses(const arrow::Array& chunk, const LabelVocabulary* vocabu
 std::shared_ptr<const ParquetRowSplit> BuildParquetRowSplit(const ParquetBackedDataset& dataset,
                                                             const std::string& stratify_column,
                                                             const std::array<double, 3>& ratios,
-                                                            bool shuffle, uint32_t seed, std::string& error) {
+                                                            bool shuffle, bool shared_rule, uint32_t seed,
+                                                            std::string& error) {
     auto split = std::make_shared<ParquetRowSplit>();
     const int groups = dataset.GetNumRowGroups();
     int64_t rows = 0;
@@ -341,10 +342,10 @@ std::shared_ptr<const ParquetRowSplit> BuildParquetRowSplit(const ParquetBackedD
     }
     split->bucket.resize(static_cast<size_t>(rows));
 
-    if (stratify_column.empty() && shuffle) {
+    if (stratify_column.empty() && shared_rule) {
         // The shared split rule (split_partitioning.h), one class.
         SplitAssigner assigner({static_cast<uint64_t>(rows)}, static_cast<float>(ratios[0]),
-                               static_cast<float>(ratios[1]), static_cast<float>(ratios[2]), true, seed);
+                               static_cast<float>(ratios[1]), static_cast<float>(ratios[2]), shuffle, seed);
         for (int64_t row = 0; row < rows; ++row) {
             const auto bucket = static_cast<uint8_t>(assigner.Next(0));
             split->bucket[static_cast<size_t>(row)] = bucket;
