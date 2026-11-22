@@ -733,6 +733,63 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
     return true;
 }
 
+TrainingExecutor::RoundRunResult TrainingExecutor::TrainRound(
+    const RoundRun& round, int batch_size, ResolvedExternalBatchers batchers) {
+    if (mode_ != DatasetMode::External) {
+        RoundRunResult result;
+        result.error = "this executor was not built for role batchers";
+        return result;
+    }
+    external_batchers_ = std::move(batchers);
+    RoundRunResult result = RunRound(round, batch_size);
+    external_batchers_ = {};
+    return result;
+}
+
+TrainingExecutor::RoundRunResult TrainingExecutor::TrainRound(
+    const RoundRun& round, int batch_size, std::unique_ptr<ISequenceBatcher> batcher) {
+    if (mode_ != DatasetMode::SequenceExternal) {
+        RoundRunResult result;
+        result.error = "this executor was not built for a sequence batcher";
+        return result;
+    }
+    sequence_batcher_ = std::move(batcher);
+    RoundRunResult result = RunRound(round, batch_size);
+    sequence_batcher_.reset();
+    return result;
+}
+
+TrainingExecutor::RoundRunResult TrainingExecutor::RunRound(const RoundRun& round, int batch_size) {
+    RoundRunResult result;
+    round_run_ = &round;
+    round_started_ = false;
+    round_data_used_up_ = false;
+    round_steps_ = 0;
+    round_samples_ = 0;
+    round_seconds_ = 0.0;
+    try {
+        Train(round.round, batch_size, [this, &round](int, int, int, float loss, float) {
+            if (round.on_progress) round.on_progress(round_steps_, round_samples_, loss);
+            if (round.should_stop && round.should_stop()) Stop();
+        });
+    } catch (const std::exception& e) {
+        result.error = e.what();
+    }
+    round_run_ = nullptr;
+    round_started_ = false;
+
+    const TrainingMetrics metrics = GetMetrics();
+    result.cancelled = metrics.terminal_status == "cancelled";
+    result.ok = result.error.empty() && metrics.terminal_status == "completed";
+    if (!result.ok && !result.cancelled && result.error.empty()) result.error = metrics.terminal_reason;
+    result.steps = round_steps_;
+    result.samples = round_samples_;
+    result.last_loss = metrics.train_loss;
+    result.train_seconds = round_seconds_;
+    result.data_used_up = round_data_used_up_;
+    return result;
+}
+
 void TrainingExecutor::Train(
     int epochs,
     int batch_size,
@@ -916,7 +973,9 @@ void TrainingExecutor::Train(
         randomness.model_seed = ParseModelRandomSeed(std::to_string(config_.model_seed));
         randomness.dataloader_seed = config_.dataloader_seed;
         randomness.execution_device = execution_context.Describe();
-        if (randomness.model_seed >= 0) {
+        // A later round keeps the model the first one built.
+        const bool keep_model = round_run_ != nullptr && model_ != nullptr;
+        if (randomness.model_seed >= 0 && !keep_model) {
             randomness.generator = SeedCurrentArrayFireRandomEngine(
                 static_cast<uint64_t>(randomness.model_seed));
         }
@@ -927,7 +986,7 @@ void TrainingExecutor::Train(
         spdlog::info("TrainingExecutor: Model RNG provenance {}", seed_provenance);
 
         // Initialize
-        if (!Initialize(batch_size)) {
+        if (!keep_model && !Initialize(batch_size)) {
             spdlog::error("TrainingExecutor: {}",
                           errors::FormatError(
                               errors::Training::InvalidTrainingSetup,
@@ -1332,7 +1391,7 @@ void TrainingExecutor::Train(
 
     // Resume (TOFIX118 P4e): restore the checkpoint into the model and
     // optimizer just built, and continue at the epoch after it.
-    int start_epoch = 1;
+    int start_epoch = round_run_ ? round_run_->round : 1;
     const int run_model_seed = GetMetrics().randomness.model_seed;
     resume_total_epochs_ = epochs;
     resume_model_seed_ = run_model_seed;
@@ -1418,6 +1477,26 @@ void TrainingExecutor::Train(
         RunGenerationPreview(point);
     }
 
+    if (round_run_) {
+        const std::string device = execution_context.effective_backend + ":" + std::to_string(execution_context.effective_device_id);
+        if (round_device_.empty()) {
+            round_device_ = device;
+        } else if (round_device_ != device) {
+            fail_run("round_device_changed: the model was built on " + round_device_ + ", this round is on " + device);
+            return;
+        }
+        std::string round_error;
+        if (round_run_->on_ready && !round_run_->on_ready(*model_, round_error)) {
+            fail_run("round_setup_failed: " + round_error);
+            return;
+        }
+        // The budget counts training, not the setup above.
+        round_start_ = std::chrono::steady_clock::now();
+        round_deadline_ = round_start_ + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(round_run_->train_seconds));
+        round_started_ = true;
+    }
+
     // Training loop
     const bool regression_metrics = UsesRegressionMetrics(config_);
     for (int epoch = start_epoch; epoch <= epochs; ++epoch) {
@@ -1491,6 +1570,12 @@ void TrainingExecutor::Train(
             RunTrainingEpochArrow(*active_train_ibatcher, epoch, batch_cb);
         }
 
+        if (round_run_) {
+            // A round is one pass over its own data at most.
+            round_data_used_up_ = !ShouldStop();
+            round_seconds_ = std::chrono::duration<double>(std::chrono::steady_clock::now() - round_start_).count();
+            break;
+        }
         if (ShouldStop()) break;
 
         // Run validation (eval mode).
@@ -1783,6 +1868,8 @@ void TrainingExecutor::Train(
             }
         }
     }
+
+    if (round_run_ && round_run_->on_done) round_run_->on_done(*model_);
 
     TrainingMetrics final_metrics = GetMetrics();
 
@@ -2312,6 +2399,7 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     UpdateMetrics([](TrainingMetrics& m) {
         ++m.optimizer_step_count;
     });
+    ++round_steps_;
     if (scheduler_controller_) {
         ApplySchedulerAdvance(
             scheduler_controller_->OnOptimizerStep());
@@ -2704,6 +2792,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
 
         ++batch_num;
         sample_count += batch.size;
+        round_samples_ += batch.size;
         NotifyPluginBatch(true, epoch, batch_num, static_cast<int>(total_batches), 0.0f, 0.0f);
 
         CrashRunRecorder::Instance().MarkStage(
@@ -2801,7 +2890,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
         AccumulateGradientsAndMaybeStep(
             epoch, batch_num, static_cast<int>(total_batches),
             batch_loss, current_acc, loss_weight, nullptr,
-            batcher.IsEpochComplete());
+            batcher.IsEpochComplete() || RoundBudgetReached());
 
         UpdateMetrics([batch_num,
                        current_loss,
@@ -3092,6 +3181,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
             static_cast<float>(fetch_ms));
 
         batch_num++;
+        round_samples_ += batch.size;
         fetch_total_ms += fetch_ms;
         fetch_max_ms = std::max(fetch_max_ms, fetch_ms);
         NotifyPluginBatch(true, epoch, batch_num, static_cast<int>(total_batches), 0.0f, 0.0f);
@@ -3320,7 +3410,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
         AccumulateGradientsAndMaybeStep(
             epoch, batch_num, static_cast<int>(total_batches),
             batch_loss, current_acc, loss_weight.host, loss_weight.device,
-            batcher.IsEpochComplete());
+            batcher.IsEpochComplete() || RoundBudgetReached());
 
         UpdateMetrics([batch_num, current_loss, current_acc,
                        current_mae, current_rmse](TrainingMetrics& m) {

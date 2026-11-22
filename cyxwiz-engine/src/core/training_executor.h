@@ -235,6 +235,42 @@ public:
 
     ~TrainingExecutor();
 
+    // ---- Rounds (group training) ----
+    // One round trains the model this executor already holds (it is built on
+    // the first round and kept, with its optimizer state) on the round's own
+    // data, until the budget is reached or the data is used up. A round runs
+    // no validation, saves no checkpoint and evaluates no test split: the
+    // group's coordinator owns those. Every round must run on the same thread.
+    struct RoundRun {
+        int round = 1;               // seeds and logs use it as the epoch number
+        double train_seconds = 0.0;  // 0: no time limit
+        uint64_t max_steps = 0;      // optimizer steps; 0: no limit
+        bool setup_only = false;     // build the model, call on_ready and on_done, train nothing
+        // Polled after every batch; true ends the round as cancelled.
+        std::function<bool()> should_stop;
+        std::function<void(uint64_t steps, uint64_t samples, double loss)> on_progress;
+        // The model is built and its device is bound: the place to put the
+        // round's starting values in. False (with a reason) fails the round.
+        std::function<bool(IExecutableModel&, std::string&)> on_ready;
+        // Training is over and the device is still bound: the place to read
+        // the values back.
+        std::function<void(IExecutableModel&)> on_done;
+    };
+    struct RoundRunResult {
+        bool ok = false;
+        bool cancelled = false;      // Stop() ended it
+        std::string error;
+        uint64_t steps = 0;          // optimizer steps taken
+        uint64_t samples = 0;        // samples trained
+        double last_loss = 0.0;
+        double train_seconds = 0.0;  // from the first batch to the last
+        bool data_used_up = false;   // the round's data ended before its budget
+    };
+    // For an executor built with the batcher-factory or role-batchers constructor.
+    RoundRunResult TrainRound(const RoundRun& round, int batch_size, ResolvedExternalBatchers batchers);
+    // For an executor built with the sequence-batcher constructor.
+    RoundRunResult TrainRound(const RoundRun& round, int batch_size, std::unique_ptr<ISequenceBatcher> batcher);
+
     /**
      * Start training (blocking - should be called from a background thread)
      * @param epochs Number of epochs to train
@@ -566,7 +602,26 @@ private:
     /**
      * Check if we should stop (for cooperative cancellation)
      */
-    bool ShouldStop() const { return stop_requested_.load(); }
+    bool ShouldStop() const { return stop_requested_.load() || RoundBudgetReached(); }
+
+    // The round in progress, if Train was entered through TrainRound.
+    RoundRunResult RunRound(const RoundRun& round, int batch_size);
+    bool RoundBudgetReached() const {
+        if (!round_run_ || !round_started_) return false;
+        if (round_run_->setup_only) return true;
+        if (round_run_->max_steps > 0 && round_steps_ >= round_run_->max_steps) return true;
+        return round_run_->train_seconds > 0.0 && std::chrono::steady_clock::now() >= round_deadline_;
+    }
+    const RoundRun* round_run_ = nullptr;
+    bool round_started_ = false;
+    bool round_data_used_up_ = false;
+    uint64_t round_steps_ = 0;
+    uint64_t round_samples_ = 0;
+    std::chrono::steady_clock::time_point round_start_;
+    std::chrono::steady_clock::time_point round_deadline_;
+    double round_seconds_ = 0.0;
+    // The device the kept model lives on: every later round must bind it again.
+    std::string round_device_;
 
     /**
      * Wait while paused and report whether execution may continue.

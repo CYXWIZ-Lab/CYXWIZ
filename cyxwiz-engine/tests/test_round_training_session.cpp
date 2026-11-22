@@ -1,0 +1,311 @@
+// One group-training round of the Engine against the PyTorch reference
+// (tests/computation_truth/reference/round_training_reference.py): three
+// workers start from the same state, train 7, 3 and 1 steps with Adam and
+// return their updates.
+
+#include "../src/core/execution_device_context.h"
+#include "../src/core/execution_device_preferences.h"
+#include "../src/core/round_training_session.h"
+#include "../src/core/round_update_codec.h"
+#include "../src/core/graph_node_factory.h"
+#include "route_qualification_test_fixture.h"
+
+#include <cyxwiz/device.h>
+
+#include <arrow/api.h>
+#include <arrow/io/file.h>
+#include <nlohmann/json.hpp>
+#include <parquet/arrow/writer.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <string>
+#include <vector>
+
+namespace {
+
+namespace fs = std::filesystem;
+using nlohmann::json;
+
+void Check(bool condition, const std::string& message) {
+    if (!condition) {
+        std::cerr << "FAIL: " << message << "\n";
+        std::exit(1);
+    }
+    std::cout << "  ok   " << message << "\n";
+}
+
+void SelectArrayFireCpu() {
+    const auto devices = cyxwiz::Device::GetAvailableDevices();
+    const auto cpu = std::find_if(devices.begin(), devices.end(), [](const cyxwiz::DeviceInfo& device) {
+        return device.type == cyxwiz::DeviceType::CPU;
+    });
+    if (cpu == devices.end()) {
+        std::cerr << "FAIL: an ArrayFire CPU route is required\n";
+        std::exit(1);
+    }
+    cyxwiz::test::InstallQualifiedRouteSnapshot(devices);
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(cyxwiz::DeviceType::CPU, cpu->device_id);
+    cyxwiz::ClearNextRunExecutionPolicy();
+    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
+}
+
+// A worker's batches as a Parquet file: 8 float features and the class, in batch order.
+bool WriteBatches(const fs::path& path, const json& batches, int repeat = 1) {
+    arrow::FloatBuilder features[8];
+    arrow::Int64Builder labels;
+    for (int pass = 0; pass < repeat; ++pass) {
+        for (const json& batch : batches) {
+            const std::vector<float> x = batch.at("x").at("values").get<std::vector<float>>();
+            const std::vector<int> y = batch.at("y").get<std::vector<int>>();
+            for (size_t row = 0; row < y.size(); ++row) {
+                for (size_t column = 0; column < 8; ++column) {
+                    if (!features[column].Append(x[row * 8 + column]).ok()) return false;
+                }
+                if (!labels.Append(y[row]).ok()) return false;
+            }
+        }
+    }
+    std::vector<std::shared_ptr<arrow::Array>> arrays(9);
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    for (int column = 0; column < 8; ++column) {
+        if (!features[column].Finish(&arrays[column]).ok()) return false;
+        fields.push_back(arrow::field("x" + std::to_string(column), arrow::float32()));
+    }
+    if (!labels.Finish(&arrays[8]).ok()) return false;
+    fields.push_back(arrow::field("class", arrow::int64()));
+    auto table = arrow::Table::Make(arrow::schema(fields), arrays);
+    auto out = arrow::io::FileOutputStream::Open(path.string());
+    return out.ok() && parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), *out, 1024).ok() &&
+           (*out)->Close().ok();
+}
+
+// Data Input -> Split -> Loader -> Dense 144 -> ReLU -> Dense 4 -> cross entropy -> Adam -> Output.
+std::string Graph(int hidden) {
+    using gui::NodeType;
+    json nodes = json::array();
+    const auto add = [&nodes](int id, NodeType type, const char* name, json parameters) {
+        nodes.push_back({{"id", id}, {"type", static_cast<int>(type)}, {"name", name}, {"parameters", parameters}});
+    };
+    add(1, NodeType::DataInput, "Rows",
+        {{"dataset_name", "round_rows"}, {"file_category", "tabular"}, {"file_type", "parquet"}, {"label_column", "class"}});
+    add(2, NodeType::DataSplit, "Split",
+        {{"seed", "42"}, {"stratified", "false"}, {"train_ratio", "0.8"}, {"val_ratio", "0.1"}, {"test_ratio", "0.1"}});
+    add(3, NodeType::DataLoader, "Loader",
+        {{"batch_size", "8"}, {"epochs", "2"}, {"shuffle", "true"}, {"seed", "11"}, {"model_seed", "7"}});
+    add(4, NodeType::Dense, "Hidden", {{"units", std::to_string(hidden)}});
+    add(5, NodeType::ReLU, "ReLU", json::object());
+    add(6, NodeType::Dense, "Classes", {{"units", "4"}});
+    add(7, NodeType::CrossEntropyLoss, "Cross entropy", json::object());
+    add(8, NodeType::Adam, "Adam", {{"learning_rate", "0.01"}});
+    add(9, NodeType::Output, "Output", {{"num_classes", "4"}});
+    json links = json::array();
+    int link_id = 1;
+    const auto link = [&](int from, int from_index, int to, int to_index) {
+        links.push_back({{"id", link_id}, {"from_node", from}, {"from_pin", 100 + link_id}, {"from_pin_index", from_index},
+                         {"to_node", to}, {"to_pin", 200 + link_id}, {"to_pin_index", to_index}, {"link_type", 0}});
+        ++link_id;
+    };
+    link(1, 0, 2, 0);
+    link(2, 0, 3, 0);
+    link(3, 0, 4, 0);
+    link(4, 0, 5, 0);
+    link(5, 0, 6, 0);
+    link(6, 0, 7, 0);
+    link(3, 1, 7, 1);
+    link(7, 0, 8, 0);
+    link(8, 0, 9, 0);
+    return json{{"version", "1.0"}, {"data_boundary_version", 2}, {"nodes", nodes}, {"links", links}}.dump();
+}
+
+// The reference lists fc1.weight, fc1.bias, fc2.weight, fc2.bias; the Engine
+// orders by layer, then parameter name. Where each reference value sits in
+// the Engine's exchanged state.
+std::vector<size_t> ReferenceToEngine(const json& reference_layout, const cyxwiz::ModelStateLayout& layout) {
+    std::vector<std::string> engine_layers;
+    for (const auto& segment : layout.segments) {
+        const std::string layer = segment.name.substr(0, segment.name.find('.'));
+        if (engine_layers.empty() || engine_layers.back() != layer) engine_layers.push_back(layer);
+    }
+    std::vector<std::string> reference_layers;
+    std::vector<size_t> position;
+    for (const json& reference : reference_layout) {
+        const std::string name = reference.at("name").get<std::string>();
+        const std::string layer = name.substr(0, name.find('.'));
+        if (reference_layers.empty() || reference_layers.back() != layer) reference_layers.push_back(layer);
+        const std::string wanted = engine_layers.at(reference_layers.size() - 1) + name.substr(name.find('.'));
+        const auto segment = std::find_if(layout.segments.begin(), layout.segments.end(),
+                                          [&](const auto& candidate) { return candidate.name == wanted; });
+        if (segment == layout.segments.end() || segment->count != reference.at("count").get<size_t>()) {
+            std::cerr << "FAIL: the Engine has no segment " << wanted << " of the reference's size\n";
+            std::exit(1);
+        }
+        for (size_t i = 0; i < segment->count; ++i) position.push_back(segment->exchanged_offset + i);
+    }
+    return position;
+}
+
+cyxwiz::GraphTrainingJobRequest Request(const std::string& graph, const fs::path& file) {
+    cyxwiz::GraphTrainingJobRequest request;
+    request.graph_json = graph;
+    request.dataset_files["round_rows"] = file.string();
+    return request;
+}
+
+}  // namespace
+
+int main() {
+    std::ifstream file(CYXWIZ_ROUND_TRAINING_FIXTURE);
+    if (!file.good()) {
+        std::cerr << "FAIL: the fixture should open: " << CYXWIZ_ROUND_TRAINING_FIXTURE << "\n";
+        return 1;
+    }
+    const json fixture = json::parse(file);
+    const json& round = fixture.at("rounds").at(0);   // float32 wire, no BatchNorm
+    const double tolerance = fixture.at("tolerance").at("round").get<double>();
+    const int hidden = round.at("layers").at(0).at("out").get<int>();
+    const std::string graph = Graph(hidden);
+
+    const fs::path work = fs::temp_directory_path() / "cyxwiz_round_training_session_test";
+    std::error_code ec;
+    fs::remove_all(work, ec);
+    fs::create_directories(work);
+
+    std::cout << "one round against PyTorch\n";
+    std::string layout_hash;
+    std::vector<float> first_delta_of_fast;
+    for (const json& worker : round.at("workers")) {
+        const std::string name = worker.at("name").get<std::string>();
+        const fs::path data = work / (name + ".parquet");
+        Check(WriteBatches(data, worker.at("batches")), name + ": its batches are written");
+
+        SelectArrayFireCpu();
+        cyxwiz::RoundFailure failure;
+        // The graph is compiled against one part of the job's data (here the
+        // fast worker's file); the round's rows come from the worker's own.
+        auto session = cyxwiz::RoundTrainingSession::Open(Request(graph, work / "fast.parquet"), failure);
+        Check(session != nullptr, name + ": the session opens " + failure.text);
+        const cyxwiz::ModelStateLayout& layout = session->Layout();
+        if (layout_hash.empty()) layout_hash = layout.hash;
+        Check(layout.hash == layout_hash, name + ": every worker builds the same layout");
+        Check(session->InitialState().size() == layout.total_count && layout.total_count == layout.exchanged_count,
+              name + ": the starting state covers the model");
+
+        const std::vector<size_t> position = ReferenceToEngine(round.at("layout"), layout);
+        const std::vector<float> reference_theta = round.at("theta").at("values").get<std::vector<float>>();
+        Check(position.size() == reference_theta.size() && position.size() == layout.exchanged_count,
+              name + ": the reference and the Engine exchange the same number of values");
+        std::vector<float> theta(layout.exchanged_count);
+        for (size_t i = 0; i < position.size(); ++i) theta[position[i]] = reference_theta[i];
+
+        std::string error;
+        Check(session->LoadInitialState(theta, error), name + ": the starting state is accepted " + error);
+        cyxwiz::RoundData leases;
+        leases.leases.push_back({data, 0, 0});
+        cyxwiz::RoundBudget budget;
+        budget.max_steps = worker.at("steps").get<uint64_t>();
+        cyxwiz::RoundOutcome outcome;
+        SelectArrayFireCpu();
+        Check(session->TrainRound(1, theta, leases, budget, {}, outcome, failure), name + ": the round trains " + failure.text);
+        Check(outcome.steps == worker.at("steps").get<uint64_t>() && outcome.samples == worker.at("samples").get<uint64_t>(),
+              name + ": " + std::to_string(outcome.steps) + " steps, " + std::to_string(outcome.samples) + " samples");
+        Check(outcome.rows_done.size() == 1 && outcome.rows_done[0] == outcome.samples, name + ": the rows trained are reported");
+
+        const std::vector<float> reference_delta = worker.at("delta").at("values").get<std::vector<float>>();
+        double worst = 0.0;
+        for (size_t i = 0; i < position.size(); ++i) {
+            worst = std::max(worst, static_cast<double>(std::abs(outcome.delta[position[i]] - reference_delta[i])));
+        }
+        Check(worst <= tolerance, name + ": the update equals PyTorch's (largest difference " + std::to_string(worst) + ")");
+
+        // The update goes through the wire codec unchanged in float32.
+        cyxwiz::EncodedUpdate encoded;
+        std::vector<float> decoded;
+        Check(cyxwiz::EncodeUpdate(outcome.delta, layout, cyxwiz::UpdateWire::Float32, encoded, error) &&
+                  cyxwiz::DecodeUpdate(encoded, layout, cyxwiz::UpdateWire::Float32, decoded, error) && decoded == outcome.delta,
+              name + ": the update encodes and decodes");
+        if (name == "fast") first_delta_of_fast = outcome.delta;
+    }
+
+    std::cout << "rounds on a kept model\n";
+    {
+        const json& fast = round.at("workers").at(0);
+        const fs::path data = work / "many.parquet";
+        Check(WriteBatches(data, fast.at("batches"), 400), "a larger file is written");   // 7 x 8 x 400 = 22,400 rows
+        SelectArrayFireCpu();
+        cyxwiz::RoundFailure failure;
+        auto session = cyxwiz::RoundTrainingSession::Open(Request(graph, data), failure);
+        Check(session != nullptr, "the session opens " + failure.text);
+        const cyxwiz::ModelStateLayout& layout = session->Layout();
+        const std::vector<size_t> position = ReferenceToEngine(round.at("layout"), layout);
+        const std::vector<float> reference_theta = round.at("theta").at("values").get<std::vector<float>>();
+        std::vector<float> theta(layout.exchanged_count);
+        for (size_t i = 0; i < position.size(); ++i) theta[position[i]] = reference_theta[i];
+
+        cyxwiz::RoundBudget seven;
+        seven.max_steps = 7;
+        cyxwiz::RoundData first;
+        first.leases.push_back({data, 0, 56});
+        cyxwiz::RoundOutcome outcome;
+        SelectArrayFireCpu();
+        Check(session->TrainRound(1, theta, first, seven, {}, outcome, failure), "round 1 trains " + failure.text);
+        Check(outcome.delta == first_delta_of_fast, "a row lease of the first 56 rows gives the same update as the whole small file");
+
+        // Round 2 from the same state: Adam's moments were kept, so the update differs.
+        SelectArrayFireCpu();
+        Check(session->TrainRound(2, theta, first, seven, {}, outcome, failure), "round 2 trains " + failure.text);
+        Check(outcome.delta != first_delta_of_fast, "the optimizer's state is kept between rounds");
+
+        // Two leases, the data ends before the budget.
+        cyxwiz::RoundData two;
+        two.leases.push_back({data, 56, 24});
+        two.leases.push_back({data, 1000, 16});
+        cyxwiz::RoundBudget large;
+        large.max_steps = 1000;
+        SelectArrayFireCpu();
+        Check(session->TrainRound(3, theta, two, large, {}, outcome, failure), "a round over two leases trains " + failure.text);
+        Check(outcome.steps == 5 && outcome.samples == 40 && outcome.rows_done == std::vector<uint64_t>({24, 16}),
+              "it ends when its 40 rows are used: " + std::to_string(outcome.steps) + " steps");
+
+        // A time budget cuts a round short; the rows trained are the first ones.
+        cyxwiz::RoundData all;
+        all.leases.push_back({data, 0, 0});
+        cyxwiz::RoundBudget brief;
+        brief.train_seconds = 0.25;
+        SelectArrayFireCpu();
+        Check(session->TrainRound(4, theta, all, brief, {}, outcome, failure), "a timed round trains " + failure.text);
+        Check(outcome.steps > 0 && outcome.samples == outcome.steps * 8 && outcome.samples < 22400 &&
+                  outcome.rows_done == std::vector<uint64_t>({outcome.samples}),
+              "it stops on time: " + std::to_string(outcome.steps) + " steps in " + std::to_string(outcome.train_seconds) + " s");
+
+        // Stopped from outside.
+        cyxwiz::RoundCallbacks stop;
+        stop.should_stop = [] { return true; };
+        SelectArrayFireCpu();
+        Check(!session->TrainRound(5, theta, all, large, stop, outcome, failure) &&
+                  failure.kind == cyxwiz::TrainingFailureKind::Cancelled,
+              "a stop request ends the round as cancelled");
+
+        // Refusals.
+        std::string error;
+        std::vector<float> short_state(layout.total_count - 1, 0.0f);
+        Check(!session->LoadInitialState(short_state, error), "a starting state of the wrong length is refused");
+        Check(!session->TrainRound(6, short_state, all, seven, {}, outcome, failure), "a round state of the wrong length is refused");
+        cyxwiz::RoundData beyond;
+        beyond.leases.push_back({data, 22390, 100});
+        Check(!session->TrainRound(6, theta, beyond, seven, {}, outcome, failure) &&
+                  failure.kind == cyxwiz::TrainingFailureKind::DataError,
+              "a lease past the end of its file is refused");
+        Check(!session->TrainRound(6, theta, all, cyxwiz::RoundBudget{}, {}, outcome, failure), "a round with no budget is refused");
+    }
+
+    fs::remove_all(work, ec);
+    std::cout << "round training session: all checks passed\n";
+    return 0;
+}

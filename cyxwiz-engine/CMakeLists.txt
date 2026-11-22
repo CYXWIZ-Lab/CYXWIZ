@@ -7568,6 +7568,16 @@ add_custom_target(copy_test_scheduler_node_training_fixture
 add_dependencies(test_scheduler_node_training copy_test_scheduler_node_training_fixture)
 add_test(NAME scheduler_node_pytorch_parity COMMAND test_scheduler_node_training)
 
+# ===== Test: one group-training round vs PyTorch (TOFIX166) =====
+add_executable(test_round_training_session
+    tests/test_round_training_session.cpp
+)
+configure_training_executor_harness(test_round_training_session)
+target_compile_definitions(test_round_training_session PRIVATE
+    CYXWIZ_ROUND_TRAINING_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/round_training_pytorch.json"
+)
+add_test(NAME round_training_pytorch_parity COMMAND test_round_training_session)
+
 # ===== Test: the learning rate range test vs PyTorch (TOFIX129 D11) =====
 set(CYXWIZ_LEARNING_RATE_RANGE_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/learning_rate_range_pytorch.json")
