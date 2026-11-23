@@ -54,9 +54,11 @@ af::array Bluestein(const af::array& signal) {
     const dim_t n = signal.dims(0);
     const dim_t columns = signal.elements() / n;
     const dim_t m = PowerOfTwoAtLeast(2 * n - 1);
-    const af::dtype complex_type = DoubleDevice() ? c64 : c32;
+    // As af::fft: a float32 (or complex float32) signal gives complex float32.
+    const af::dtype complex_type =
+        (signal.type() == f32 || signal.type() == c32 || !DoubleDevice()) ? c32 : c64;
     const af::array x = af::moddims(signal, n, columns).as(complex_type);
-    const af::array w = Chirp(n, n);
+    const af::array w = Chirp(n, n).as(complex_type);
 
     af::array a = af::constant(0, m, columns, complex_type);
     a(af::seq(0, static_cast<double>(n - 1)), af::span) = x * af::tile(w, 1, static_cast<unsigned>(columns));
