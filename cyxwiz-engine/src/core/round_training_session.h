@@ -17,6 +17,9 @@
 #include "model_state_layout.h"
 #include "training_executor.h"
 #include "training_failure.h"
+#include "training_scheduler_controller.h"
+
+#include <cyxwiz/optimizers/sgd.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -43,6 +46,27 @@ struct RoundData {
     std::vector<RowRange> leases;
 };
 
+// What a worker needs to know about its group to open a session.
+struct RoundSessionOptions {
+    // This worker's number in its group: mixed into the graph's model seed,
+    // so the members of a group do not draw the same dropout masks, while
+    // one worker's rounds stay reproducible.
+    uint32_t worker = 0;
+    // The length of the job in optimizer updates of one node training alone
+    // (rows per epoch / batch size / accumulation x epochs). Needed when the
+    // optimizer node has a schedule; 0 when the job did not say.
+    uint64_t schedule_total_steps = 0;
+};
+
+// Where the group is when a round starts. The learning rate follows it, not
+// this worker's own step count: every member is at the same point of the
+// schedule whatever its speed, and a replacement starts where the group is.
+struct RoundPosition {
+    uint64_t round = 1;         // 1, 2, ...: seeds follow it
+    uint64_t global_epoch = 0;  // epochs the group has completed
+    uint64_t global_step = 0;   // samples the group has trained / batch size / accumulation
+};
+
 struct RoundBudget {
     double train_seconds = 0.0;  // 0: no time limit
     uint64_t max_steps = 0;      // optimizer steps; 0: no limit
@@ -60,6 +84,7 @@ struct RoundOutcome {
     uint64_t samples = 0;
     double last_loss = 0.0;
     double train_seconds = 0.0;
+    double learning_rate = 0.0;       // what the round trained with
     std::vector<uint64_t> rows_done;  // per lease: rows trained, from its start
 };
 
@@ -74,11 +99,8 @@ public:
     // file of the job's data (any part of it): the graph is compiled against
     // its columns. The model is built here. Null with `failure` set when the
     // graph cannot train in rounds.
-    // `worker` is this worker's number in its group: it is mixed into the
-    // graph's model seed, so the members of a group do not draw the same
-    // dropout masks, while one worker's rounds stay reproducible.
-    static std::unique_ptr<RoundTrainingSession> Open(const GraphTrainingJobRequest& request, uint32_t worker,
-                                                      RoundFailure& failure);
+    static std::unique_ptr<RoundTrainingSession> Open(const GraphTrainingJobRequest& request,
+                                                      const RoundSessionOptions& options, RoundFailure& failure);
     ~RoundTrainingSession();
 
     const ModelStateLayout& Layout() const { return layout_; }
@@ -92,9 +114,9 @@ public:
     // round starts. Refused unless it has the layout's full length.
     bool LoadInitialState(std::span<const float> full_state, std::string& error);
 
-    // One round from `theta` (layout.exchanged_count values). `round` numbers
-    // the round for this job (1, 2, ...): seeds follow it.
-    bool TrainRound(uint64_t round, std::span<const float> theta, const RoundData& data, const RoundBudget& budget,
+    // One round from `theta` (layout.exchanged_count values). The learning
+    // rate is the schedule's at `position` and stays there for the round.
+    bool TrainRound(const RoundPosition& position, std::span<const float> theta, const RoundData& data, const RoundBudget& budget,
                     const RoundCallbacks& callbacks, RoundOutcome& outcome, RoundFailure& failure);
 
 private:
@@ -105,6 +127,16 @@ private:
     // One round's batchers over `dataset` handed to the executor.
     bool RunRound(const TrainingExecutor::RoundRun& run, const std::shared_ptr<ArrowDataset>& dataset,
                   TrainingExecutor::RoundRunResult& result, std::string& error);
+
+    // The schedule's value at the group's position; false when it cannot be evaluated.
+    bool LearningRateAt(const RoundPosition& position, double& learning_rate, std::string& error);
+
+    // The graph's schedule on a clock of its own: an optimizer that trains
+    // nothing, stepped to the group's position.
+    std::optional<TrainingSchedulerSpec> schedule_;
+    std::unique_ptr<SGDOptimizer> schedule_optimizer_;
+    std::unique_ptr<TrainingSchedulerController> schedule_clock_;
+    double base_learning_rate_ = 0.0;
 
     std::unique_ptr<TrainingExecutor> executor_;
     bool sequence_ = false;  // a language model on token windows

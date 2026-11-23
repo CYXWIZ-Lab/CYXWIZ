@@ -88,7 +88,7 @@ bool WriteBatches(const fs::path& path, const json& batches, int repeat = 1) {
 }
 
 // Data Input -> Split -> Loader -> Dense 144 -> ReLU -> Dense 4 -> cross entropy -> Adam -> Output.
-std::string Graph(int hidden) {
+std::string Graph(int hidden, const nlohmann::json& optimizer_extra = nlohmann::json::object(), bool step_schedule = false) {
     using gui::NodeType;
     json nodes = json::array();
     const auto add = [&nodes](int id, NodeType type, const char* name, json parameters) {
@@ -104,8 +104,11 @@ std::string Graph(int hidden) {
     add(5, NodeType::ReLU, "ReLU", json::object());
     add(6, NodeType::Dense, "Classes", {{"units", "4"}});
     add(7, NodeType::CrossEntropyLoss, "Cross entropy", json::object());
-    add(8, NodeType::Adam, "Adam", {{"learning_rate", "0.01"}});
+    json adam = {{"learning_rate", "0.01"}};
+    adam.update(optimizer_extra);
+    add(8, NodeType::Adam, "Adam", adam);
     add(9, NodeType::Output, "Output", {{"num_classes", "4"}});
+    if (step_schedule) add(10, NodeType::StepLR, "Step", {{"step_size", "2"}, {"gamma", "0.5"}});
     json links = json::array();
     int link_id = 1;
     const auto link = [&](int from, int from_index, int to, int to_index) {
@@ -122,6 +125,7 @@ std::string Graph(int hidden) {
     link(3, 1, 7, 1);
     link(7, 0, 8, 0);
     link(8, 0, 9, 0);
+    if (step_schedule) link(8, 0, 10, 0);
     return json{{"version", "1.0"}, {"data_boundary_version", 2}, {"nodes", nodes}, {"links", links}}.dump();
 }
 
@@ -178,7 +182,7 @@ LanguageRound TrainLanguageRound(const std::string& graph, const fs::path& sampl
     cyxwiz::GraphTrainingJobRequest request;
     request.graph_json = graph;
     request.dataset_files["tiny_causal_lm_tokens"] = sample.string();
-    auto session = cyxwiz::RoundTrainingSession::Open(request, worker, failure);
+    auto session = cyxwiz::RoundTrainingSession::Open(request, {worker, 0}, failure);
     Check(session != nullptr, what + ": the session opens " + failure.text);
     run.layout = session->Layout();
     run.start = session->InitialState();
@@ -188,7 +192,7 @@ LanguageRound TrainLanguageRound(const std::string& graph, const fs::path& sampl
     cyxwiz::RoundBudget budget;
     budget.max_steps = 1000;
     SelectArrayFireCpu();
-    Check(session->TrainRound(1, theta, leases, budget, {}, run.outcome, failure), what + ": the round trains " + failure.text);
+    Check(session->TrainRound({1, 0, 0}, theta, leases, budget, {}, run.outcome, failure), what + ": the round trains " + failure.text);
     return run;
 }
 
@@ -231,7 +235,7 @@ int main() {
         // The graph is compiled against one part of the job's data (here the
         // fast worker's file); the round's rows come from the worker's own.
         auto session = cyxwiz::RoundTrainingSession::Open(Request(graph, work / "fast.parquet"),
-                                                          static_cast<uint32_t>(layout_hash.empty() ? 0 : 1), failure);
+                                                          {static_cast<uint32_t>(layout_hash.empty() ? 0 : 1), 0}, failure);
         Check(session != nullptr, name + ": the session opens " + failure.text);
         const cyxwiz::ModelStateLayout& layout = session->Layout();
         if (layout_hash.empty()) layout_hash = layout.hash;
@@ -254,7 +258,7 @@ int main() {
         budget.max_steps = worker.at("steps").get<uint64_t>();
         cyxwiz::RoundOutcome outcome;
         SelectArrayFireCpu();
-        Check(session->TrainRound(1, theta, leases, budget, {}, outcome, failure), name + ": the round trains " + failure.text);
+        Check(session->TrainRound({1, 0, 0}, theta, leases, budget, {}, outcome, failure), name + ": the round trains " + failure.text);
         Check(outcome.steps == worker.at("steps").get<uint64_t>() && outcome.samples == worker.at("samples").get<uint64_t>(),
               name + ": " + std::to_string(outcome.steps) + " steps, " + std::to_string(outcome.samples) + " samples");
         Check(outcome.rows_done.size() == 1 && outcome.rows_done[0] == outcome.samples, name + ": the rows trained are reported");
@@ -282,7 +286,7 @@ int main() {
         Check(WriteBatches(data, fast.at("batches"), 400), "a larger file is written");   // 7 x 8 x 400 = 22,400 rows
         SelectArrayFireCpu();
         cyxwiz::RoundFailure failure;
-        auto session = cyxwiz::RoundTrainingSession::Open(Request(graph, data), 0, failure);
+        auto session = cyxwiz::RoundTrainingSession::Open(Request(graph, data), {}, failure);
         Check(session != nullptr, "the session opens " + failure.text);
         const cyxwiz::ModelStateLayout& layout = session->Layout();
         const std::vector<size_t> position = ReferenceToEngine(round.at("layout"), layout);
@@ -296,12 +300,12 @@ int main() {
         first.leases.push_back({data, 0, 56});
         cyxwiz::RoundOutcome outcome;
         SelectArrayFireCpu();
-        Check(session->TrainRound(1, theta, first, seven, {}, outcome, failure), "round 1 trains " + failure.text);
+        Check(session->TrainRound({1, 0, 0}, theta, first, seven, {}, outcome, failure), "round 1 trains " + failure.text);
         Check(outcome.delta == first_delta_of_fast, "a row lease of the first 56 rows gives the same update as the whole small file");
 
         // Round 2 from the same state: Adam's moments were kept, so the update differs.
         SelectArrayFireCpu();
-        Check(session->TrainRound(2, theta, first, seven, {}, outcome, failure), "round 2 trains " + failure.text);
+        Check(session->TrainRound({2, 0, 0}, theta, first, seven, {}, outcome, failure), "round 2 trains " + failure.text);
         Check(outcome.delta != first_delta_of_fast, "the optimizer's state is kept between rounds");
 
         // Two leases, the data ends before the budget.
@@ -311,7 +315,7 @@ int main() {
         cyxwiz::RoundBudget large;
         large.max_steps = 1000;
         SelectArrayFireCpu();
-        Check(session->TrainRound(3, theta, two, large, {}, outcome, failure), "a round over two leases trains " + failure.text);
+        Check(session->TrainRound({3, 0, 0}, theta, two, large, {}, outcome, failure), "a round over two leases trains " + failure.text);
         Check(outcome.steps == 5 && outcome.samples == 40 && outcome.rows_done == std::vector<uint64_t>({24, 16}),
               "it ends when its 40 rows are used: " + std::to_string(outcome.steps) + " steps");
 
@@ -321,7 +325,7 @@ int main() {
         cyxwiz::RoundBudget brief;
         brief.train_seconds = 0.25;
         SelectArrayFireCpu();
-        Check(session->TrainRound(4, theta, all, brief, {}, outcome, failure), "a timed round trains " + failure.text);
+        Check(session->TrainRound({4, 0, 0}, theta, all, brief, {}, outcome, failure), "a timed round trains " + failure.text);
         Check(outcome.steps > 0 && outcome.samples == outcome.steps * 8 && outcome.samples < 22400 &&
                   outcome.rows_done == std::vector<uint64_t>({outcome.samples}),
               "it stops on time: " + std::to_string(outcome.steps) + " steps in " + std::to_string(outcome.train_seconds) + " s");
@@ -330,7 +334,7 @@ int main() {
         cyxwiz::RoundCallbacks stop;
         stop.should_stop = [] { return true; };
         SelectArrayFireCpu();
-        Check(!session->TrainRound(5, theta, all, large, stop, outcome, failure) &&
+        Check(!session->TrainRound({5, 0, 0}, theta, all, large, stop, outcome, failure) &&
                   failure.kind == cyxwiz::TrainingFailureKind::Cancelled,
               "a stop request ends the round as cancelled");
 
@@ -338,13 +342,59 @@ int main() {
         std::string error;
         std::vector<float> short_state(layout.total_count - 1, 0.0f);
         Check(!session->LoadInitialState(short_state, error), "a starting state of the wrong length is refused");
-        Check(!session->TrainRound(6, short_state, all, seven, {}, outcome, failure), "a round state of the wrong length is refused");
+        Check(!session->TrainRound({6, 0, 0}, short_state, all, seven, {}, outcome, failure), "a round state of the wrong length is refused");
         cyxwiz::RoundData beyond;
         beyond.leases.push_back({data, 22390, 100});
-        Check(!session->TrainRound(6, theta, beyond, seven, {}, outcome, failure) &&
+        Check(!session->TrainRound({6, 0, 0}, theta, beyond, seven, {}, outcome, failure) &&
                   failure.kind == cyxwiz::TrainingFailureKind::DataError,
               "a lease past the end of its file is refused");
-        Check(!session->TrainRound(6, theta, all, cyxwiz::RoundBudget{}, {}, outcome, failure), "a round with no budget is refused");
+        Check(!session->TrainRound({6, 0, 0}, theta, all, cyxwiz::RoundBudget{}, {}, outcome, failure), "a round with no budget is refused");
+    }
+
+    std::cout << "the learning rate follows the group\n";
+    {
+        const fs::path data = work / "many.parquet";
+        const auto rate_at = [&](cyxwiz::RoundTrainingSession& session, uint64_t round, uint64_t epoch, uint64_t step) {
+            const std::vector<float> theta = Exchanged(session.Layout(), session.InitialState());
+            cyxwiz::RoundData lease;
+            lease.leases.push_back({data, 0, 8});
+            cyxwiz::RoundBudget one_step;
+            one_step.max_steps = 1;
+            cyxwiz::RoundOutcome outcome;
+            cyxwiz::RoundFailure failure;
+            SelectArrayFireCpu();
+            Check(session.TrainRound({round, epoch, step}, theta, lease, one_step, {}, outcome, failure),
+                  "a round at epoch " + std::to_string(epoch) + ", step " + std::to_string(step) + " trains " + failure.text);
+            return outcome.learning_rate;
+        };
+        const auto close_to = [](double actual, double expected) { return std::abs(actual - expected) <= 1e-9 + 1e-6 * expected; };
+
+        // The optimizer's own schedule: 10 warm-up steps of 100, then a straight line down to a tenth.
+        const std::string warmup = Graph(hidden, {{"lr_schedule", "warmup_linear"}, {"warmup_ratio", "0.1"}, {"min_lr_ratio", "0.1"}});
+        cyxwiz::RoundFailure failure;
+        SelectArrayFireCpu();
+        Check(cyxwiz::RoundTrainingSession::Open(Request(warmup, data), {}, failure) == nullptr &&
+                  failure.kind == cyxwiz::TrainingFailureKind::Refused,
+              "a schedule by step is refused when the job gives no length");
+        SelectArrayFireCpu();
+        auto by_step = cyxwiz::RoundTrainingSession::Open(Request(warmup, data), {0, 100}, failure);
+        Check(by_step != nullptr, "with the job's length it opens " + failure.text);
+        const double peak = rate_at(*by_step, 1, 0, 10);
+        Check(peak > 0.0098 && peak <= 0.01, "at the end of the warm-up the rate is at the optimizer's: " + std::to_string(peak));
+        const double early = rate_at(*by_step, 2, 0, 5);
+        Check(early > 0.0 && early < peak, "a position behind the clock is evaluated again: " + std::to_string(early));
+        const double late = rate_at(*by_step, 3, 0, 100);
+        Check(close_to(late, 0.001), "at the end of the job the rate is a tenth: " + std::to_string(late));
+        Check(close_to(rate_at(*by_step, 4, 0, 5000), late), "past the end it stays there");
+
+        // A scheduler node by epoch: halved every 2 epochs of the group.
+        SelectArrayFireCpu();
+        auto by_epoch = cyxwiz::RoundTrainingSession::Open(Request(Graph(hidden, json::object(), true), data), {}, failure);
+        Check(by_epoch != nullptr, "a graph with a StepLR node opens " + failure.text);
+        Check(close_to(rate_at(*by_epoch, 1, 0, 0), 0.01) && close_to(rate_at(*by_epoch, 2, 1, 0), 0.01),
+              "in the group's first two epochs the rate is the optimizer's");
+        Check(close_to(rate_at(*by_epoch, 3, 2, 0), 0.005) && close_to(rate_at(*by_epoch, 4, 5, 0), 0.0025),
+              "it is halved after 2 epochs and again after 4, whatever this worker's own steps");
     }
 
     std::cout << "a language model on token windows\n";

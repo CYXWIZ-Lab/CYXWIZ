@@ -38,9 +38,10 @@ std::string RefusalFor(const TrainingConfiguration& config) {
         return "of the sequence graphs only language models train in a group; token tagging builds its label "
                "list from the data, and every part of the data would build its own";
     }
-    if (config.scheduler.has_value() || config.lr_schedule != "none") {
-        return "a learning-rate schedule cannot follow a group yet: remove the scheduler node (or set the optimizer's "
-               "schedule to none) to train in a group";
+    if (config.scheduler.has_value() &&
+        GetTrainingSchedulerCadence(*config.scheduler) == TrainingSchedulerCadence::ValidatedEpoch) {
+        return "a schedule that waits for the validation loss to stop improving cannot run in a group: the workers "
+               "do not validate. Use a schedule by epoch or by step";
     }
     if (config.learning_rate_range.enabled) return "a learning-rate range test runs on one node, not in a group";
     if (!config.initialize_from_checkpoint.empty()) {
@@ -55,7 +56,9 @@ RoundTrainingSession::RoundTrainingSession() = default;
 RoundTrainingSession::~RoundTrainingSession() = default;
 
 std::unique_ptr<RoundTrainingSession> RoundTrainingSession::Open(const GraphTrainingJobRequest& request,
-                                                                 uint32_t worker, RoundFailure& failure) {
+                                                                 const RoundSessionOptions& options,
+                                                                 RoundFailure& failure) {
+    const uint32_t worker = options.worker;
     failure = {};
     PreparedGraphJob prepared;
     if (auto refused = PrepareGraphJob(request, prepared); !refused.error.empty()) {
@@ -116,7 +119,24 @@ std::unique_ptr<RoundTrainingSession> RoundTrainingSession::Open(const GraphTrai
                      "cannot be reproduced");
     }
 
+    // The schedule leaves the executor: a round trains at one learning rate,
+    // the schedule's at the group's position (LearningRateAt).
+    std::optional<TrainingSchedulerSpec> schedule = config.scheduler;
+    if (!schedule && config.lr_schedule != "none") {
+        if (options.schedule_total_steps == 0 || options.schedule_total_steps > 2'000'000'000ull) {
+            failure = Failure(TrainingFailureKind::Refused,
+                              "the optimizer's schedule (" + config.lr_schedule + ") needs the length of the job in steps, "
+                              "and the group did not give a usable one");
+            return nullptr;
+        }
+        schedule = OptimizerNodeScheduleSpec(config, static_cast<long long>(options.schedule_total_steps));
+    }
+    config.scheduler.reset();
+    config.lr_schedule = "none";
+
     std::unique_ptr<RoundTrainingSession> session(new RoundTrainingSession());
+    session->schedule_ = schedule;
+    session->base_learning_rate_ = config.learning_rate;
     session->sequence_ = sequence;
     session->label_column_ = label_column;
     session->dataset_name_ = config.dataset_name;
@@ -174,6 +194,42 @@ bool RoundTrainingSession::RunRound(const TrainingExecutor::RoundRun& run, const
             run, batch_size_,
             TakeResolvedExternalBatchers(BuildArrowTrainingBatchers(round_config_, dataset, label_column_, batch_size_)));
     }
+    return true;
+}
+
+bool RoundTrainingSession::LearningRateAt(const RoundPosition& position, double& learning_rate, std::string& error) {
+    learning_rate = base_learning_rate_;
+    if (!schedule_) return true;
+    const bool by_epoch = GetTrainingSchedulerCadence(*schedule_) == TrainingSchedulerCadence::CompletedEpoch;
+    uint64_t target = by_epoch ? position.global_epoch : position.global_step;
+    if (const auto* decay = std::get_if<WarmupDecayLRSchedulerSpec>(&*schedule_)) {
+        target = std::min<uint64_t>(target, static_cast<uint64_t>(std::max(0, decay->total_steps)));
+    } else if (const auto* cycle = std::get_if<OneCycleLRSchedulerSpec>(&*schedule_)) {
+        target = std::min<uint64_t>(target, static_cast<uint64_t>(std::max(0, cycle->total_steps)));
+    }
+    const auto at = [&] {
+        return static_cast<uint64_t>(by_epoch ? schedule_clock_->GetCompletedEpochs()
+                                              : schedule_clock_->GetCompletedOptimizerSteps());
+    };
+    // The clock only runs forward; a position behind it (a round repeated
+    // after the coordinator restarted) starts it again.
+    if (!schedule_clock_ || at() > target) {
+        schedule_optimizer_ = std::make_unique<SGDOptimizer>(base_learning_rate_);
+        schedule_clock_ = std::make_unique<TrainingSchedulerController>(*schedule_);
+        if (!schedule_clock_->Attach(*schedule_optimizer_, std::nullopt, error)) {
+            schedule_clock_.reset();
+            return false;
+        }
+    }
+    while (at() < target) {
+        const auto advanced = by_epoch ? schedule_clock_->OnEpochCompleted(std::nullopt) : schedule_clock_->OnOptimizerStep();
+        if (!advanced.ok) {
+            error = advanced.error;
+            schedule_clock_.reset();
+            return false;
+        }
+    }
+    learning_rate = schedule_optimizer_->GetLearningRate();
     return true;
 }
 
@@ -250,7 +306,7 @@ std::shared_ptr<ArrowDataset> RoundTrainingSession::LoadLeases(const RoundData& 
                                           dataset_name_);
 }
 
-bool RoundTrainingSession::TrainRound(uint64_t round, std::span<const float> theta, const RoundData& data,
+bool RoundTrainingSession::TrainRound(const RoundPosition& position, std::span<const float> theta, const RoundData& data,
                                       const RoundBudget& budget, const RoundCallbacks& callbacks,
                                       RoundOutcome& outcome, RoundFailure& failure) {
     outcome = {};
@@ -265,6 +321,12 @@ bool RoundTrainingSession::TrainRound(uint64_t round, std::span<const float> the
         failure = Failure(TrainingFailureKind::Internal, "a round needs a time or a step budget");
         return false;
     }
+    double learning_rate = 0.0;
+    std::string schedule_error;
+    if (!LearningRateAt(position, learning_rate, schedule_error)) {
+        failure = Failure(TrainingFailureKind::Internal, "the learning-rate schedule could not be evaluated: " + schedule_error);
+        return false;
+    }
     std::vector<uint64_t> lease_rows;
     const auto dataset = LoadLeases(data, lease_rows, failure);
     if (!dataset) return false;
@@ -272,7 +334,7 @@ bool RoundTrainingSession::TrainRound(uint64_t round, std::span<const float> the
     std::vector<float> local;
     std::string read_error;
     TrainingExecutor::RoundRun run;
-    run.round = static_cast<int>(std::min<uint64_t>(round, 1'000'000'000));
+    run.round = static_cast<int>(std::min<uint64_t>(position.round, 1'000'000'000));
     run.train_seconds = budget.train_seconds;
     run.max_steps = budget.max_steps;
     run.should_stop = callbacks.should_stop;
@@ -283,9 +345,14 @@ bool RoundTrainingSession::TrainRound(uint64_t round, std::span<const float> the
             pending_full_state_.clear();
             pending_full_state_.shrink_to_fit();
         }
+        if (Optimizer* optimizer = executor_->GetOptimizer()) optimizer->SetLearningRate(learning_rate);
         return WriteModelState(model, layout_, theta, false, error);
     };
-    run.on_done = [&](IExecutableModel& model) { ReadModelState(model, layout_, false, local, read_error); };
+    double trained_learning_rate = 0.0;
+    run.on_done = [&](IExecutableModel& model) {
+        if (Optimizer* optimizer = executor_->GetOptimizer()) trained_learning_rate = optimizer->GetLearningRate();
+        ReadModelState(model, layout_, false, local, read_error);
+    };
 
     TrainingExecutor::RoundRunResult result;
     std::string data_error;
@@ -317,6 +384,7 @@ bool RoundTrainingSession::TrainRound(uint64_t round, std::span<const float> the
     outcome.samples = result.samples;
     outcome.last_loss = result.last_loss;
     outcome.train_seconds = result.train_seconds;
+    outcome.learning_rate = trained_learning_rate;
     uint64_t left = result.samples;
     for (const uint64_t rows : lease_rows) {
         const uint64_t done = std::min(left, rows);

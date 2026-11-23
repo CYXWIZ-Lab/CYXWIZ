@@ -2566,6 +2566,17 @@ void TrainingExecutor::SetResumeFrom(std::filesystem::path checkpoint) {
     resume_from_ = std::move(checkpoint);
 }
 
+WarmupDecayLRSchedulerSpec OptimizerNodeScheduleSpec(const TrainingConfiguration& config, long long total_updates) {
+    WarmupDecayLRSchedulerSpec spec;
+    spec.peak_lr = config.learning_rate;
+    spec.total_steps = static_cast<int>(total_updates);
+    spec.warmup_steps = static_cast<int>(std::llround(config.warmup_ratio * static_cast<double>(total_updates)));
+    spec.decay = config.lr_schedule == "warmup_linear" ? "linear"
+               : config.lr_schedule == "warmup_constant" ? "constant" : "cosine";
+    spec.min_lr_ratio = config.min_lr_ratio;
+    return spec;
+}
+
 void TrainingExecutor::AttachGraphScheduleIfPending(size_t batches_per_epoch) {
     if (!graph_schedule_pending_) return;
     graph_schedule_pending_ = false;
@@ -2575,13 +2586,7 @@ void TrainingExecutor::AttachGraphScheduleIfPending(size_t batches_per_epoch) {
     if (total > std::numeric_limits<int>::max()) {
         throw std::runtime_error("TrainingExecutor: lr_schedule step count exceeds the supported range");
     }
-    WarmupDecayLRSchedulerSpec spec;
-    spec.peak_lr = config_.learning_rate;
-    spec.total_steps = static_cast<int>(total);
-    spec.warmup_steps = static_cast<int>(std::llround(config_.warmup_ratio * static_cast<double>(total)));
-    spec.decay = config_.lr_schedule == "warmup_linear" ? "linear"
-               : config_.lr_schedule == "warmup_constant" ? "constant" : "cosine";
-    spec.min_lr_ratio = config_.min_lr_ratio;
+    const WarmupDecayLRSchedulerSpec spec = OptimizerNodeScheduleSpec(config_, total);
     scheduler_controller_ = std::make_unique<TrainingSchedulerController>(spec);
     std::string error;
     const auto resume_state = std::exchange(graph_schedule_resume_, std::nullopt);

@@ -196,6 +196,10 @@ using ExternalBatcherFactory =
  * - Updates weights
  * - Reports progress via callbacks
  */
+// The schedule an optimizer node asks for (lr_schedule: warm-up, then cosine,
+// linear or constant decay) over `total_updates` optimizer updates.
+WarmupDecayLRSchedulerSpec OptimizerNodeScheduleSpec(const TrainingConfiguration& config, long long total_updates);
+
 class TrainingExecutor {
 public:
     /**
