@@ -58,7 +58,7 @@
   ],
   "template": {
     "nodes": [
-      {"id": "data_input", "type": "DataInput", "name": "Token sequences", "pos": [0, 260], "params": {"source_type": "file", "file_category": "tabular", "file_type": "csv", "has_header": "true", "sequence_create_causal_lm_targets": "true", "sequence_length": "$max_sequence_length", "sequence_vocab_size": "$vocab_size"}},
+      {"id": "data_input", "type": "DataInput", "name": "Token sequences", "pos": [0, 260], "params": {"source_type": "file", "file_category": "tabular", "file_type": "csv", "has_header": "true", "sequence_create_causal_lm_targets": "true", "sequence_length": "$max_sequence_length"}},
       {"id": "data_split", "type": "DataSplit", "name": "Data Split", "pos": [220, 260], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1", "seed": "42", "stratified": "false"}},
       {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [440, 260], "params": {"batch_size": "8", "epochs": "20", "shuffle": "true", "seed": "42", "validation_freq": "1"}},
       {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [660, 260], "params": {"num_embeddings": "$vocab_size", "embedding_dim": "$d_model", "padding_idx": "0"}},
