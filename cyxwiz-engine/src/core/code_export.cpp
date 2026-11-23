@@ -5,6 +5,7 @@
 #include "activation_codegen_contract.h"
 #include "extension_node_metadata.h"
 #include "graph_compiler.h"
+#include "loss_node_types.h"
 #include "pipeline_runtime_capabilities.h"
 #include "rl_graph_compile.h"
 #include "spatial_layer_shapes.h"
@@ -134,18 +135,6 @@ std::string BlockedCodegenConfiguration(
 std::string RecurrentLastStepLine(const MLNode& node) {
     if (PythonBoolLiteral(GetParamOrDefault(node, "return_sequences", "false")) == "True") return {};
     return "        x = x[:, -1, :]  # return_sequences=false: the last time step\n";
-}
-
-bool IsLossNode(NodeType type) {
-    switch (type) {
-        case NodeType::MSELoss: case NodeType::CrossEntropyLoss: case NodeType::FocalLoss:
-        case NodeType::BCELoss: case NodeType::BCEWithLogits: case NodeType::L1Loss:
-        case NodeType::SmoothL1Loss: case NodeType::HuberLoss: case NodeType::NLLLoss:
-        case NodeType::SoftDiceLoss: case NodeType::TverskyLoss: case NodeType::JaccardLoss:
-            return true;
-        default:
-            return false;
-    }
 }
 
 // The example loop's criterion: its setup line and its call's arguments.
@@ -780,7 +769,7 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
                type == NodeType::Concatenate;
     };
     const auto is_model_node = [&](const MLNode& n) {
-        if (IsLossNode(n.type) || n.type == NodeType::Output || n.type == NodeType::SequenceTagOutput) return false;
+        if (IsBuiltInLossNodeType(n.type) || n.type == NodeType::Output || n.type == NodeType::SequenceTagOutput) return false;
         switch (n.type) {
             case NodeType::SGD: case NodeType::Adam: case NodeType::AdamW: case NodeType::RMSprop:
             case NodeType::Adagrad: case NodeType::NAdam: case NodeType::StepLR: case NodeType::CosineAnnealing:
@@ -1090,13 +1079,10 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
     return code;
 }
 
-// Training recipe in PyTorch terms, read from the first optimizer node
-// (tofix112): optimizer + hyperparameters, AdamW no-decay groups, per-update
-// warmup/decay LambdaLR matching WarmupDecayLR, and global-norm clipping.
 // The graph's loss node (the first one), or nullptr.
 const MLNode* GraphCodeExporter::FindExportLossNode() const {
     for (const auto& node : nodes_)
-        if (IsLossNode(node.type)) return &node;
+        if (IsBuiltInLossNodeType(node.type)) return &node;
     return nullptr;
 }
 
@@ -1134,6 +1120,9 @@ const MLNode* GraphCodeExporter::FindExportSchedulerNode() const {
     return nullptr;
 }
 
+// Training recipe in PyTorch terms, read from the first optimizer node
+// (tofix112): optimizer + hyperparameters, AdamW no-decay groups, per-update
+// warmup/decay LambdaLR matching WarmupDecayLR, and global-norm clipping.
 std::string GraphCodeExporter::PyTorchOptimizerSetup() const {
     const MLNode* node = FindExportOptimizerNode();
     if (!node) {

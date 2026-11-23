@@ -1,4 +1,5 @@
 #include "graph_compiler.h"
+#include "loss_node_types.h"
 #include "rl_graph_compile.h"
 #include "column_list.h"
 #include <tuple>
@@ -846,24 +847,6 @@ void SuggestSparseFeatureOutput(
                "batches are made dense only when they reach the model.";
     AddIssue(config, IssueLevel::Warning, message.str(),
              vectorizer->id, vectorizer->name);
-}
-
-bool IsBuiltInLossNodeType(gui::NodeType type) {
-    return type == gui::NodeType::MSELoss ||
-           type == gui::NodeType::CrossEntropyLoss ||
-           type == gui::NodeType::FocalLoss ||
-           type == gui::NodeType::BCELoss ||
-           type == gui::NodeType::BCEWithLogits ||
-           type == gui::NodeType::L1Loss ||
-           type == gui::NodeType::SmoothL1Loss ||
-           type == gui::NodeType::HuberLoss ||
-           type == gui::NodeType::NLLLoss ||
-           type == gui::NodeType::SoftDiceLoss ||
-           type == gui::NodeType::TverskyLoss ||
-           type == gui::NodeType::JaccardLoss ||
-           type == gui::NodeType::TripletLoss ||
-           type == gui::NodeType::ContrastiveLoss ||
-           type == gui::NodeType::CosineEmbeddingLoss;
 }
 
 // A loss node from a plugin or a Python bundle (TOFIX125 P7). One that is
