@@ -135,13 +135,20 @@ source, checks it and creates its bundle. You write only the arithmetic.
    node is in the Nodes panel at once, under **Plugins**, in its group. A node whose check
    fails is still created, with the result kept on it.
 
-- **Open** lists the project's `nodes_src` sources. A source not made by this
-  form opens in the Script Editor. **Open in Script Editor** writes the
-  source and opens the whole file there; a source changed in the Script
-  Editor is made into a node with **Run > Create node from script...**.
+- **Open** lists the project's `nodes_src` sources. A source the form did not
+  write, or one changed outside it (an import, a helper, a comment), opens in
+  the Script Editor: make that node with **Run > Create node from
+  script...**. **Open in Script Editor** writes the source and opens the
+  whole file there. A source changed on disk after you opened it here is not
+  overwritten: Check and Create say so until you open it again.
+- **New**, **Open** and a different **Kind** ask first when the form holds
+  changes not created yet; a Kind starts its code over.
 - **Create node** needs an open project; without one you can still write and
-  check the node. It is blocked, with the reason, while a field is wrong or
-  when another node's source already has that file name.
+  check the node. It is blocked, with the reason, while a field is wrong,
+  when another node's source already has that file name, or when the
+  project's `nodes` folder has a bundle of that name made another way.
+- A Check or Create result stays only while the form still writes the
+  source it ran on.
 - Each node is its own bundle, with the id `project.<project>.<file>`: the
   same on every Create, so graphs that use the node keep it. Change the
   class name and you make a new node.

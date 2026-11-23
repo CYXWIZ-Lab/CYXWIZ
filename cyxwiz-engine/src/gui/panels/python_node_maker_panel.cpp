@@ -29,7 +29,7 @@ namespace nm = node_maker;
 namespace {
 
 constexpr const char* kWindow = "Make a Python node";
-constexpr const char* kNewConfirm = "Start a new node?###MakePythonNodeNew";
+constexpr const char* kConfirm = "Drop the changes?###MakePythonNodeConfirm";
 
 std::string ReadText(const fs::path& path) {
     std::ifstream in(path, std::ios::binary);
@@ -38,9 +38,15 @@ std::string ReadText(const fs::path& path) {
     return text.str();
 }
 
+// Text without carriage returns, to compare a file with what was written.
+std::string WithoutCR(std::string text) {
+    text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+    return text;
+}
+
 std::string FormatNumber(double value) {
     char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "%g", value);
+    std::snprintf(buffer, sizeof(buffer), "%.12g", value);
     return buffer;
 }
 
@@ -118,12 +124,40 @@ fs::path PythonNodeMakerPanel::SourcePath() const {
     return fs::temp_directory_path() / "cyxwiz_node_maker" / file;
 }
 
-bool PythonNodeMakerPanel::SourceTakenByAnother() const {
+std::string PythonNodeMakerPanel::ConflictReason() const {
+    // Without a project the source goes to a temporary folder; nothing else
+    // is there to overwrite.
+    if (!HasProject()) return {};
     const fs::path path = SourcePath();
+    if (path.empty()) return {};
     std::error_code ec;
-    if (path.empty() || !fs::exists(path, ec)) return false;
-    if (!file_.empty() && fs::equivalent(path, file_, ec)) return false;
-    return true;
+    if (fs::exists(path, ec) && !(!file_.empty() && fs::equivalent(path, file_, ec)))
+        return "A node source " + path.filename().string() +
+               " is already in the project: open it, or pick another class name";
+    const std::string stem = path.stem().string();
+    const fs::path manifest = fs::path(ProjectManager::Instance().GetProjectRoot()) / "nodes" / (stem + ".cyxnode") /
+                              "node.json";
+    if (fs::exists(manifest, ec)) {
+        std::ifstream in(manifest);
+        const auto j = nlohmann::json::parse(in, nullptr, false);
+        const std::string id = j.is_object() ? j.value("id", std::string()) : std::string();
+        if (id != nm::BundleIdFor(ProjectName(), stem))
+            return "The project's nodes folder already has a bundle " + stem + ".cyxnode" +
+                   (id.empty() ? std::string() : " (" + id + ")") + " made another way: pick another class name";
+    }
+    return {};
+}
+
+void PythonNodeMakerPanel::ConfirmIfEdited(const std::string& question, const char* confirm_label,
+                                           std::function<void()> action) {
+    if (!Edited()) {
+        action();
+        return;
+    }
+    confirm_question_ = question;
+    confirm_label_ = confirm_label;
+    confirm_action_ = std::move(action);
+    confirm_requested_ = true;
 }
 
 void PythonNodeMakerPanel::Reset(const nm::NodeForm& form, const fs::path& file) {
@@ -160,6 +194,15 @@ bool PythonNodeMakerPanel::WriteSource(fs::path& written, std::string& error) {
         error = "Could not create " + written.parent_path().string() + ": " + ec.message();
         return false;
     }
+    // The file this form opened, changed on disk since (in the Script Editor):
+    // writing now would throw that change away.
+    if (HasProject() && !file_.empty() && fs::exists(written, ec) && fs::equivalent(written, file_, ec) &&
+        WithoutCR(ReadText(written)) != WithoutCR(saved_source_)) {
+        error = written.filename().string() +
+                " was changed on disk since it was opened here (in the Script Editor?). Open it again to load the "
+                "change, or make it with Run > Create node from script";
+        return false;
+    }
     const std::string source = nm::Generate(form_, nm::BundleIdFor(ProjectName(), written.stem().string()));
     std::ofstream out(written, std::ios::binary | std::ios::trunc);
     out << source;
@@ -191,6 +234,7 @@ void PythonNodeMakerPanel::StartCheck() {
         result_detail_ = error;
         return;
     }
+    ran_source_ = saved_source_.empty() ? ReadText(written) : saved_source_;
     call_ = Call::Check;
     result_ = Result::Busy;
     result_title_ = "Checking the gradients...";
@@ -216,6 +260,7 @@ void PythonNodeMakerPanel::StartCreate() {
     const fs::path nodes = fs::path(ProjectManager::Instance().GetProjectRoot()) / "nodes";
     std::error_code ec;
     fs::create_directories(nodes, ec);
+    ran_source_ = saved_source_.empty() ? ReadText(written) : saved_source_;
     call_ = Call::Create;
     result_ = Result::Busy;
     result_title_ = "Creating the node...";
@@ -288,6 +333,13 @@ void PythonNodeMakerPanel::Collect() {
 
 void PythonNodeMakerPanel::Render() {
     Collect();
+    // A result belongs to the source it ran on: an edit since puts it away.
+    if (result_ != Result::None && result_ != Result::Busy) {
+        const fs::path path = SourcePath();
+        const std::string now =
+            path.empty() ? std::string() : nm::Generate(form_, nm::BundleIdFor(ProjectName(), path.stem().string()));
+        if (WithoutCR(now) != WithoutCR(ran_source_)) result_ = Result::None;
+    }
     if (!visible_) return;
     if (bring_to_front_) {
         ::gui::BringToFront(kWindow);
@@ -300,6 +352,8 @@ void PythonNodeMakerPanel::Render() {
     }
     const float footer = ImGui::GetFrameHeightWithSpacing() * 2.6f;
     RenderTopRow();
+    // The form stays as it is while Check or Create runs on its source.
+    ImGui::BeginDisabled(call_ != Call::None);
     ImGui::BeginChild("##maker_body", ImVec2(0.0f, -footer));
     RenderKind();
     ImGui::Spacing();
@@ -316,53 +370,61 @@ void PythonNodeMakerPanel::Render() {
         ImGui::EndTable();
     }
     ImGui::EndChild();
+    ImGui::EndDisabled();
     RenderFooter(footer);
-    RenderNewConfirm();
+    RenderConfirm();
     ImGui::End();
 }
 
 void PythonNodeMakerPanel::RenderTopRow() {
     const ui::Tokens& t = ui::CurrentTokens();
     const bool busy = call_ != Call::None;
-    if (ui::SecondaryButton("Open " ICON_FA_CHEVRON_DOWN, !busy, "Wait for the check to finish")) ImGui::OpenPopup("##open_source");
+    if (ui::SecondaryButton("Open " ICON_FA_CHEVRON_DOWN, !busy, "Wait for the running step")) ImGui::OpenPopup("##open_source");
     if (ImGui::BeginPopup("##open_source")) {
         const fs::path folder = HasProject() ? fs::path(ProjectManager::Instance().GetProjectRoot()) / "nodes_src" : fs::path();
+        if (ImGui::IsWindowAppearing()) {
+            // Read the folder once per opening, not every frame.
+            sources_.clear();
+            std::vector<fs::path> files;
+            std::error_code ec;
+            for (fs::directory_iterator it(folder, ec), end; !folder.empty() && !ec && it != end; it.increment(ec)) {
+                if (it->path().extension() == ".py") files.push_back(it->path());
+            }
+            std::sort(files.begin(), files.end());
+            for (const auto& file : files) {
+                SourceEntry entry;
+                entry.file = file;
+                std::string error;
+                entry.ours = nm::Read(ReadText(file), entry.form, &error);
+                entry.label = file.filename().string() +
+                              (entry.ours ? "  \xC2\xB7  " + entry.form.display_name + ", " + nm::KindLabel(entry.form.kind)
+                                          : std::string("  \xC2\xB7  opens in the Script Editor"));
+                sources_.push_back(std::move(entry));
+            }
+        }
         if (folder.empty()) {
             ImGui::TextColored(t.text_dim, "Open a project to see its node sources");
         } else {
             ImGui::TextColored(t.text_dim, "Node sources in %s/nodes_src", ProjectName().c_str());
-            std::vector<fs::path> files;
-            std::error_code ec;
-            for (fs::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
-                if (it->path().extension() == ".py") files.push_back(it->path());
-            }
-            std::sort(files.begin(), files.end());
-            if (files.empty()) ImGui::TextColored(t.text_faint, "None yet: Create node writes one here");
-            for (const auto& file : files) {
-                nm::NodeForm read;
-                std::string error;
-                const bool ours = nm::Read(ReadText(file), read, &error);
-                const std::string label = file.filename().string() +
-                                          (ours ? "  \xC2\xB7  " + read.display_name + ", " + nm::KindLabel(read.kind)
-                                                : std::string("  \xC2\xB7  opens in the Script Editor"));
-                if (ImGui::MenuItem(label.c_str())) {
-                    if (ours) {
-                        Reset(read, file);
-                    } else if (open_in_script_editor_) {
-                        open_in_script_editor_(file.string());
-                    }
+            if (sources_.empty()) ImGui::TextColored(t.text_faint, "None yet: Create node writes one here");
+            for (const auto& entry : sources_) {
+                if (!ImGui::MenuItem(entry.label.c_str())) continue;
+                if (!entry.ours) {
+                    if (open_in_script_editor_) open_in_script_editor_(entry.file.string());
+                } else {
+                    const SourceEntry chosen = entry;
+                    ConfirmIfEdited("Your changes to this node are not created yet. Open " + chosen.file.filename().string() +
+                                        " instead?",
+                                    "Open it", [this, chosen]() { Reset(chosen.form, chosen.file); });
                 }
             }
         }
         ImGui::EndPopup();
     }
     ImGui::SameLine();
-    if (ui::SecondaryButton("New", !busy, "Wait for the check to finish")) {
-        if (Edited()) {
-            confirm_new_ = true;
-        } else {
-            Reset(nm::Starter(nm::Kind::Layer), {});
-        }
+    if (ui::SecondaryButton("New", !busy, "Wait for the running step")) {
+        ConfirmIfEdited("Your changes to this node are not created yet. Start a new one?", "Start new",
+                        [this]() { Reset(nm::Starter(nm::Kind::Layer), {}); });
     }
     ImGui::SameLine();
     const std::string file = SourcePath().filename().string();
@@ -371,14 +433,14 @@ void PythonNodeMakerPanel::RenderTopRow() {
     ImGui::TextColored(t.text_dim, "Editing %s \xC2\xB7 %s", file.empty() ? "a new node" : file.c_str(), state.c_str());
 }
 
-void PythonNodeMakerPanel::RenderNewConfirm() {
-    if (confirm_new_) {
-        ImGui::OpenPopup(kNewConfirm);
-        confirm_new_ = false;
+void PythonNodeMakerPanel::RenderConfirm() {
+    if (confirm_requested_) {
+        ImGui::OpenPopup(kConfirm);
+        confirm_requested_ = false;
     }
-    const auto result = ui::ConfirmDialog(kNewConfirm, "Your changes to this node are not created yet. Start a new one?",
-                                          "Start new", true);
-    if (result == ui::DialogResult::Primary) Reset(nm::Starter(nm::Kind::Layer), {});
+    const auto result = ui::ConfirmDialog(kConfirm, confirm_question_.c_str(), confirm_label_.c_str(), true);
+    if (result == ui::DialogResult::Primary && confirm_action_) confirm_action_();
+    if (result != ui::DialogResult::None) confirm_action_ = nullptr;
 }
 
 void PythonNodeMakerPanel::RenderKind() {
@@ -386,12 +448,15 @@ void PythonNodeMakerPanel::RenderKind() {
     Section("Kind");
     const char* kinds[] = {"Activation", "Layer", "Loss"};
     int selected = static_cast<int>(form_.kind);
-    ImGui::BeginDisabled(call_ != Call::None);
     if (ui::SegmentedControl("##kind", kinds, 3, &selected)) {
-        form_ = nm::WithKind(form_, static_cast<nm::Kind>(selected));
-        class_follows_name_ = nm::ClassNameFrom(form_.display_name) == form_.class_name;
+        const auto kind = static_cast<nm::Kind>(selected);
+        ConfirmIfEdited(std::string("A ") + nm::KindLabel(kind) + " starts its code over: the method bodies you wrote "
+                                                                  "go. Switch?",
+                        "Switch", [this, kind]() {
+                            form_ = nm::WithKind(form_, kind);
+                            class_follows_name_ = nm::ClassNameFrom(form_.display_name) == form_.class_name;
+                        });
     }
-    ImGui::EndDisabled();
     ImGui::TextColored(t.text_dim, "%s", nm::KindNote(form_.kind));
 }
 
@@ -474,9 +539,12 @@ void PythonNodeMakerPanel::RenderSettings() {
                            "the rest. Need a setting?");
         ImGui::PopTextWrapPos();
         if (ui::LinkButton("Make it a Layer shown as Activation")) {
-            nm::NodeForm layer = nm::WithKind(form_, nm::Kind::Layer);
-            layer.shown_as_activation = true;
-            form_ = layer;
+            ConfirmIfEdited("A Layer starts its code over: f and df become forward and backward. Switch?", "Switch",
+                            [this]() {
+                                nm::NodeForm layer = nm::WithKind(form_, nm::Kind::Layer);
+                                layer.shown_as_activation = true;
+                                form_ = layer;
+                            });
         }
         return;
     }
@@ -691,15 +759,8 @@ void PythonNodeMakerPanel::RenderCode() {
 void PythonNodeMakerPanel::RenderFooter(float height) {
     const ui::Tokens& t = ui::CurrentTokens();
     const auto issues = nm::Validate(form_);
-    const bool taken = SourceTakenByAnother();
     const bool busy = call_ != Call::None;
-    std::string blocker;
-    if (!issues.empty()) {
-        blocker = issues.front();
-    } else if (taken) {
-        blocker = "A node source " + SourcePath().filename().string() +
-                  " is already in the project: open it, or pick another class name";
-    }
+    std::string blocker = issues.empty() ? ConflictReason() : issues.front();
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_bar);
     ImGui::BeginChild("##maker_footer", ImVec2(0.0f, height), ImGuiChildFlags_AlwaysUseWindowPadding);

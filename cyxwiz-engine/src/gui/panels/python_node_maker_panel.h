@@ -52,7 +52,7 @@ private:
     void RenderPins();
     void RenderCode();
     void RenderFooter(float height);
-    void RenderNewConfirm();
+    void RenderConfirm();
 
     // Where the source goes: <project>/nodes_src/<stem>.py, or a temporary
     // folder for a check without a project. Empty without a class name.
@@ -61,8 +61,13 @@ private:
     bool HasProject() const;
     // The source written for Check, Create and Open in Script Editor.
     bool WriteSource(std::filesystem::path& written, std::string& error);
-    // Another node's source already at the path this form would write.
-    bool SourceTakenByAnother() const;
+    // Why Check / Create would overwrite another node: its source in
+    // nodes_src, or a bundle of that name with another id in nodes. Empty
+    // when nothing is in the way (or no project is open).
+    std::string ConflictReason() const;
+    // Runs `action` now, or after the user confirms `question` when the form
+    // holds changes not created yet.
+    void ConfirmIfEdited(const std::string& question, const char* confirm_label, std::function<void()> action);
 
     void StartCheck();
     void StartCreate();
@@ -88,7 +93,24 @@ private:
     std::string result_detail_;
     std::string created_group_;
 
-    bool confirm_new_ = false;
+    // The source a Check or Create ran on: its result shows while the form
+    // still writes the same source.
+    std::string ran_source_;
+
+    // A question before an action that drops changes (New, Open, Kind).
+    std::string confirm_question_;
+    std::string confirm_label_;
+    std::function<void()> confirm_action_;
+    bool confirm_requested_ = false;
+
+    // The Open menu's entries, read once each time it opens.
+    struct SourceEntry {
+        std::filesystem::path file;
+        bool ours = false;
+        node_maker::NodeForm form;
+        std::string label;
+    };
+    std::vector<SourceEntry> sources_;
     bool bring_to_front_ = false;
 };
 
