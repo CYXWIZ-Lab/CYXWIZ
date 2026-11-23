@@ -1,11 +1,11 @@
-// The stability gate's runs (TOFIX195 PPO, TOFIX216 SAC): one task and seed
+// The stability gate's runs (TOFIX195 PPO, TOFIX216 SAC and TD3): one task and seed
 // per process, trained the way Studio's Train does it (the learner's pattern
 // with its node's "Tuned for" settings, the RL compile, RLTrainingRun). Writes
 // the run's reports and outcome as JSON; the gate compares them with
 // Stable-Baselines3 on the same environments
-// (resources/rl_reference/ppo_sb3_curves.json, sac_sb3_curves.json).
+// (resources/rl_reference/ppo_sb3_curves.json, sac_sb3_curves.json, td3_sb3_curves.json).
 //
-//   cyxwiz-rl-stability-gate [--sac] <task> <seed> <output.json> [<MuJoCo plugin folder>]
+//   cyxwiz-rl-stability-gate [--sac | --td3] <task> <seed> <output.json> [<MuJoCo plugin folder>]
 //
 // PPO: task CartPole-v1 (built in), InvertedPendulum-v5 or HalfCheetah-v5 (the
 // MuJoCo plugin). CartPole and InvertedPendulum stop at their target return;
@@ -13,6 +13,9 @@
 // --sac: InvertedPendulum-v5 (SB3's SAC defaults, one copy, 150,000 steps, stops at a
 // mean return of 950) or HalfCheetah-v5 (RL Zoo, 1,000,000 steps); both with
 // SAC's two layers of 256 and ReLU.
+// --td3: the same tasks and budgets with the TD3 node's defaults (SB3's, RL
+// Zoo's noise 0.1) on InvertedPendulum and RL Zoo's settings on HalfCheetah;
+// both with TD3's layers of 400 and 300 and ReLU.
 // CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu picks the device (default
 // CPU). The run takes it the Engine's way (TOFIX206): the pending device
 // selection and a Strict next-run policy, as Preferences > Devices sets them,
@@ -80,12 +83,15 @@ bool SelectRequestedRoute() {
 
 int main(int argc, char** argv) {
     const bool sac = argc > 1 && std::string(argv[1]) == "--sac";
-    if (sac) {
+    const bool td3 = argc > 1 && std::string(argv[1]) == "--td3";
+    const bool off_policy = sac || td3;
+    if (off_policy) {
         --argc;
         ++argv;
     }
     if (argc < 4)
-        return Fail("usage: cyxwiz-rl-stability-gate [--sac] <task> <seed> <output.json> [<MuJoCo plugin folder>]");
+        return Fail("usage: cyxwiz-rl-stability-gate [--sac | --td3] <task> <seed> <output.json> "
+                    "[<MuJoCo plugin folder>]");
     const std::string task = argv[1];
     const std::string seed = argv[2];
     const std::filesystem::path output = argv[3];
@@ -110,14 +116,20 @@ int main(int argc, char** argv) {
     }
 
     const bool cheetah = task == "HalfCheetah-v5";
-    if (sac && task != "InvertedPendulum-v5" && !cheetah) return Fail("no SAC gate task " + task);
-    // SAC's InvertedPendulum has no RL Zoo entry: the SAC node's defaults (SB3's)
-    const auto preset = sac ? cyxwiz::rl_graph::TunedSacSettings(task) : cyxwiz::rl_graph::TunedPpoSettings(task);
-    if (!preset && !(sac && !cheetah)) return Fail("no tuned settings for " + task);
+    if (off_policy && task != "InvertedPendulum-v5" && !cheetah)
+        return Fail(std::string("no ") + (sac ? "SAC" : "TD3") + " gate task " + task);
+    // SAC's and TD3's InvertedPendulum have no RL Zoo entry: the node's defaults
+    const auto preset = sac   ? cyxwiz::rl_graph::TunedSacSettings(task)
+                        : td3 ? cyxwiz::rl_graph::TunedTd3Settings(task)
+                              : cyxwiz::rl_graph::TunedPpoSettings(task);
+    if (!preset && !(off_policy && !cheetah)) return Fail("no tuned settings for " + task);
     rl_graph_test::Ids id{};
     auto g = sac       ? rl_graph_test::Pattern(id, 256, gui::NodeType::ReLU, gui::NodeType::SAC)
+             : td3     ? rl_graph_test::Pattern(id, 400, gui::NodeType::ReLU, gui::NodeType::TD3)
              : cheetah ? rl_graph_test::Pattern(id, 256, gui::NodeType::ReLU)
                        : rl_graph_test::Pattern(id);
+    if (td3)  // TD3's second layer is 300 (SB3's and RL Zoo's [400, 300])
+        for (const int dense : {id.p2, id.v2}) g.At(dense).parameters["units"] = "300";
     g.At(id.env).parameters["environment"] =
         (mujoco ? std::string("com.cyxwiz.simulation.mujoco:") : std::string("cyxwiz.builtin:")) + task;
     if (preset) {
@@ -128,11 +140,11 @@ int main(int argc, char** argv) {
     g.At(id.ppo).parameters["seed"] = seed;
     const float target = cheetah ? 4800.0f : (task == "CartPole-v1" ? 475.0f : 950.0f);
     if (!cheetah) {  // the budgets of the SB3 reference
-        g.At(id.ppo).parameters["total_timesteps"] = sac ? "150000" : task == "CartPole-v1" ? "200000" : "300000";
+        g.At(id.ppo).parameters["total_timesteps"] = off_policy ? "150000" : task == "CartPole-v1" ? "200000" : "300000";
         g.At(id.ppo).parameters["stop_at_return"] = "true";
-        if (sac) {  // one copy, as the SB3 reference (the Environment node's default is more)
+        if (off_policy) {  // one copy, as the SB3 reference (the Environment node's default is more)
             g.At(id.env).parameters["copies"] = "1";
-            g.At(id.ppo).parameters["target_return"] = "950";  // the SAC node's own default is 4000
+            g.At(id.ppo).parameters["target_return"] = "950";  // the nodes' own default is 4000
         }
     }
     // CYXWIZ_GATE_STEPS=<n>: a shorter run, for measurements (not the gate)
@@ -167,8 +179,9 @@ int main(int argc, char** argv) {
             {"task", task},
             {"seed", std::stoll(seed)},
             {"copies", config.copies},
-            {"learner", sac ? "SAC" : "PPO"},
-            {"total_timesteps", sac ? config.sac.total_timesteps : config.ppo.total_timesteps},
+            {"learner", cyxwiz::RLAlgorithmName(config.algorithm)},
+            {"total_timesteps", sac ? config.sac.total_timesteps : td3 ? config.td3.total_timesteps
+                                                                       : config.ppo.total_timesteps},
             {"target", target},
             {"layers", layers},
             {"device", device},
@@ -178,8 +191,8 @@ int main(int argc, char** argv) {
             {"final_mean_return", Number(last_return)},
             {"steps", rows.empty() ? 0 : rows.back()[0].get<long long>()},
             {"seconds", std::round(seconds * 10.0) / 10.0},
-            {"columns", sac ? nlohmann::json{"timesteps", "mean_return", "critic_loss", "actor_loss", "ent_coef",
-                                             "mean_q", "steps_per_second"}
+            {"columns", off_policy ? nlohmann::json{"timesteps", "mean_return", "critic_loss", "actor_loss",
+                                                    "ent_coef", "mean_q", "steps_per_second"}
                             : nlohmann::json{"timesteps", "mean_return", "policy_loss", "value_loss", "approx_kl",
                                              "clip_fraction", "explained_variance", "action_std", "steps_per_second"}},
             {"updates", rows},

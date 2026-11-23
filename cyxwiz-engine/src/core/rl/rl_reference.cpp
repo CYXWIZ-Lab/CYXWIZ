@@ -123,6 +123,28 @@ std::optional<RLReference> FindSacReference(const std::string& json_text, const 
     });
 }
 
+std::optional<RLReference> FindTd3Reference(const std::string& json_text, const std::string& environment_id,
+                                            int copies, const Td3Config& c) {
+    return Find(json_text, environment_id, copies, [&c](const nlohmann::json& task) {
+        const auto& s = task.at("td3");
+        // The recorded runs explore with Gaussian noise of "noise_std" (none
+        // when absent) and normalise nothing
+        if (task.value("normalize", false) || c.normalize_observations) return false;
+        const bool noise = s.contains("noise_std");
+        if (noise != c.action_noise || (noise && !Same(s.at("noise_std").get<double>(), c.action_noise_std)))
+            return false;
+        return Same(Setting(s, "learning_rate", 1e-3), c.learning_rate) &&
+               Same(Setting(s, "buffer_size", 1e6), static_cast<double>(c.buffer_size)) &&
+               Same(Setting(s, "learning_starts", 100), static_cast<double>(c.learning_starts)) &&
+               Same(Setting(s, "batch_size", 256), c.batch_size) && Same(Setting(s, "tau", 0.005), c.tau) &&
+               Same(Setting(s, "gamma", 0.99), c.gamma) && Same(Setting(s, "train_freq", 1), c.train_freq) &&
+               Same(Setting(s, "gradient_steps", 1), c.gradient_steps) &&
+               Same(Setting(s, "policy_delay", 2), c.policy_delay) &&
+               Same(Setting(s, "target_policy_noise", 0.2), c.target_policy_noise) &&
+               Same(Setting(s, "target_noise_clip", 0.5), c.target_noise_clip);
+    });
+}
+
 bool DefaultEnvironmentSettings(const plugin::PluginEnvironmentInfo& environment,
                                 const std::map<std::string, std::string>& settings) {
     const auto number = [](const std::string& text, double& out) {

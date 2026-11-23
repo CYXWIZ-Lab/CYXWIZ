@@ -1,8 +1,9 @@
 #pragma once
 
 // Stable-Baselines3 reference curves for an RL run (TOFIX195 S4.3, R9; SAC
-// TOFIX216 S5): the recorded SB3 runs (generate_ppo_sb3_curves.py ->
-// ppo_sb3_curves.json, generate_sac_sb3_curves.py -> sac_sb3_curves.json) on
+// TOFIX216 S5, TD3 U5): the recorded SB3 runs (generate_ppo_sb3_curves.py ->
+// ppo_sb3_curves.json, generate_sac_sb3_curves.py -> sac_sb3_curves.json,
+// generate_td3_sb3_curves.py -> td3_sb3_curves.json) on
 // the same environment with the same copies and settings, as the mean episode
 // return by environment step. A run with other settings has no reference: a
 // curve of other settings would mislead. The recorded runs use each
@@ -10,6 +11,7 @@
 
 #include "ppo_trainer.h"
 #include "sac_config.h"
+#include "td3_config.h"
 
 #include <map>
 #include <optional>
@@ -35,6 +37,9 @@ std::optional<RLReference> FindPpoReference(const std::string& json_text, const 
 // The SAC reference likewise (sac_sb3_curves.json)
 std::optional<RLReference> FindSacReference(const std::string& json_text, const std::string& environment_id,
                                             int copies, const SacConfig& config);
+// The TD3 reference likewise (td3_sb3_curves.json)
+std::optional<RLReference> FindTd3Reference(const std::string& json_text, const std::string& environment_id,
+                                            int copies, const Td3Config& config);
 
 // Whether `settings` (the Environment node's) leave every setting the
 // environment declares at its default, as the recorded runs do: a value equal
@@ -43,7 +48,7 @@ std::optional<RLReference> FindSacReference(const std::string& json_text, const 
 bool DefaultEnvironmentSettings(const plugin::PluginEnvironmentInfo& environment,
                                 const std::map<std::string, std::string>& settings);
 
-// A recorded file ("ppo_sb3_curves.json", "sac_sb3_curves.json") in the
+// A recorded file ("ppo_sb3_curves.json", "sac_sb3_curves.json", "td3_sb3_curves.json") in the
 // Engine's resources/rl_reference, empty if none
 std::string ReadReferenceFile(const std::string& name);
 

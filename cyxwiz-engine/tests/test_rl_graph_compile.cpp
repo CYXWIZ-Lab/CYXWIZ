@@ -386,6 +386,38 @@ void CheckSacReference() {
     }
 }
 
+// TD3's reference (TOFIX216 TD3 U5): the recorded runs' settings, their
+// Gaussian noise included, must be the node's
+void CheckTd3Reference() {
+    const std::string text = R"({"versions": {"stable_baselines3": "2.7.1"},
+        "columns": ["time/total_timesteps", "rollout/ep_rew_mean", "train/critic_loss", "train/actor_loss"],
+        "tasks": [
+          {"id": "InvertedPendulum-v5", "copies": 1, "td3": {"noise_std": 0.1},
+           "runs": [{"seed": 1, "updates": [[1000, 10.0, 0.5, -5.0], [2000, 30.0, 0.4, -9.0]]},
+                    {"seed": 2, "updates": [[1000, 20.0, 0.5, -5.0], [2000, 50.0, 0.4, -9.0]]}]},
+          {"id": "HalfCheetah-v5", "copies": 1, "td3": {"learning_starts": 10000, "noise_std": 0.1},
+           "runs": [{"seed": 1, "updates": [[11000, -280.0, 1.0, -20.0]]}]}]})";
+    cyxwiz::rl::Td3Config defaults;  // the TD3 node's: SB3's, with RL Zoo's noise 0.1
+    const auto pendulum = cyxwiz::rl::FindTd3Reference(text, "InvertedPendulum-v5", 1, defaults);
+    Check(pendulum && pendulum->seeds.size() == 2 && pendulum->At(2000.0) == 40.0,
+          "TD3: the pendulum's reference at the node's defaults, the seeds' mean");
+    auto cheetah = defaults;
+    cheetah.learning_starts = 10000;
+    Check(!cyxwiz::rl::FindTd3Reference(text, "HalfCheetah-v5", 1, defaults).has_value() &&
+              cyxwiz::rl::FindTd3Reference(text, "HalfCheetah-v5", 1, cheetah).has_value(),
+          "TD3: HalfCheetah's reference is RL Zoo's settings'");
+    auto quiet = defaults;
+    quiet.action_noise = false;
+    auto louder = defaults;
+    louder.action_noise_std = 0.2f;
+    auto delayed = defaults;
+    delayed.policy_delay = 3;
+    Check(!cyxwiz::rl::FindTd3Reference(text, "InvertedPendulum-v5", 1, quiet).has_value() &&
+              !cyxwiz::rl::FindTd3Reference(text, "InvertedPendulum-v5", 1, louder).has_value() &&
+              !cyxwiz::rl::FindTd3Reference(text, "InvertedPendulum-v5", 1, delayed).has_value(),
+          "TD3: no noise, other noise or another policy delay has no reference");
+}
+
 // A pattern-format graph file (a "template" of nodes by string id and links
 // by pin index), built as the editor's LoadPatternAsGraph builds it
 bool LoadExample(const std::filesystem::path& path, Graph& g, std::string& error) {
@@ -770,6 +802,7 @@ int main() {
     CheckPresentation();
     CheckReference();
     CheckSacReference();
+    CheckTd3Reference();
     CheckSac();
     CheckTd3();
     CheckExamples();

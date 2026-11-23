@@ -4287,14 +4287,23 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     }
     // The SB3 reference of the same settings, on the environment as recorded
     // (its defaults: a run with grounds, pushes or throws has none)
-    // (TD3's comes with its recorded curves)
-    if (c.algorithm != cyxwiz::RLAlgorithm::TD3 &&
-        cyxwiz::rl::DefaultEnvironmentSettings(c.environment, c.environment_settings))
-        info.reference = sac
-                             ? cyxwiz::rl::FindSacReference(cyxwiz::rl::ReadReferenceFile("sac_sb3_curves.json"),
-                                                            c.environment.id, c.copies, c.sac)
-                             : cyxwiz::rl::FindPpoReference(cyxwiz::rl::ReadReferenceFile("ppo_sb3_curves.json"),
-                                                            c.environment.id, c.copies, c.ppo);
+    if (cyxwiz::rl::DefaultEnvironmentSettings(c.environment, c.environment_settings)) {
+        namespace rl = cyxwiz::rl;
+        switch (c.algorithm) {
+            case cyxwiz::RLAlgorithm::TD3:
+                info.reference = rl::FindTd3Reference(rl::ReadReferenceFile("td3_sb3_curves.json"), c.environment.id,
+                                                      c.copies, c.td3);
+                break;
+            case cyxwiz::RLAlgorithm::SAC:
+                info.reference = rl::FindSacReference(rl::ReadReferenceFile("sac_sb3_curves.json"), c.environment.id,
+                                                      c.copies, c.sac);
+                break;
+            case cyxwiz::RLAlgorithm::PPO:
+                info.reference = rl::FindPpoReference(rl::ReadReferenceFile("ppo_sb3_curves.json"), c.environment.id,
+                                                      c.copies, c.ppo);
+                break;
+        }
+    }
     auto* run = rl_run_.get();
     cyxwiz::TrainingDashboardPanel::RunControls controls;
     controls.pause = [run]() { run->Pause(); };
