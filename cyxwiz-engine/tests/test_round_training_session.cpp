@@ -13,6 +13,7 @@
 
 #include <cyxwiz/device.h>
 
+#include <arrayfire.h>
 #include <arrow/api.h>
 #include <arrow/io/file.h>
 #include <nlohmann/json.hpp>
@@ -415,6 +416,26 @@ int main() {
         Check(!session->TrainRound({5, 0, 0}, theta, all, large, stop, outcome, failure) &&
                   failure.kind == cyxwiz::TrainingFailureKind::Cancelled,
               "a stop request ends the round as cancelled");
+
+        // Nothing piles up from round to round: ArrayFire holds as many
+        // buffers after the twelfth round as after the second. (A lazy device
+        // sum once kept two buffers per training step alive, and rounds grew
+        // three times slower past about a thousand.)
+        {
+            cyxwiz::RoundBudget steps;
+            steps.max_steps = 150;
+            std::vector<size_t> buffers;
+            for (uint64_t number = 10; number < 22; ++number) {
+                SelectArrayFireCpu();
+                Check(session->TrainRound({number, 0, 0}, theta, all, steps, {}, outcome, failure),
+                      "round " + std::to_string(number) + " trains " + failure.text);
+                size_t alloc_bytes = 0, alloc_buffers = 0, used_bytes = 0, used_buffers = 0;
+                af::deviceMemInfo(&alloc_bytes, &alloc_buffers, &used_bytes, &used_buffers);
+                buffers.push_back(used_buffers);
+            }
+            Check(buffers.back() <= buffers[1] + 8, "device buffers in use stay flat across rounds: " +
+                  std::to_string(buffers[1]) + " after round 11, " + std::to_string(buffers.back()) + " after round 21");
+        }
 
         // Refusals.
         std::string error;

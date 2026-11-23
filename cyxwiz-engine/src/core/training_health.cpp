@@ -52,8 +52,15 @@ void TrainingHealthRecorder::OnStep(const std::map<std::string, Tensor>& gradien
         const af::array g = gradient.GetRowMajorFlatArray();
         const af::array norm = af::sqrt(af::sum(g * g));
         auto found = state_->gradient_norm_sums.find(name);
-        if (found == state_->gradient_norm_sums.end()) state_->gradient_norm_sums.emplace(name, norm);
-        else found->second += norm;
+        if (found == state_->gradient_norm_sums.end()) {
+            state_->gradient_norm_sums.emplace(name, norm).first->second.eval();
+        } else {
+            // Evaluated every step: a lazy `+=` keeps every step's norm alive
+            // until the epoch ends, one device buffer per weight per step, and
+            // training slows once ArrayFire holds about a thousand of them.
+            found->second += norm;
+            found->second.eval();
+        }
     }
     ++state_->steps;
 }
