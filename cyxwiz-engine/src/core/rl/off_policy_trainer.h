@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -76,6 +77,10 @@ public:
     // Actions in [-1, 1] [N, A] to explore with, for observations [N, obs]
     // (past the random steps)
     virtual Tensor Explore(const Tensor& observations, const NextSeed& next_seed) = 0;
+    // The random steps' uniform actions [N, A] as the environment gets them:
+    // as they are, unless the learner adds its exploration noise to them too
+    // (TD3, as SB3 does)
+    virtual Tensor Warmup(const Tensor& actions, const NextSeed& /*next_seed*/) { return actions; }
     // One gradient step on a replay batch; gradient_step counts within this
     // training call (SB3's train(), whose counters some settings follow)
     virtual void Learn(const ReplayBuffer::Batch& batch, int gradient_step, const NextSeed& next_seed) = 0;
@@ -123,6 +128,13 @@ private:
     std::atomic<bool> paused_{false};
 };
 
+// An off-policy learner's actor as it is between two reports (a training
+// preview), with the observation statistics
+struct ActorCopy {
+    std::map<std::string, Tensor> parameters;
+    std::unique_ptr<VecNormalize> normalizer;
+};
+
 // ---- Pieces the learners share
 
 // PyTorch's default nn.Linear initialisation, which SB3's SAC and TD3 keep:
@@ -137,5 +149,17 @@ void CopyParameters(IExecutableModel& from, IExecutableModel& to);
 void PolyakUpdate(IExecutableModel& network, IExecutableModel& target, float tau);
 // The first value of a device tensor
 float FirstValue(const Tensor& t);
+
+// One Adam step for each of several networks (or loose tensors, as SAC's log
+// entropy weight): in one launch when the device's provider steps Adam
+// (AdamOptimizer::StepTogether), else each through ApplyOptimizerStep.
+// together: whether to try one launch; cleared, for good, when it cannot.
+struct OffPolicyUpdate {
+    Optimizer* optimizer;
+    IExecutableModel* model;                    // its parameters, or (null)
+    std::map<std::string, Tensor>* parameters;  // these, updated in place
+    std::map<std::string, Tensor>* gradients;
+};
+void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, bool& together, const char* learner);
 
 }  // namespace cyxwiz::rl

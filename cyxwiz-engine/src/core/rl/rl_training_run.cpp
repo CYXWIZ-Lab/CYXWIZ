@@ -302,7 +302,7 @@ bool RLTrainingRun::TrainSac(const std::shared_ptr<plugin::EnvironmentBatch>& ba
             m.environment_stats = batch->Stats();  // between steps: the batch is not stepping
             if (WatchBetweenUpdates(*batch, report.report, last_watch, raw_shown)) {
                 auto next = std::make_unique<PreviewNetworks>();
-                SacPolicyCopy copy;
+                ActorCopy copy;
                 std::string copy_error;
                 if (trainer.CopyPolicy(copy, copy_error)) {
                     next->parameters = std::move(copy.parameters);

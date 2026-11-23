@@ -1,9 +1,6 @@
 #include "sac_trainer.h"
 
-#include "../optimizer_step.h"
-
 #include <cyxwiz/fused_mlp.h>
-#include <cyxwiz/optimizers/adam.h>
 #include <cyxwiz/rl/sac.h>
 #include <cyxwiz/sequential.h>
 
@@ -206,35 +203,14 @@ SacLearner::ActorPass SacLearner::ActorLayers(const ReplayBuffer::Batch& batch, 
     return p;
 }
 
-void SacLearner::StepOptimizers(const std::vector<Update>& updates) {
-    if (adam_together_) {
-        std::vector<std::map<std::string, Tensor>> params(updates.size());
-        std::vector<AdamOptimizer::Group> groups;
-        for (size_t i = 0; i < updates.size(); ++i) {
-            const Update& u = updates[i];
-            params[i] = u.model ? u.model->GetParameters() : std::map<std::string, Tensor>{{"log_ent_coef", log_ent_coef_}};
-            groups.push_back({dynamic_cast<AdamOptimizer*>(u.optimizer), &params[i], u.gradients});
-        }
-        std::string why;
-        if (AdamOptimizer::StepTogether(groups, 0.0f, why)) {
-            for (size_t i = 0; i < updates.size(); ++i) {
-                if (updates[i].model) updates[i].model->SetParameters(params[i]);
-                else log_ent_coef_ = params[i].at("log_ent_coef");
-            }
-            return;
-        }
-        adam_together_ = false;
-        spdlog::debug("SAC: the optimizers step per tensor ({})", why);
-    }
-    for (const Update& u : updates) {
-        if (u.model) {
-            ApplyOptimizerStep(*u.model, *u.optimizer, *u.gradients, {});
-            continue;
-        }
-        std::map<std::string, Tensor> params{{"log_ent_coef", log_ent_coef_}};
-        u.optimizer->Step(params, *u.gradients);
-        log_ent_coef_ = params.at("log_ent_coef");
-    }
+void SacLearner::StepOptimizers(const std::vector<OffPolicyUpdate>& updates) {
+    // The entropy weight goes as a loose tensor and comes back the same way
+    std::map<std::string, Tensor> ent{{"log_ent_coef", log_ent_coef_}};
+    std::vector<OffPolicyUpdate> all = updates;
+    for (auto& u : all)
+        if (!u.model) u.parameters = &ent;
+    StepOffPolicyOptimizers(all, adam_together_, "SAC");
+    log_ent_coef_ = ent.at("log_ent_coef");
 }
 
 SacStepLosses SacLearner::Step(const ReplayBuffer::Batch& batch, const Tensor& noise_pi, const Tensor& noise_next,
@@ -266,15 +242,15 @@ SacStepLosses SacLearner::Step(const ReplayBuffer::Batch& batch, const Tensor& n
     // ---- The entropy weight, then the critics (SB3's order; one launch
     // together when the provider steps Adam)
     std::map<std::string, Tensor> ent_grads;
-    std::vector<Update> updates;
+    std::vector<OffPolicyUpdate> updates;
     if (config_.ent_coef_auto) {
         const SacEntCoefLoss ent = SacEntCoefLossAndGradient(log_ent_coef_, c.log_prob, config_.target_entropy);
         losses.ent_coef_loss = ent.loss;
         ent_grads["log_ent_coef"] = ent.grad_log_ent_coef;
-        updates.push_back({ent_coef_optimizer_.get(), nullptr, &ent_grads});
+        updates.push_back({ent_coef_optimizer_.get(), nullptr, nullptr, &ent_grads});
     }
-    updates.push_back({q1_optimizer_.get(), n.q1.get(), &c.q1_grads});
-    updates.push_back({q2_optimizer_.get(), n.q2.get(), &c.q2_grads});
+    updates.push_back({q1_optimizer_.get(), n.q1.get(), nullptr, &c.q1_grads});
+    updates.push_back({q2_optimizer_.get(), n.q2.get(), nullptr, &c.q2_grads});
     StepOptimizers(updates);
 
     // ---- The actor against the updated critics
@@ -291,7 +267,7 @@ SacStepLosses SacLearner::Step(const ReplayBuffer::Batch& batch, const Tensor& n
     if (!done) p = ActorLayers(batch, c, noise_pi, alpha);
     losses.actor_loss = p.loss;
     losses.mean_q = p.mean_q;
-    StepOptimizers({{actor_optimizer_.get(), n.actor.get(), &p.grads}});
+    StepOptimizers({{actor_optimizer_.get(), n.actor.get(), nullptr, &p.grads}});
 
     if (update_targets) {
         PolyakUpdate(*n.q1, *n.q1_target, config_.tau);
@@ -397,7 +373,7 @@ bool SacTrainer::TakeTrained(SacTrainedState& out, std::string& error) {
     return true;
 }
 
-bool SacTrainer::CopyPolicy(SacPolicyCopy& out, std::string& error) {
+bool SacTrainer::CopyPolicy(ActorCopy& out, std::string& error) {
     if (!learner_ || !loop_.Normalizer()) {
         error = "SAC has no policy to copy yet.";
         return false;

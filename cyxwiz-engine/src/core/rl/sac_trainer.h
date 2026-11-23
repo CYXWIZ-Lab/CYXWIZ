@@ -111,14 +111,8 @@ private:
                          const Tensor& alpha);
     ActorPass ActorLayers(const ReplayBuffer::Batch& batch, const CriticPass& c, const Tensor& noise_pi,
                           const Tensor& alpha);
-    // One Adam step of each optimizer's parameters, in one launch when they
-    // step together (else each through ApplyOptimizerStep)
-    struct Update {
-        Optimizer* optimizer;
-        IExecutableModel* model;  // null: the entropy weight
-        std::map<std::string, Tensor>* gradients;
-    };
-    void StepOptimizers(const std::vector<Update>& updates);
+    // One Adam step of each network's (and the entropy weight's) parameters
+    void StepOptimizers(const std::vector<OffPolicyUpdate>& updates);
 
     SacNetworks networks_;
     size_t observation_size_;
@@ -147,12 +141,6 @@ struct SacTrainedState {
     std::map<std::string, OptimizerState> optimizers;
 };
 
-// The actor as it is between two reports (a training preview).
-struct SacPolicyCopy {
-    std::map<std::string, Tensor> parameters;
-    std::unique_ptr<VecNormalize> normalizer;
-};
-
 // The loop's settings of a SAC config
 OffPolicySettings LoopSettings(const SacConfig& config);
 
@@ -173,7 +161,7 @@ public:
     // Moves out what Train left (once, after Train). False with the reason.
     bool TakeTrained(SacTrainedState& out, std::string& error);
     // A copy of the actor now. Call from on_report, on the thread that trains.
-    bool CopyPolicy(SacPolicyCopy& out, std::string& error);
+    bool CopyPolicy(ActorCopy& out, std::string& error);
 
 private:
     bool CheckSetup(std::string& error) const;

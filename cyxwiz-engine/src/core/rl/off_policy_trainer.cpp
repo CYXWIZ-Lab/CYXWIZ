@@ -1,5 +1,7 @@
 #include "off_policy_trainer.h"
 
+#include "../optimizer_step.h"
+
 #include <cyxwiz/optimizers/adam.h>
 #include <cyxwiz/rl/sac.h>
 
@@ -109,6 +111,32 @@ void PolyakUpdate(IExecutableModel& network, IExecutableModel& target, float tau
 
 float FirstValue(const Tensor& t) { return Host(t).at(0); }
 
+void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, bool& together, const char* learner) {
+    if (together) {
+        std::vector<std::map<std::string, Tensor>> params(updates.size());
+        std::vector<AdamOptimizer::Group> groups;
+        for (size_t i = 0; i < updates.size(); ++i) {
+            const OffPolicyUpdate& u = updates[i];
+            params[i] = u.model ? u.model->GetParameters() : *u.parameters;
+            groups.push_back({dynamic_cast<AdamOptimizer*>(u.optimizer), &params[i], u.gradients});
+        }
+        std::string why;
+        if (AdamOptimizer::StepTogether(groups, 0.0f, why)) {
+            for (size_t i = 0; i < updates.size(); ++i) {
+                if (updates[i].model) updates[i].model->SetParameters(params[i]);
+                else *updates[i].parameters = params[i];
+            }
+            return;
+        }
+        together = false;
+        spdlog::debug("{}: the optimizers step per tensor ({})", learner, why);
+    }
+    for (const OffPolicyUpdate& u : updates) {
+        if (u.model) ApplyOptimizerStep(*u.model, *u.optimizer, *u.gradients, {});
+        else u.optimizer->Step(*u.parameters, *u.gradients);
+    }
+}
+
 // ---------------------------------------------------------------- the loop
 
 bool CheckOffPolicySetup(const TrainingEnvironment& environment, const OffPolicySettings& s,
@@ -207,7 +235,7 @@ bool OffPolicyLoop::Run(OffPolicyLearner& learner, const std::function<void(cons
             // ---- Act: uniform random until learning starts, then the learner's
             std::vector<float> actions;
             if (metrics.timesteps < s.learning_starts)
-                actions = Host(SacUniformActions(n, act_size, random.Next()));
+                actions = Host(learner.Warmup(SacUniformActions(n, act_size, random.Next()), next_seed));
             else
                 actions = Host(learner.Explore(Tensor({n, obs_size}, obs.data()), next_seed));
             for (size_t i = 0; i < n * act_size; ++i) {  // [-1, 1] to the environment's bounds

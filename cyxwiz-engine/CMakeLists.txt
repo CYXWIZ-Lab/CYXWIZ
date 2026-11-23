@@ -7876,6 +7876,33 @@ add_custom_target(copy_test_sac_trainer_fixture
 add_dependencies(test_sac_trainer copy_test_sac_trainer_fixture)
 add_test(NAME sac_trainer COMMAND test_sac_trainer)
 
+# ===== Test: the TD3 trainer: four SB3 gradient steps, a small task (TOFIX216 TD3 U3) =====
+set(CYXWIZ_TD3_STEP_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/td3_step_sb3.json")
+add_executable(test_td3_trainer
+    tests/test_td3_trainer.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_link_libraries(test_td3_trainer PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui nlohmann_json::nlohmann_json)
+target_include_directories(test_td3_trainer PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+target_compile_definitions(test_td3_trainer PRIVATE CYXWIZ_TD3_STEP_FIXTURE="${CYXWIZ_TD3_STEP_FIXTURE}")
+if(WIN32)
+    target_compile_definitions(test_td3_trainer PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_custom_target(copy_test_td3_trainer_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_td3_trainer>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_TD3_STEP_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_td3_trainer>/computation_truth_fixtures/td3_step_sb3.json"
+    SOURCES "${CYXWIZ_TD3_STEP_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_td3_trainer copy_test_td3_trainer_fixture)
+add_test(NAME td3_trainer COMMAND test_td3_trainer)
+
 # ===== Test: RL graphs compile (Environment, layers, heads, PPO) and say what is wrong (TOFIX195 S4.3) =====
 add_executable(test_rl_graph_compile tests/test_rl_graph_compile.cpp src/gui/node_type_import_registry.cpp)
 target_link_libraries(test_rl_graph_compile PRIVATE cyxwiz-training-core)
