@@ -427,9 +427,8 @@ public:
     using DebugCallback = std::function<void()>;
     void SetDebugCallback(DebugCallback callback) { debug_callback_ = callback; }
 
-    // Open Custom Node Editor callback - opens the CustomNodeEditorPanel from the Studio toolbar
-    using OpenCustomNodeEditorCallback = std::function<void()>;
-    void SetOpenCustomNodeEditorCallback(OpenCustomNodeEditorCallback callback) { open_custom_node_editor_callback_ = callback; }
+    // Make a Python node, from the Studio toolbar's More menu
+    void SetOpenPythonNodeMakerCallback(std::function<void()> callback) { open_python_node_maker_callback_ = std::move(callback); }
 
     // Open Studio Debugger callback - opens the debugger panel from the Studio toolbar
     using OpenStudioDebuggerCallback = std::function<void()>;
@@ -1259,8 +1258,8 @@ private:
     // Local Debug callback (runs one forward + backward pass on synthetic data)
     DebugCallback debug_callback_;
 
-    // Open Custom Node Editor callback (opens CustomNodeEditorPanel)
-    OpenCustomNodeEditorCallback open_custom_node_editor_callback_;
+    // Opens Make a Python node
+    std::function<void()> open_python_node_maker_callback_;
     OpenPluginManagerCallback open_plugin_manager_callback_;
 
     // Open Studio Debugger callback (opens StudioDebuggerPanel)

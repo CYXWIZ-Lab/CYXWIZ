@@ -34,7 +34,6 @@ class Console;
 class Viewport;
 class Properties;
 class WalletPanel;
-class CustomNodeEditorPanel;
 class ThemeEditorPanel;
 class CloudBrowserPanel;
 class CloudDatasetManagerPanel;
@@ -55,6 +54,7 @@ class ConnectionDialog;
 class JobStatusPanel;
 class P2PTrainingPanel;
 class PatternBrowserPanel;
+class PythonNodeMakerPanel;
 class QueryConsolePanel;
 class MonitorPanel;
 class VariableExplorerPanel;
@@ -409,7 +409,7 @@ private:
     // it turns off (TOFIX178 D1).
     std::vector<bool*> debugger_hidden_panels_;
     std::unique_ptr<cyxwiz::QueryConsolePanel> query_console_;
-    std::unique_ptr<gui::CustomNodeEditorPanel> custom_node_editor_;
+    std::unique_ptr<cyxwiz::PythonNodeMakerPanel> python_node_maker_;
     std::unique_ptr<gui::ThemeEditorPanel> theme_editor_;
     std::unique_ptr<cyxwiz::MonitorPanel> monitor_panel_;
     std::unique_ptr<cyxwiz::VariableExplorerPanel> variable_explorer_;

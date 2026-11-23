@@ -74,7 +74,7 @@
 #include "panels/task_progress_panel.h"
 #include "panels/pattern_browser.h"
 #include "panels/query_console.h"
-#include "panels/custom_node_editor.h"
+#include "panels/python_node_maker_panel.h"
 #include "patterns/pattern_library.h"
 #include "panels/theme_editor.h"
 #include "panels/monitor_panel.h"
@@ -587,7 +587,14 @@ MainWindow::MainWindow()
     }
     pattern_browser_ = std::make_unique<cyxwiz::PatternBrowserPanel>();
     query_console_ = std::make_unique<cyxwiz::QueryConsolePanel>();
-    custom_node_editor_ = std::make_unique<gui::CustomNodeEditorPanel>();
+    python_node_maker_ = std::make_unique<cyxwiz::PythonNodeMakerPanel>();
+    python_node_maker_->SetScriptingEngine(scripting_engine_);
+    python_node_maker_->SetOpenInScriptEditorCallback([this](const std::string& path) {
+        if (!script_editor_) return;
+        script_editor_->OpenFile(path);
+        script_editor_->SetVisible(true);
+        ::gui::BringToFront(script_editor_->GetName());
+    });
     theme_editor_ = std::make_unique<gui::ThemeEditorPanel>();
     monitor_panel_ = std::make_unique<cyxwiz::MonitorPanel>();
     variable_explorer_ = std::make_unique<cyxwiz::VariableExplorerPanel>();
@@ -1209,12 +1216,9 @@ MainWindow::MainWindow()
         }
     });
 
-    // Open the Custom Node Editor panel from the Studio toolbar
-    node_editor_->SetOpenCustomNodeEditorCallback([this]() {
-        if (custom_node_editor_) {
-            custom_node_editor_->Show();
-            spdlog::info("Opened Custom Node Editor panel from Studio toolbar");
-        }
+    // Make a Python node, from the Studio toolbar's More menu
+    node_editor_->SetOpenPythonNodeMakerCallback([this]() {
+        if (python_node_maker_) python_node_maker_->Open();
     });
 
     // Set up callbacks in the toolbar
@@ -1782,12 +1786,9 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up Custom Node Editor callback
-    toolbar_->SetOpenCustomNodeEditorCallback([this]() {
-        if (custom_node_editor_) {
-            custom_node_editor_->Show();
-            spdlog::info("Opened Custom Node Editor panel");
-        }
+    // Nodes > Make a Python node...
+    toolbar_->SetOpenPythonNodeMakerCallback([this]() {
+        if (python_node_maker_) python_node_maker_->Open();
     });
 
     // Set up Node Editor operation callbacks (Nodes menu)
@@ -2607,8 +2608,8 @@ MainWindow::~MainWindow() {
     monitor_panel_.reset();
     spdlog::info("~MainWindow: theme_editor_");
     theme_editor_.reset();
-    spdlog::info("~MainWindow: custom_node_editor_");
-    custom_node_editor_.reset();
+    spdlog::info("~MainWindow: python_node_maker_");
+    python_node_maker_.reset();
     spdlog::info("~MainWindow: query_console_");
     query_console_.reset();
     spdlog::info("~MainWindow: pattern_browser_");
@@ -2978,7 +2979,7 @@ void MainWindow::Render() {
     TimedRender("task progress", task_progress_panel_);
     TimedRender("pattern browser", pattern_browser_);
     TimedRender("query console", query_console_);
-    TimedRender("custom node editor", custom_node_editor_);
+    TimedRender("python node maker", python_node_maker_);
     TimedRender("theme editor", theme_editor_);
     TimedRender("Monitor", monitor_panel_);
     cyxwiz::VariablesView::PollAll(scripting_engine_.get());  // results for every Variables view
@@ -3467,7 +3468,7 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (task_progress_panel_) task_progress_panel_->SetVisible(false);
     if (pattern_browser_) pattern_browser_->SetVisible(false);
     if (query_console_) query_console_->SetVisible(false);
-    if (custom_node_editor_) custom_node_editor_->SetVisible(false);
+    if (python_node_maker_) python_node_maker_->SetVisible(false);
     if (theme_editor_) theme_editor_->SetVisible(false);
     if (monitor_panel_) monitor_panel_->SetVisible(false);
     if (variable_explorer_) variable_explorer_->SetVisible(false);

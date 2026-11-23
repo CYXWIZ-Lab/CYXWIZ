@@ -712,7 +712,7 @@ set(ENGINE_SOURCES
     # Annotation Editor Panel (Phase 2 - UI Consolidation)
     src/gui/panels/annotation_editor_panel.cpp
     src/gui/panels/task_progress_panel.cpp
-    src/gui/panels/custom_node_editor.cpp
+    src/gui/panels/python_node_maker_panel.cpp
     src/gui/panels/theme_editor.cpp
     src/gui/panels/monitor_panel.cpp
     src/gui/panels/monitor_panel_loaded_data.cpp
@@ -1018,7 +1018,7 @@ set(ENGINE_HEADERS
     # Interactive annotation tools (Phase 4)
     src/gui/annotation/annotation_tools.h
     src/gui/panels/task_progress_panel.h
-    src/gui/panels/custom_node_editor.h
+    src/gui/panels/python_node_maker_panel.h
     src/gui/panels/theme_editor.h
     src/gui/panels/monitor_panel.h
     src/gui/panels/pattern_browser.h
