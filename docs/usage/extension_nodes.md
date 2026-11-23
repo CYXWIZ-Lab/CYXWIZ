@@ -62,6 +62,9 @@ within 2 seconds, without a restart.
   approval belongs to the bundle's id and code hash, not to its folder:
   changed code needs a new approval, and a copy of approved code elsewhere
   is approved too. **Actions > Revoke approval** takes one back.
+- **Make one in a form.** **Nodes > Make a Python node...** (or **More >
+  Make a Python node...** on the Studio toolbar) writes the Python for you;
+  see [Make a Python node](#make-a-python-node) below.
 - **Make one from a script.** In the Script Editor, open a saved `.py`
   file that defines nodes with `@nodes.activation`, `@nodes.node` or
   `@nodes.loss`, then
@@ -97,6 +100,51 @@ within 2 seconds, without a restart.
   says *Training failed:* with the node's name and the Python traceback, and
   the Console (Logs) has the full text. How to find the cause:
   [python-nodes.md](../extending/python-nodes.md) section 10.
+
+## Make a Python node
+
+**Nodes > Make a Python node...** opens a form that writes a node's Python
+source, checks it and creates its bundle. You write only the arithmetic.
+
+1. **Kind.** It decides the pins, which you do not edit:
+   - **Activation**: Input to Output, element by element. You write `f(x)`
+     and its derivative `df(x)`; an activation has no settings.
+   - **Layer**: Input to Output. You write `forward(self, x)` and
+     `backward(self, grad_output)`. **Shown as** Layer or Activation picks
+     its place in the Nodes panel; **Output shape** *I compute it* adds
+     `output_shape(self, input_shape)` for a layer that changes the shape.
+   - **Loss**: Predictions and Targets to Loss. You write `forward` and
+     `backward` on `(predictions, targets)`; **Targets** is *Classes
+     (one-hot)* or *Values*.
+2. **Details.** The name in the Nodes panel, the class name (made from the
+   name until you type your own), the version, the group it is listed in
+   under **Plugins** in the Nodes panel, and a description.
+3. **Settings** (Layer and Loss): each has a name, a type (number, whole
+   number, on / off, text or choice), a default, and lowest / highest for
+   numbers. They show in the node's Properties; the code reads them as
+   `self.<name>`.
+4. **Code.** The decorator and the settings are written from the form and
+   shown above the method boxes; type the bodies of the methods. Each kind
+   starts from a node that works (Soft Clip, Swish with a `beta` setting,
+   Log-cosh), so **Check** passes before you change anything.
+5. **Check** runs the gradient check with the default settings and says
+   whether `backward` matches `forward` (largest relative error, limit
+   0.02), or the Python error.
+6. **Create node** writes the source to `<project>/nodes_src/<file>.py` and
+   the bundle to `<project>/nodes/<file>.cyxnode`, approved for you; the
+   node is in the Nodes panel at once, under **Plugins**, in its group. A node whose check
+   fails is still created, with the result kept on it.
+
+- **Open** lists the project's `nodes_src` sources. A source not made by this
+  form opens in the Script Editor. **Open in Script Editor** writes the
+  source and opens the whole file there; a source changed in the Script
+  Editor is made into a node with **Run > Create node from script...**.
+- **Create node** needs an open project; without one you can still write and
+  check the node. It is blocked, with the reason, while a field is wrong or
+  when another node's source already has that file name.
+- Each node is its own bundle, with the id `project.<project>.<file>`: the
+  same on every Create, so graphs that use the node keep it. Change the
+  class name and you make a new node.
 
 ## C++ plugins
 

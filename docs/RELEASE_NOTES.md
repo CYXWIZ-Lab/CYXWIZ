@@ -528,6 +528,15 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Make a Python node.** **Nodes > Make a Python node...** (also in the
+  Studio toolbar's More menu) writes a node in Python from a form: pick the
+  kind (Activation, Layer or Loss, which fixes the pins), name it, add
+  settings, and type the method bodies; each kind starts from a node that
+  works. **Check** runs the gradient check, **Create node** writes the source
+  to the project's `nodes_src` and the bundle to its `nodes`, approved for
+  you, and the node is in the Nodes panel at once (under Plugins). It
+  replaces the Custom Node Editor, whose nodes never reached the Nodes panel.
+  Example: `examples/python_nodes/node_maker`.
 - **Save selection as pattern, and My patterns.** Select nodes, right-click
   the canvas and choose Actions > Save selection as pattern...: the dialog
   says which links are kept and which leave the selection, and saves a block
@@ -790,11 +799,6 @@ private Data Studio tickets (`tofix*/track*`).
 - **The Nodes panel's Examples follow the pattern library.** The list and its
   count update after a pattern is saved or deleted, and My patterns stay in the
   Pattern Browser instead of mixing with the shipped examples.
-- **The Custom Node Editor keeps its definitions apart from My patterns.** They
-  are saved in their own `custom_nodes` folder beside the settings and read back
-  whole (pins, parameters, code and colour). Before, they sat in the patterns
-  folder, showed in My patterns as 0-node blocks that could not be inserted, and
-  a new node with a taken name could overwrite another's file without a word.
 - **A CyxQL count groups by the other columns.** `RETURN type(n) AS type,
   count(n) AS count` gave one row (the first node's type beside the count of
   every node); it now gives one row per type, as in Cypher.
