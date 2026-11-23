@@ -50,6 +50,16 @@ std::string Encode(const std::string& text, const TextFormat& format) {
     return out;
 }
 
+LineEnding NewFileLineEnding(int choice) {
+    if (choice == 1) return LineEnding::LF;
+    if (choice == 2) return LineEnding::CRLF;
+#ifdef _WIN32
+    return LineEnding::CRLF;
+#else
+    return LineEnding::LF;
+#endif
+}
+
 bool WriteAtomically(const std::string& path, const std::string& bytes, std::string* error) {
     namespace fs = std::filesystem;
     const fs::path target(path);

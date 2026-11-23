@@ -94,7 +94,6 @@ enum class StudioDebuggerRunMode;
 
 namespace scripting {
 class ScriptingEngine;
-class StartupScriptManager;
 } // namespace scripting
 
 namespace network {
@@ -139,6 +138,7 @@ public:
     bool HasUnsavedFiles() const;
     std::vector<std::string> GetUnsavedFileNames() const;
     void SaveAllFiles();
+    void AutoSaveFiles();  // File > Auto Save: only what already has a file
 
     // Get the scripting engine
     std::shared_ptr<scripting::ScriptingEngine> GetScriptingEngine() { return scripting_engine_; }
@@ -515,8 +515,6 @@ private:
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
 
-    // Startup script manager
-    std::unique_ptr<scripting::StartupScriptManager> startup_script_manager_;
 
     bool first_time_layout_;
     bool reset_layout_requested_ = false;

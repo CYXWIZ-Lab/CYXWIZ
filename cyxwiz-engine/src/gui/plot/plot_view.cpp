@@ -1,6 +1,7 @@
 #include "plot_view.h"
 
 #include "plot_style.h"
+#include "../../core/display_text.h"
 #include "../../core/plot/plot_prepare.h"
 #include "../../core/plot/world_map.h"
 #include "../icons.h"
@@ -11,6 +12,7 @@
 #include "../separate_windows.h"
 
 #include <implot.h>
+#include <implot_internal.h>
 
 #include <algorithm>
 #include <cfloat>
@@ -33,6 +35,17 @@ ImVec4 SeriesColour(size_t i) {
     return ui::CurrentTokens().series[i % ui::Tokens::kSeriesCount];
 }
 
+// The legend shows each item's own colour. ImPlot gives an item that names
+// no colour the colormap's next one when the item is first seen, counting
+// every item the plot ever had, so after a change of kind or columns the
+// legend was a place or more off the Colour list. Scatter items name theirs
+// as the marker outline (weight 0, not drawn); pie slices and grouped bars
+// cannot name one, so their items are given it before and after drawing
+// (after: the legend of the frame that first sees them).
+void HoldItemColour(const char* label, const ImVec4& colour) {
+    if (ImPlotItem* item = ImPlot::GetItem(label)) item->Color = ImGui::ColorConvertFloat4ToU32(colour);
+}
+
 std::string Value(double v) {
     char buf[48];
     std::snprintf(buf, sizeof(buf), "%.4g", v);
@@ -46,7 +59,7 @@ void TooltipRow(const ImVec4& colour, const std::string& name, const std::string
     ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(p.x + h * 0.3f, p.y + h * 0.5f), h * 0.28f, ui::ToU32(colour));
     ImGui::Dummy(ImVec2(h * 0.75f, h));
     ImGui::SameLine();
-    ImGui::TextUnformatted(name.c_str());
+    ImGui::TextUnformatted(core::DisplayText(name).c_str());
     ImGui::SameLine();
     ImGui::TextColored(ui::CurrentTokens().text_bright, "%s", value.c_str());
 }
@@ -172,8 +185,10 @@ ImVec4 LabelColour(DataLabel::State s) {
 
 // The legend lists the first kMaxLegendSeries series; the rest are drawn
 // and shown on hover ("##" hides an ImPlot item from the legend).
+// Data names are drawn through core::DisplayText (Arabic joined, right to
+// left); the data keeps the names as they are.
 std::string LegendLabel(const Prepared& p, size_t i, const std::string& label) {
-    return p.series.size() > kMaxLegendSeries && i >= kMaxLegendSeries ? "##" + label : label;
+    return p.series.size() > kMaxLegendSeries && i >= kMaxLegendSeries ? "##" + label : core::DisplayText(label);
 }
 
 // A grid value's colour on the plot's grid range (hexbin: log option).
@@ -475,7 +490,7 @@ void PlotView::Draw(ImVec2 size, const Options& o) {
     if (o.toolbar) DrawToolbar(o);
     if (o.show_title && has_data_) {
         ui::FontScope bold(ui::Font::Medium);
-        ImGui::TextUnformatted(Title().c_str());
+        ImGui::TextUnformatted(core::DisplayText(Title()).c_str());
     }
     if (size.y <= 0) size.y = std::max(120.0f, ImGui::GetContentRegionAvail().y + size.y);
     if (size.x <= 0) size.x = ImGui::GetContentRegionAvail().x + size.x;
@@ -650,14 +665,14 @@ void PlotView::DrawPairPlot(ImVec2 size) {
                         ys.push_back(p.multi_values[static_cast<size_t>(i)][r]);
                     }
                     const std::string label = g < p.multi_groups.size() && !p.multi_groups[g].empty() ? p.multi_groups[g] : std::string("rows");
-                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 1.8f, ui::WithAlpha(SeriesColour(g), 0.7f), 0.0f);
-                    ImPlot::PlotScatter(label.c_str(), xs.data(), ys.data(), static_cast<int>(xs.size()));
+                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 1.8f, ui::WithAlpha(SeriesColour(g), 0.7f), 0.0f, SeriesColour(g));
+                    ImPlot::PlotScatter(core::DisplayText(label).c_str(), xs.data(), ys.data(), static_cast<int>(xs.size()));
                 }
                 if (ImPlot::IsPlotHovered()) {
                     const ImPlotPoint m = ImPlot::GetPlotMousePos();
                     ImGui::BeginTooltip();
-                    ImGui::Text("%s %s", p.multi_cols[static_cast<size_t>(j)].c_str(), Value(m.x).c_str());
-                    ImGui::Text("%s %s", p.multi_cols[static_cast<size_t>(i)].c_str(), Value(m.y).c_str());
+                    ImGui::Text("%s %s", core::DisplayText(p.multi_cols[static_cast<size_t>(j)]).c_str(), Value(m.x).c_str());
+                    ImGui::Text("%s %s", core::DisplayText(p.multi_cols[static_cast<size_t>(i)]).c_str(), Value(m.y).c_str());
                     ImGui::EndTooltip();
                 }
             }
@@ -818,10 +833,13 @@ void PlotView::DrawPlot(ImVec2 size) {
     // Category ticks (bar, error bars, box, violin, heatmap).
     std::vector<const char*> names;
     std::vector<double> positions;
+    std::vector<std::string> shown;  // the names as drawn
     const auto set_ticks = [&](ImAxis axis, const std::vector<std::string>& labels, double offset) {
         names.clear();
         positions.clear();
+        shown.clear();
         if (labels.empty() || labels.size() > 40) return;
+        for (const auto& l : labels) shown.push_back(core::DisplayText(l));
         // Names that would run into each other: a name is drawn when it clears
         // the last one drawn (the hover card has them all).
         const bool along_x = axis == ImAxis_X1;
@@ -829,10 +847,10 @@ void PlotView::DrawPlot(ImVec2 size) {
         float last_end = -1e9f;
         for (size_t i = 0; i < labels.size(); ++i) {
             const float centre = room * (static_cast<float>(i) + 0.5f);
-            const float half = (along_x ? ImGui::CalcTextSize(labels[i].c_str()).x + 8.0f : ImGui::GetTextLineHeight()) * 0.5f;
+            const float half = (along_x ? ImGui::CalcTextSize(shown[i].c_str()).x + 8.0f : ImGui::GetTextLineHeight()) * 0.5f;
             const bool fits = centre - half >= last_end;
             if (fits) last_end = centre + half;
-            names.push_back(fits ? labels[i].c_str() : "");
+            names.push_back(fits ? shown[i].c_str() : "");
             positions.push_back(static_cast<double>(i) + offset);
         }
         ImPlot::SetupAxisTicks(axis, positions.data(), static_cast<int>(positions.size()), names.data());
@@ -842,6 +860,7 @@ void PlotView::DrawPlot(ImVec2 size) {
     std::vector<const char*> xnames, ynames;
     std::vector<double> xpos, ypos;
     std::vector<std::string> short_names;
+    std::vector<std::string> side_names;  // the names down the side, as drawn
 
     switch (kind) {
         case Kind::Bar: set_ticks(horiz ? ImAxis_Y1 : ImAxis_X1, p.categories, 0.0); break;
@@ -890,8 +909,9 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Importance: {
             // Features down the side, the largest on top.
             const size_t count = p.categories.size();
-            for (size_t i = 0; i < count && count <= 60; ++i) {
-                ynames.push_back(p.categories[i].c_str());
+            for (size_t i = 0; i < count && count <= 60; ++i) side_names.push_back(core::DisplayText(p.categories[i]));
+            for (size_t i = 0; i < side_names.size(); ++i) {
+                ynames.push_back(side_names[i].c_str());
                 ypos.push_back(static_cast<double>(count - 1 - i));
             }
             if (!ypos.empty()) ImPlot::SetupAxisTicks(ImAxis_Y1, ypos.data(), static_cast<int>(ypos.size()), ynames.data());
@@ -903,21 +923,33 @@ void PlotView::DrawPlot(ImVec2 size) {
             // Column names longer than their cell are shortened ("artist_po..");
             // the rows and the hover keep the full names.
             float row_w = 0.0f;
-            for (const auto& r : p.row_names) row_w = std::max(row_w, ImGui::CalcTextSize(r.c_str()).x);
+            const bool row_ticks = p.row_names.size() <= 40;  // more: no names down the side
+            if (row_ticks)
+                for (const auto& r : p.row_names) side_names.push_back(core::DisplayText(r));
+            for (const auto& r : side_names) row_w = std::max(row_w, ImGui::CalcTextSize(r.c_str()).x);
             const float cell_w = p.grid_cols > 0 ? (plot_size.x - row_w - 40.0f) / static_cast<float>(p.grid_cols) - 6.0f : 0.0f;
             for (size_t i = 0; i < p.col_names.size() && p.col_names.size() <= 40; ++i) {
-                std::string name = p.col_names[i];
+                // Shortened at the end of the name as written (whole characters),
+                // then drawn: right-to-left names lose their end, not their start
+                std::string name = core::DisplayText(p.col_names[i]);
                 if (ImGui::CalcTextSize(name.c_str()).x > cell_w) {
-                    while (name.size() > 1 && ImGui::CalcTextSize((name + "..").c_str()).x > cell_w) name.pop_back();
-                    name += "..";
+                    std::string kept = p.col_names[i];
+                    const auto drop_last = [&kept] {  // the last character, all its bytes
+                        while (!kept.empty() && (static_cast<unsigned char>(kept.back()) & 0xC0) == 0x80) kept.pop_back();
+                        if (!kept.empty()) kept.pop_back();
+                    };
+                    do {
+                        drop_last();
+                        name = core::DisplayText(kept + "..");
+                    } while (kept.size() > 1 && ImGui::CalcTextSize(name.c_str()).x > cell_w);
                 }
                 short_names.push_back(std::move(name));
                 xpos.push_back(static_cast<double>(i) + 0.5);
             }
             for (const auto& name : short_names) xnames.push_back(name.c_str());
             // Row 0 is drawn at the top.
-            for (size_t i = 0; i < p.row_names.size() && p.row_names.size() <= 40; ++i) {
-                ynames.push_back(p.row_names[i].c_str());
+            for (size_t i = 0; i < side_names.size(); ++i) {
+                ynames.push_back(side_names[i].c_str());
                 ypos.push_back(static_cast<double>(p.grid_rows) - static_cast<double>(i) - 0.5);
             }
             if (!xpos.empty()) ImPlot::SetupAxisTicks(ImAxis_X1, xpos.data(), static_cast<int>(xpos.size()), xnames.data());
@@ -990,7 +1022,7 @@ void PlotView::DrawPlot(ImVec2 size) {
                     ImPlot::PopPlotClipRect();
                     continue;
                 }
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(ColourOf((i)), 0.7f), 0.0f);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(ColourOf(i), 0.7f), 0.0f, ColourOf(i));
                 ImPlot::PlotScatter(LegendLabel(p, i, s.label).c_str(), s.x.data(), s.y.data(), n(s.x));
             }
             break;
@@ -1018,11 +1050,11 @@ void PlotView::DrawPlot(ImVec2 size) {
                     ImPlot::SetNextLineStyle(ImVec4(0, 0, 0, 0));  // no outline on the dimmed bars
                     ImPlot::PlotBars(("##dim" + s.label).c_str(), s.x.data(), s.y.data(), n(s.x), width * 0.94);
                     ImPlot::SetNextFillStyle(ColourOf(i), 0.95f);
-                    ImPlot::PlotBars(s.label.c_str(), in_x.data(), in_y.data(), n(in_x), width * 0.94);
+                    ImPlot::PlotBars(core::DisplayText(s.label).c_str(), in_x.data(), in_y.data(), n(in_x), width * 0.94);
                     continue;
                 }
                 ImPlot::SetNextFillStyle(ColourOf((i)), p.series.size() > 1 ? 0.6f : 0.9f);
-                ImPlot::PlotBars(s.label.c_str(), s.x.data(), s.y.data(), n(s.x), width * 0.94);
+                ImPlot::PlotBars(core::DisplayText(s.label).c_str(), s.x.data(), s.y.data(), n(s.x), width * 0.94);
             }
             if (p.spec.show_median) {
                 const std::string l = "median " + Value(p.stats.median);
@@ -1038,17 +1070,19 @@ void PlotView::DrawPlot(ImVec2 size) {
         }
         case Kind::Bar:
             if (p.series.size() > 1) {
+                std::vector<std::string> legend_text;
                 std::vector<const char*> labels;
                 std::vector<double> values;
                 for (const auto& s : p.series) {
-                    labels.push_back(s.label.c_str());
+                    legend_text.push_back(core::DisplayText(s.label));
                     values.insert(values.end(), s.y.begin(), s.y.end());
                 }
-                ImPlot::PushColormap(SeriesColormap());
+                for (const auto& l : legend_text) labels.push_back(l.c_str());
+                for (size_t i = 0; i < labels.size(); ++i) HoldItemColour(labels[i], ColourOf(i));
                 ImPlot::PlotBarGroups(labels.data(), values.data(), static_cast<int>(p.series.size()),
                                       static_cast<int>(p.categories.size()), 0.67, 0.0,
                                       p.spec.bar_layout == PlotSpec::BarLayout::Grouped ? 0 : ImPlotBarGroupsFlags_Stacked);
-                ImPlot::PopColormap();
+                for (size_t i = 0; i < labels.size(); ++i) HoldItemColour(labels[i], ColourOf(i));
             } else if (!p.series.empty()) {
                 const auto& s = p.series[0];
                 // One set of bars: positions and heights, turned for horizontal bars.
@@ -1082,10 +1116,10 @@ void PlotView::DrawPlot(ImVec2 size) {
                     ImPlot::SetNextLineStyle(ImVec4(0, 0, 0, 0));  // no outline on the dimmed bars
                     bars(("##dim" + s.label).c_str(), s.x, s.y, 0.67);
                     ImPlot::SetNextFillStyle(ColourOf(0), 0.95f);
-                    bars(s.label.c_str(), in_x, in_y, 0.67);
+                    bars(core::DisplayText(s.label).c_str(), in_x, in_y, 0.67);
                 } else {
                     ImPlot::SetNextFillStyle(ColourOf((0)), 0.9f);
-                    bars(s.label.c_str(), s.x, s.y, 0.67);
+                    bars(core::DisplayText(s.label).c_str(), s.x, s.y, 0.67);
                 }
             }
             break;
@@ -1093,17 +1127,21 @@ void PlotView::DrawPlot(ImVec2 size) {
             if (!p.series.empty()) {
                 const auto& s = p.series[0];
                 ImPlot::SetNextErrorBarStyle(ColourOf((0)), 1.5f, 6.0f);
-                ImPlot::PlotErrorBars(s.label.c_str(), s.x.data(), s.y.data(), s.low.data(), s.high.data(), n(s.x));
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4.0f, ColourOf((0)), 0.0f);
-                ImPlot::PlotScatter(s.label.c_str(), s.x.data(), s.y.data(), n(s.x));
+                ImPlot::PlotErrorBars(core::DisplayText(s.label).c_str(), s.x.data(), s.y.data(), s.low.data(), s.high.data(), n(s.x));
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4.0f, ColourOf(0), 0.0f, ColourOf(0));
+                ImPlot::PlotScatter(core::DisplayText(s.label).c_str(), s.x.data(), s.y.data(), n(s.x));
             }
             break;
         case Kind::Pie:
             if (!p.series.empty() && !p.categories.empty()) {
+                std::vector<std::string> legend_text;
+                for (const auto& c : p.categories) legend_text.push_back(core::DisplayText(c));
                 std::vector<const char*> labels;
-                for (const auto& c : p.categories) labels.push_back(c.c_str());
+                for (const auto& l : legend_text) labels.push_back(l.c_str());
+                for (size_t i = 0; i < labels.size(); ++i) HoldItemColour(labels[i], ColourOf(i));
                 ImPlot::PlotPieChart(labels.data(), p.series[0].y.data(), static_cast<int>(labels.size()), 0.5, 0.5, 0.4,
                                      p.spec.donut ? nullptr : "%.0f", 90);
+                for (size_t i = 0; i < labels.size(); ++i) HoldItemColour(labels[i], ColourOf(i));
                 if (p.spec.donut) {
                     double total = 0;
                     for (double v : p.series[0].y) total += std::max(0.0, v);
@@ -1230,7 +1268,7 @@ void PlotView::DrawPlot(ImVec2 size) {
             // Legend entries for the groups.
             for (size_t g = 0; g < p.multi_groups.size() && p.multi_groups.size() > 1; ++g) {
                 ImPlot::SetNextLineStyle(SeriesColour(g), 2.0f);
-                ImPlot::PlotDummy(p.multi_groups[g].c_str());
+                ImPlot::PlotDummy(core::DisplayText(p.multi_groups[g]).c_str());
             }
             break;
         }
@@ -1277,7 +1315,7 @@ void PlotView::DrawPlot(ImVec2 size) {
                 }
                 const ImVec4 c = ColourOf(i);
                 if (p.spec.polar_points) {
-                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.8f, ui::WithAlpha(c, 0.85f), 0.0f);
+                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.8f, ui::WithAlpha(c, 0.85f), 0.0f, c);
                     ImPlot::PlotScatter(LegendLabel(p, i, s.label).c_str(), xs.data(), ys.data(), n(xs));
                 } else {
                     ImPlot::SetNextLineStyle(c, 1.8f);
@@ -1421,9 +1459,9 @@ void PlotView::DrawPlot(ImVec2 size) {
                     std::vector<double> sx{0.0}, sy{sr.y.empty() ? 1.0 : sr.y.front()};
                     sx.insert(sx.end(), sr.x.begin(), sr.x.end());
                     sy.insert(sy.end(), sr.y.begin(), sr.y.end());
-                    ImPlot::PlotStairs(sr.label.c_str(), sx.data(), sy.data(), n(sx), ImPlotStairsFlags_PreStep);
+                    ImPlot::PlotStairs(core::DisplayText(sr.label).c_str(), sx.data(), sy.data(), n(sx), ImPlotStairsFlags_PreStep);
                 } else {
-                    ImPlot::PlotLine(sr.label.c_str(), sr.x.data(), sr.y.data(), n(sr.x));
+                    ImPlot::PlotLine(core::DisplayText(sr.label).c_str(), sr.x.data(), sr.y.data(), n(sr.x));
                 }
             }
             break;
@@ -1441,14 +1479,14 @@ void PlotView::DrawPlot(ImVec2 size) {
                 }
                 ImPlot::SetNextLineStyle(ColourOf(0), 2.0f);
                 ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4.5f, ColourOf(0), 0.0f);
-                ImPlot::PlotLine(sr.label.c_str(), sr.x.data(), sr.y.data(), n(sr.x));
+                ImPlot::PlotLine(core::DisplayText(sr.label).c_str(), sr.x.data(), sr.y.data(), n(sr.x));
             }
             break;
         case Kind::Residuals:
             if (!p.series.empty()) {
                 const auto& sr = p.series[0];
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(ColourOf(0), 0.6f), 0.0f);
-                ImPlot::PlotScatter(sr.label.c_str(), sr.x.data(), sr.y.data(), n(sr.x));
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(ColourOf(0), 0.6f), 0.0f, ColourOf(0));
+                ImPlot::PlotScatter(core::DisplayText(sr.label).c_str(), sr.x.data(), sr.y.data(), n(sr.x));
                 const double zero = 0.0;
                 ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.9f), 1.4f);
                 ImPlot::PlotInfLines("##zero", &zero, 1, ImPlotInfLinesFlags_Horizontal);
@@ -1464,7 +1502,7 @@ void PlotView::DrawPlot(ImVec2 size) {
                 }
                 ImPlot::SetNextLineStyle(c, 2.0f);
                 ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3.5f, c, 0.0f);
-                ImPlot::PlotLine(sr.label.c_str(), sr.x.data(), sr.y.data(), n(sr.x));
+                ImPlot::PlotLine(core::DisplayText(sr.label).c_str(), sr.x.data(), sr.y.data(), n(sr.x));
                 if (static_cast<int>(i) == p.best_series && p.best_index < sr.x.size()) {
                     ImDrawList* dl = ImPlot::GetPlotDrawList();
                     ImPlot::PushPlotClipRect();
@@ -1479,7 +1517,7 @@ void PlotView::DrawPlot(ImVec2 size) {
                 std::vector<double> pos;
                 for (size_t i = 0; i < sr.y.size(); ++i) pos.push_back(static_cast<double>(sr.y.size() - 1 - i));
                 ImPlot::SetNextFillStyle(ColourOf(0), 0.9f);
-                ImPlot::PlotBars(sr.label.c_str(), sr.y.data(), pos.data(), n(pos), 0.67, ImPlotBarsFlags_Horizontal);
+                ImPlot::PlotBars(core::DisplayText(sr.label).c_str(), sr.y.data(), pos.data(), n(pos), 0.67, ImPlotBarsFlags_Horizontal);
                 if (sr.low.size() == sr.y.size()) {
                     ImPlot::SetNextErrorBarStyle(t.text_bright, 1.2f, 5.0f);
                     ImPlot::PlotErrorBars(("##spread" + sr.label).c_str(), sr.y.data(), pos.data(), sr.low.data(), sr.high.data(), n(pos),
@@ -1499,7 +1537,9 @@ void PlotView::DrawPlot(ImVec2 size) {
                 const ImVec4 c = ColourOf(i);
                 // A small marker per point keeps the fit and the legend; the
                 // sized and coloured circles are drawn over it.
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 1.0f, p.colour_scale ? ui::WithAlpha(t.text, 0.0f) : c, 0.0f);
+                // The outline (weight 0, not drawn) names the legend colour also
+                // when the markers are see-through under a colour scale
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 1.0f, p.colour_scale ? ui::WithAlpha(t.text, 0.0f) : c, 0.0f, c);
                 ImPlot::PlotScatter((p.series.size() > 1 ? LegendLabel(p, i, sr.label) : std::string("##points")).c_str(), sr.x.data(), sr.y.data(), n(sr.x));
                 ImPlot::PushPlotClipRect();
                 for (size_t k = 0; k < sr.x.size(); ++k) {
@@ -1869,7 +1909,7 @@ void PlotView::DrawHover() {
     const auto begin = [&](const std::string& header) {
         if (!shown) {
             ImGui::BeginTooltip();
-            ImGui::TextColored(t.text_bright, "%s", header.c_str());
+            ImGui::TextColored(t.text_bright, "%s", core::DisplayText(header).c_str());
             shown = true;
         }
     };

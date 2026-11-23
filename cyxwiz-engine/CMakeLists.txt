@@ -309,6 +309,9 @@ set(ENGINE_SOURCES
     src/core/rl_playback_presentation.cpp
     src/core/rl_device_presentation.cpp
     src/core/rl_dashboard_presentation.cpp
+    src/core/project_session.cpp
+    src/core/python_package_list.cpp
+    src/core/display_text.cpp
     src/gui/panels/policy_playback_panel.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
@@ -616,6 +619,9 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_preferences_storage.cpp
     src/gui/panels/toolbar_preferences_studio_debugger.cpp
     src/gui/panels/toolbar_preferences_training.cpp
+    src/gui/panels/toolbar_preferences_studio.cpp
+    src/gui/panels/toolbar_preferences_tools.cpp
+    src/gui/panels/toolbar_preferences_restore.cpp
     src/gui/panels/toolbar_preferences_nodes_panel.cpp
     src/gui/panels/toolbar_preferences_search.cpp
     src/gui/panels/toolbar_preferences_servers.cpp
@@ -777,7 +783,6 @@ set(ENGINE_SOURCES
     src/scripting/python_engine.cpp
     src/scripting/python_environment.cpp
     src/scripting/script_manager.cpp
-    src/scripting/startup_script_manager.cpp
     src/scripting/cell_manager.cpp
     src/gui/panels/output_renderer.cpp
     # Preview system
@@ -1061,7 +1066,6 @@ set(ENGINE_HEADERS
     src/scripting/scripting_engine.h
     src/scripting/python_sandbox.h
     src/scripting/script_output_sink.h
-    src/scripting/startup_script_manager.h
     src/scripting/cell.h
     src/scripting/cell_manager.h
     src/gui/panels/output_renderer.h
@@ -1298,14 +1302,6 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
     ${CMAKE_SOURCE_DIR}/scripts/templates
     $<TARGET_FILE_DIR:cyxwiz-engine>/scripts/templates
     COMMENT "Copying scripts..."
-)
-
-# Copy the safe default startup-script configuration next to the Engine.
-add_custom_command(TARGET cyxwiz-engine POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    ${CMAKE_SOURCE_DIR}/scripts/startup/startup_scripts.txt
-    $<TARGET_FILE_DIR:cyxwiz-engine>/startup_scripts.txt
-    COMMENT "Copying startup_scripts.txt..."
 )
 
 # Copy test data files to build directory
@@ -4262,6 +4258,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
+    src/core/display_text.cpp
     src/gui/plot/plot_view3d.cpp
     src/gui/plot/plot_view_graph.cpp
     src/gui/ui_buttons.cpp
@@ -4413,6 +4410,7 @@ add_executable(test_text_gui_training_launch
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
+    src/core/display_text.cpp
     src/gui/plot/plot_view3d.cpp
     src/gui/plot/plot_view_graph.cpp
     src/gui/ui_buttons.cpp
@@ -6038,6 +6036,7 @@ add_executable(test_training_manager_session
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
+    src/core/display_text.cpp
     src/gui/plot/plot_view3d.cpp
     src/gui/plot/plot_view_graph.cpp
     src/gui/ui_buttons.cpp
@@ -7994,6 +7993,36 @@ if(WIN32)
 endif()
 add_test(NAME rl_dashboard_presentation COMMAND test_rl_dashboard_presentation)
 
+# ===== Test: reopening the last project (TOFIX129 B9-3) =====
+add_executable(test_project_session
+    tests/test_project_session.cpp
+    src/core/project_session.cpp
+)
+if(WIN32)
+    target_compile_definitions(test_project_session PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME project_session COMMAND test_project_session)
+
+# ===== Test: packages for new project environments (TOFIX129 B9-9) =====
+add_executable(test_python_package_list
+    tests/test_python_package_list.cpp
+    src/core/python_package_list.cpp
+)
+if(WIN32)
+    target_compile_definitions(test_python_package_list PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME python_package_list COMMAND test_python_package_list)
+
+# ===== Test: text as the interface draws it (Arabic forms, right to left) =====
+add_executable(test_display_text
+    tests/test_display_text.cpp
+    src/core/display_text.cpp
+)
+if(WIN32)
+    target_compile_definitions(test_display_text PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME display_text COMMAND test_display_text)
+
 # ===== Test: metric learning (pairs, triplets) vs PyTorch (TOFIX140 A5) =====
 set(CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/metric_graph_pytorch.json")
@@ -9119,6 +9148,7 @@ set(CYXWIZ_TRAIN_PATH_TEST_SOURCES
     src/core/plot/world_map.cpp
     src/core/plot/plot_export.cpp
     src/gui/plot/plot_view.cpp
+    src/core/display_text.cpp
     src/gui/plot/plot_view3d.cpp
     src/gui/plot/plot_view_graph.cpp
     src/gui/ui_buttons.cpp

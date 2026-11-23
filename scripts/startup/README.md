@@ -1,157 +1,44 @@
-# CyxWiz Startup Scripts
+# Startup scripts
 
-This directory contains example startup scripts that run automatically when CyxWiz Engine starts.
+A startup script is a Python file the Engine runs in each Python session
+before the session's first command or script, and again after **Restart**.
+It runs in the session's namespace, so what it imports or defines is there
+in the Python console and in every script you run.
 
-## What are Startup Scripts?
+## Set them
 
-Startup scripts are Python (.cyx) files that execute automatically on application launch. They're useful for:
+**Edit > Preferences > Python > When Python starts > Startup scripts**:
 
-- **Importing common libraries**: Auto-load math, numpy, pandas, etc.
-- **Loading datasets**: Automatically load frequently used data
-- **Configuring environment**: Set up paths, preferences
-- **Custom initialization**: Run your own setup code
+- **Add a script...** picks a `.py` (or `.cyx`) file. Add as many as you
+  need; they run in the order shown.
+- The arrow moves a script up the order; the cross removes it from the list
+  (the file stays where it is).
+- A script that is no longer there is shown in the warning colour; sessions
+  start without it.
 
-## How to Use
+The list is saved with the Engine settings and is the same for every
+project. A change applies to the next session (use **Restart** in the
+Python console to start one now).
 
-### Enable Startup Scripts
+The two switches below it, **import numpy as np** and **import pycyxwiz**,
+run before the scripts, so a script can use `np` and `pycyxwiz` when they
+are on.
 
-1. Build the Engine, then edit `startup_scripts.txt` next to the Engine executable
-2. Add script paths (one per line):
-   ```
-   scripts/startup/welcome.cyx
-   scripts/startup/init_imports.cyx
-   ```
-3. Restart CyxWiz Engine
-4. Scripts will run automatically and output to Console
+## What you see
 
-### Configuration File Format
+- What a script prints goes to the Console log, as
+  `Startup script printed: ...`.
+- A script that is missing, or stops with an error, is reported in the
+  Console log; the session starts anyway and the next script still runs.
 
-```
-# Comments start with #
-# One script path per line
-# Paths can be absolute or relative
+## Example
 
-scripts/startup/welcome.cyx
-scripts/startup/init_imports.cyx
-C:/Users/me/my_custom_startup.cyx
-```
-
-### Example Scripts
-
-This directory includes:
-
-**welcome.cyx**:
-- Displays welcome message
-- Shows quick tips
-- Lists useful commands
-
-**init_imports.cyx**:
-- Auto-imports math, random, json
-- Attempts to load numpy, pandas
-- Imports pycyxwiz if available
-
-## Creating Your Own Startup Scripts
-
-Example: `my_startup.cyx`
-
-```python
-# My custom startup script
-
-print("Loading my custom setup...")
-
-# Import libraries
-import math
-import random
-
-# Define helper functions
-def quick_plot(data):
-    """Quick plotting helper"""
-    # Implementation here
-    pass
-
-# Load data
-try:
-    # Auto-load my dataset
-    data = load_data("my_dataset.csv")
-    print(f"Loaded dataset: {len(data)} rows")
-except:
-    print("Dataset not found")
-
-print("Custom setup complete!")
-```
-
-Then add to `startup_scripts.txt`:
-```
-scripts/startup/my_startup.cyx
-```
+[`example_startup.py`](example_startup.py) defines two helpers,
+`read_json(path)` and `describe(values)`, and prints one line. Add it, open
+the Python console, and type `describe([1, 2, 3])`.
 
 ## Tips
 
-**Keep scripts fast**: Avoid long-running operations (>5 seconds)
-
-**Handle errors gracefully**: Use try/except to prevent blocking startup
-
-**Use print() for feedback**: Messages appear in Console
-
-**Test scripts individually**: Run scripts manually before adding to startup
-
-**Safe mode**: Hold Shift on startup to skip all startup scripts (future feature)
-
-## Troubleshooting
-
-**Scripts not running?**
-- Check `startup_scripts.txt` exists next to the Engine executable
-- Verify script paths are correct (absolute or relative)
-- Check Console for error messages
-
-**Application slow to start?**
-- Remove slow scripts from configuration
-- Optimize scripts to run faster
-- Consider lazy loading (import on first use)
-
-**Script errors?**
-- Scripts continue even if one fails
-- Check Console for error output
-- Test script manually first (F5 in Script Editor)
-
-## Advanced
-
-### Conditional Execution
-
-```python
-# Only run on Windows
-import platform
-if platform.system() == "Windows":
-    print("Windows-specific setup")
-```
-
-### Project Detection
-
-```python
-# Different setup for different projects
-import os
-project_name = os.path.basename(os.getcwd())
-if project_name == "my_ml_project":
-    # Load ML-specific libraries
-    import tensorflow as tf
-```
-
-### Performance Timing
-
-```python
-import time
-start = time.time()
-
-# Your initialization code here
-
-elapsed = time.time() - start
-print(f"Startup completed in {elapsed:.2f}s")
-```
-
-## Examples Gallery
-
-See more examples in the [CyxWiz Documentation](../docs/startup_scripts.md).
-
----
-
-**Happy scripting!** 🐍
+- Keep scripts quick: the session's first command waits for them.
+- Add only scripts you trust: they run with your user's rights.
+- Try a script in the Script Editor (F5) before adding it.

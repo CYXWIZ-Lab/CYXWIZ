@@ -18,6 +18,37 @@ void ScriptEditorPanel::ConfigureEditor(CodeEditor& editor) const {
     editor.Doc().Settings().auto_indent = auto_indent_;
 }
 
+void ScriptEditorPanel::ApplyEditorSettings(const core::EditorConfig& settings) {
+    SetTabSize(settings.tab_size);
+    SetShowWhitespace(settings.show_whitespace);
+    SetSyntaxHighlighting(settings.syntax_colours);
+    SetShowMinimap(settings.minimap);
+    SetWordWrap(settings.word_wrap);
+    SetAutoIndent(settings.auto_indent);
+    new_file_line_endings_ = settings.new_file_line_endings;
+    trim_trailing_whitespace_ = settings.trim_trailing_whitespace;
+    final_newline_ = settings.final_newline;
+}
+
+core::EditorConfig ScriptEditorPanel::EditorSettings() const {
+    core::EditorConfig settings;
+    settings.tab_size = tab_size_;
+    settings.show_whitespace = show_whitespace_;
+    settings.syntax_colours = syntax_highlighting_;
+    settings.minimap = show_minimap_;
+    settings.word_wrap = word_wrap_;
+    settings.auto_indent = auto_indent_;
+    settings.new_file_line_endings = new_file_line_endings_;
+    settings.trim_trailing_whitespace = trim_trailing_whitespace_;
+    settings.final_newline = final_newline_;
+    return settings;
+}
+
+void ScriptEditorPanel::TidyBeforeSave(EditorTab& tab, const std::string& path) {
+    if (tab.cell_mode || scriptfile::IsNotebookJson(path)) return;
+    tab.editor.Doc().TidyForSave(trim_trailing_whitespace_, final_newline_);
+}
+
 void ScriptEditorPanel::SetTabSize(int size) {
     if (size >= 1 && size <= 8) {
         tab_size_ = size;

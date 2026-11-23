@@ -429,6 +429,11 @@ std::vector<cyxwiz::ValidationIssue> CheckGraphLaunchReadiness(
 
     // 1. Sequence columns on every loaded partition (train, dev, test).
     if (config.sequence_batch.enabled) {
+        const bool training_table_is_prepared =
+            config.training_data_needs_pipeline_run ||
+            std::any_of(nodes.begin(), nodes.end(), [](const MLNode& node) {
+                return cyxwiz::ResolvePipelineRuntimeSupport(node.type).materializer_arrow_table_supported;
+            });
         struct Partition {
             const char* role;
             std::string dataset_name;
@@ -447,6 +452,11 @@ std::vector<cyxwiz::ValidationIssue> CheckGraphLaunchReadiness(
             if (partition.dataset_name.empty() || !FindTabularSchema(registry, partition.dataset_name)) {
                 continue;
             }
+            // Steps before the Split make the training table (a Tokenizer's
+            // windows): the raw source has no token column yet. The launch
+            // checks the prepared table once the steps have run (as the raw
+            // width check is skipped for them below).
+            if (&partition == &partitions[0] && training_table_is_prepared) continue;
             std::string error;
             if (!ValidateSequenceLaunchColumns(registry, partition.dataset_name, config, error)) {
                 issues.push_back({cyxwiz::IssueLevel::Error, partition.node_id,

@@ -163,9 +163,9 @@ void ToolbarPanel::HandleAutoSaveTimer() {
         if (auto_save_timer_ >= auto_save_interval_) {
             auto_save_timer_ = 0.0f;
 
-            // Trigger save all callback
-            if (save_all_callback_) {
-                save_all_callback_();
+            // Saves what already has a file; an untitled graph or script waits for File > Save
+            if (auto_save_callback_) {
+                auto_save_callback_();
                 spdlog::info("Auto-save triggered");
             }
         }

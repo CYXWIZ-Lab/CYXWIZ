@@ -137,6 +137,9 @@ int main() {
         root / "text" / "test_03_sentiment_lstm_mini.cyxgraph",
         root / "text" / "test_04_sentiment_gru_mini.cyxgraph",
         root / "text" / "test_05_sentiment_transformer_mini.cyxgraph",
+        // Decoder-only causal LM on token windows (text corpus -> Tokenizer)
+        root / "text" / "causal_lm_decoder_generation_experiment.cyxgraph",
+        root / "task50_gpt_generation_controls" / "causal_lm_decoder_generation_experiment.cyxgraph",
         root / "cats_dogs_resnet_scratch.cyxgraph",
         root / "cats_dogs_image_filter.cyxgraph",
         root / "cats_dogs_edges_channel.cyxgraph",

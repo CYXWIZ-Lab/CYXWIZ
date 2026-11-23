@@ -125,6 +125,30 @@ struct StudioDebuggerConfig {
 };
 
 // The user's defaults for training choices (Preferences > Training).
+// How the Studio starts (Preferences > Studio); the menus change them for
+// the session
+struct StudioConfig {
+    bool auto_save_at_start = false;  // File > Auto Save on when the Engine starts
+    bool minimap = true;              // the canvas minimap
+    bool operator==(const StudioConfig&) const = default;
+};
+
+// How the Training Dashboard's charts start (Preferences > Training); the
+// dashboard's View options change them for the session
+struct TrainingDashboardConfig {
+    static constexpr int kMinEpochWindow = 3;
+    static constexpr int kMaxEpochWindow = 50;
+    static constexpr int kMinSmoothWindow = 2;
+    static constexpr int kMaxSmoothWindow = 50;
+    bool auto_scale = true;
+    bool follow_current_epoch = false;
+    int epoch_window = 30;  // epochs shown while following
+    bool log_loss_axis = false;
+    bool smooth = false;
+    int smooth_window = 5;  // points in the moving average
+    bool operator==(const TrainingDashboardConfig&) const = default;
+};
+
 struct TrainingDefaultsConfig {
     // What a new BatchNorm node does with its running statistics when it is
     // frozen: keep them (true) or keep updating them.
@@ -183,6 +207,34 @@ struct PolicyStressDefaults {
     int kind = 0;       // rl::StressKind: 0 Rough, 1 Slopes, 2 Steps, 3 Obstacles, 4 Kicks
     int levels = 5;     // 2 to 21
     int episodes = 10;  // a level, 1 to 100
+};
+
+// What each Python session starts with, and the Python console's history
+// (Preferences > Python)
+struct PythonStartConfig {
+    static constexpr int kMinCommandsKept = 100;
+    static constexpr int kMaxCommandsKept = 10000;
+    std::vector<std::string> startup_scripts;  // run in this order in each new session
+    bool import_numpy = true;         // import numpy as np
+    bool import_pycyxwiz = true;      // import pycyxwiz and its short names (cyx, svd, zeros...)
+    int console_commands_kept = 500;  // commands, each with its output
+    bool operator==(const PythonStartConfig&) const = default;
+};
+
+// The Script Editor's settings (Preferences > Script Editor)
+struct EditorConfig {
+    int tab_size = 4;  // 2, 4 or 8
+    bool show_whitespace = true;
+    bool syntax_colours = true;
+    bool minimap = true;
+    bool word_wrap = false;
+    bool auto_indent = true;
+    // Line endings of a new file: 0 as the system (CRLF on Windows), 1 LF,
+    // 2 CRLF. A file keeps the line endings it has.
+    int new_file_line_endings = 0;
+    bool trim_trailing_whitespace = false;
+    bool final_newline = true;
+    bool operator==(const EditorConfig&) const = default;
 };
 
 class EngineConfig {
@@ -254,20 +306,6 @@ public:
     int GetDefaultP2PPort() const;
     void SetDefaultP2PPort(int port);
 
-    // ===== Feature Flags =====
-
-    // Auto-connect to central server on startup
-    bool AutoConnectOnStartup() const;
-    void SetAutoConnectOnStartup(bool auto_connect);
-
-    // ===== Timeouts (in seconds) =====
-
-    int GetConnectionTimeout() const;
-    void SetConnectionTimeout(int seconds);
-
-    int GetRequestTimeout() const;
-    void SetRequestTimeout(int seconds);
-
     // ===== Python Settings =====
 
     // Effective Python interpreter: the configured path when it exists,
@@ -299,6 +337,10 @@ public:
     std::vector<std::string> GetDefaultVenvPackages() const;
     void SetDefaultVenvPackages(const std::vector<std::string>& packages);
 
+    // Each Python session's start and the console's history (Preferences > Python)
+    PythonStartConfig GetPythonStart() const;
+    void SetPythonStart(const PythonStartConfig& start);
+
     // ===== Local Debug =====
 
     // Strict mode: if true, StartTrainingFromGraph refuses to start
@@ -312,6 +354,10 @@ public:
     void SetStudioDebugger(const StudioDebuggerConfig& studio_debugger);
 
     TrainingDefaultsConfig GetTrainingDefaults() const;
+    StudioConfig GetStudio() const;
+    void SetStudio(const StudioConfig& studio);
+    TrainingDashboardConfig GetTrainingDashboard() const;
+    void SetTrainingDashboard(const TrainingDashboardConfig& dashboard);
     void SetTrainingDefaults(const TrainingDefaultsConfig& training_defaults);
 
     // ===== Runtime Observability =====
@@ -399,13 +445,26 @@ public:
     MonitorConfig GetMonitor() const;
     void SetMonitor(const MonitorConfig& monitor);
 
-    // ===== Recent Projects =====
+    // ===== Script Editor (Preferences > Script Editor, TOFIX129 B9-7, B9-8) =====
+    // Engine-wide (every project); the Script Editor's View menu edits the same values.
+    EditorConfig GetEditor() const;
+    void SetEditor(const EditorConfig& editor);
 
-    // Get list of recent projects (up to 10)
-    std::vector<std::string> GetRecentProjects() const;
+    // ===== General (Preferences > General, TOFIX129 B9) =====
 
-    // Add a project to recent projects list
-    void AddRecentProject(const std::string& project_path);
+    // When the Engine starts: the start page, or the last project (its
+    // scripts and the graph that was open come back with it)
+    bool StartWithLastProject() const;
+    void SetStartWithLastProject(bool last_project);
+    // How many recent projects File > Open Recent and the start page keep
+    static constexpr int kMinRecentProjects = 1;
+    static constexpr int kMaxRecentProjects = 50;
+    static constexpr int kDefaultRecentProjects = 10;
+    int RecentProjectsKept() const;
+    void SetRecentProjectsKept(int kept);
+    // Closing asks every time, not only when something would be lost
+    bool AskBeforeClosingAlways() const;
+    void SetAskBeforeClosingAlways(bool always);
 
     // Check if configuration has been modified
     bool IsModified() const { return modified_; }
@@ -441,23 +500,19 @@ private:
     std::string default_deployment_address_;
     int default_p2p_port_ = 50052;
 
-    // Feature flags
-    bool auto_connect_on_startup_ = false;
-
-    // Timeouts
-    int connection_timeout_ = 10;  // seconds
-    int request_timeout_ = 30;     // seconds
-
     // Python settings
     std::string system_python_path_;  // System Python interpreter path (auto-detected or user-configured)
     std::string detected_python_path_;  // session only, not serialized
     bool auto_create_venv_ = true;    // Auto-create venv for new projects
     std::vector<std::string> default_venv_packages_;  // Default packages to install in new venvs
+    PythonStartConfig python_start_;
 
     // Local Debug settings
     bool require_debug_before_train_ = false;
     StudioDebuggerConfig studio_debugger_;
     TrainingDefaultsConfig training_defaults_;
+    StudioConfig studio_;
+    TrainingDashboardConfig training_dashboard_;
 
     std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
     bool record_debug_logs_ = true;
@@ -479,8 +534,11 @@ private:
     UtilitiesConfig utilities_;
     MonitorConfig monitor_;
 
-    // Recent projects
-    std::vector<std::string> recent_projects_;  // Recent project paths (max 10)
+    EditorConfig editor_;
+    // Preferences > General
+    bool start_with_last_project_ = false;
+    int recent_projects_kept_ = kDefaultRecentProjects;
+    bool ask_before_closing_always_ = false;
 };
 
 } // namespace cyxwiz::core

@@ -33,6 +33,7 @@
 #include "core/training_manager.h"
 #include "plugin/engine_plugin_context.h"
 #include "core/engine_config.h"
+#include "core/project_session.h"
 #include "core/python_detector.h"
 #include "core/texture_manager.h"
 
@@ -74,6 +75,8 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 #include <filesystem>
+#include <fstream>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <algorithm>
 #include <cctype>
@@ -246,8 +249,8 @@ void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
         const std::filesystem::path script = std::filesystem::absolute(arg, ec);
         const std::string ext = script.extension().string();
         if (!ec && (ext == ".py" || ext == ".cyx" || ext == ".ipynb") && std::filesystem::is_regular_file(script, ec)) {
-            startup_scripts_.push_back(script.string());
-            spdlog::info("Startup script: {}", startup_scripts_.back());
+            command_line_scripts_.push_back(script.string());
+            spdlog::info("Script to open: {}", command_line_scripts_.back());
         } else if (!ec && ext == ".cyxgraph" && std::filesystem::is_regular_file(script, ec)) {
             // cyxwiz-engine <project> graph.cyxgraph opens the graph in the Node Editor.
             startup_graph_path_ = script.string();
@@ -268,6 +271,14 @@ void CyxWizApp::OpenStartupProjectIfRequested() {
     if (pm.OpenProject(startup_project_path_)) {
         if (startup_project_from_command_line_)
             spdlog::debug("Opened project from the command line: {}", startup_project_path_);
+        // The last project brings back the graph that was open (a graph
+        // named on the command line wins)
+        if (reopening_last_project_ && startup_graph_path_.empty()) {
+            const std::string graph =
+                cyxwiz::project_session::ResolvedGraph(pm.GetConfig().open_graph, pm.GetProjectRoot());
+            std::error_code ec;
+            if (!graph.empty() && std::filesystem::is_regular_file(graph, ec)) startup_graph_path_ = graph;
+        }
     } else {
         spdlog::error("Failed to open project {}", startup_project_path_);
     }
@@ -282,11 +293,14 @@ void CyxWizApp::OpenStartupGraphIfRequested() {
         // A starter is a copy to work on: Save asks for a name instead of
         // overwriting the example next to the Engine, and its data paths keep
         // working wherever it is saved. A graph named on the command line is
-        // the user's own file.
-        if (!startup_graph_from_command_line_) {
+        // the user's own file, and so is the last project's graph.
+        if (!startup_graph_from_command_line_ && !reopening_last_project_) {
             if (auto* editor = main_window_->GetNodeEditor()) editor->DetachFromExample();
         }
-        spdlog::info("Opened {} graph: {}", startup_graph_from_command_line_ ? "command-line" : "starter",
+        spdlog::info("Opened {} graph: {}",
+                     startup_graph_from_command_line_ ? "command-line"
+                     : reopening_last_project_        ? "the last project's"
+                                                      : "starter",
                      startup_graph_path_);
     } else {
         spdlog::error("Failed to open graph: {}", startup_graph_path_);
@@ -496,9 +510,31 @@ bool CyxWizApp::Initialize() {
     python_configured_ = true;
     spdlog::info("Python scripting support is disabled in this build; skipping interpreter setup");
 #endif
-    // A project named on the command line opens straight away; the start
-    // page is for choosing one (its "Continue without project" used to drop
-    // the command-line project).
+    // Preferences > General: how many recent projects are kept, and whether
+    // the last one opens instead of the start page (a command-line project
+    // wins; a project whose folder is gone is skipped).
+    {
+        const auto& general = cyxwiz::core::EngineConfig::Instance();
+        auto& pm = cyxwiz::ProjectManager::Instance();
+        pm.SetRecentProjectsLimit(static_cast<size_t>(general.RecentProjectsKept()));
+        if (startup_project_path_.empty() && general.StartWithLastProject()) {
+            std::vector<std::string> paths;
+            for (const auto& recent : pm.GetRecentProjects()) paths.push_back(recent.path);
+            // A file that is gone or does not read as a project is skipped
+            // (opening it would leave neither a project nor the start page)
+            startup_project_path_ = cyxwiz::project_session::FirstExisting(paths, [](const std::string& path) {
+                std::error_code ec;
+                if (!std::filesystem::is_regular_file(path, ec)) return false;
+                std::ifstream file(path);
+                return file && nlohmann::json::accept(file);
+            });
+            reopening_last_project_ = !startup_project_path_.empty();
+            if (reopening_last_project_) spdlog::info("Reopening the last project: {}", startup_project_path_);
+        }
+    }
+    // A project named on the command line (or the last one) opens straight
+    // away; the start page is for choosing one (its "Continue without
+    // project" used to drop the command-line project).
     if (!startup_project_path_.empty()) {
         project_selected_ = true;
     } else {
@@ -520,7 +556,9 @@ int CyxWizApp::Run() {
 
             // Anything still open (running script, unsaved scripts, loaded
             // data) is listed in one dialog; otherwise close at once.
-            if (ShouldPreventClose() || HasUnsavedWork() || HasLoadedData()) {
+            // Something would be lost, or Preferences > General asks every time
+            if (ShouldPreventClose() || HasUnsavedWork() || HasLoadedData() ||
+                cyxwiz::core::EngineConfig::Instance().AskBeforeClosingAlways()) {
                 glfwSetWindowShouldClose(window_, GLFW_FALSE);
                 show_close_dialog_ = true;
             } else {
@@ -555,7 +593,7 @@ bool CyxWizApp::ShouldPreventClose() {
 }
 
 bool CyxWizApp::HasUnsavedWork() {
-    // Check for unsaved files in script editor
+    // Unsaved scripts or graph
     if (main_window_ && main_window_->HasUnsavedFiles()) {
         return true;
     }
@@ -593,7 +631,8 @@ void CyxWizApp::HandleCloseRequest() {
     const std::vector<std::string> datasets = registry.GetDatasetNames();
 
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 600.0f);
-    ImGui::TextUnformatted("Some work is still open. Choose what happens to it.");
+    const bool nothing_open = unsaved.empty() && !script_running && datasets.empty();
+    ImGui::TextUnformatted(nothing_open ? "Nothing is unsaved." : "Some work is still open. Choose what happens to it.");
     ImGui::Spacing();
 
     auto section = [&](const char* title, const std::vector<std::string>& lines, const char* note) {
@@ -604,7 +643,7 @@ void CyxWizApp::HandleCloseRequest() {
         EndCard();
     };
     if (!unsaved.empty()) {
-        section(("Unsaved scripts (" + std::to_string(unsaved.size()) + ")").c_str(), unsaved, nullptr);
+        section(("Unsaved work (" + std::to_string(unsaved.size()) + ")").c_str(), unsaved, nullptr);
     }
     if (script_running) {
         section("Running script", {"A Python script is running. Closing stops it."}, nullptr);
@@ -633,10 +672,11 @@ void CyxWizApp::HandleCloseRequest() {
     };
 
     if (!unsaved.empty()) {
-        if (PrimaryButton("Save scripts and close")) {
+        if (PrimaryButton("Save and close")) {
             main_window_->SaveAllFiles();
             if (main_window_->HasUnsavedFiles()) {
-                close_error_ = "Some scripts could not be saved; they are still listed above. Details are in the log.";
+                close_error_ = "Some work was not saved (a save failed or was cancelled); it is still listed above. "
+                               "Details are in the log.";
             } else {
                 close_now();
             }
@@ -860,8 +900,8 @@ void CyxWizApp::Render() {
         main_window_ = std::make_unique<gui::MainWindow>();
         OpenStartupProjectIfRequested();
         OpenStartupGraphIfRequested();
-        for (const auto& script : startup_scripts_) main_window_->OpenScriptFile(script);
-        startup_scripts_.clear();
+        for (const auto& script : command_line_scripts_) main_window_->OpenScriptFile(script);
+        command_line_scripts_.clear();
         grpc_client_ = std::make_unique<network::GRPCClient>();
         job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());
 
@@ -1209,6 +1249,31 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     icon_config.RasterizerDensity = font_rasterizer_density_;
     icon_config.GlyphMinAdvanceX = base_font_size;  // Make icons monospaced
 
+    // Arabic letters and their joined forms (Noto Sans Arabic, OFL), merged
+    // into each interface font: Inter has none, so Arabic data was drawn as
+    // "?". core::DisplayText gives the joined forms and the right-to-left
+    // order; the ranges are the letters and the forms it uses.
+    static const ImWchar arabic_ranges[] = {0x0600, 0x06FF, 0x0750, 0x077F, 0xFB50, 0xFBFF, 0xFE70, 0xFEFF, 0};
+    const std::string arabic_font = font_base_path + "NotoSansArabic-Regular.ttf";
+    const bool has_arabic_font = std::filesystem::exists(arabic_font);
+    ImFontConfig arabic_config;
+    arabic_config.MergeMode = true;
+    arabic_config.PixelSnapH = true;
+    arabic_config.OversampleH = 1;
+    arabic_config.OversampleV = 1;
+    arabic_config.RasterizerDensity = font_rasterizer_density_;
+    // A font's pixel size is its ascent plus descent: 1.21 em for Inter, 2.11
+    // for Noto Sans Arabic, so at the same size Arabic was drawn at 57% of
+    // Inter's scale (small on screen). Its letters span -0.42 to 1.01 em, more
+    // than Inter's line (-0.24 to 0.97): 1.48 times the size fits them in the
+    // line, lifted by 0.095 of the size, so nothing is cut at the bottom.
+    const auto merge_arabic = [&](float font_size) {
+        if (!has_arabic_font) return;
+        arabic_config.GlyphOffset.y = -std::round(font_size * 0.095f);
+        io.Fonts->AddFontFromFileTTF(arabic_font.c_str(), std::round(font_size * 1.48f), &arabic_config, arabic_ranges);
+    };
+    if (!has_arabic_font) spdlog::warn("Arabic font not found ({}): Arabic text is drawn as '?'", arabic_font);
+
     // Load regular font (this becomes the default)
     if (std::filesystem::exists(inter_regular)) {
         font_regular_ = io.Fonts->AddFontFromFileTTF(inter_regular.c_str(), base_font_size, &font_config);
@@ -1220,6 +1285,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
                 spdlog::debug("Merged FontAwesome icons into regular font");
             }
+            merge_arabic(base_font_size);
         }
     }
 
@@ -1233,6 +1299,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
             if (std::filesystem::exists(fa_solid)) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
             }
+            merge_arabic(base_font_size);
         }
     }
 
@@ -1248,6 +1315,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), heading_font_size - 1.0f, &icon_config, icon_ranges);
                 icon_config.GlyphMinAdvanceX = base_font_size;
             }
+            merge_arabic(heading_font_size);
             cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Heading, heading);
         }
     }
@@ -1262,6 +1330,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
             if (std::filesystem::exists(fa_solid)) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
             }
+            merge_arabic(base_font_size);
         }
     }
 

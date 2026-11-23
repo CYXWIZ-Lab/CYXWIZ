@@ -469,6 +469,15 @@ void ApplySeriesColours(Series& train_loss, Series& val_loss, Series& train_accu
 }
 }  // namespace
 
+void TrainingPlotPanel::SetViewDefaults(const core::TrainingDashboardConfig& view) {
+    auto_scale_ = view.auto_scale;
+    follow_current_epoch_ = view.follow_current_epoch;
+    visible_epoch_window_ = view.epoch_window;
+    log_loss_scale_ = view.log_loss_axis;
+    show_smoothed_curves_ = view.smooth;
+    smoothing_window_ = view.smooth_window;
+}
+
 TrainingPlotPanel::TrainingPlotPanel()
     : Panel("Training Dashboard") {
 

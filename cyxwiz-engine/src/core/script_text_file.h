@@ -25,6 +25,9 @@ Decoded Decode(const std::string& raw);
 // The editor's text back in the file's own format.
 std::string Encode(const std::string& text, const TextFormat& format);
 
+// A new file's line endings: 0 as the system (CRLF on Windows, LF elsewhere), 1 LF, 2 CRLF
+LineEnding NewFileLineEnding(int choice);
+
 // Writes through a temporary file next to `path`, then replaces `path`, so a
 // failed write never leaves a truncated file. `error` says why on failure.
 bool WriteAtomically(const std::string& path, const std::string& bytes, std::string* error = nullptr);

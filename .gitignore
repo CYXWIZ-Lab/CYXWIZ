@@ -121,7 +121,6 @@ id.json
 
 # Local runtime and temporary files
 nul
-/startup_scripts.txt
 install-solana*.bat
 install-solana*.ps1
 /imgui.ini

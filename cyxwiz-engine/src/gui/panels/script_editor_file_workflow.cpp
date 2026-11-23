@@ -21,6 +21,7 @@ void ScriptEditorPanel::NewFile() {
     tab->filepath = "";
     tab->is_new = true;
     tab->is_modified = false;
+    tab->format.eol = scriptfile::NewFileLineEnding(new_file_line_endings_);
 
     ConfigureEditor(tab->editor);
 
@@ -363,6 +364,7 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
         tab->filepath = "";  // Not saved yet
         tab->is_new = true;
         tab->is_modified = true;  // Has content, mark as modified
+        tab->format.eol = scriptfile::NewFileLineEnding(new_file_line_endings_);
 
         ConfigureEditor(tab->editor);
         tab->editor.SetText(code);
@@ -391,6 +393,7 @@ void ScriptEditorPanel::SaveFile() {
     }
 
     // Save to existing path
+    TidyBeforeSave(*tab, tab->filepath);
     std::string content = GetTabContentForPersistence(*tab, tab->filepath);
     std::string error;
     if (SaveFileContent(tab->filepath, content, tab->format, &error)) {
@@ -427,6 +430,7 @@ void ScriptEditorPanel::SaveFileAs() {
     // Keep the extension the user typed (x.py stays x.py; P0 item 2).
     path = scriptfile::SaveAsPath(path, tab->filename);
 
+    TidyBeforeSave(*tab, path);
     const std::string content = GetTabContentForPersistence(*tab, path);
     std::string error;
     if (SaveFileContent(path, content, tab->format, &error)) {

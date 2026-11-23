@@ -6692,11 +6692,11 @@ int main(int argc, char** argv) {
             (void)pad.Finish(&pad_array);
             (void)other.Finish(&other_array);
             (void)label.Finish(&label_array);
-            auto table = arrow::Table::Make(
+            auto odd_table = arrow::Table::Make(
                 arrow::schema({arrow::field("income, net", arrow::float64()), arrow::field(" pad", arrow::float64()),
                                arrow::field("other", arrow::float64()), arrow::field("label", arrow::int64())}),
                 {income_array, pad_array, other_array, label_array});
-            cyxwiz::ArrowDataset source(table, "odd_names_missing_source");
+            cyxwiz::ArrowDataset source(odd_table, "odd_names_missing_source");
             Check(source.ExportParquet(odd_parquet.string()), "the odd-names Parquet fixture is written");
         }
         nlohmann::json graph = {
@@ -6709,9 +6709,9 @@ int main(int argc, char** argv) {
                                             {"columns", "\"income, net\", \" pad\""},
                                             {"label_col", "label"}}}}})},
             {"links", nlohmann::json::array({{{"start_node", 93131}, {"end_node", 93132}}})}};
-        cyxwiz::PipelineExecutor executor;
-        Check(executor.ExecutePipeline(graph.dump()),
-              "Missing Value reads quoted column names: " + executor.GetLastError());
+        cyxwiz::PipelineExecutor odd_executor;
+        Check(odd_executor.ExecutePipeline(graph.dump()),
+              "Missing Value reads quoted column names: " + odd_executor.GetLastError());
         auto out = registry.GetArrowDataset("ds_fillmissing_93132");
         const auto filled = out ? out->GetArrowTable() : nullptr;
         Check(filled && filled->num_rows() == 3, "the filled table keeps its 3 rows");

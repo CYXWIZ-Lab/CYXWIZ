@@ -7,6 +7,7 @@
 #include "../../core/training_progress_estimate.h"
 #include "../../core/word_vector_runs.h"
 #include "../../core/training_dashboard_presentation.h"
+#include "../../core/engine_config.h"
 #include "../../core/missing_values_presentation.h"
 #include <chrono>
 #include <functional>
@@ -60,6 +61,8 @@ struct TrainingStatusSnapshot {
 class TrainingPlotPanel : public Panel {
 public:
     TrainingPlotPanel();
+    // How the charts start (Preferences > Training); View changes them for the session
+    void SetViewDefaults(const core::TrainingDashboardConfig& view);
     ~TrainingPlotPanel() override;
 
     void Render() override;

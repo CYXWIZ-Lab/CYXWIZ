@@ -45,32 +45,52 @@ void ToolbarPanel::RenderShortcutsPreferences() {
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
 
+    // Wide: the windows in a rail beside the list. Narrow (the Preferences
+    // rail already takes the left): a Window choice above a full-width list.
     const float rail_width = 200.0f;
-    if (ImGui::BeginChild("##shortcut_windows", ImVec2(rail_width, 0.0f), ImGuiChildFlags_None)) {
+    const bool stacked = ImGui::GetContentRegionAvail().x < rail_width + 420.0f;
+    const auto window_label = [&](int i) {
+        int count = 0;
+        for (const auto& e : table) if (e.context == contexts[i] && Matches(e, needle)) ++count;
+        return std::string(menu::ContextName(contexts[i])) + "  (" + std::to_string(count) + ")";
+    };
+    if (stacked) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Window");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(std::min(260.0f, ImGui::GetContentRegionAvail().x));
+        const std::string current = window_label(std::clamp(shortcuts_context_, 0, kContexts - 1));
+        if (ImGui::BeginCombo("##shortcut_window", current.c_str())) {
+            for (int i = 0; i < kContexts; ++i)
+                if (ImGui::Selectable(window_label(i).c_str(), shortcuts_context_ == i)) shortcuts_context_ = i;
+            ImGui::EndCombo();
+        }
+    } else if (ImGui::BeginChild("##shortcut_windows", ImVec2(rail_width, 0.0f), ImGuiChildFlags_None)) {
         ImGui::TextDisabled("WINDOW");
         ImGui::Spacing();
-        for (int i = 0; i < kContexts; ++i) {
-            int count = 0;
-            for (const auto& e : table) if (e.context == contexts[i] && Matches(e, needle)) ++count;
-            const std::string label = std::string(menu::ContextName(contexts[i])) + "  (" + std::to_string(count) + ")";
-            if (ImGui::Selectable(label.c_str(), shortcuts_context_ == i)) shortcuts_context_ = i;
-        }
+        for (int i = 0; i < kContexts; ++i)
+            if (ImGui::Selectable(window_label(i).c_str(), shortcuts_context_ == i)) shortcuts_context_ = i;
         ImGui::Spacing();
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("Console and the other windows list their keys here when their "
                             "screens are reviewed.");
         ImGui::PopTextWrapPos();
     }
-    ImGui::EndChild();
-
-    ImGui::SameLine();
+    if (!stacked) {
+        ImGui::EndChild();
+        ImGui::SameLine();
+    }
 
     if (ImGui::BeginChild("##shortcut_list", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None)) {
-        ImGui::SetNextItemWidth(280.0f);
+        const char* planned = "Rebinding: planned";
+        const float search_width = std::min(280.0f, ImGui::GetContentRegionAvail().x);
+        ImGui::SetNextItemWidth(search_width);
         ImGui::InputTextWithHint("##shortcut_search", ICON_FA_MAGNIFYING_GLASS " Search actions or keys",
                                  shortcuts_search_, sizeof(shortcuts_search_));
-        ImGui::SameLine();
-        ImGui::TextDisabled("Rebinding: planned");
+        if (ImGui::GetContentRegionAvail().x - search_width >
+            ImGui::CalcTextSize(planned).x + ImGui::GetStyle().ItemSpacing.x * 2.0f)
+            ImGui::SameLine();
+        ImGui::TextDisabled("%s", planned);
         ImGui::Spacing();
 
         const menu::Context context = contexts[std::clamp(shortcuts_context_, 0, kContexts - 1)];
@@ -80,7 +100,11 @@ void ToolbarPanel::RenderShortcutsPreferences() {
         if (ImGui::BeginTable("##shortcuts", 3, flags, ImVec2(0.0f, 0.0f))) {
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch, 2.4f);
-            ImGui::TableSetupColumn("Shortcut", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            // The shortcut column fits its longest key so no chord is cut
+            float chord_width = ImGui::CalcTextSize("Shortcut").x;
+            for (const auto& e : table)
+                if (e.context == context) chord_width = std::max(chord_width, ImGui::CalcTextSize(e.chord.c_str()).x);
+            ImGui::TableSetupColumn("Shortcut", ImGuiTableColumnFlags_WidthFixed, chord_width);
             ImGui::TableSetupColumn("Also in menu", ImGuiTableColumnFlags_WidthStretch, 1.3f);
             ImGui::TableHeadersRow();
             int shown = 0;

@@ -67,5 +67,6 @@ not supported; the cell stops with a syntax error. See
 
 The Engine closes cleanly after notebooks, scripts or the Console ran Python
 (it used to crash on exit after any Python run, 2026-10-15). Unsaved
-notebooks are listed in the close dialog with **Save scripts and close**,
-**Close without saving** and **Keep working**.
+notebooks (and an unsaved graph on the canvas) are listed in the close dialog
+under **Unsaved work** with **Save and close**, **Close without saving** and
+**Keep working**.
