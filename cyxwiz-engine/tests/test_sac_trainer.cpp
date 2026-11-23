@@ -319,14 +319,14 @@ rl::SacConfig ReachConfig() {
 struct Run {
     bool ok = false;
     std::string error;
-    std::vector<rl::SacUpdateMetrics> reports;
+    std::vector<rl::OffPolicyUpdateMetrics> reports;
 };
 
 Run TrainReach(rl::SacConfig config, int copies, rl::SacTrainedState* trained = nullptr) {
     SeedCurrentArrayFireRandomEngine(5);
     rl::SacTrainer trainer(Reach(copies), Networks(2, 1, 32, 2), config);
     Run run;
-    run.ok = trainer.Train([&](const rl::SacUpdateMetrics& m) { run.reports.push_back(m); }, run.error);
+    run.ok = trainer.Train([&](const rl::OffPolicyUpdateMetrics& m) { run.reports.push_back(m); }, run.error);
     if (trained && run.ok) Check(trainer.TakeTrained(*trained, run.error), "a run's networks can be taken: " + run.error);
     return run;
 }
@@ -338,7 +338,7 @@ void CheckReach() {
     if (run.reports.empty()) return;
     const auto& first = run.reports.front();
     const auto& last = run.reports.back();
-    std::printf("Reach: return %.2f at %lld steps -> %.2f at %lld (%lld updates, alpha %.3f, critic %.4f, %.0f steps/s)\n",
+    std::printf("Reach: return %.6f at %lld steps -> %.6f at %lld (%lld updates, alpha %.8f, critic %.8f, %.0f steps/s)\n",
                 first.mean_episode_return, static_cast<long long>(first.timesteps), last.mean_episode_return,
                 static_cast<long long>(last.timesteps), static_cast<long long>(last.updates), last.ent_coef,
                 last.critic_loss, last.steps_per_second);
@@ -437,8 +437,8 @@ void CheckPendulum(const std::filesystem::path& plugin) {
         SeedCurrentArrayFireRandomEngine(1);
         rl::SacTrainer trainer(Adapt(batch), Networks(4, 1, 256, 2), c);
         const bool ok = trainer.Train(
-            [&](const rl::SacUpdateMetrics& m) {
-                std::printf("  InvertedPendulum %6lld steps  return %7.1f  length %6.1f  critic %.3f  alpha %.4f  %5.0f steps/s\n",
+            [&](const rl::OffPolicyUpdateMetrics& m) {
+                std::printf("  InvertedPendulum %6lld steps  return %.4f  length %.4f  critic %.8f  alpha %.8f  %5.0f steps/s\n",
                             static_cast<long long>(m.timesteps), m.mean_episode_return, m.mean_episode_length,
                             m.critic_loss, m.ent_coef, m.steps_per_second);
             },

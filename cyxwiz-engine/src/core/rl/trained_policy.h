@@ -42,7 +42,7 @@ struct TrainedPolicy {
     std::unique_ptr<VecNormalize> normalizer;  // the observation statistics
     std::map<std::string, OptimizerState> optimizers;
     std::vector<PpoUpdateMetrics> updates;      // PPO's run
-    std::vector<SacUpdateMetrics> sac_reports;  // SAC's run
+    std::vector<OffPolicyUpdateMetrics> sac_reports;  // SAC's run
     // The ArrayFire device its networks live on: playback acts there
     DeviceType device_type = DeviceType::CPU;
     int device_id = 0;
@@ -97,7 +97,7 @@ std::unique_ptr<TrainedPolicy> MakeTrainedPolicy(const RLTrainingConfiguration& 
                                                  PpoTrainedState state, std::vector<PpoUpdateMetrics> updates);
 // What a SAC run leaves (SacTrainer::TakeTrained), with its graph and reports.
 std::unique_ptr<TrainedPolicy> MakeSacTrainedPolicy(const RLTrainingConfiguration& config, std::string graph_json,
-                                                    SacTrainedState state, std::vector<SacUpdateMetrics> reports);
+                                                    SacTrainedState state, std::vector<OffPolicyUpdateMetrics> reports);
 
 // One action per row of `observations` (rows x observation size, raw from the
 // environment; normalised here when the policy was trained so). best: the most

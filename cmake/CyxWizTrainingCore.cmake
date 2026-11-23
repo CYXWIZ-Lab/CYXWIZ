@@ -19,6 +19,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/rl/ppo_trainer.cpp
     ${_cyxwiz_engine_src}/core/rl/vec_normalize.cpp
     ${_cyxwiz_engine_src}/core/rl/replay_buffer.cpp
+    ${_cyxwiz_engine_src}/core/rl/off_policy_trainer.cpp
     ${_cyxwiz_engine_src}/core/rl/sac_trainer.cpp
     ${_cyxwiz_engine_src}/core/rl/rl_reference.cpp
     ${_cyxwiz_engine_src}/core/rl_graph_presentation.cpp

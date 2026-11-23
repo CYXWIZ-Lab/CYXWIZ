@@ -7,114 +7,13 @@
 #include <cyxwiz/rl/sac.h>
 #include <cyxwiz/sequential.h>
 
-#include <arrayfire.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
-#include <deque>
-#include <limits>
-#include <thread>
-#include <vector>
+#include <stdexcept>
 
 namespace cyxwiz::rl {
-
-namespace {
-
-// SplitMix64 for the trainer's own draws (noise, action and sample seeds)
-class Random {
-public:
-    explicit Random(uint64_t seed) : state_(seed) {}
-    uint64_t Next() {
-        uint64_t z = (state_ += 0x9E3779B97F4A7C15ull);
-        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
-        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-        return z ^ (z >> 31);
-    }
-
-private:
-    uint64_t state_;
-};
-
-std::vector<float> Host(const Tensor& t) {
-    const float* data = t.ReadData<float>();
-    return std::vector<float>(data, data + t.NumElements());
-}
-
-Tensor Rows(const std::vector<float>& values, size_t rows, size_t width) {
-    return Tensor({rows, width}, values.data());
-}
-
-float First(const Tensor& t) { return Host(t).at(0); }
-
-std::unique_ptr<Optimizer> Adam(float learning_rate) {
-    // SB3 SAC's optimizer: th.optim.Adam with its defaults
-    return std::make_unique<AdamOptimizer>(learning_rate, 0.9, 0.999, 1e-8);
-}
-
-// The critics' own parameters into the targets
-void CopyParameters(IExecutableModel& from, IExecutableModel& to) {
-    std::map<std::string, Tensor> copy;
-    for (const auto& [name, tensor] : from.GetParameters()) copy[name] = tensor.Clone();
-    to.SetParameters(copy);
-}
-
-void Polyak(IExecutableModel& critic, IExecutableModel& target, float tau) {
-    auto params = critic.GetParameters();
-    auto targets = target.GetParameters();
-    for (auto& [name, t] : targets) {
-        const auto it = params.find(name);
-        if (it == params.end()) throw std::runtime_error("SAC: a target critic's parameter " + name + " has no critic one");
-        t = PolyakAverage(it->second, t, tau);
-    }
-    target.SetParameters(targets);
-}
-
-// Observations normalised with the statistics as they are now, as SB3's
-// replay buffer does at sample time with a VecNormalize
-Tensor NormalizeOnDevice(const Tensor& observations, const VecNormalize& normalizer) {
-    const auto& stats = normalizer.ObservationStats();
-    const auto& s = normalizer.Settings();
-    const size_t rows = observations.Shape()[0], width = observations.Shape()[1];
-    std::vector<float> mean(width), scale(width);
-    for (size_t i = 0; i < width; ++i) {
-        mean[i] = static_cast<float>(stats.mean[i]);
-        scale[i] = static_cast<float>(1.0 / std::sqrt(stats.var[i] + s.epsilon));
-    }
-    const unsigned r = static_cast<unsigned>(rows);
-    const af::array m = af::tile(af::array(1, static_cast<dim_t>(width), mean.data()), r, 1);
-    const af::array k = af::tile(af::array(1, static_cast<dim_t>(width), scale.data()), r, 1);
-    af::array out = af::clamp((observations.GetSemanticArray() - m) * k, -static_cast<double>(s.clip_observations),
-                              static_cast<double>(s.clip_observations));
-    out.eval();
-    return Tensor::FromSemanticArray(out, {rows, width});
-}
-
-}  // namespace
-
-void InitializeLikeTorchLinear(IExecutableModel& model) {
-    auto params = model.GetParameters();
-    // fan_in of each layer: its weight's columns ([out, in]); "layer<K>.weight" / "layer<K>.bias"
-    std::map<std::string, size_t> fan_in;
-    for (const auto& [name, tensor] : params) {
-        const auto dot = name.rfind('.');
-        if (dot != std::string::npos && name.substr(dot + 1) == "weight" && tensor.Shape().size() == 2)
-            fan_in[name.substr(0, dot)] = tensor.Shape()[1];
-    }
-    for (auto& [name, tensor] : params) {
-        const auto dot = name.rfind('.');
-        const auto it = fan_in.find(dot == std::string::npos ? name : name.substr(0, dot));
-        if (it == fan_in.end() || it->second == 0) continue;
-        const float bound = 1.0f / std::sqrt(static_cast<float>(it->second));
-        af::array u = (af::randu(af::dim4(static_cast<dim_t>(tensor.NumElements())), f32) * 2.0f - 1.0f) * bound;
-        u.eval();
-        std::vector<float> host(tensor.NumElements());
-        u.host(host.data());
-        tensor = Tensor(tensor.Shape(), host.data());
-    }
-    model.SetParameters(params);
-}
 
 // ---------------------------------------------------------------- SacLearner
 
@@ -127,14 +26,14 @@ SacLearner::SacLearner(SacNetworks networks, size_t observation_size, size_t act
     CopyParameters(*networks_.q2, *networks_.q2_target);
     networks_.q1_target->SetTraining(false);
     networks_.q2_target->SetTraining(false);
-    actor_optimizer_ = Adam(config_.learning_rate);
-    q1_optimizer_ = Adam(config_.learning_rate);  // SB3: one Adam over both critics, the same per parameter
-    q2_optimizer_ = Adam(config_.learning_rate);
+    actor_optimizer_ = OffPolicyAdam(config_.learning_rate);
+    q1_optimizer_ = OffPolicyAdam(config_.learning_rate);  // SB3: one Adam over both critics, the same per parameter
+    q2_optimizer_ = OffPolicyAdam(config_.learning_rate);
     // SB3: log_ent_coef starts at log(ent_coef) when learned
     const float start = std::log(config_.ent_coef > 0.0f ? config_.ent_coef : 1.0f);
     log_ent_coef_ = Tensor({1}, &start);
     fixed_ent_coef_ = Tensor({1}, &config_.ent_coef);
-    if (config_.ent_coef_auto) ent_coef_optimizer_ = Adam(config_.learning_rate);
+    if (config_.ent_coef_auto) ent_coef_optimizer_ = OffPolicyAdam(config_.learning_rate);
 
     // The five networks fused on the device's provider, or none of them (one
     // path to report)
@@ -395,8 +294,8 @@ SacStepLosses SacLearner::Step(const ReplayBuffer::Batch& batch, const Tensor& n
     StepOptimizers({{actor_optimizer_.get(), n.actor.get(), &p.grads}});
 
     if (update_targets) {
-        Polyak(*n.q1, *n.q1_target, config_.tau);
-        Polyak(*n.q2, *n.q2_target, config_.tau);
+        PolyakUpdate(*n.q1, *n.q1_target, config_.tau);
+        PolyakUpdate(*n.q2, *n.q2_target, config_.tau);
     }
     return losses;
 }
@@ -411,28 +310,71 @@ bool SacLearner::ExportOptimizers(std::map<std::string, OptimizerState>& out, st
     return true;
 }
 
+Tensor SacLearner::Explore(const Tensor& observations, const NextSeed& next_seed) {
+    const Tensor noise = SacNoise(observations.Shape()[0], action_size_, next_seed());
+    return Act(observations, &noise);
+}
+
+void SacLearner::Learn(const ReplayBuffer::Batch& batch, int gradient_step, const NextSeed& next_seed) {
+    const size_t rows = batch.observations.Shape()[0];
+    const Tensor noise_pi = SacNoise(rows, action_size_, next_seed());
+    const Tensor noise_next = SacNoise(rows, action_size_, next_seed());
+    // SB3 counts the target interval within each train() call
+    const SacStepLosses l = Step(batch, noise_pi, noise_next, gradient_step % config_.target_update_interval == 0);
+    const bool first = since_report_ == 0;
+    critic_sum_ = first ? l.critic_loss : critic_sum_ + l.critic_loss;
+    actor_sum_ = first ? l.actor_loss : actor_sum_ + l.actor_loss;
+    alpha_sum_ = first ? l.ent_coef : alpha_sum_ + l.ent_coef;
+    q_sum_ = first ? l.mean_q : q_sum_ + l.mean_q;
+    if (config_.ent_coef_auto) alpha_loss_sum_ = first ? l.ent_coef_loss : alpha_loss_sum_ + l.ent_coef_loss;
+    ++since_report_;
+}
+
+void SacLearner::Report(OffPolicyUpdateMetrics& metrics) {
+    if (since_report_ > 0) {
+        const float k = static_cast<float>(since_report_);
+        metrics.critic_loss = FirstValue(critic_sum_) / k;
+        metrics.actor_loss = FirstValue(actor_sum_) / k;
+        metrics.ent_coef = FirstValue(alpha_sum_) / k;
+        metrics.mean_q = FirstValue(q_sum_) / k;
+        metrics.ent_coef_loss = config_.ent_coef_auto ? FirstValue(alpha_loss_sum_) / k : 0.0f;
+    } else {
+        metrics.ent_coef = config_.ent_coef_auto ? std::exp(FirstValue(log_ent_coef_)) : config_.ent_coef;
+    }
+    since_report_ = 0;
+}
+
 // ---------------------------------------------------------------- SacTrainer
 
+OffPolicySettings LoopSettings(const SacConfig& c) {
+    OffPolicySettings s;
+    s.total_timesteps = c.total_timesteps;
+    s.buffer_size = c.buffer_size;
+    s.learning_starts = c.learning_starts;
+    s.batch_size = c.batch_size;
+    s.train_freq = c.train_freq;
+    s.gradient_steps = c.gradient_steps;
+    s.gamma = c.gamma;
+    s.seed = c.seed;
+    s.normalize_observations = c.normalize_observations;
+    s.target_return = c.target_return;
+    s.report_every = c.report_every;
+    return s;
+}
+
 SacTrainer::SacTrainer(TrainingEnvironment environment, SacNetworks networks, SacConfig config)
-    : environment_(std::move(environment)), networks_(std::move(networks)), config_(std::move(config)) {}
+    : loop_(std::move(environment), LoopSettings(config), "SAC"), networks_(std::move(networks)),
+      config_(std::move(config)) {}
 
 SacTrainer::~SacTrainer() = default;
 
 bool SacTrainer::CheckSetup(std::string& error) const {
-    const auto& info = environment_.info;
     const auto& c = config_;
     if (!networks_.actor || !networks_.q1 || !networks_.q2 || !networks_.q1_target || !networks_.q2_target)
         error = "SAC needs an actor, two critics and their targets.";
-    else if (environment_.count < 1 || !environment_.reset || !environment_.step) error = "SAC needs an environment.";
-    else if (info.discrete_actions) error = "SAC learns continuous actions; " + info.name + " has a choice of actions.";
-    else if (info.observation_size < 1 || info.action_size < 1) error = "The environment observes or acts on nothing.";
-    else if (info.action_low.size() != static_cast<size_t>(info.action_size) ||
-             info.action_high.size() != static_cast<size_t>(info.action_size) ||
-             !std::all_of(info.action_low.begin(), info.action_low.end(), [](float v) { return std::isfinite(v); }) ||
-             !std::all_of(info.action_high.begin(), info.action_high.end(), [](float v) { return std::isfinite(v); }))
-        error = "SAC needs bounded actions; " + info.name + " has actions without finite bounds.";
-    else if (c.total_timesteps < 1 || c.buffer_size < 1 || c.learning_starts < 0 || c.batch_size < 1 ||
-             c.train_freq < 1 || c.gradient_steps < 1 || c.target_update_interval < 1 || c.report_every < 1)
+    else if (!CheckOffPolicySetup(loop_.Environment(), loop_.Settings(), "SAC", error))
+        return false;
+    else if (c.target_update_interval < 1)
         error = "SAC's counts must each be at least 1 (the random steps first at least 0).";
     else if (!(c.learning_rate > 0.0f) || !(c.gamma > 0.0f && c.gamma <= 1.0f) || !(c.tau > 0.0f && c.tau <= 1.0f) ||
              !(c.ent_coef > 0.0f))
@@ -441,7 +383,7 @@ bool SacTrainer::CheckSetup(std::string& error) const {
 }
 
 bool SacTrainer::TakeTrained(SacTrainedState& out, std::string& error) {
-    if (!learner_ || !normalizer_) {
+    if (!learner_ || !loop_.Normalizer()) {
         error = "SAC has not trained a policy.";
         return false;
     }
@@ -450,175 +392,34 @@ bool SacTrainer::TakeTrained(SacTrainedState& out, std::string& error) {
     out.optimizers = std::move(optimizers);
     out.log_ent_coef = learner_->LogEntCoef();
     out.networks = std::move(learner_->Networks());
-    out.normalizer = std::move(normalizer_);
+    out.normalizer = loop_.TakeNormalizer();
     learner_.reset();
     return true;
 }
 
 bool SacTrainer::CopyPolicy(SacPolicyCopy& out, std::string& error) {
-    if (!learner_ || !normalizer_) {
+    if (!learner_ || !loop_.Normalizer()) {
         error = "SAC has no policy to copy yet.";
         return false;
     }
     out.parameters.clear();
     for (const auto& [name, tensor] : learner_->Networks().actor->GetParameters()) out.parameters[name] = tensor.Clone();
-    out.normalizer = std::make_unique<VecNormalize>(*normalizer_);
+    out.normalizer = std::make_unique<VecNormalize>(*loop_.Normalizer());
     return true;
 }
 
-bool SacTrainer::Train(const std::function<void(const SacUpdateMetrics&)>& on_report, std::string& error) {
+bool SacTrainer::Train(const std::function<void(const OffPolicyUpdateMetrics&)>& on_report, std::string& error) {
     error.clear();
     if (!CheckSetup(error)) return false;
-    const auto& info = environment_.info;
-    const size_t n = static_cast<size_t>(environment_.count);
-    const size_t obs_size = static_cast<size_t>(info.observation_size);
-    const size_t act_size = static_cast<size_t>(info.action_size);
-    const size_t batch = static_cast<size_t>(config_.batch_size);
-    Random random(config_.seed ^ 0x5AC5AC5AC5ull);
-
-    std::vector<float> obs(n * obs_size), final_obs(n * obs_size), rewards(n), env_actions(n * act_size);
-    std::vector<uint8_t> terminated(n), truncated(n);
-    const plugin::PluginEnvironmentStepBuffers out{obs.data(), rewards.data(), terminated.data(), truncated.data(),
-                                                   final_obs.data()};
-    std::vector<float> raw_obs(n * obs_size), raw_next(n * obs_size);
-    std::vector<double> episode_return(n, 0.0);
-    std::vector<int> episode_length(n, 0);
-    std::deque<std::pair<float, int>> recent;  // the last 100 episodes
-    SacUpdateMetrics metrics;
-
+    const auto& info = loop_.Environment().info;
     try {
-        learner_ = std::make_unique<SacLearner>(std::move(networks_), obs_size, act_size, config_);
-        spdlog::info("SAC: the networks run as {}", learner_->NetworkPath());
-        ReplayBuffer buffer(config_.buffer_size, obs_size, act_size);
-        metrics.buffer_capacity = buffer.Capacity();
-        metrics.buffer_bytes = buffer.Bytes();
-        VecNormalizeSettings norm;
-        norm.observations = config_.normalize_observations;
-        norm.rewards = false;  // SAC: observations only (RL Zoo normalises none)
-        norm.gamma = config_.gamma;
-        normalizer_ = std::make_unique<VecNormalize>(n, obs_size, norm);
-        spdlog::info("SAC: training on {} x {} for {} steps; replay buffer {} steps ({:.0f} MB on the device)", info.id,
-                     n, config_.total_timesteps, buffer.Capacity(), static_cast<double>(buffer.Bytes()) / 1e6);
-
-        if (!environment_.reset(config_.seed, obs.data(), error)) return false;
-        raw_obs = obs;
-        normalizer_->Reset(obs.data());
-
-        Tensor critic_sum, actor_sum, alpha_sum, alpha_loss_sum, q_sum;
-        int since_report = 0;
-        int64_t vec_steps = 0, last_report = 0;
-        auto report_start = std::chrono::steady_clock::now();
-        // The numbers since the last report: the losses averaged over its gradient steps
-        const auto report = [&]() {
-            ++metrics.report;
-            metrics.compute_path = learner_->NetworkPath();
-            if (since_report > 0) {
-                const float k = static_cast<float>(since_report);
-                metrics.critic_loss = First(critic_sum) / k;
-                metrics.actor_loss = First(actor_sum) / k;
-                metrics.ent_coef = First(alpha_sum) / k;
-                metrics.mean_q = First(q_sum) / k;
-                metrics.ent_coef_loss = config_.ent_coef_auto ? First(alpha_loss_sum) / k : 0.0f;
-            } else {
-                metrics.ent_coef = config_.ent_coef_auto ? std::exp(First(learner_->LogEntCoef())) : config_.ent_coef;
-            }
-            since_report = 0;
-            if (recent.empty()) {
-                metrics.mean_episode_return = metrics.mean_episode_length = std::numeric_limits<float>::quiet_NaN();
-            } else {
-                double r = 0.0, l = 0.0;
-                for (const auto& [ret, len] : recent) {
-                    r += ret;
-                    l += len;
-                }
-                metrics.mean_episode_return = static_cast<float>(r / recent.size());
-                metrics.mean_episode_length = static_cast<float>(l / recent.size());
-            }
-            metrics.buffer_size = buffer.Size();
-            const auto now = std::chrono::steady_clock::now();
-            const double seconds = std::chrono::duration<double>(now - report_start).count();
-            metrics.steps_per_second =
-                seconds > 0.0 ? static_cast<float>(static_cast<double>(metrics.timesteps - last_report) / seconds) : 0.0f;
-            report_start = now;
-            last_report = metrics.timesteps;
-            metrics.reached_target = recent.size() >= 100 && metrics.mean_episode_return >= config_.target_return;
-            if (on_report) on_report(metrics);
-        };
-        while (metrics.timesteps < config_.total_timesteps && !stop_) {
-            while (paused_ && !stop_) std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            if (stop_) break;
-            // ---- Act: uniform random until learning starts, then the actor's draw
-            std::vector<float> actions;
-            if (metrics.timesteps < config_.learning_starts) {
-                actions = Host(SacUniformActions(n, act_size, random.Next()));
-            } else {
-                const Tensor noise = SacNoise(n, act_size, random.Next());
-                actions = Host(learner_->Act(Rows(obs, n, obs_size), &noise));
-            }
-            for (size_t i = 0; i < n * act_size; ++i) {  // [-1, 1] to the environment's bounds
-                const size_t j = i % act_size;
-                env_actions[i] = info.action_low[j] + 0.5f * (actions[i] + 1.0f) * (info.action_high[j] - info.action_low[j]);
-            }
-            if (!environment_.step(env_actions.data(), out, error)) return false;
-
-            // ---- The transitions, raw: an ended copy's next observation is its final one
-            for (size_t i = 0; i < n; ++i) {
-                const bool done = terminated[i] || truncated[i];
-                std::copy_n((done ? final_obs.begin() : obs.begin()) + i * obs_size, obs_size,
-                            raw_next.begin() + i * obs_size);
-                episode_return[i] += rewards[i];
-                ++episode_length[i];
-                if (done) {
-                    recent.emplace_back(static_cast<float>(episode_return[i]), episode_length[i]);
-                    if (recent.size() > 100) recent.pop_front();
-                    ++metrics.episodes;
-                    episode_return[i] = 0.0;
-                    episode_length[i] = 0;
-                }
-            }
-            buffer.Add(raw_obs.data(), actions.data(), rewards.data(), raw_next.data(), terminated.data(), n);
-            raw_obs = obs;  // the next step's raw observations
-            normalizer_->Step(obs.data(), rewards.data(), terminated.data(), truncated.data(), final_obs.data());
-            metrics.timesteps += static_cast<int64_t>(n);
-            ++vec_steps;
-
-            // ---- Train every train_freq steps once past learning_starts
-            metrics.learning = metrics.timesteps > config_.learning_starts;
-            if (metrics.learning && vec_steps % config_.train_freq == 0) {
-                for (int g = 0; g < config_.gradient_steps && !stop_; ++g) {
-                    ReplayBuffer::Batch b = buffer.Sample(batch, random.Next());
-                    if (config_.normalize_observations) {
-                        b.observations = NormalizeOnDevice(b.observations, *normalizer_);
-                        b.next_observations = NormalizeOnDevice(b.next_observations, *normalizer_);
-                    }
-                    const Tensor noise_pi = SacNoise(batch, act_size, random.Next());
-                    const Tensor noise_next = SacNoise(batch, act_size, random.Next());
-                    // SB3 counts the target interval within each train() call
-                    const SacStepLosses l = learner_->Step(b, noise_pi, noise_next, g % config_.target_update_interval == 0);
-                    const bool first = since_report == 0;
-                    critic_sum = first ? l.critic_loss : critic_sum + l.critic_loss;
-                    actor_sum = first ? l.actor_loss : actor_sum + l.actor_loss;
-                    alpha_sum = first ? l.ent_coef : alpha_sum + l.ent_coef;
-                    q_sum = first ? l.mean_q : q_sum + l.mean_q;
-                    if (config_.ent_coef_auto) alpha_loss_sum = first ? l.ent_coef_loss : alpha_loss_sum + l.ent_coef_loss;
-                    ++since_report;
-                    ++metrics.updates;
-                }
-            }
-
-            // ---- Report
-            const bool last = metrics.timesteps >= config_.total_timesteps;
-            if (!last && metrics.timesteps - last_report < config_.report_every) continue;
-            report();
-            if (metrics.reached_target) break;
-        }
-        // A Stop reports where it stopped, so the run's last numbers say so
-        if (stop_ && metrics.timesteps > last_report) report();
+        learner_ = std::make_unique<SacLearner>(std::move(networks_), static_cast<size_t>(info.observation_size),
+                                                static_cast<size_t>(info.action_size), config_);
     } catch (const std::exception& e) {
         error = std::string("SAC training failed: ") + e.what();
         return false;
     }
-    return true;
+    return loop_.Run(*learner_, on_report, error);
 }
 
 }  // namespace cyxwiz::rl

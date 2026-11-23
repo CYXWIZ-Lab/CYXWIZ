@@ -478,8 +478,8 @@ void CheckContinuous(const std::filesystem::path& plugin) {
     manager.UnloadPlugin("com.cyxwiz.simulation.mujoco");
 }
 
-std::vector<cyxwiz::rl::SacUpdateMetrics> WaitSac(cyxwiz::rl::RLTrainingRun& run, double seconds) {
-    std::vector<cyxwiz::rl::SacUpdateMetrics> all;
+std::vector<cyxwiz::rl::OffPolicyUpdateMetrics> WaitSac(cyxwiz::rl::RLTrainingRun& run, double seconds) {
+    std::vector<cyxwiz::rl::OffPolicyUpdateMetrics> all;
     const auto start = std::chrono::steady_clock::now();
     while (run.Active() &&
            std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() < seconds) {
@@ -607,7 +607,7 @@ void CheckSac(const rl_graph_test::Graph& ppo_graph) {
     cyxwiz::rl::RLTrainingRun stopped;
     SelectCpu();
     Check(stopped.Start(longer, rl_graph_test::Json(g), error), "a long SAC run starts: " + error);
-    std::vector<cyxwiz::rl::SacUpdateMetrics> seen;
+    std::vector<cyxwiz::rl::OffPolicyUpdateMetrics> seen;
     const auto start = std::chrono::steady_clock::now();
     while (stopped.Active() && std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() < 300.0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));

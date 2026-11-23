@@ -194,9 +194,9 @@ std::vector<PpoUpdateMetrics> RLTrainingRun::TakeUpdates() {
     return out;
 }
 
-std::vector<SacUpdateMetrics> RLTrainingRun::TakeSacReports() {
+std::vector<OffPolicyUpdateMetrics> RLTrainingRun::TakeSacReports() {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<SacUpdateMetrics> out;
+    std::vector<OffPolicyUpdateMetrics> out;
     out.swap(sac_reports_);
     return out;
 }
@@ -288,13 +288,13 @@ bool RLTrainingRun::TrainSac(const std::shared_ptr<plugin::EnvironmentBatch>& ba
         if (stop_requested_) trainer.Stop();
     }
     spdlog::info("SAC: training on {} x {} for {} steps", c.environment.id, c.copies, c.sac.total_timesteps);
-    std::vector<SacUpdateMetrics> history;
+    std::vector<OffPolicyUpdateMetrics> history;
     std::string traced_path;
     int last_watch = static_cast<int>(Watch::Off);
     bool raw_shown = false;
     const bool ok = trainer.Train(
-        [&](const SacUpdateMetrics& report) {
-            SacUpdateMetrics m = report;
+        [&](const OffPolicyUpdateMetrics& report) {
+            OffPolicyUpdateMetrics m = report;
             m.environment_stats = batch->Stats();  // between steps: the batch is not stepping
             if (WatchBetweenUpdates(*batch, report.report, last_watch, raw_shown)) {
                 auto next = std::make_unique<PreviewNetworks>();

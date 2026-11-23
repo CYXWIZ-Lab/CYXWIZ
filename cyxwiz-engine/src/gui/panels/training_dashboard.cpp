@@ -211,7 +211,7 @@ void TrainingDashboardPanel::AddPpoUpdate(const rl::PpoUpdateMetrics& m) {
     last_update_ = m;
 }
 
-void TrainingDashboardPanel::AddSacReport(const rl::SacUpdateMetrics& m) {
+void TrainingDashboardPanel::AddSacReport(const rl::OffPolicyUpdateMetrics& m) {
     const double steps = static_cast<double>(m.timesteps);
     if (!std::isnan(m.mean_episode_return)) {
         Push("episode_reward", m.mean_episode_return, steps);

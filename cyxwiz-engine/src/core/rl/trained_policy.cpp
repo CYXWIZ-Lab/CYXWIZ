@@ -130,7 +130,7 @@ PpoUpdateMetrics UpdateFromJson(const json& j) {
     return m;
 }
 
-json SacReportToJson(const SacUpdateMetrics& m) {
+json SacReportToJson(const OffPolicyUpdateMetrics& m) {
     const auto number = [](float v) { return std::isfinite(v) ? json(v) : json(nullptr); };
     return {{"report", m.report},
             {"timesteps", m.timesteps},
@@ -151,11 +151,11 @@ json SacReportToJson(const SacUpdateMetrics& m) {
             {"reached_target", m.reached_target}};
 }
 
-SacUpdateMetrics SacReportFromJson(const json& j) {
+OffPolicyUpdateMetrics SacReportFromJson(const json& j) {
     const auto number = [&j](const char* key) {
         return j.contains(key) && j[key].is_number() ? j[key].get<float>() : std::numeric_limits<float>::quiet_NaN();
     };
-    SacUpdateMetrics m;
+    OffPolicyUpdateMetrics m;
     m.report = j.value("report", 0);
     m.timesteps = j.value("timesteps", int64_t{0});
     m.updates = j.value("updates", int64_t{0});
@@ -352,7 +352,7 @@ std::unique_ptr<TrainedPolicy> MakeTrainedPolicy(const RLTrainingConfiguration& 
 }
 
 std::unique_ptr<TrainedPolicy> MakeSacTrainedPolicy(const RLTrainingConfiguration& config, std::string graph_json,
-                                                    SacTrainedState state, std::vector<SacUpdateMetrics> reports) {
+                                                    SacTrainedState state, std::vector<OffPolicyUpdateMetrics> reports) {
     auto out = std::make_unique<TrainedPolicy>();
     out->config = config;
     out->graph_json = std::move(graph_json);

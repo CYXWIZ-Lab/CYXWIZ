@@ -63,7 +63,7 @@ public:
     // A PPO run's updates since the last call (UI thread)
     std::vector<PpoUpdateMetrics> TakeUpdates();
     // A SAC run's reports since the last call (UI thread)
-    std::vector<SacUpdateMetrics> TakeSacReports();
+    std::vector<OffPolicyUpdateMetrics> TakeSacReports();
 
     // The policy of the last finished or stopped run (null otherwise)
     std::shared_ptr<TrainedPolicy> Trained() const;
@@ -136,7 +136,7 @@ private:
     std::atomic<bool> stop_requested_{false};
     mutable std::mutex mutex_;  // guards the members below and the trainers
     std::vector<PpoUpdateMetrics> updates_;
-    std::vector<SacUpdateMetrics> sac_reports_;
+    std::vector<OffPolicyUpdateMetrics> sac_reports_;
     std::string message_;
     std::string waiting_;  // what to tell the user while it waits for its GPU
     PpoTrainer* trainer_ = nullptr;  // while Run trains PPO

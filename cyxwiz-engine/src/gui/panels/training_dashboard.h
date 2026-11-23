@@ -93,7 +93,7 @@ public:
     void SetRunComputePath(std::string path) { device_compute_path_ = std::move(path); }
     void SetRunNote(std::string note) { device_note_ = std::move(note); }
     void AddPpoUpdate(const rl::PpoUpdateMetrics& m);
-    void AddSacReport(const rl::SacUpdateMetrics& m);
+    void AddSacReport(const rl::OffPolicyUpdateMetrics& m);
     // Watch progress set from outside (a policy playback took the view: 0, off)
     void SetWatch(int watch) { watch_ = watch; }
     void EndRun(const std::string& outcome, bool failed);
@@ -132,7 +132,7 @@ private:
     std::string device_compute_path_;
     std::string memory_place_;
     std::optional<rl::PpoUpdateMetrics> last_update_;
-    std::optional<rl::SacUpdateMetrics> last_sac_;
+    std::optional<rl::OffPolicyUpdateMetrics> last_sac_;
     long long sac_report_updates_ = 0;  // gradient steps the last SAC report averaged
     // Watch progress: from Preferences > Simulation at each run's start
     int watch_ = 0;
