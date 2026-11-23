@@ -29,6 +29,7 @@
 #include "../../src/core/graph_compiler.h"
 #include "../../src/core/graph_compiler_dataset_hooks.h"
 #include "../../src/core/graph_node_factory.h"
+#include "../../src/core/sequence_batcher.h"
 #include "../../src/core/sha256_digest.h"
 #include "../../src/core/training_executor.h"
 #include "../../src/core/weight_match.h"
@@ -83,7 +84,10 @@ struct ZooModel : cyxwiz::test::TrainGraph {
     std::vector<size_t> input_shape;  // one row, as the Data node gives it
     bool image_rows = false;          // rows are [H, W, C] images; torch takes them [C, H, W]
     int token_ids = 0;                // > 0: rows are token ids below it (torch takes them as integers)
-    std::string task;                 // "classification" (integer labels) or "regression"
+    // "classification" (an integer label per row), "regression", or
+    // "token_classification" (a label per token; the Engine trains it through
+    // the sequence batcher, padded positions carry the ignore index)
+    std::string task;
     int classes = 0;                  // classification
     int rows = 0;
     int batch_size = 0;
@@ -247,8 +251,38 @@ ZooModel BiLstmClassifier() {
     return With(g, model);
 }
 
+// A per-token tagger: token ids (up to 8 per row, the rest padding: token 0,
+// label -100), an embedding, a bidirectional LSTM over every step, a Dense
+// head per token; cross-entropy over the real tokens; Adam with clipping. The
+// Engine reads the rows through its sequence batcher, as a token-tagging
+// dataset trains.
+ZooModel BiLstmTagger() {
+    GraphBuilder g;
+    const int data = g.Data({8});
+    const int last = g.Chain(data, {g.Add(NodeType::Embedding, "Tokens", {{"num_embeddings", "20"}, {"embedding_dim", "6"}}),
+                                    g.Add(NodeType::LSTM, "Recurrent",
+                                          {{"input_size", "6"}, {"hidden_size", "5"}, {"bidirectional", "true"},
+                                           {"return_sequences", "true"}}),
+                                    g.Add(NodeType::TimeDistributed, "Tags", {{"units", "4"}})});
+    const int loss = g.Add(NodeType::CrossEntropyLoss, "Loss", {{"ignore_index", "-100"}});
+    const int adam = g.Add(NodeType::Adam, "Adam", {{"learning_rate", "0.01"}, {"grad_clip_norm", "1.0"}});
+    g.Finish(data, last, loss, adam);
+    ZooModel model;
+    model.name = "bilstm_tagger";
+    model.summary = "Embedding 20 x 6, bidirectional LSTM 5 (every step), Dense 4 per token; token cross-entropy "
+                    "(padding ignored); Adam clip";
+    model.input_shape = {8};
+    model.token_ids = 20;
+    model.task = "token_classification";
+    model.classes = 4;
+    model.rows = 40;
+    model.batch_size = 8;
+    return With(g, model);
+}
+
 std::vector<ZooModel> Zoo() {
-    return {MlpBatchNorm(), GruRegressor(), TransformerClassifier(), ResNetBlock(), BiLstmClassifier()};
+    return {MlpBatchNorm(), GruRegressor(), TransformerClassifier(), ResNetBlock(), BiLstmClassifier(),
+            BiLstmTagger()};
 }
 
 // ------------------------------------------------------------- the export --
@@ -320,6 +354,43 @@ std::shared_ptr<cyxwiz::ArrowDataset> Rows(const json& c) {
     return std::make_shared<cyxwiz::ArrowDataset>(std::move(table), "oracle_train");
 }
 
+// A token-tagging fixture's rows as the sequence batcher's samples: each row's
+// tokens up to its first padded position (label -100), in order, unshuffled.
+std::unique_ptr<cyxwiz::ISequenceBatcher> TokenRows(const json& c, int batch_size) {
+    const auto x = c.at("x").at("values").get<std::vector<float>>();
+    const auto y = c.at("y").get<std::vector<std::vector<int64_t>>>();
+    const size_t width = x.size() / y.size();
+    std::vector<cyxwiz::SequenceSample> samples;
+    for (size_t r = 0; r < y.size(); ++r) {
+        cyxwiz::SequenceSample sample;
+        for (size_t t = 0; t < width && y[r][t] != -100; ++t) {
+            sample.word_ids.push_back(static_cast<int64_t>(x[r * width + t]));
+            sample.tag_ids.push_back(y[r][t]);
+        }
+        samples.push_back(std::move(sample));
+    }
+    cyxwiz::SequenceBatcherConfig batcher;
+    batcher.batch_size = static_cast<size_t>(batch_size);
+    batcher.max_sequence_length = width;
+    batcher.shuffle = false;
+    batcher.word_pad_id = 0;
+    batcher.tag_ignore_index = -100;
+    return std::make_unique<cyxwiz::SequenceBatcher>(std::move(samples), batcher);
+}
+
+std::vector<std::string> TagNames(const json& c) {
+    std::vector<std::string> names;
+    for (int k = 0; k < c.at("classes").get<int>(); ++k) names.push_back("tag" + std::to_string(k));
+    return names;
+}
+
+std::unique_ptr<cyxwiz::TrainingExecutor> MakeExecutor(const cyxwiz::TrainingConfiguration& config, const json& c,
+                                                       int batch_size) {
+    if (c.at("task") == "token_classification")
+        return std::make_unique<cyxwiz::TrainingExecutor>(config, TokenRows(c, batch_size), TagNames(c));
+    return std::make_unique<cyxwiz::TrainingExecutor>(config, Rows(c), "label");
+}
+
 struct Trajectory {
     std::string status, reason, layout_problem;
     size_t steps = 0;   // steps compared
@@ -333,7 +404,8 @@ Trajectory Train(const cyxwiz::TrainingConfiguration& config, const json& c, int
                  double rtol, double noise_atol, bool print) {
     const json& steps = c.at("steps");
     cyxwiz::test::PinTrainingDevice();
-    cyxwiz::TrainingExecutor executor(config, Rows(c), "label");
+    const auto made = MakeExecutor(config, c, batch_size);
+    cyxwiz::TrainingExecutor& executor = *made;
     Trajectory out;
     std::map<std::string, std::vector<float>> noise;  // Engine key -> 1 where only noise moves the element
     bool noise_ready = false;
@@ -450,6 +522,13 @@ void RunModel(const ZooModel& model, const json& c, const json& tolerance) {
     config.log_interval = 1;
     config.checkpoint_dir = (work / "checkpoints").string();
     config.initialize_from_weights_file = (FixtureDir() / c.at("init_weights").get<std::string>()).string();
+    if (model.task == "token_classification") {
+        // A token-tagging dataset trains through the sequence batcher.
+        config.sequence_batch.enabled = true;
+        config.sequence_batch.ignore_index = -100;
+        config.sequence_batch.max_sequence_length = static_cast<int>(model.input_shape.at(0));
+        config.loss_params["ignore_index"] = "-100";
+    }
 
     const double atol = tolerance.at("atol").get<double>();
     const double rtol = tolerance.at("rtol").get<double>();

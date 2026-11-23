@@ -75,8 +75,22 @@ def split_export(code: str) -> tuple[str, str]:
     return setup, "\n".join(loop_lines) + "\n"
 
 
+IGNORE_INDEX = -100
+
+
 def make_rows(spec: dict[str, Any], generator: torch.Generator) -> tuple[torch.Tensor, torch.Tensor]:
     rows = spec["rows"]
+    if spec["task"] == "token_classification":
+        # Up to input_shape[0] tokens a row (ids 1..), then padding: token 0,
+        # label IGNORE_INDEX (the Engine's sequence batcher pads the same way).
+        width = spec["input_shape"][0]
+        x = torch.randint(1, spec["token_ids"], (rows, width), generator=generator)
+        y = torch.randint(0, spec["classes"], (rows, width), generator=generator)
+        lengths = torch.randint(width // 2, width + 1, (rows,), generator=generator)
+        pad = torch.arange(width).unsqueeze(0) >= lengths.unsqueeze(1)
+        x[pad] = 0
+        y[pad] = IGNORE_INDEX
+        return x.to(torch.float32), y
     if spec.get("token_ids"):  # token ids: the Engine reads them as numbers, torch as integers
         x = torch.randint(0, spec["token_ids"], (rows, *spec["input_shape"]), generator=generator).to(torch.float32)
     else:
@@ -92,23 +106,31 @@ class RecordingLoader:
     """The example loop's train_loader: the rows in order, batch by batch.
     Before each next batch (and at the end) it records the step just done."""
 
-    def __init__(self, x, y, batch_size, namespace, steps):
+    def __init__(self, x, y, batch_size, namespace, steps, token_weighted=False):
         self.x, self.y, self.batch_size = x, y, batch_size
         self.namespace, self.steps = namespace, steps
+        # A token task's running loss weights each batch by its real tokens,
+        # as the Engine's sequence epoch reports it.
+        self.token_weighted = token_weighted
+        self.batch = 0
         self.records: list[dict[str, Any]] = []
         self.losses: list[float] = []
+        self.weights: list[float] = []
         self.grad_max: dict[str, torch.Tensor] = {}  # each element's largest |gradient| so far
 
     def record(self):
         loss = self.namespace["loss"]
         self.losses.append(float(loss.detach()))
+        lo = (self.batch - 1) * self.batch_size
+        self.weights.append(float((self.y[lo:lo + self.batch_size] != IGNORE_INDEX).sum())
+                            if self.token_weighted else 1.0)
         for name, p in self.namespace["model"].named_parameters():
             g = p.grad.detach().abs() if p.grad is not None else torch.zeros_like(p)
             self.grad_max[name] = torch.maximum(self.grad_max[name], g) if name in self.grad_max else g
         self.records.append({
             "step": len(self.records) + 1,
             "batch_loss": self.losses[-1],
-            "running_loss": sum(self.losses) / len(self.losses),
+            "running_loss": sum(l * w for l, w in zip(self.losses, self.weights)) / sum(self.weights),
             "parameters": state(self.namespace["model"]),
         })
 
@@ -117,6 +139,7 @@ class RecordingLoader:
         for b in range(min(batches, self.steps)):
             if b > 0:
                 self.record()
+            self.batch = b + 1
             lo = b * self.batch_size
             yield self.x[lo:lo + self.batch_size], self.y[lo:lo + self.batch_size]
         self.record()
@@ -148,7 +171,8 @@ def run_model(name: str, steps: int) -> dict[str, Any]:
     init_name = f"{name}_init.pth"
     torch.save({k: v.detach().clone() for k, v in model.state_dict().items()}, MODELS_DIR / init_name)
 
-    loader = RecordingLoader(torch_x, y, spec["batch_size"], namespace, steps)
+    loader = RecordingLoader(torch_x, y, spec["batch_size"], namespace, steps,
+                             token_weighted=spec["task"] == "token_classification")
     namespace.update({"train_loader": loader, "num_epochs": 1})
     exec(compile(loop, f"{name}.py (example loop)", "exec"), namespace)
     # Elements no gradient reaches (|g| < NOISE_GRADIENT at every step: a key
@@ -167,6 +191,7 @@ def run_model(name: str, steps: int) -> dict[str, Any]:
         "summary": spec["summary"],
         "export_sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
         "task": spec["task"],
+        "classes": spec["classes"],
         "rows": steps * spec["batch_size"],
         "batch_size": spec["batch_size"],
         "init_weights": init_name,

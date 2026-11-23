@@ -316,9 +316,9 @@
    "generator_sha256": "079aee832c7fb114f96a2ca42c8398821eff198a2322d694b639aaab8b672e0e"
   },
   "train_trajectory_pytorch.json": {
-   "fixture_sha256": "7b276bea6f1f6403cc5fde27b0f402e53b136720bebad6eeea17b7fca672b147",
+   "fixture_sha256": "a6d6f83990da89c7f75140ef406ea6609687a5d2ed9da763b3d1b6de7f35d530",
    "generator": "reference/generate_train_trajectory_fixtures.py",
-   "generator_sha256": "e491c26852ba7530bafb6b7e6c328771bb3c240dc4cf97f874cbcb3a769ac8f6",
+   "generator_sha256": "ea6a85ae75fe1e89641a4649b33f2ef1e275bed5b8966386c47969398bea29be",
    "note": "made from the committed exports in train_trajectory/ (test_oracle_train --write-exports); the test checks a fresh export equals them and the fixture's export_sha256"
   },
   "training_core_pytorch.json": {
