@@ -6470,17 +6470,21 @@ TrainingConfiguration GraphCompiler::Compile(
     // before a convolution or pooling reads each row as an image (a CSV of
     // pixel columns: MNIST's 784 as 28 x 28 x 1). Rows are already in
     // height, width, channel order, so the Reshape is the data's shape.
-    // A branched graph (a residual Add) does the same when the Reshape reads
-    // the Data node's rows: the graph plan's edges out of it then start at the
-    // data pin (ORA-27).
+    // A branched graph (a residual Add) does the same when the Reshape alone
+    // reads the Data node's rows (another reader of the rows would then get
+    // images): the graph plan's edges out of it start at the data pin (ORA-27).
     const bool layer_stack = config.graph_op_node_ids.empty() && config.multi_input_layer_node_ids.empty();
     const auto reads_data_rows = [&config](const CompiledLayer& layer) {
         const auto& plan = config.graph_plan;
         if (!plan.available) return false;
-        for (const auto& edge : plan.edges)
-            if (edge.to_node_id == layer.node_id)
-                return edge.from_node_id == plan.data_node_id && edge.from_pin_id == plan.data_pin_id;
-        return false;
+        bool fed_by_data = false;
+        size_t data_readers = 0;
+        for (const auto& edge : plan.edges) {
+            const bool from_data = edge.from_node_id == plan.data_node_id && edge.from_pin_id == plan.data_pin_id;
+            if (from_data) ++data_readers;
+            if (edge.to_node_id == layer.node_id && from_data) fed_by_data = true;
+        }
+        return fed_by_data && data_readers == 1;
     };
     if (!config.HasErrors() && config.layers.size() >= 2 && (layer_stack || reads_data_rows(config.layers.front()))) {
         const CompiledLayer first = config.layers.front();
