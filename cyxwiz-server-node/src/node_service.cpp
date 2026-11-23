@@ -1,4 +1,5 @@
 #include "node_service.h"
+#include "node_group_state.h"
 #include <spdlog/spdlog.h>
 
 namespace cyxwiz {
@@ -24,6 +25,15 @@ grpc::Status NodeServiceImpl::AssignJob(
                      node_id_, request->node_id());
         spdlog::warn("Accepting job anyway for integration testing");
         // TODO: In production, verify node IDs match or implement proper UUID-based node registration
+    }
+
+    if (NodeInGroup().load()) {
+        response->set_status(protocol::STATUS_FAILED);
+        response->set_accepted(false);
+        auto* error = response->mutable_error();
+        error->set_code(409);  // Conflict
+        error->set_message(kNodeInGroupRefusal);
+        return grpc::Status::OK;
     }
 
     // Validate job configuration

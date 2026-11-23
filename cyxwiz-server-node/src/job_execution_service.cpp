@@ -1,4 +1,5 @@
 #include "job_execution_service.h"
+#include "node_group_state.h"
 #include "core/grpc_listen.h"
 #include "node_data_dir.h"
 #include "node_job_timing.h"
@@ -290,6 +291,13 @@ grpc::Status JobExecutionServiceImpl::SendJob(
     // Cleanup any stale jobs before checking capacity
     // This handles the case where an Engine disconnected after SendJob but before StreamTrainingMetrics
     CleanupStaleJobs();
+
+    if (cyxwiz::servernode::NodeInGroup().load()) {
+        response->set_status(cyxwiz::protocol::STATUS_ERROR);
+        response->set_accepted(false);
+        response->set_rejection_reason(cyxwiz::servernode::kNodeInGroupRefusal);
+        return grpc::Status::OK;
+    }
 
     // Check if we have too many active jobs (simple capacity check)
     {

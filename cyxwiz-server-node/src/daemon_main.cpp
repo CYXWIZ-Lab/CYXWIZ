@@ -42,6 +42,7 @@
 #include "core/route_qualification_snapshot.h"
 #include "core/machine_compute_preference.h"
 #include "core/training_benchmark.h"
+#include "group_worker.h"
 #include "node_doctor.h"
 #include "node_service.h"
 #include "job_execution_service.h"
@@ -79,6 +80,10 @@ void PrintUsage(const char* program) {
               << "                       %APPDATA%/CyxWiz or ~/.config/cyxwiz/server_config.yaml)\n"
               << "  --p2p-secret-file=PATH File holding the secret the central server signs Engine\n"
               << "                       tokens with ([jwt].p2p_secret); keep it to its owner (chmod 600)\n"
+              << "  --group-coordinator=ADDR Join the training group this coordinator runs (HOST:PORT or\n"
+              << "                       https://HOST:PORT); with --group-ticket-file\n"
+              << "  --group-ticket-file=PATH File holding this node's ticket for that group; keep it to its\n"
+              << "                       owner (chmod 600)\n"
               << "  --tls                Enable TLS for gRPC servers\n"
               << "  --tls-cert=PATH      Path to TLS certificate file\n"
               << "  --tls-key=PATH       Path to TLS private key file\n"
@@ -113,6 +118,9 @@ struct DaemonConfig {
     std::string server;        // --server: the one server address
     std::string config_path;
     int http_port = 0;
+    std::string group_coordinator;            // join this coordinator's training group
+    std::string group_ticket_file;
+    bool group_ticket_on_command_line = false;  // --group-ticket=: refused
     std::string p2p_secret_file;
     bool p2p_secret_on_command_line = false;  // --p2p-secret=: refused
     std::string p2p_secret;                   // read from p2p_secret_file
@@ -374,6 +382,12 @@ DaemonConfig ParseArgs(int argc, char** argv) {
             config.p2p_secret_file = argv[i] + 18;
         } else if (std::strncmp(argv[i], "--p2p-secret=", 13) == 0) {
             config.p2p_secret_on_command_line = true;
+        } else if (std::strncmp(argv[i], "--group-coordinator=", 20) == 0) {
+            config.group_coordinator = argv[i] + 20;
+        } else if (std::strncmp(argv[i], "--group-ticket-file=", 20) == 0) {
+            config.group_ticket_file = argv[i] + 20;
+        } else if (std::strncmp(argv[i], "--group-ticket=", 15) == 0) {
+            config.group_ticket_on_command_line = true;
         } else if (std::strcmp(argv[i], "--tls") == 0) {
             config.enable_tls = true;
         } else if (std::strncmp(argv[i], "--tls-cert=", 11) == 0) {
@@ -412,6 +426,17 @@ int main(int argc, char** argv) {
         std::cerr << "--p2p-secret= puts the secret where every user of this machine can read it "
                      "(the process list). Write it to a file only you can read and pass "
                      "--p2p-secret-file=PATH" << std::endl;
+        return 1;
+    }
+
+    if (cli_config.group_ticket_on_command_line) {
+        std::cerr << "--group-ticket= puts the ticket where every user of this machine can read it "
+                     "(the process list). Write it to a file only you can read and pass "
+                     "--group-ticket-file=PATH" << std::endl;
+        return 1;
+    }
+    if (cli_config.group_coordinator.empty() != cli_config.group_ticket_file.empty()) {
+        std::cerr << "--group-coordinator and --group-ticket-file go together" << std::endl;
         return 1;
     }
 
@@ -864,6 +889,24 @@ int main(int argc, char** argv) {
         spdlog::info("  Inference gRPC:       {}", daemon_config.inference_address);
         spdlog::info("  TLS encryption:       {}", tls_manager.IsEnabled() ? "ENABLED" : "DISABLED");
         spdlog::info("========================================");
+
+        // A training group, when the operator named one. The node's device is
+        // the group's until the group ends; the node then serves as before.
+        std::unique_ptr<cyxwiz::servernode::GroupWorker> group_worker;
+        if (!cli_config.group_coordinator.empty()) {
+            const auto ticket = cyxwiz::servernode::core::ReadSecretFile(cli_config.group_ticket_file);
+            if (!ticket.error.empty()) {
+                spdlog::error("Group ticket: {}", ticket.error);
+            } else {
+                cyxwiz::servernode::GroupWorkerOptions group_options;
+                group_options.coordinator_address = cli_config.group_coordinator;
+                group_options.ticket = ticket.secret;
+                group_options.node_version = cyxwiz::GetVersionString();
+                group_worker = std::make_unique<cyxwiz::servernode::GroupWorker>(std::move(group_options));
+                group_worker->Start();
+            }
+        }
+
         spdlog::info("Press Ctrl+C to shutdown");
 
         // Main loop - wait for shutdown signal
@@ -872,6 +915,11 @@ int main(int argc, char** argv) {
         }
 
         spdlog::info("Shutting down gracefully...");
+
+        if (group_worker) {
+            spdlog::info("Leaving the training group...");
+            group_worker->Stop();
+        }
 
         // Stop services in reverse order
         spdlog::info("Stopping IPC daemon service...");

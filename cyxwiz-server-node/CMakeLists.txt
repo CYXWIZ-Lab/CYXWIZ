@@ -95,6 +95,7 @@ set(DAEMON_SOURCES
     src/job_executor.cpp
     src/remote_dataset_fetcher.cpp
     src/cloud_dataset_fetcher.cpp
+    src/group_worker.cpp
     src/node_doctor.cpp
     # API layer
     src/api/api_key_manager.cpp
@@ -470,6 +471,61 @@ if(CYXWIZ_BUILD_TESTS)
             PROTOBUF_USE_DLLS
             GOOGLE_PROTOBUF_NO_THREADLOCAL
         )
+    endif()
+
+    # A node's part in a training group (TOFIX166): a scripted coordinator in-process
+    add_executable(test_group_worker
+        tests/test_group_worker.cpp
+        src/group_worker.cpp
+    )
+    target_include_directories(test_group_worker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
+    )
+    target_link_libraries(test_group_worker PRIVATE
+        cyxwiz-training-core
+        Catch2::Catch2
+        Catch2::Catch2WithMain
+        fmt::fmt
+        spdlog::spdlog
+        nlohmann_json::nlohmann_json
+        cyxwiz-backend
+        cyxwiz-protocol
+        gRPC::grpc++
+        protobuf::libprotobuf
+        Threads::Threads
+    )
+    target_compile_definitions(test_group_worker PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        target_compile_definitions(test_group_worker PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN NOGDI
+            PROTOBUF_USE_DLLS GOOGLE_PROTOBUF_NO_THREADLOCAL)
+    endif()
+    add_test(NAME test_group_worker COMMAND test_group_worker)
+
+    # A group worker without the rest of the daemon, for a whole group on one machine
+    add_executable(group_worker_tool
+        tests/group_worker_tool.cpp
+        src/group_worker.cpp
+        src/core/secret_file.cpp
+    )
+    target_include_directories(group_worker_tool PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
+    )
+    target_link_libraries(group_worker_tool PRIVATE
+        cyxwiz-training-core
+        fmt::fmt
+        spdlog::spdlog
+        nlohmann_json::nlohmann_json
+        cyxwiz-backend
+        cyxwiz-protocol
+        gRPC::grpc++
+        protobuf::libprotobuf
+        Threads::Threads
+    )
+    if(WIN32)
+        target_compile_definitions(group_worker_tool PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN NOGDI
+            PROTOBUF_USE_DLLS GOOGLE_PROTOBUF_NO_THREADLOCAL)
     endif()
 
     # A node pulls a dataset file from CyxCloud (TOFIX164): fake gateway in-process
