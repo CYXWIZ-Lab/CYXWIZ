@@ -189,6 +189,22 @@ void CheckRecurrentAndLoss() {
               Contains(ce, "loss = criterion(output, target)"),
           "cross-entropy: ignore_index and label_smoothing, integer targets as they are");
 
+    // A per-token head: [batch, seq, classes] against [batch, seq] targets,
+    // the loss over every token.
+    Graph tagger;
+    const int tokens = tagger.Add(gui::NodeType::DatasetInput, "Data", {{"shape", "[6,3]"}});
+    const int lstm = tagger.Add(gui::NodeType::LSTM, "Recurrent",
+                                {{"input_size", "3"}, {"hidden_size", "5"}, {"return_sequences", "true"}});
+    const int tags = tagger.Add(gui::NodeType::TimeDistributed, "Tags", {{"units", "4"}});
+    const int token_loss = tagger.Add(gui::NodeType::CrossEntropyLoss, "Loss", {{"ignore_index", "-100"}});
+    const int tagger_opt = tagger.Add(gui::NodeType::Adam, "Adam");
+    tagger.Connect(tokens, lstm);
+    tagger.Connect(lstm, tags);
+    tagger.Connect(tags, token_loss);
+    tagger.Connect(token_loss, tagger_opt);
+    Check(Contains(PyTorchOf(tagger), "loss = criterion(output.flatten(0, -2), target.flatten())"),
+          "a per-token head: the cross-entropy over every token");
+
     const std::string bce = PyTorchOf(Recurrent(gui::NodeType::GRU, "false", gui::NodeType::BCEWithLogits,
                                                 {{"pos_weight", "3.0"}}));
     Check(Contains(bce, "criterion = nn.BCEWithLogitsLoss(reduction='mean', pos_weight=torch.tensor(3.0))") &&

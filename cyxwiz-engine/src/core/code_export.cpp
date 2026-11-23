@@ -154,8 +154,12 @@ struct PyTorchCriterion {
     std::string arguments = "output, target";
 };
 
-PyTorchCriterion PyTorchCriterionFor(const MLNode* node) {
+// per_token: the model ends in a per-token head (TimeDistributed), its output
+// [batch, seq, classes] against [batch, seq] targets; the loss is over every
+// token, so both are flattened (torch's class axis is the last one then).
+PyTorchCriterion PyTorchCriterionFor(const MLNode* node, bool per_token) {
     PyTorchCriterion out;
+    const std::string token_arguments = "output.flatten(0, -2), target.flatten()";
     if (!node) {
         out.setup = "    criterion = nn.CrossEntropyLoss()  # no loss node in the graph\n";
         return out;
@@ -172,11 +176,13 @@ PyTorchCriterion PyTorchCriterionFor(const MLNode* node) {
             const std::string weights = GetParamOrDefault(*node, "class_weight", "none");
             if (weights != "none")
                 out.setup += "    # class_weight=" + weights + ": pass the per-class weights as weight=torch.tensor([...])\n";
+            if (per_token) out.arguments = token_arguments;
             break;
         }
         case NodeType::NLLLoss:
             out.setup = "    criterion = nn.NLLLoss(" + reduction + ", ignore_index=" +
                         GetParamOrDefault(*node, "ignore_index", "-100") + ")\n";
+            if (per_token) out.arguments = token_arguments;
             break;
         case NodeType::MSELoss:
             out.setup = "    criterion = nn.MSELoss(" + reduction + ")\n";
@@ -1063,7 +1069,9 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
     code += "    model = GeneratedModel()\n";
     code += "    print(model)\n\n";
 
-    const PyTorchCriterion criterion = PyTorchCriterionFor(FindExportLossNode());
+    const bool per_token = std::any_of(nodes_.begin(), nodes_.end(),
+                                       [](const MLNode& n) { return n.type == NodeType::TimeDistributed; });
+    const PyTorchCriterion criterion = PyTorchCriterionFor(FindExportLossNode(), per_token);
     code += "    # Loss (from the graph's loss node) and optimizer (from its optimizer node)\n";
     code += criterion.setup;
     code += PyTorchOptimizerSetup();
