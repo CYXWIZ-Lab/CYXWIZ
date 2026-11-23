@@ -282,6 +282,7 @@ set(BACKEND_SOURCES
     src/algorithms/rl_interface.cpp
     src/algorithms/rl/ppo.cpp
     src/algorithms/rl/sac.cpp
+    src/algorithms/rl/td3.cpp
     src/algorithms/dataloader.cpp
     src/algorithms/data/synthetic_dataset.cpp
     src/algorithms/data/mnist_dataset.cpp
