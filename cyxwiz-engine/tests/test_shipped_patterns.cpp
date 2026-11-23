@@ -21,6 +21,7 @@
 #include "../src/core/graph_node_factory.h"
 #include "../src/core/rl_graph_compile.h"
 #include "../src/core/training_executor.h"
+#include "../src/gui/data_input_capabilities.h"
 #include "../src/gui/loaders/data_loader.h"
 #include "../src/gui/patterns/pattern_library.h"
 #include "route_qualification_test_fixture.h"
@@ -364,8 +365,19 @@ int main() {
         // Custom is where a category the Engine does not know lands: a shipped pattern names a known one.
         Check(pattern->category != gui::patterns::PatternCategory::Custom, id + ": its category is a known one");
         std::set<std::string> node_ids;
-        for (const auto& node : pattern->template_data.nodes)
+        for (const auto& node : pattern->template_data.nodes) {
             Check(node_ids.insert(node.id).second, id + ": node id '" + node.id + "' is used once");
+            // An image folder pattern says "one subfolder per class": Data Input opens on that
+            // layout, not on a flat folder that needs a labels CSV.
+            const auto category = node.params.find("file_category");
+            if (node.type == "DataInput" && category != node.params.end() && category->second == "image") {
+                const auto layout = node.params.find("image_layout");
+                Check(layout != node.params.end() &&
+                          layout->second ==
+                              std::to_string(static_cast<int>(gui::data_input::ImageLayout::ClassSubdirs)),
+                      id + ": Data Input opens on class subfolders");
+            }
+        }
 
         Inserted g = Insert(library, *pattern);
         if (!pattern->needs.empty()) {

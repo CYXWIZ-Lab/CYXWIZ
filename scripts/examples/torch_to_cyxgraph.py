@@ -383,7 +383,7 @@ def network_pattern(model: nn.Module, pattern_id: str, name: str, weights_file: 
         out_links.append(entry)
 
     line = [("data_input", "DataInput", "Data Input", {"source_type": "folder", "file_category": "image",
-                                                       "image_layout": "1"}),
+                                                       "image_layout": "0"}),
             ("data_split", "DataSplit", "Data Split", {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1",
                                                        "seed": "42", "stratified": "true"}),
             ("data_loader", "DataLoader", "DataLoader", {"batch_size": "64", "epochs": "10", "shuffle": "true",
