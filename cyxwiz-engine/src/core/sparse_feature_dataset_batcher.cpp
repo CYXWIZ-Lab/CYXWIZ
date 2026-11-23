@@ -445,12 +445,12 @@ Batch SparseFeatureDatasetBatcher::AssembleBatch(const int64_t* rows, size_t act
             }
         }
         // The first Linear uploads the three CSR arrays for its product.
-        RecordBatchUpload(kUploader, "csr row offsets", BatchUploadReason::Batch, {sparse.row_offsets.size()},
-                          DataType::Int32);
-        RecordBatchUpload(kUploader, "csr column indices", BatchUploadReason::Batch, {sparse.column_indices.size()},
-                          DataType::Int32);
-        RecordBatchUpload(kUploader, "csr values", BatchUploadReason::Batch, {sparse.values.size()},
-                          DataType::Float32);
+        RecordVariableBatchUpload(kUploader, "csr row offsets", BatchUploadReason::Batch, sparse.row_offsets.size(),
+                                  DataType::Int32);
+        RecordVariableBatchUpload(kUploader, "csr column indices", BatchUploadReason::Batch,
+                                  sparse.column_indices.size(), DataType::Int32);
+        RecordVariableBatchUpload(kUploader, "csr values", BatchUploadReason::Batch, sparse.values.size(),
+                                  DataType::Float32);
         batch.sparse_features = std::move(sparse);
     } else {
         ValidateDenseBatchMemory(actual_batch_size);

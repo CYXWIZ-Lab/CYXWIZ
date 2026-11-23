@@ -176,14 +176,20 @@ void AudioDataset::ScanDirectory(const std::string& directory) {
 
     // The audio files under `folder`, by path.
     const auto sorted_audio_files = [&](const fs::path& folder) {
-        std::vector<std::string> files;
+        // Ordered by the path inside the folder with "/" separators, so a
+        // class folder with subfolders orders the same on every platform.
+        std::vector<std::pair<std::string, std::string>> found;  // (relative generic path, path)
         for (const auto& entry : fs::recursive_directory_iterator(folder)) {
             if (!entry.is_regular_file()) continue;
             std::string ext = entry.path().extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            if (is_audio(ext)) files.push_back(entry.path().string());
+            if (is_audio(ext))
+                found.emplace_back(entry.path().lexically_relative(folder).generic_string(), entry.path().string());
         }
-        std::sort(files.begin(), files.end());
+        std::sort(found.begin(), found.end());
+        std::vector<std::string> files;
+        files.reserve(found.size());
+        for (auto& [key, path] : found) files.push_back(std::move(path));
         return files;
     };
 

@@ -48,6 +48,19 @@ void RecordBatchUpload(const char* batcher, const char* part, const char* reason
     TrainingTraceCollector::Instance().RecordHostUpload(upload);
 }
 
+void RecordVariableBatchUpload(const char* batcher, const char* part, const char* reason, size_t elements,
+                               DataType dtype) {
+    TrainingTraceHostSyncGroup upload;
+    upload.category = batcher;
+    upload.operation = part;
+    upload.reason = reason;
+    upload.dtype = UploadDtypeName(dtype);
+    upload.layout = "row_major";
+    upload.event_count = 1;
+    upload.bytes = static_cast<uint64_t>(elements) * UploadDtypeBytes(dtype);
+    TrainingTraceCollector::Instance().RecordHostUpload(upload);
+}
+
 Tensor HostBatchTensor(const char* batcher, const char* part, const std::vector<size_t>& shape,
                        const void* data, DataType dtype) {
     RecordBatchUpload(batcher, part, BatchUploadReason::Batch, shape, dtype);

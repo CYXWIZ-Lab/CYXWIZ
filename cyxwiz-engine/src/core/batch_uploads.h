@@ -28,6 +28,12 @@ inline constexpr const char* Index = "index";
 void RecordBatchUpload(const char* batcher, const char* part, const char* reason,
                        const std::vector<size_t>& shape, DataType dtype);
 
+// An upload whose size changes from batch to batch (a CSR batch's column
+// indices and values: one per non-zero): its bytes are counted, its shape is
+// left out, so the run's upload groups stay one per part.
+void RecordVariableBatchUpload(const char* batcher, const char* part, const char* reason, size_t elements,
+                               DataType dtype);
+
 // A batch tensor copied from host memory, recorded as one upload.
 Tensor HostBatchTensor(const char* batcher, const char* part, const std::vector<size_t>& shape,
                        const void* data, DataType dtype = DataType::Float32);
