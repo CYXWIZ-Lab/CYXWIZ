@@ -7805,6 +7805,25 @@ add_custom_target(copy_test_computation_truth_td3_fixture
 add_dependencies(test_computation_truth_td3 copy_test_computation_truth_td3_fixture)
 add_test(NAME td3_pytorch_parity COMMAND test_computation_truth_td3)
 
+# ===== Test: DQN math (cyxwiz/rl/dqn.h) vs PyTorch / Stable-Baselines3 (TOFIX216 DQN V2) =====
+set(CYXWIZ_DQN_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/dqn_pytorch.json")
+add_executable(test_computation_truth_dqn tests/test_computation_truth_dqn.cpp)
+target_link_libraries(test_computation_truth_dqn PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json)
+target_include_directories(test_computation_truth_dqn PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+target_compile_definitions(test_computation_truth_dqn PRIVATE CYXWIZ_DQN_FIXTURE="${CYXWIZ_DQN_PYTORCH_FIXTURE}" NOMINMAX)
+add_custom_target(copy_test_computation_truth_dqn_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_dqn>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_DQN_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_dqn>/computation_truth_fixtures/dqn_pytorch.json"
+    SOURCES "${CYXWIZ_DQN_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_computation_truth_dqn copy_test_computation_truth_dqn_fixture)
+add_test(NAME dqn_pytorch_parity COMMAND test_computation_truth_dqn)
+
 # ===== Test: gradient clipping (host, device, fused Adam) vs torch clip_grad_norm_ + Adam (TOFIX206) =====
 set(CYXWIZ_GRADIENT_CLIPPING_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/gradient_clipping_pytorch.json")
