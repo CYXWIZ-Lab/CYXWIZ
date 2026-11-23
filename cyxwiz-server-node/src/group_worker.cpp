@@ -111,6 +111,7 @@ const char* GroupWorkerStateName(GroupWorkerState state) {
         case GroupWorkerState::NotStarted: return "Not in a group";
         case GroupWorkerState::Joining: return "Joining";
         case GroupWorkerState::BuildingModel: return "Building the model";
+        case GroupWorkerState::MeasuringLink: return "Measuring the link";
         case GroupWorkerState::GettingModel: return "Getting the model";
         case GroupWorkerState::WaitingForRound: return "Waiting for the round";
         case GroupWorkerState::ReceivingState: return "Getting the model";
@@ -267,6 +268,70 @@ public:
             }
             if (!worker_.Wait(0.5)) return Step::End;
         }
+    }
+
+    // The coordinator times everything; this side answers and sends.
+    Step ProbeLink() {
+        const uint64_t bytes = settings_.probe_bytes();
+        if (bytes == 0) return Step::Ok;
+        worker_.Set(GroupWorkerState::MeasuringLink);
+        Call call(worker_, kTransferSeconds);
+        auto stream = stub_->ProbeLink(&call.context);
+        pb::ProbeMessage start;
+        start.mutable_start()->set_worker_id(worker_id_);
+        start.mutable_start()->set_session_token(token_);
+        stream->Write(start);
+        pb::ProbeMessage message;
+        uint64_t received = 0;
+        bool measured = false;
+        pb::LinkMeasurement link;
+        while (!measured && stream->Read(&message)) {
+            switch (message.kind_case()) {
+                case pb::ProbeMessage::kPing: {
+                    pb::ProbeMessage pong;
+                    pong.set_pong(message.ping());
+                    stream->Write(pong);
+                    break;
+                }
+                case pb::ProbeMessage::kData:
+                    received += message.data().size();
+                    break;
+                case pb::ProbeMessage::kDone: {
+                    pb::ProbeMessage got;
+                    got.set_received(received);
+                    bool open = stream->Write(got);
+                    const std::string piece(PieceBytes(), '\x5a');
+                    for (uint64_t sent = 0; open && sent < bytes;) {
+                        const size_t size = static_cast<size_t>(std::min<uint64_t>(bytes - sent, piece.size()));
+                        pb::ProbeMessage data;
+                        data.set_data(piece.substr(0, size));
+                        open = stream->Write(data);
+                        sent += size;
+                    }
+                    pb::ProbeMessage done;
+                    done.set_done(bytes);
+                    if (open) stream->Write(done);
+                    break;
+                }
+                case pb::ProbeMessage::kResult:
+                    link = message.result();
+                    measured = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+        stream->WritesDone();
+        if (const Step step = FromStatus(stream->Finish(), "measure the link"); step != Step::Ok) return step;
+        if (!measured) return Step::Retry;
+        worker_.Update([&](GroupWorkerStatus& status) {
+            status.up_mbit = link.up_mbit();
+            status.down_mbit = link.down_mbit();
+            status.latency_ms = link.latency_ms();
+        });
+        spdlog::info("Group worker: link to the coordinator: up {:.1f} Mbit/s, down {:.1f} Mbit/s, round trip {:.1f} ms",
+                     link.up_mbit(), link.down_mbit(), link.latency_ms());
+        return Step::Ok;
     }
 
     Step ExchangeInitialState() {
@@ -602,6 +667,7 @@ void GroupWorker::Run() {
             step = session.Join();
             if (step == Step::Ok) step = session.BuildModel();
             if (step == Step::Ok) step = session.Describe();
+            if (step == Step::Ok) step = session.ProbeLink();
             if (step == Step::Ok) step = session.ExchangeInitialState();
             in_group = step == Step::Ok;
         } else {

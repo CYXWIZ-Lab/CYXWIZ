@@ -90,6 +90,43 @@ public:
         settings->set_piece_bytes(64 * 1024);
         settings->set_progress_seconds(1);
         settings->set_warm_up_steps(1);
+        settings->set_probe_bytes(kProbeBytes);
+        return grpc::Status::OK;
+    }
+
+    // The coordinator's side of the probe, with fixed results: the test checks
+    // the worker answers and sends, and keeps what it is told.
+    grpc::Status ProbeLink(grpc::ServerContext*,
+                           grpc::ServerReaderWriter<wire::ProbeMessage, wire::ProbeMessage>* stream) override {
+        wire::ProbeMessage message;
+        if (!stream->Read(&message) || !message.has_start()) return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "start");
+        for (uint32_t sequence = 1; sequence <= 5; ++sequence) {
+            wire::ProbeMessage ping;
+            ping.set_ping(sequence);
+            stream->Write(ping);
+            if (!stream->Read(&message) || message.pong() != sequence) return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "pong");
+        }
+        for (uint64_t sent = 0; sent < kProbeBytes; sent += 16 * 1024) {
+            wire::ProbeMessage data;
+            data.set_data(std::string(16 * 1024, 'd'));
+            stream->Write(data);
+        }
+        wire::ProbeMessage done;
+        done.set_done(kProbeBytes);
+        stream->Write(done);
+        if (!stream->Read(&message) || message.received() != kProbeBytes) {
+            return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "received");
+        }
+        uint64_t up = 0;
+        while (stream->Read(&message) && message.has_data()) up += message.data().size();
+        if (message.done() != kProbeBytes || up != kProbeBytes) return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "upload");
+        wire::ProbeMessage result;
+        result.mutable_result()->set_up_mbit(12.5);
+        result.mutable_result()->set_down_mbit(34.5);
+        result.mutable_result()->set_latency_ms(1.5);
+        stream->Write(result);
+        std::lock_guard<std::mutex> lock(mutex);
+        ++probes;
         return grpc::Status::OK;
     }
 
@@ -206,8 +243,10 @@ public:
         return grpc::Status::OK;
     }
 
+    static constexpr uint64_t kProbeBytes = 96 * 1024;
     std::mutex mutex;
     int joins = 0;
+    int probes = 0;
     int downloads = 0;
     uint32_t protocol_version = 0;
     std::vector<wire::ModelDescription> descriptions;
@@ -266,9 +305,14 @@ TEST_CASE("A group worker joins, trains its rounds and leaves when the job ends"
         CHECK(status.group_id == "scripted-group");
         CHECK(status.rounds_joined == 2);
         CHECK(status.updates_refused == 0);
+        // The link as the coordinator measured it.
+        CHECK(status.up_mbit == 12.5);
+        CHECK(status.down_mbit == 34.5);
+        CHECK(status.latency_ms == 1.5);
 
         std::lock_guard<std::mutex> lock(coordinator.mutex);
         CHECK(coordinator.protocol_version == 1);
+        CHECK(coordinator.probes == 1);
         REQUIRE(coordinator.descriptions.size() == 1);
         const wire::ModelDescription& description = coordinator.descriptions[0];
         CHECK(description.layout_hash().size() == 64);

@@ -41,10 +41,11 @@ ends". When the group ends the node serves as before.
 | `joining the group at ...` | The node is trying to reach the coordinator. It retries, waiting a little longer each time (up to 30 s), until it answers or the node is stopped. |
 | `joined group ... as worker N` | The ticket was accepted. |
 | `model built (... values exchanged, layout ...); warm-up ...` | The model is built on this node's device and a few steps were timed. The coordinator works out this node's speed from that. |
+| `link to the coordinator: up ... Mbit/s, down ... Mbit/s, round trip ... ms` | The coordinator measured this node's connection (it sends and receives 8 MiB each way, timed on its side). |
 | `round R: S steps, N samples, loss L, update sent in T s` | One round done and its update accepted. |
 | `round R: the update was not taken: ...` | The coordinator refused the update, with the reason. The node goes on with the next round. |
 | `Group finished: ...` | The job ended (completed, or a limit was reached). |
-| `Removed from the group: ...` | The coordinator took this node out, with the term: for example it is slower than the group allows, or it missed two rounds in a row. Being slower than the group is not a fault of the node. |
+| `Removed from the group: ...` | The coordinator took this node out, with the term: for example it is slower than the group allows, its link is, or it missed two rounds in a row. Being slower than the group is not a fault of the node. |
 | `Could not go on: ...` | This node stopped: the ticket was refused, the model could not be built, the data could not be read, or training failed. The coordinator is told. |
 
 ## Stopping

@@ -13,8 +13,9 @@ import "job.proto";
 // change it made; the coordinator combines the changes.
 //
 // Every call is opened by the worker, so a node behind a home router needs no
-// open port. Calls are unary or one-way streams, so each can be retried alone.
-// Large values travel as a header message followed by data pieces.
+// open port. Calls are unary or one-way streams, so each can be retried alone,
+// except the short link probe. Large values travel as a header message
+// followed by data pieces.
 
 service TrainingGroupService {
   // The worker shows its ticket and gets the job and the group's settings.
@@ -26,6 +27,8 @@ service TrainingGroupService {
   rpc UploadInitialState(stream StatePiece) returns (StateReceipt);
   // Any other worker: the starting state, frozen values included.
   rpc DownloadInitialState(InitialStateRequest) returns (stream StatePiece);
+  // The coordinator measures this node's link itself (see ProbeMessage).
+  rpc ProbeLink(stream ProbeMessage) returns (stream ProbeMessage);
   // Waits until the next round opens; a header, then the group's state.
   rpc NextRound(NextRoundRequest) returns (stream RoundPiece);
   // While training; the answer may tell the worker to stop.
@@ -95,6 +98,7 @@ message GroupSettings {
   uint32 progress_seconds = 3;   // how often to report progress
   GroupContract contract = 4;
   uint32 warm_up_steps = 5;      // steps the worker times before DescribeModel
+  uint64 probe_bytes = 6;        // bytes each way in ProbeLink; 0: no probe
 }
 
 message GroupJobSpec {
@@ -166,6 +170,39 @@ message StatePiece {
 message StateReceipt {
   GroupRefusal refusal = 1;
   string refusal_text = 2;
+}
+
+// ------------------------------------------------------------- link probe
+
+// After DescribeModel, when probe_bytes is above 0. Everything is timed by
+// the coordinator, so a node does not state its own link.
+//   worker:      start
+//   coordinator: ping 1..5, each answered by the worker's pong
+//   coordinator: data pieces (probe_bytes), then done (the byte count)
+//   worker:      received (the byte count), when it has them all
+//   worker:      data pieces (probe_bytes), then done
+//   coordinator: result, then it closes the call
+message ProbeStart {
+  string worker_id = 1;
+  string session_token = 2;
+}
+
+message LinkMeasurement {
+  double up_mbit = 1;            // node to coordinator
+  double down_mbit = 2;          // coordinator to node
+  double latency_ms = 3;         // round trip, median of the pings
+}
+
+message ProbeMessage {
+  oneof kind {
+    ProbeStart start = 1;
+    uint32 ping = 2;
+    uint32 pong = 3;
+    bytes data = 4;
+    uint64 done = 5;
+    uint64 received = 6;
+    LinkMeasurement result = 7;
+  }
 }
 
 // ----------------------------------------------------------------- a round

@@ -41,6 +41,7 @@ enum class GroupWorkerState {
     NotStarted,
     Joining,
     BuildingModel,   // building the model and timing a few steps
+    MeasuringLink,   // the coordinator measures this node's link
     GettingModel,    // sending or fetching the group's starting state
     WaitingForRound,
     ReceivingState,
@@ -65,6 +66,10 @@ struct GroupWorkerStatus {
     uint64_t rounds_joined = 0;
     uint64_t updates_refused = 0;
     uint64_t state_values = 0;   // values exchanged each round
+    // The link as the coordinator measured it (0 until measured).
+    double up_mbit = 0.0;
+    double down_mbit = 0.0;
+    double latency_ms = 0.0;
 };
 
 class GroupWorker {
