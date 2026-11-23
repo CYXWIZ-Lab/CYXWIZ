@@ -96,6 +96,42 @@ bool Breakable(const std::string& value) {
            value.find_first_of(" \n") == std::string::npos;
 }
 
+// A number grouped by commas ("8,000"): ImGui's wrapping may break a line
+// after any comma, which would split it into "8," and "000"
+bool HasGroupedNumber(const std::string& text) {
+    for (size_t i = 1; i + 1 < text.size(); ++i)
+        if (text[i] == ',' && std::isdigit(static_cast<unsigned char>(text[i - 1])) &&
+            std::isdigit(static_cast<unsigned char>(text[i + 1])))
+            return true;
+    return false;
+}
+
+// Text wrapped at its spaces only, so a grouped number stays on one line: the
+// breaks become newlines in one text item, spaced as ImGui's own wrapping (a
+// single word wider than the cell still wraps as ImGui wraps it)
+void SpaceWrappedText(const std::string& text, const ImVec4& colour) {
+    const float width = ImGui::GetContentRegionAvail().x;
+    std::string wrapped, line;
+    size_t start = 0;
+    while (start <= text.size()) {
+        size_t end = text.find(' ', start);
+        if (end == std::string::npos) end = text.size();
+        const std::string word = text.substr(start, end - start);
+        const std::string longer = line.empty() ? word : line + " " + word;
+        if (!line.empty() && ImGui::CalcTextSize(longer.c_str()).x > width) {
+            wrapped += line + "\n";
+            line = word;
+        } else {
+            line = longer;
+        }
+        start = end + 1;
+    }
+    wrapped += line;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(colour, "%s", wrapped.c_str());
+    ImGui::PopTextWrapPos();
+}
+
 void DetailsRow(const Truth& truth) {
     const auto& t = cyxwiz::ui::CurrentTokens();
     ImGui::TableNextRow();
@@ -189,6 +225,11 @@ void Note(const char* text) {
     const auto& t = cyxwiz::ui::CurrentTokens();
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(1);
+    const std::string note(text);
+    if (HasGroupedNumber(note) && note.find('\n') == std::string::npos) {
+        SpaceWrappedText(note, t.text_dim);
+        return;
+    }
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(t.text_dim, "%s", text);
     ImGui::PopTextWrapPos();
@@ -250,6 +291,10 @@ void ReadOnly(const char* label, const std::string& value, const char* key) {
 void Value(const std::string& text, const ImVec4& colour) {
     if (Breakable(text)) {
         BreakableText(text, colour);
+        return;
+    }
+    if (HasGroupedNumber(text) && text.find('\n') == std::string::npos) {
+        SpaceWrappedText(text, colour);
         return;
     }
     ImGui::PushTextWrapPos(0.0f);
