@@ -7,6 +7,7 @@
 #include "../model_builder.h"
 
 #include <cyxwiz/rl/sac.h>
+#include <cyxwiz/rl/dqn.h>
 #include <cyxwiz/rl/td3.h>
 
 #include <nlohmann/json.hpp>
@@ -26,18 +27,22 @@ namespace {
 
 using json = nlohmann::json;
 
-// 1: PPO. 2: SAC. 3: TD3 (an older Engine refuses each newer one as newer);
-// each learner keeps its own number
-constexpr int kPolicySchema = 3;
+// 1: PPO. 2: SAC. 3: TD3. 4: DQN (an older Engine refuses each newer one as
+// newer); each learner keeps its own number
 constexpr int kPpoPolicySchema = 1;
 constexpr int kSacPolicySchema = 2;
+constexpr int kTd3PolicySchema = 3;
+constexpr int kDqnPolicySchema = 4;
+constexpr int kPolicySchema = kDqnPolicySchema;  // the newest this Engine reads
 
 int PolicySchema(RLAlgorithm algorithm) {
     switch (algorithm) {
         case RLAlgorithm::SAC:
             return kSacPolicySchema;
         case RLAlgorithm::TD3:
-            return kPolicySchema;
+            return kTd3PolicySchema;
+        case RLAlgorithm::DQN:
+            return kDqnPolicySchema;
         case RLAlgorithm::PPO:
             break;
     }
@@ -166,6 +171,7 @@ json ReportToJson(const OffPolicyUpdateMetrics& m) {
             {"ent_coef", number(m.ent_coef)},
             {"ent_coef_loss", number(m.ent_coef_loss)},
             {"mean_q", number(m.mean_q)},
+            {"exploration_rate", number(m.exploration_rate)},
             {"buffer_size", m.buffer_size},
             {"buffer_capacity", m.buffer_capacity},
             {"buffer_bytes", m.buffer_bytes},
@@ -190,6 +196,7 @@ OffPolicyUpdateMetrics ReportFromJson(const json& j) {
     m.ent_coef = number("ent_coef");
     m.ent_coef_loss = number("ent_coef_loss");
     m.mean_q = number("mean_q");
+    m.exploration_rate = j.contains("exploration_rate") ? number("exploration_rate") : 0.0f;  // none before DQN
     m.buffer_size = j.value("buffer_size", int64_t{0});
     m.buffer_capacity = j.value("buffer_capacity", int64_t{0});
     m.buffer_bytes = j.value("buffer_bytes", uint64_t{0});
@@ -370,6 +377,18 @@ bool BuildTd3Networks(const RLTrainingConfiguration& config, Td3Networks& networ
     return networks.q1_target && networks.q2_target;
 }
 
+std::unique_ptr<IExecutableModel> BuildDqnQNetwork(const RLTrainingConfiguration& config, std::string& error) {
+    return TorchLike(config.q_layers, config.observation_size, config.policy_outputs, "Q", error);
+}
+
+bool BuildDqnNetworks(const RLTrainingConfiguration& config, DqnNetworks& networks, std::string& error) {
+    networks.q = BuildDqnQNetwork(config, error);
+    if (!networks.q) return false;
+    // The target starts as a copy (DqnLearner copies the weights)
+    networks.q_target = Layers(config.q_layers, config.observation_size, config.policy_outputs, "target Q", error);
+    return networks.q_target != nullptr;
+}
+
 bool BuildRLNetworks(const RLTrainingConfiguration& config, std::unique_ptr<IExecutableModel>& policy,
                      std::unique_ptr<IExecutableModel>& value, std::string& error) {
     policy = BuildRLPolicyNetwork(config, error);
@@ -438,6 +457,23 @@ std::unique_ptr<TrainedPolicy> MakeTd3TrainedPolicy(const RLTrainingConfiguratio
     return out;
 }
 
+std::unique_ptr<TrainedPolicy> MakeDqnTrainedPolicy(const RLTrainingConfiguration& config, std::string graph_json,
+                                                    DqnTrainedState state, std::vector<OffPolicyUpdateMetrics> reports) {
+    auto out = std::make_unique<TrainedPolicy>();
+    out->config = config;
+    out->graph_json = std::move(graph_json);
+    out->policy = std::move(state.networks.q);
+    out->q_target = std::move(state.networks.q_target);
+    out->normalizer = std::move(state.normalizer);
+    out->optimizers = std::move(state.optimizers);
+    out->reports = std::move(reports);
+    if (!out->reports.empty()) {
+        out->steps = out->reports.back().timesteps;
+        out->mean_return = out->reports.back().mean_episode_return;
+    }
+    return out;
+}
+
 std::vector<float> PolicyActions(TrainedPolicy& p, std::vector<float> observations, size_t rows, bool best,
                                  uint64_t seed) {
     const std::lock_guard<std::mutex> lock(p.in_use);
@@ -445,6 +481,25 @@ std::vector<float> PolicyActions(TrainedPolicy& p, std::vector<float> observatio
     const auto& info = p.config.environment;
     const size_t obs_size = p.config.observation_size;
     if (p.normalizer) p.normalizer->NormalizeObservations(observations.data(), rows);
+    if (p.IsDqn()) {  // the highest Q; sampled: epsilon-greedy at the run's final epsilon
+        p.policy->SetTraining(false);
+        const Tensor greedy = DqnGreedyActions(p.policy->Forward(Tensor({rows, obs_size}, observations.data())));
+        const float* data = greedy.ReadData<float>();
+        std::vector<float> actions(data, data + rows);
+        if (!best) {
+            uint64_t state = seed;
+            const auto next = [&state]() {  // splitmix64
+                uint64_t z = (state += 0x9E3779B97F4A7C15ull);
+                z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+                z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+                return z ^ (z >> 31);
+            };
+            const double draw = static_cast<double>(next() >> 11) * (1.0 / 9007199254740992.0);
+            if (draw < p.config.dqn.exploration_final_eps)  // one draw for all the rows, as SB3's predict
+                for (auto& a : actions) a = static_cast<float>(next() % static_cast<uint64_t>(p.config.policy_outputs));
+        }
+        return actions;
+    }
     if (p.IsOffPolicy()) {  // [-1, 1] from the actor, then the bounds, as the trainers step them
         const size_t act = static_cast<size_t>(info.action_size);
         const Tensor input({rows, obs_size}, observations.data());
@@ -517,6 +572,14 @@ std::string PolicyMismatch(const TrainedPolicy& p, const RLTrainingConfiguration
         for (const auto& l : layers) out.push_back(static_cast<int>(l.type));
         return out;
     };
+    if (p.IsDqn()) {  // one network, the Q layers
+        const bool same = widths(p.config.q_layers) == widths(graph.q_layers) &&
+                          kinds(p.config.q_layers) == kinds(graph.q_layers);
+        if (!same)
+            return "The policy was trained on " + widths(p.config.q_layers) + " Q layers; this graph has " +
+                   widths(graph.q_layers) + ".";
+        return {};
+    }
     // The second network: PPO's value layers, SAC's and TD3's Q layers
     const bool q = p.IsOffPolicy();
     const auto& own = q ? p.config.q_layers : p.config.value_layers;
@@ -534,8 +597,12 @@ bool SaveTrainedPolicy(const TrainedPolicy& p, const std::filesystem::path& path
     error.clear();
     const bool sac = p.IsSac();
     const bool td3 = p.IsTd3();
+    const bool dqn = p.IsDqn();
     const bool q = p.IsOffPolicy();
-    if (!p.policy || (q ? !(p.q1 && p.q2 && p.q1_target && p.q2_target) : !p.value) || (td3 && !p.actor_target)) {
+    const bool networks_present = dqn  ? p.q_target != nullptr
+                                  : q  ? p.q1 && p.q2 && p.q1_target && p.q2_target && (!td3 || p.actor_target)
+                                       : p.value != nullptr;
+    if (!p.policy || !networks_present) {
         error = "There is no trained policy to save.";
         return false;
     }
@@ -562,7 +629,13 @@ bool SaveTrainedPolicy(const TrainedPolicy& p, const std::filesystem::path& path
         };
         const auto& info = p.config.environment;
         json networks;
-        if (q) {
+        if (dqn) {
+            for (const auto& [role, net] : {std::pair<const char*, IExecutableModel*>{"q", p.policy.get()},
+                                            std::pair<const char*, IExecutableModel*>{"q_target", p.q_target.get()}}) {
+                for (const auto& [name, t] : net->GetParameters()) add(std::string(role) + "." + name, t);
+                networks[role] = std::string(role) + ".";
+            }
+        } else if (q) {
             std::vector<std::pair<const char*, IExecutableModel*>> nets = {{"actor", p.policy.get()},
                                                                            {"q1", p.q1.get()},
                                                                            {"q2", p.q2.get()},
@@ -735,7 +808,15 @@ std::unique_ptr<TrainedPolicy> LoadTrainedPolicy(const std::filesystem::path& pa
                     RLAlgorithmName(out->config.algorithm) + ".";
             return nullptr;
         }
-        if (out->IsTd3()) {
+        if (out->IsDqn()) {
+            DqnNetworks n;
+            if (!BuildDqnNetworks(out->config, n, error)) return nullptr;
+            if (!SetWeights(*n.q, "q.", weights, shapes, dtypes, "Q", error) ||
+                !SetWeights(*n.q_target, "q_target.", weights, shapes, dtypes, "target Q", error))
+                return nullptr;
+            out->policy = std::move(n.q);
+            out->q_target = std::move(n.q_target);
+        } else if (out->IsTd3()) {
             Td3Networks n;
             if (!BuildTd3Networks(out->config, n, error)) return nullptr;
             if (!SetWeights(*n.actor, "actor.", weights, shapes, dtypes, "actor", error) ||

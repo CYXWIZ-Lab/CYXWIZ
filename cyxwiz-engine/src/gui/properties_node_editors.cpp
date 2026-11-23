@@ -532,7 +532,8 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
                                         : "DQN chooses among actions; this environment has continuous actions: train "
                                           "it with SAC, TD3 or PPO.");
     }
-    // Its trained policy (TOFIX195 S5; SAC's since TOFIX216 S4, TD3's since U4): play, save, load
+    // Its trained policy (TOFIX195 S5; SAC's since TOFIX216 S4, TD3's since U4, DQN's since V4): play,
+    // save, load
     const cyxwiz::ui::Tokens& tokens = cyxwiz::ui::CurrentTokens();
     {
         properties_rows::Label("Trained policy", false, "The policy of the last run, or one loaded from a .cyxmodel");

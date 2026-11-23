@@ -806,12 +806,12 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
     }
 
     // The RL graph's nodes: compiled by GraphCompiler's RL branch and trained
-    // by the Engine's PPO (TOFIX195 S4.3), SAC (TOFIX216 S4) or TD3 (TOFIX216 TD3 U4)
+    // by the Engine's PPO (TOFIX195 S4.3), SAC (TOFIX216 S4), TD3 (TOFIX216 TD3 U4) or DQN (DQN V4)
     const std::string rl_reason =
-        "GraphCompiler compiles the RL graph and the Engine's PPO, SAC or TD3 (core/rl) trains it on the "
+        "GraphCompiler compiles the RL graph and the Engine's PPO, SAC, TD3 or DQN (core/rl) trains it on the "
         "environment's copies; PipelineExecutor and the supervised trainer do not run it.";
     for (NodeType node_type : {NodeType::RLEnvironment, NodeType::PolicyHead, NodeType::ValueHead, NodeType::PPO,
-                               NodeType::QHead, NodeType::SAC, NodeType::TD3}) {
+                               NodeType::QHead, NodeType::SAC, NodeType::TD3, NodeType::DQN}) {
         auto it = metadata_.find(node_type);
         if (it == metadata_.end()) continue;
         apply_workflow_lane_guidance(node_type, "reinforcement_learning", rl_reason.c_str());
@@ -4901,7 +4901,7 @@ void NodeMetadataRegistry::InitializeRLNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     // TOFIX216 DQN: a Q Head and the Environment, no Policy Head (the policy is
-    // the greedy choice). Planned (Template) until the Engine's DQN trainer runs it.
+    // the greedy choice), trained by the Engine's DQN (core/rl/dqn_trainer).
     RegisterNode({NodeType::DQN, NodeCategory::RL, "DQN", ICON_FA_ARROWS_ROTATE,
         {"dqn", "deep q-network", "q-learning", "epsilon", "greedy", "off-policy", "replay", "reinforcement", "rl",
          "training"}, 0, false,
@@ -4959,7 +4959,7 @@ void NodeMetadataRegistry::InitializeRLNodes() {
          {"normalize_observations", "bool", "false",
           "Running mean and variance of the observations, as VecNormalize (norm_obs)", {}, "", "Observations",
           "Normalise"}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

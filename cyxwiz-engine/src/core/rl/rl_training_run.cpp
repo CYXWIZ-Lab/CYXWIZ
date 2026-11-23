@@ -30,10 +30,6 @@ bool RLTrainingRun::Start(std::shared_ptr<const RLTrainingConfiguration> config,
         error = "The graph is not a compiled RL graph.";
         return false;
     }
-    if (config->algorithm == RLAlgorithm::DQN) {
-        error = "DQN compiles, but the Engine cannot train it yet.";
-        return false;
-    }
     if (worker_.joinable()) worker_.join();
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -223,20 +219,22 @@ void TraceComputePath(const char* learner, const std::string& path, std::string&
 bool RLTrainingRun::AnyActive() { return active_runs.load() > 0; }
 
 namespace {
-// "ppo", "sac", "td3": a run id's start
+// "ppo", "sac", "td3", "dqn": a run id's start
 std::string LowerName(const char* name) {
     std::string out(name);
     for (auto& ch : out) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     return out;
 }
 
-// The preview's own policy network: PPO's policy, SAC's or TD3's actor
+// The preview's own policy network: PPO's policy, SAC's or TD3's actor, DQN's Q network
 std::unique_ptr<IExecutableModel> PreviewNetwork(const RLTrainingConfiguration& c, std::string& error) {
     switch (c.algorithm) {
         case RLAlgorithm::SAC:
             return BuildSacActorNetwork(c, error);
         case RLAlgorithm::TD3:
             return BuildTd3ActorNetwork(c, error);
+        case RLAlgorithm::DQN:
+            return BuildDqnQNetwork(c, error);
         case RLAlgorithm::PPO:
             break;
     }
@@ -307,8 +305,9 @@ bool RLTrainingRun::TrainOffPolicy(const std::shared_ptr<plugin::EnvironmentBatc
     const auto& c = *config_;
     const char* learner = Learner();
     std::vector<OffPolicyUpdateMetrics> history;
-    // SAC's or TD3's trainer through the same loop: the reports, the preview's
-    // copies of the actor, Stop / Pause; true when it trained without failing
+    // SAC's, TD3's or DQN's trainer through the same loop: the reports, the
+    // preview's copies of the actor (DQN: the Q network), Stop / Pause; true
+    // when it trained without failing
     const auto train = [&](auto& trainer) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -352,6 +351,17 @@ bool RLTrainingRun::TrainOffPolicy(const std::shared_ptr<plugin::EnvironmentBatc
     };
     // A run stopped before its first gradient step has no policy (a Stop reports where it stopped)
     const auto learned = [&history]() { return !history.empty() && history.back().updates > 0; };
+    if (c.algorithm == RLAlgorithm::DQN) {
+        DqnNetworks networks;
+        if (!BuildDqnNetworks(c, networks, error)) return false;
+        DqnTrainer trainer(std::move(env), std::move(networks), c.dqn);
+        if (!train(trainer)) return false;
+        if (!learned()) return true;
+        DqnTrainedState state;
+        if (!trainer.TakeTrained(state, error)) return false;
+        trained = MakeDqnTrainedPolicy(c, graph_json_, std::move(state), std::move(history));
+        return true;
+    }
     if (c.algorithm == RLAlgorithm::TD3) {
         Td3Networks networks;
         if (!BuildTd3Networks(c, networks, error)) return false;

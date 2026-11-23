@@ -153,6 +153,19 @@ void CheckSacDashboard() {
     const auto quiet = Td3ExplorationCard(false, 0.1f, 0.2f, 0.5f);
     Check(quiet.value == "none" && quiet.detail.rfind("the policy's own actions", 0) == 0,
           "TD3 without exploration noise says so");
+    // DQN's board (TOFIX216 DQN V4)
+    const auto epsilon = DqnExplorationCard(0.04f, 1.0f, 0.04f, 0.16f, 50000);
+    Check(epsilon.value == "4 %" && epsilon.detail == "random actions now \xC2\xB7 from 100 % to 4 % over 8,000 steps",
+          "DQN's exploration card, as the approved board: " + epsilon.value + " / " + epsilon.detail);
+    const auto falling = DqnExplorationCard(0.7f, 1.0f, 0.05f, 0.1f, 1000000);
+    Check(falling.value == "70 %" && falling.detail.find("over 100,000 steps") != std::string::npos,
+          "while it falls: " + falling.value + " / " + falling.detail);
+    const auto steady = DqnExplorationCard(0.1f, 0.1f, 0.1f, 0.5f, 1000);
+    Check(steady.value == "10 %" && steady.detail == "random actions now \xC2\xB7 10 % throughout",
+          "an epsilon that does not fall: " + steady.detail);
+    Check(DqnLossDetail(128, 1000) == "Huber, last 128 updates" && DqnLossDetail(1, 1000) == "Huber, last 1 update" &&
+              DqnLossDetail(0, 1000) == "learning starts at 1,000",
+          "DQN's loss card detail");
     Check(OffPolicyProgress(212480, 1000000, 202480, 10000) ==
               "212,480 of 1,000,000 steps \xC2\xB7 202,480 updates \xC2\xB7 learning started at 10,000 "
               "(random steps before)",

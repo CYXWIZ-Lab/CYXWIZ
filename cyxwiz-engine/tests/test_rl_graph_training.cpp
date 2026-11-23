@@ -10,7 +10,10 @@
 // normalised observations saves and loads the same way (continuous actions),
 // and so does a SAC run of the SAC pattern (TOFIX216 S4): its reports, its
 // replay buffer, a live preview of its actor, Stop, its five networks and
-// entropy weight saved and loaded, playback, ghost and Stress test.
+// entropy weight saved and loaded, playback, ghost and Stress test. The DQN
+// pattern trains the built-in CartPole-v1 the same way (TOFIX216 DQN V4): its
+// reports and epsilon, a preview of its Q network, its Q network and target
+// saved and loaded, greedy and epsilon-greedy choices, a ghost.
 // The device (TOFIX206): every run takes the route chosen the Engine's way
 // (the pending selection + the next-run policy, here the ArrayFire CPU), and
 // reports it; Strict refuses a route that cannot start, Compatibility falls
@@ -824,6 +827,106 @@ void CheckGpuPolicy() {
     std::filesystem::remove(path, ignored);
 }
 
+// DQN on the built-in CartPole-v1 (no plugin needed)
+void CheckDqn() {
+    rl_graph_test::Ids id{};
+    auto g = rl_graph_test::DqnPattern(id);
+    g.At(id.env).parameters["copies"] = "1";
+    auto& dqn = g.At(id.ppo).parameters;
+    dqn["total_timesteps"] = "3000";
+    dqn["learning_starts"] = "500";
+    dqn["buffer_size"] = "2000";
+    dqn["batch_size"] = "32";
+    dqn["target_update_interval"] = "200";
+    dqn["exploration_final_eps"] = "0.5";  // sampled choices differ from the greedy ones often enough to see
+    dqn["exploration_fraction"] = "0.5";   // still falling at the first report (step 500)
+    const auto config = Compile(g);
+    if (!config) return;
+    Check(config->algorithm == cyxwiz::RLAlgorithm::DQN, "the DQN pattern compiles to DQN");
+    auto run_config = std::make_shared<cyxwiz::RLTrainingConfiguration>(*config);
+    run_config->dqn.report_every = 500;
+    std::string error;
+    cyxwiz::rl::RLTrainingRun run;
+    SelectCpu();
+    run.SetWatch(cyxwiz::rl::RLTrainingRun::Watch::Preview, 1);
+    Check(run.Start(run_config, rl_graph_test::Json(g), error), "the DQN run starts: " + error);
+    const auto reports = WaitSac(run, 600.0);
+    Check(run.GetState() == cyxwiz::rl::RLTrainingRun::State::Finished, "the DQN run finishes: " + run.Message());
+    Check(run.TakeUpdates().empty(), "a DQN run reports no PPO updates");
+    Check(reports.size() == 6 && reports.back().timesteps == 3000, "a report every 500 steps to the end");
+    if (!reports.empty()) {
+        const auto& last = reports.back();
+        Check(last.learning && last.updates == (3000 - 500) / 4 && last.buffer_size == 2000,
+              "random choices first, then a gradient step every 4 steps, the buffer full");
+        Check(std::isfinite(last.critic_loss) && std::isfinite(last.mean_q) && last.actor_loss == 0.0f &&
+                  last.ent_coef == 0.0f,
+              "the loss and mean Q are numbers; no actor or entropy weight");
+        Check(reports.front().exploration_rate > last.exploration_rate && last.exploration_rate == 0.5f,
+              "epsilon falls to its end: " + std::to_string(reports.front().exploration_rate) + " -> " +
+                  std::to_string(last.exploration_rate));
+    }
+    const auto preview = run.PreviewPolicy();
+    Check(preview && preview->IsDqn() && preview->policy && !preview->q_target,
+          "the live preview holds a copy of the Q network");
+    const auto trained = run.Trained();
+    Check(trained && trained->IsDqn() && trained->policy && trained->q_target && !trained->value && !trained->q1 &&
+              !trained->actor_target,
+          "the run keeps the Q network and its target");
+    if (!trained) return;
+    Check(trained->reports.size() == reports.size() && trained->steps == 3000 && trained->optimizers.size() == 1 &&
+              trained->optimizers.count("q"),
+          "with its reports, steps and its one optimizer");
+    const auto obs = SampleObservations(16, 4);
+    const auto best = cyxwiz::rl::PolicyActions(*trained, obs, 16, true, 0);
+    bool choices = best.size() == 16;
+    for (const float a : best) choices = choices && (a == 0.0f || a == 1.0f);
+    bool any_random = false;
+    for (uint64_t seed = 1; seed <= 8; ++seed) {
+        const auto sampled = cyxwiz::rl::PolicyActions(*trained, obs, 16, false, seed);
+        for (const float a : sampled) choices = choices && sampled.size() == 16 && (a == 0.0f || a == 1.0f);
+        any_random = any_random || sampled != best;
+    }
+    Check(choices, "DQN's actions are choices 0 or 1");
+    Check(best == cyxwiz::rl::PolicyActions(*trained, obs, 16, true, 99) && any_random,
+          "the greedy choices are deterministic; epsilon-greedy ones are not always them");
+    CheckSaveAndLoad(*trained, "cyxwiz_rl_dqn_policy_test.cyxmodel");
+    {
+        const auto path = std::filesystem::temp_directory_path() / "cyxwiz_rl_dqn_networks_test.cyxmodel";
+        Check(cyxwiz::rl::SaveTrainedPolicy(*trained, path, error), "the DQN policy saves: " + error);
+        const cyxwiz::ProbeResult probe = cyxwiz::formats::CyxModelFormat().Probe(path.string());
+        const auto algorithm = probe.custom_metadata.find("rl_algorithm");
+        Check(probe.has_rl_policy && algorithm != probe.custom_metadata.end() && algorithm->second == "DQN",
+              "the DQN package names DQN as its learner");
+        auto loaded = cyxwiz::rl::LoadTrainedPolicy(path, error);
+        const cyxwiz::rl::PolicyDeviceScope on_its_device(*trained);
+        Check(loaded && loaded->IsDqn() && SameParameters(*loaded->policy, *trained->policy) &&
+                  SameParameters(*loaded->q_target, *trained->q_target) &&
+                  loaded->reports.back().exploration_rate == trained->reports.back().exploration_rate,
+              "the Q network, its target and the reports' epsilon load back as saved: " + error);
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+    Check(cyxwiz::rl::PolicyMismatch(*trained, *config).empty(), "the DQN policy fits its own graph");
+    {
+        rl_graph_test::Ids wider_id{};
+        auto wider = rl_graph_test::DqnPattern(wider_id, 128);
+        const auto other = Compile(wider);
+        if (other)
+            Check(cyxwiz::rl::PolicyMismatch(*trained, *other).find("64-64 Q layers; this graph has 128-128") !=
+                      std::string::npos,
+                  "a DQN graph of other layers refuses it: " + cyxwiz::rl::PolicyMismatch(*trained, *other));
+    }
+    rl_graph_test::Ids ppo_id{};
+    const auto ppo_graph = rl_graph_test::Pattern(ppo_id);
+    cyxwiz::GraphCompiler compiler;
+    const auto ppo = compiler.Compile(ppo_graph.nodes, ppo_graph.links, true);
+    if (ppo.rl)
+        Check(cyxwiz::rl::PolicyMismatch(*trained, *ppo.rl).find("trained by DQN") != std::string::npos,
+              "a PPO graph refuses the DQN policy: " + cyxwiz::rl::PolicyMismatch(*trained, *ppo.rl));
+    std::printf("DQN: a ghost beside the policy\n");
+    CheckGhostPlayback(trained, false);  // the built-in CartPole has no view: numbers only
+}
+
 }  // namespace
 
 // The stress test's conditions (board 6): its settings over the policy's own,
@@ -892,6 +995,7 @@ int main(int argc, char** argv) {
     CheckDevice();
     CheckStopAndFailure();
     CheckCartPole();
+    CheckDqn();
     CheckGpuPolicy();
     if (argc > 1) CheckContinuous(std::filesystem::absolute(argv[1]));
     if (failures == 0) std::printf("test_rl_graph_training: all checks passed\n");

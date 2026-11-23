@@ -4255,7 +4255,20 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     cyxwiz::TrainingDashboardPanel::RunInfo info;
     info.title = learner + " on " + c.environment.id + " x " + std::to_string(c.copies);
     info.continuous = !c.environment.discrete_actions;
-    if (c.algorithm == cyxwiz::RLAlgorithm::TD3) {
+    if (c.algorithm == cyxwiz::RLAlgorithm::DQN) {
+        const auto& d = c.dqn;
+        info.off_policy = true;
+        info.dqn = true;
+        info.total_timesteps = static_cast<long long>(d.total_timesteps);
+        info.target_return = d.target_return;
+        info.learning_starts = static_cast<long long>(d.learning_starts);
+        info.report_every = static_cast<int>(d.report_every);
+        info.updates_per_step = static_cast<double>(d.gradient_steps) /
+                                (static_cast<double>(d.train_freq) * static_cast<double>(std::max(1, c.copies)));
+        info.exploration_initial_eps = d.exploration_initial_eps;
+        info.exploration_final_eps = d.exploration_final_eps;
+        info.exploration_fraction = d.exploration_fraction;
+    } else if (c.algorithm == cyxwiz::RLAlgorithm::TD3) {
         const auto& t = c.td3;
         info.off_policy = true;
         info.td3 = true;

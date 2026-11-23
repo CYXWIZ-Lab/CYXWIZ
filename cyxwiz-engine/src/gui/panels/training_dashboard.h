@@ -48,7 +48,7 @@ public:
         float target_return = 0.0f;  // NaN: no target
         bool continuous = false;
         std::optional<rl::RLReference> reference;
-        // A SAC or TD3 run: its own cards and progress
+        // A SAC, TD3 or DQN run: its own cards and progress
         bool off_policy = false;
         long long learning_starts = 0;  // random actions before
         int report_every = 0;           // steps between two reports (the watch's unit)
@@ -64,6 +64,11 @@ public:
         float target_policy_noise = 0.2f;
         float target_noise_clip = 0.5f;
         int policy_delay = 1;
+        // DQN's epsilon schedule (dqn: the run is DQN's)
+        bool dqn = false;
+        float exploration_initial_eps = 1.0f;
+        float exploration_final_eps = 0.05f;
+        float exploration_fraction = 0.1f;
     };
     struct RunControls {
         std::function<void()> pause;
@@ -95,7 +100,7 @@ public:
     // The device the run trains on, once its preflight is done
     // (core/rl_device_presentation): the chip, its route on hover, a note
     void SetRunDevice(std::string chip, std::string tooltip, bool fallback, std::string note);
-    // Where a SAC or TD3 run's replay buffer lives: "the GPU", "the CPU's memory"
+    // Where a SAC, TD3 or DQN run's replay buffer lives: "the GPU", "the CPU's memory"
     void SetRunMemoryPlace(std::string place) { memory_place_ = std::move(place); }
     // How the run computes (fused kernels or ArrayFire operations), shown with the chip's route
     void SetRunComputePath(std::string path) { device_compute_path_ = std::move(path); }

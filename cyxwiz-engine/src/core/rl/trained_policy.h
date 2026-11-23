@@ -1,11 +1,12 @@
 #pragma once
 
-// A trained RL policy (TOFIX195 S5; SAC since TOFIX216 S4, TD3 since U4): the
-// networks a run leaves, how to act with them, and their .cyxmodel. The
-// package is the ordinary one: the RL graph, the weights (PPO: "policy.*",
-// "value.*", "log_std"; SAC: "actor.*", "q1.*", "q2.*", "q1_target.*",
-// "q2_target.*", "log_ent_coef"; TD3: those without "log_ent_coef", with
-// "actor_target.*"), the optimizers' states in optimizer/, and rl/policy.json for
+// A trained RL policy (TOFIX195 S5; SAC since TOFIX216 S4, TD3 since U4, DQN
+// since V4): the networks a run leaves, how to act with them, and their
+// .cyxmodel. The package is the ordinary one: the RL graph, the weights (PPO:
+// "policy.*", "value.*", "log_std"; SAC: "actor.*", "q1.*", "q2.*",
+// "q1_target.*", "q2_target.*", "log_ent_coef"; TD3: those without
+// "log_ent_coef", with "actor_target.*"; DQN: "q.*", "q_target.*"), the
+// optimizers' states in optimizer/, and rl/policy.json for
 // the learner, the environment, the observation statistics and the run's
 // reports. Loading rebuilds the networks from the graph, so the environment
 // must be available (for a MuJoCo task, its plugin loaded). GUI-free.
@@ -14,6 +15,7 @@
 #include "ppo_trainer.h"
 #include "sac_trainer.h"
 #include "td3_trainer.h"
+#include "dqn_trainer.h"
 
 #include <cyxwiz/device.h>
 
@@ -35,7 +37,8 @@ struct TrainedPolicy {
     std::string graph_json;          // that graph as saved (the package keeps it)
     // PPO: observations -> logits or means. SAC: the actor, observations ->
     // [mean | log std] of the squashed Gaussian. TD3: the actor, observations
-    // -> actions in [-1, 1]
+    // -> actions in [-1, 1]. DQN: the Q network, observations -> one Q value
+    // per choice (the policy picks the highest)
     std::unique_ptr<IExecutableModel> policy;
     std::unique_ptr<IExecutableModel> value;  // PPO: observations -> value
     Tensor log_std;                           // PPO: [actions] of a continuous policy
@@ -44,15 +47,17 @@ struct TrainedPolicy {
     std::unique_ptr<IExecutableModel> q1, q2, q1_target, q2_target;
     Tensor log_ent_coef;
     std::unique_ptr<IExecutableModel> actor_target;
+    std::unique_ptr<IExecutableModel> q_target;  // DQN: its Q network's target
     std::unique_ptr<VecNormalize> normalizer;  // the observation statistics
     std::map<std::string, OptimizerState> optimizers;
     std::vector<PpoUpdateMetrics> updates;         // PPO's run
-    std::vector<OffPolicyUpdateMetrics> reports;   // SAC's or TD3's run
+    std::vector<OffPolicyUpdateMetrics> reports;   // SAC's, TD3's or DQN's run
     // The ArrayFire device its networks live on: playback acts there
     DeviceType device_type = DeviceType::CPU;
     int device_id = 0;
     bool IsSac() const { return config.algorithm == RLAlgorithm::SAC; }
     bool IsTd3() const { return config.algorithm == RLAlgorithm::TD3; }
+    bool IsDqn() const { return config.algorithm == RLAlgorithm::DQN; }
     bool IsOffPolicy() const { return cyxwiz::IsOffPolicy(config.algorithm); }
     // Steps trained and the last mean return of 100 episodes
     int64_t steps = 0;
@@ -107,6 +112,14 @@ bool BuildTd3Networks(const RLTrainingConfiguration& config, Td3Networks& networ
 // TD3's actor alone, made the same way (a training preview's own copy). Null with the reason.
 std::unique_ptr<IExecutableModel> BuildTd3ActorNetwork(const RLTrainingConfiguration& config, std::string& error);
 
+// DQN's networks for a compiled DQN graph (TOFIX216 DQN): the Q network (the
+// Q layers on the observation plus an output layer of one value per choice)
+// and its target, initialised as PyTorch's nn.Linear (SB3's DQN keeps that).
+// False with the reason.
+bool BuildDqnNetworks(const RLTrainingConfiguration& config, DqnNetworks& networks, std::string& error);
+// DQN's Q network alone, made the same way (a training preview's own copy). Null with the reason.
+std::unique_ptr<IExecutableModel> BuildDqnQNetwork(const RLTrainingConfiguration& config, std::string& error);
+
 // What a trained run leaves (PpoTrainer::TakeTrained), with its graph and updates.
 std::unique_ptr<TrainedPolicy> MakeTrainedPolicy(const RLTrainingConfiguration& config, std::string graph_json,
                                                  PpoTrainedState state, std::vector<PpoUpdateMetrics> updates);
@@ -116,12 +129,17 @@ std::unique_ptr<TrainedPolicy> MakeSacTrainedPolicy(const RLTrainingConfiguratio
 // What a TD3 run leaves (Td3Trainer::TakeTrained), with its graph and reports.
 std::unique_ptr<TrainedPolicy> MakeTd3TrainedPolicy(const RLTrainingConfiguration& config, std::string graph_json,
                                                     Td3TrainedState state, std::vector<OffPolicyUpdateMetrics> reports);
+// What a DQN run leaves (DqnTrainer::TakeTrained), with its graph and reports.
+std::unique_ptr<TrainedPolicy> MakeDqnTrainedPolicy(const RLTrainingConfiguration& config, std::string graph_json,
+                                                    DqnTrainedState state, std::vector<OffPolicyUpdateMetrics> reports);
 
 // One action per row of `observations` (rows x observation size, raw from the
 // environment; normalised here when the policy was trained so). best: the most
 // likely action (a discrete policy's argmax, a Gaussian's mean, SAC's
-// tanh(mean), TD3's own action); otherwise sampled as in training (TD3: its
-// exploration noise). Continuous actions are clipped to the bounds (SAC's and
+// tanh(mean), TD3's own action, DQN's highest Q); otherwise sampled as in
+// training (TD3: its exploration noise; DQN: random choices at the run's final
+// epsilon, one draw for all the rows as SB3's predict). Continuous actions are
+// clipped to the bounds (SAC's and
 // TD3's are scaled from [-1, 1] to them, as in training).
 std::vector<float> PolicyActions(TrainedPolicy& policy, std::vector<float> observations, size_t rows, bool best,
                                  uint64_t seed);

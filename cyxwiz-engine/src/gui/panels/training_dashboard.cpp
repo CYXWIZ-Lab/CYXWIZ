@@ -105,11 +105,14 @@ TrainingDashboardPanel::TrainingDashboardPanel() : Panel("RL Training Dashboard"
     RegisterCustomPlot("approx_kl", "Approx KL");
     RegisterCustomPlot("clip_fraction", "Clip fraction");
     RegisterCustomPlot("action_std", "Action std");
-    // A SAC or TD3 run's (TOFIX216 S4, TD3 U4); the entropy weight is SAC's
+    // A SAC or TD3 run's (TOFIX216 S4, TD3 U4); the entropy weight is SAC's;
+    // DQN's loss and exploration rate (DQN V4)
     RegisterCustomPlot("critic_loss", "Critic loss");
     RegisterCustomPlot("actor_loss", "Actor loss");
     RegisterCustomPlot("ent_coef", "Entropy weight");
     RegisterCustomPlot("mean_q", "Mean Q");
+    RegisterCustomPlot("loss", "Loss");
+    RegisterCustomPlot("exploration_rate", "Exploration rate");
 }
 
 void TrainingDashboardPanel::RegisterCustomPlot(const std::string& name, const std::string& display_name) {
@@ -219,12 +222,14 @@ void TrainingDashboardPanel::AddOffPolicyReport(const rl::OffPolicyUpdateMetrics
     }
     // The losses average the gradient steps since the last report (none before learning starts)
     report_updates_ = m.updates - (last_report_ ? last_report_->updates : 0);
+    const bool dqn = run_ && run_->dqn;
     if (report_updates_ > 0) {
-        Push("critic_loss", m.critic_loss, steps);
-        Push("actor_loss", m.actor_loss, steps);
+        Push(dqn ? "loss" : "critic_loss", m.critic_loss, steps);
+        if (!dqn) Push("actor_loss", m.actor_loss, steps);
         Push("mean_q", m.mean_q, steps);
     }
-    if (run_ && !run_->td3) Push("ent_coef", m.ent_coef, steps);
+    if (dqn) Push("exploration_rate", m.exploration_rate, steps);
+    else if (run_ && !run_->td3) Push("ent_coef", m.ent_coef, steps);
     last_report_ = m;
 }
 
@@ -284,13 +289,15 @@ void TrainingDashboardPanel::Render() {
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Policy diagnostics")) {
-            // Every diagnostic with values, in registration order; the learner's
-            // main loss even before its first value
-            const char* main_loss = run_ && run_->off_policy ? "critic_loss" : "policy_loss";
-            std::vector<std::string> shown;
+            // Every diagnostic with values, the learner's main loss first (even
+            // before its first value), the rest in registration order
+            const char* main_loss = run_ && run_->dqn          ? "loss"
+                                    : run_ && run_->off_policy ? "critic_loss"
+                                                               : "policy_loss";
+            std::vector<std::string> shown{main_loss};
             for (const auto& name : order_)
-                if (name != "episode_reward" && name != "episode_length" &&
-                    (!metrics_[name].history.empty() || name == main_loss))
+                if (name != "episode_reward" && name != "episode_length" && name != main_loss &&
+                    !metrics_[name].history.empty())
                     shown.push_back(name);
             ImGui::BeginChild("##rl_diag", ImVec2(0, 0));
             for (const auto& name : shown) RenderMetric(name, 150.0f);
@@ -301,8 +308,8 @@ void TrainingDashboardPanel::Render() {
     }
     if (rewards.empty() && !running && !run_)
         ImGui::TextColored(t.text_dim, "Train an RL graph (Environment, Policy Head, then Value Head and PPO, or "
-                                       "Q Head and SAC) on the canvas, or report metrics from a script with "
-                                       "pycyxwiz.rl_update_metric.");
+                                       "Q Head and SAC or TD3; or Environment, Q Head and DQN) on the canvas, or "
+                                       "report metrics from a script with pycyxwiz.rl_update_metric.");
     ImGui::End();
 
     // Charts opened in their own windows.
@@ -534,17 +541,28 @@ void TrainingDashboardPanel::RenderOffPolicyKpis() {
               reward.empty() ? "no episode finished yet"
                              : "mean of last 100 \xC2\xB7 best " +
                                    Format(*std::max_element(reward.begin(), reward.end()), "%.1f"));
-    cards.Add("##kpi_critic", "Critic loss", critic.empty() ? "-" : Format(critic.back(), "%.4g"),
-              pb::CriticDetail(critic.empty() ? 0 : report_updates_, run_->learning_starts));
-    cards.Add("##kpi_actor", "Actor loss", actor.empty() ? "-" : Format(actor.back(), "%.4g"),
-              mean_q.empty() ? "" : "mean Q " + Format(mean_q.back(), "%.4g"));
-    if (run_->td3) {
-        const auto exploration = pb::Td3ExplorationCard(run_->action_noise, run_->action_noise_std,
-                                                        run_->target_policy_noise, run_->target_noise_clip);
-        cards.Add("##kpi_noise", "Exploration", exploration.value, exploration.detail);
+    if (run_->dqn) {  // DQN's board: its loss, epsilon and the chosen actions' Q
+        const auto& loss = metrics_["loss"].history;
+        cards.Add("##kpi_loss", "Loss", loss.empty() ? "-" : Format(loss.back(), "%.4g"),
+                  pb::DqnLossDetail(loss.empty() ? 0 : report_updates_, run_->learning_starts));
+        const auto exploration = pb::DqnExplorationCard(
+            last_report_ ? last_report_->exploration_rate : 0.0f, run_->exploration_initial_eps,
+            run_->exploration_final_eps, run_->exploration_fraction, run_->total_timesteps);
+        cards.Add("##kpi_epsilon", "Exploration", exploration.value, exploration.detail);
+        cards.Add("##kpi_q", "Mean Q", mean_q.empty() ? "-" : Format(mean_q.back(), "%.4g"), "of the chosen actions");
     } else {
-        cards.Add("##kpi_alpha", "Entropy weight", alpha.empty() ? "-" : Format(alpha.back(), "%.3g"),
-                  pb::SacEntropyDetail(run_->ent_coef_auto, run_->ent_coef_start, run_->target_entropy));
+        cards.Add("##kpi_critic", "Critic loss", critic.empty() ? "-" : Format(critic.back(), "%.4g"),
+                  pb::CriticDetail(critic.empty() ? 0 : report_updates_, run_->learning_starts));
+        cards.Add("##kpi_actor", "Actor loss", actor.empty() ? "-" : Format(actor.back(), "%.4g"),
+                  mean_q.empty() ? "" : "mean Q " + Format(mean_q.back(), "%.4g"));
+        if (run_->td3) {
+            const auto exploration = pb::Td3ExplorationCard(run_->action_noise, run_->action_noise_std,
+                                                            run_->target_policy_noise, run_->target_noise_clip);
+            cards.Add("##kpi_noise", "Exploration", exploration.value, exploration.detail);
+        } else {
+            cards.Add("##kpi_alpha", "Entropy weight", alpha.empty() ? "-" : Format(alpha.back(), "%.3g"),
+                      pb::SacEntropyDetail(run_->ent_coef_auto, run_->ent_coef_start, run_->target_entropy));
+        }
     }
     const auto buffer = last_report_ ? pb::ReplayBufferCard(last_report_->buffer_size, last_report_->buffer_capacity,
                                                             last_report_->buffer_bytes, memory_place_)

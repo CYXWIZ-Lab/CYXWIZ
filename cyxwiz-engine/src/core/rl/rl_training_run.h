@@ -1,10 +1,11 @@
 #pragma once
 
-// One run of a compiled RL graph (TOFIX195 S4.3; SAC since TOFIX216 S4): on a
-// worker thread it creates the environment copies from the plugin environment
-// registry, builds the graph's networks (PPO: policy and value, SB3's
-// initialisation; SAC: the actor, twin critics and their targets, PyTorch's)
-// and trains them with PpoTrainer, SacTrainer or Td3Trainer. The UI thread starts, pauses
+// One run of a compiled RL graph (TOFIX195 S4.3; SAC since TOFIX216 S4, TD3
+// and DQN after it): on a worker thread it creates the environment copies from
+// the plugin environment registry, builds the graph's networks (PPO: policy
+// and value, SB3's initialisation; SAC, TD3: the actor, twin critics and their
+// targets; DQN: the Q network and its target; PyTorch's initialisation) and
+// trains them with PpoTrainer, SacTrainer, Td3Trainer or DqnTrainer. The UI thread starts, pauses
 // and stops it and drains its reports. A finished or stopped run keeps its
 // trained policy (TOFIX195 S5) until the next Start. Engine side: it links the
 // plugin host.
@@ -62,8 +63,7 @@ public:
 
     // A PPO run's updates since the last call (UI thread)
     std::vector<PpoUpdateMetrics> TakeUpdates();
-    // A SAC run's reports since the last call (UI thread)
-    // SAC's or TD3's reports since the last call
+    // An off-policy run's reports (SAC's, TD3's or DQN's) since the last call (UI thread)
     std::vector<OffPolicyUpdateMetrics> TakeOffPolicyReports();
 
     // The policy of the last finished or stopped run (null otherwise)
@@ -109,7 +109,7 @@ private:
     // environment) and end. `preview_network`: the preview's own policy
     // network, built before the run seeded its random engine. False with the
     // reason; `trained` stays null for a run stopped before it trained (PPO:
-    // its first update; SAC, TD3: its first gradient step).
+    // its first update; SAC, TD3, DQN: its first gradient step).
     bool TrainPpo(const std::shared_ptr<plugin::EnvironmentBatch>& batch, TrainingEnvironment env,
                   std::unique_ptr<IExecutableModel>& preview_network, std::shared_ptr<TrainedPolicy>& trained,
                   std::string& error);
@@ -126,7 +126,7 @@ private:
     // waits for the preview's next episode (RefreshPreview).
     void CopyForPreview(std::unique_ptr<PreviewNetworks> next, const RLTrainingConfiguration& c,
                         std::unique_ptr<IExecutableModel>& network);
-    // "PPO", "SAC" or "TD3": the run's logs and trace
+    // "PPO", "SAC", "TD3" or "DQN": the run's logs and trace
     const char* Learner() const;
 
     std::shared_ptr<const RLTrainingConfiguration> config_;
@@ -141,7 +141,7 @@ private:
     std::string message_;
     std::string waiting_;  // what to tell the user while it waits for its GPU
     PpoTrainer* trainer_ = nullptr;  // while Run trains PPO
-    OffPolicyLoop* off_policy_ = nullptr;  // while Run trains SAC or TD3
+    OffPolicyLoop* off_policy_ = nullptr;  // while Run trains SAC, TD3 or DQN
     std::shared_ptr<TrainedPolicy> trained_;
     ExecutionDeviceContext device_;
 

@@ -286,8 +286,8 @@ void PolicyPlaybackPanel::RenderPlay(const std::shared_ptr<rl::TrainedPolicy>& p
     ImGui::SameLine(label_w + ImGui::GetCursorStartPos().x);
     if (ui::SegmentedControl("##playback_actions", kActions, 2, &actions)) playback_.SetBest(actions == 0);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Best: the policy's most likely action (argmax, or the Gaussian mean). "
-                          "Sampled: drawn as in training.");
+        ImGui::SetTooltip("Best: the policy's most likely action (argmax, the Gaussian mean, or DQN's highest Q "
+                          "value). Sampled: drawn as in training (DQN: a random choice at its last epsilon).");
     int speed = static_cast<int>(playback_.Speed());
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_dim, "Speed");

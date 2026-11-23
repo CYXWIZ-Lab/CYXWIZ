@@ -87,6 +87,26 @@ CardText Td3ExplorationCard(bool noise, float noise_std, float target_policy_noi
     return card;
 }
 
+CardText DqnExplorationCard(float rate, float initial_eps, float final_eps, float fraction, int64_t total_timesteps) {
+    const auto percent = [](double share) { return Number(std::round(share * 1000.0) / 10.0, "%g") + " %"; };
+    CardText card;
+    card.value = percent(rate);
+    if (!(fraction > 0.0f) || initial_eps == final_eps) {
+        card.detail = "random actions now \xC2\xB7 " + percent(final_eps) + " throughout";
+        return card;
+    }
+    const auto over =
+        static_cast<int64_t>(std::llround(static_cast<double>(fraction) * static_cast<double>(total_timesteps)));
+    card.detail = "random actions now \xC2\xB7 from " + percent(initial_eps) + " to " + percent(final_eps) +
+                  " over " + Thousands(over) + " steps";
+    return card;
+}
+
+std::string DqnLossDetail(int64_t updates_since_report, int64_t learning_starts) {
+    if (updates_since_report <= 0) return "learning starts at " + Thousands(learning_starts);
+    return "Huber, last " + Thousands(updates_since_report) + (updates_since_report == 1 ? " update" : " updates");
+}
+
 std::string SacEntropyDetail(bool learned, float start, float target) {
     if (!learned) return "fixed";
     return "learned (started at " + Number(start, "%g") + ") \xC2\xB7 target " + Number(target, "%g");
