@@ -74,7 +74,7 @@ bool IsRLGraphNode(gui::NodeType type);
 
 // Whether the device's neural provider would run both networks (PPO's policy
 // and value; SAC's and TD3's actor and Q, the twin and targets alike) as fused
-// small-network kernels (Dense layers of at most 256 units with the fused
+// small-network kernels (Dense layers of at most 512 units with the fused
 // activations, one LeakyReLU slope and one ELU alpha per network, the
 // minibatch within the backward's rows): asked of the provider registry's
 // capability checks; no kernel runs. The first use of the registry loads the

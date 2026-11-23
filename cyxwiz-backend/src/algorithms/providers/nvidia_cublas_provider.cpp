@@ -707,8 +707,9 @@ extern "C" __global__ void cyxwiz_attention_backward_dkdv(
 }
 )";
 
-// A whole small multilayer perceptron per launch (TOFIX206 3.2): PPO's
-// networks are a few Dense layers of <= 256 units, so per-layer GEMMs and
+// A whole small multilayer perceptron per launch (TOFIX206 3.2): PPO's and
+// SAC's networks are a few Dense layers of <= 256 units, TD3's 400 and 300
+// (layers up to 512, TOFIX216 TD3), so per-layer GEMMs and
 // element-wise kernels cost far more in launches than in arithmetic. One
 // block carries MLP_RB rows through every layer; the rows' activations live
 // in shared memory, the weights ([out, in], first dimension fastest) are read
@@ -825,13 +826,15 @@ extern "C" __global__ void cyxwiz_mlp_forward(MlpNets P, const float* __restrict
 // Every layer's delta (dLoss/dZ) from dY, for MLP_RB rows per block, and the
 // input's gradient W_1^T * delta_1 when dx is given. The deltas are written
 // unit-fastest, delta[(zoff + u) + r * zwidth], so the gradient kernel's reads
-// coalesce. W^T * delta reads the weights through a
-// shared tile of MLP_TU units x win inputs (coalesced loads; the +1 pad keeps
-// the column reads off one bank). Shared memory: 2 * MLP_RB * maxw +
-// MLP_TU_PAD * maxw floats, maxw = the widest layer (not the input).
+// coalesce. W^T * delta reads the weights through a shared tile of MLP_TU
+// units x ic inputs (coalesced loads; the +1 pad keeps the column reads off
+// one bank), the inputs ic at a time, one thread each (ic <= blockDim.x; the
+// host fits the tile in 48 KB). Each input's sum runs over the units in the
+// same order whatever ic is. Shared memory: 2 * MLP_RB * maxw + MLP_TU_PAD *
+// ic floats, maxw = the widest layer (not the input).
 #define MLP_TU 32
 #define MLP_TU_PAD 33
-extern "C" __global__ void cyxwiz_mlp_backward_deltas(MlpNets P, int rows, int maxw) {
+extern "C" __global__ void cyxwiz_mlp_backward_deltas(MlpNets P, int rows, int maxw, int ic) {
   const MlpShape& s = P.s[blockIdx.y];
   const MlpWeights& p = P.p[blockIdx.y];
   const float* __restrict__ z = P.z[blockIdx.y];
@@ -860,33 +863,36 @@ extern "C" __global__ void cyxwiz_mlp_backward_deltas(MlpNets P, int rows, int m
   for (int l = L - 1; l >= 1; --l) {
     const int wout = s.widths[l + 1], win = s.widths[l];
     const float* __restrict__ W = p.w[l];
-    float acc[MLP_RB];
-    for (int rb = 0; rb < MLP_RB; ++rb) acc[rb] = 0.0f;
-    const int i = threadIdx.x;  // blockDim.x >= win (the widest layer, in warps)
-    for (int u0 = 0; u0 < wout; u0 += MLP_TU) {
-      const int tu = min(MLP_TU, wout - u0);
-      for (int k = threadIdx.x; k < MLP_TU * win; k += blockDim.x) {
-        const int uu = k % MLP_TU, ii = k / MLP_TU;
-        tile[ii * MLP_TU_PAD + uu] = uu < tu ? W[(u0 + uu) + (size_t)ii * wout] : 0.0f;
-      }
-      __syncthreads();
-      if (i < win) {
-        for (int uu = 0; uu < tu; ++uu) {
-          const float wv = tile[i * MLP_TU_PAD + uu];
-          for (int rb = 0; rb < MLP_RB; ++rb) acc[rb] += cur[rb * maxw + u0 + uu] * wv;
+    for (int i0 = 0; i0 < win; i0 += ic) {
+      const int ci = min(ic, win - i0);
+      float acc[MLP_RB];
+      for (int rb = 0; rb < MLP_RB; ++rb) acc[rb] = 0.0f;
+      const int i = threadIdx.x;  // input i0 + i of this chunk
+      for (int u0 = 0; u0 < wout; u0 += MLP_TU) {
+        const int tu = min(MLP_TU, wout - u0);
+        for (int k = threadIdx.x; k < MLP_TU * ci; k += blockDim.x) {
+          const int uu = k % MLP_TU, ii = k / MLP_TU;
+          tile[ii * MLP_TU_PAD + uu] = uu < tu ? W[(u0 + uu) + (size_t)(i0 + ii) * wout] : 0.0f;
         }
-      }
-      __syncthreads();
-    }
-    if (i < win) {
-      for (int rb = 0; rb < MLP_RB; ++rb) {
-        float d = 0.0f;
-        if (rb < nr) {
-          const size_t zi = (r0 + rb) + (size_t)(s.zoff[l - 1] + i) * rows;
-          d = acc[rb] * mlp_dact(s.acts[l - 1], z[zi], s.slope, s.alpha);
-          delta[(s.zoff[l - 1] + i) + (size_t)(r0 + rb) * zw] = d;
+        __syncthreads();
+        if (i < ci) {
+          for (int uu = 0; uu < tu; ++uu) {
+            const float wv = tile[i * MLP_TU_PAD + uu];
+            for (int rb = 0; rb < MLP_RB; ++rb) acc[rb] += cur[rb * maxw + u0 + uu] * wv;
+          }
         }
-        nxt[rb * maxw + i] = d;
+        __syncthreads();
+      }
+      if (i < ci) {
+        for (int rb = 0; rb < MLP_RB; ++rb) {
+          float d = 0.0f;
+          if (rb < nr) {
+            const size_t zi = (r0 + rb) + (size_t)(s.zoff[l - 1] + i0 + i) * rows;
+            d = acc[rb] * mlp_dact(s.acts[l - 1], z[zi], s.slope, s.alpha);
+            delta[(s.zoff[l - 1] + i0 + i) + (size_t)(r0 + rb) * zw] = d;
+          }
+          nxt[rb * maxw + i0 + i] = d;
+        }
       }
     }
     __syncthreads();
@@ -1033,7 +1039,7 @@ std::string MlpContractError(const NeuralOpRequest& r) {
         if (c.layers < 1 || c.layers > NeuralOpRequest::kMaxMlpLayers) return "mlp needs 1 to 8 layers";
         if (c.widths[0] < 1 || c.widths[0] > 1024) return "mlp input width must be 1 to 1024";
         for (size_t l = 1; l <= c.layers; ++l)
-            if (c.widths[l] < 1 || c.widths[l] > 256) return "mlp layer widths must be 1 to 256";
+            if (c.widths[l] < 1 || c.widths[l] > 512) return "mlp layer widths must be 1 to 512";
         for (size_t l = 0; l < c.layers; ++l) {
             switch (c.acts[l]) {
             case NeuralActivation::None: case NeuralActivation::Relu: case NeuralActivation::Gelu:
@@ -2992,10 +2998,17 @@ private:
         P.tiles0 = tiles[0];
         const float* x = static_cast<const float*>(in[0].handle);
         int rows_arg = static_cast<int>(rows);
-        void* delta_args[] = {&P, &rows_arg, &max_hidden};
+        // The weight tile's inputs: one thread each, as many as the block has
+        // threads (in whole warps) while cur + nxt + the 32-unit tile (33
+        // floats per input with the pad) fit 48 KB, the per-block shared
+        // memory every CUDA device has without opting in
+        constexpr size_t kSharedBytes = 48 * 1024;
+        const size_t rows_bytes = 2 * kMlpRowsPerBlock * static_cast<size_t>(max_hidden) * sizeof(float);
+        int chunk = static_cast<int>(std::min<size_t>(threads, (kSharedBytes - rows_bytes) / (33 * sizeof(float))));
+        chunk = std::max(32, chunk / 32 * 32);
+        void* delta_args[] = {&P, &rows_arg, &max_hidden, &chunk};
         const unsigned blocks = static_cast<unsigned>((rows + kMlpRowsPerBlock - 1) / kMlpRowsPerBlock);
-        // cur + nxt rows, and the 32-unit weight tile (33 floats per input with the pad)
-        const unsigned shared = static_cast<unsigned>((2 * kMlpRowsPerBlock + 33) * max_hidden * sizeof(float));
+        const unsigned shared = static_cast<unsigned>(rows_bytes + 33 * static_cast<size_t>(chunk) * sizeof(float));
         if (cuLaunchKernel(device_state_.MlpDeltas(), blocks, static_cast<unsigned>(nets), 1, threads, 1, 1, shared,
                            stream, delta_args, nullptr) != CUDA_SUCCESS) {
             return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "mlp_backward deltas launch failed");

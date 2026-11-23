@@ -738,6 +738,12 @@ void CheckTd3() {
         const auto config = Compile(g);
         Check(config.rl && config.rl->td3.learning_starts == 10000 && config.rl->td3.action_noise,
               "the HalfCheetah preset's values compile:" + Issues(config));
+        if (config.rl) {
+            const bool cuda_provider =
+                !cyxwiz::NeuralProviderRegistry::Instance().ListServing({cyxwiz::DeviceType::CUDA, 0}).empty();
+            Check(cyxwiz::FusedNetworksExpected(*config.rl, cyxwiz::DeviceType::CUDA, 0) == cuda_provider,
+                  "RL Zoo's 400-unit TD3 networks are expected fused on CUDA exactly when a provider serves CUDA");
+        }
     }
     Check(gui::ResolveNodeTypeImportName("TD3") == NodeType::TD3, "a saved graph names the node TD3");
 }

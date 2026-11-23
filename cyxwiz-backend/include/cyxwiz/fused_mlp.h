@@ -31,7 +31,7 @@ public:
     // The fused form of `model` on the active device, or null with the
     // reason: not a Dense/activation chain (another layer, a layer without
     // bias, two activations in a row), outside the provider's limits (at most
-    // 8 layers, inputs up to 1024, layers up to 256 units), or no provider
+    // 8 layers, inputs up to 1024, layers up to 512 units), or no provider
     // serves it on this device.
     static std::unique_ptr<FusedMlp> For(SequentialModel& model, std::string& why);
 

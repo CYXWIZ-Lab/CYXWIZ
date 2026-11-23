@@ -134,6 +134,8 @@ void CheckParity() {
         {4, {64, 64}, 1, 64},     // the value network, one minibatch
         {17, {256, 256}, 6, 64},  // HalfCheetah's, one minibatch
         {348, {256}, 17, 5},      // a wide observation (Humanoid-like), rows not a multiple of 4
+        {17, {400, 300}, 6, 256}, // TD3's actor (RL Zoo's 400-300), one minibatch
+        {23, {512, 512}, 1, 9},   // the widest layers, rows not a multiple of 4
         {7, {1, 33, 129}, 3, 513},
         {3, {}, 2, 1},            // a single Dense layer, one row
     };
@@ -219,6 +221,7 @@ void CheckPairs() {
         {"HalfCheetah policy + value x64", 17, 64, {256, 256}, {256, 256}, 6, 1, 1, 1},
         {"LeakyReLU 7-33-3 + ELU 7-1-129-1 x13", 7, 13, {33}, {1, 129}, 3, 1, 2, 4},
         {"HalfCheetah SAC critics x256", 23, 256, {256, 256}, {256, 256}, 1, 1, 1, 1},
+        {"HalfCheetah TD3 critics x256", 23, 256, {400, 300}, {400, 300}, 1, 1, 1, 1},
     };
     for (const auto& p : pairs) {
         auto a = Chain(p.inputs, p.hidden_a, p.out_a, Activations()[p.act_a].add);
@@ -271,8 +274,8 @@ void CheckPairs() {
 
 void CheckRefusals() {
     std::string why;
-    auto wide = Chain(4, {300}, 2, Activations()[0].add);
-    Check(!cyxwiz::FusedMlp::For(wide, why) && !why.empty(), "a 300-unit layer is refused: " + why);
+    auto wide = Chain(4, {600}, 2, Activations()[0].add);
+    Check(!cyxwiz::FusedMlp::For(wide, why) && !why.empty(), "a 600-unit layer is refused: " + why);
     cyxwiz::SequentialModel twice;
     twice.Add<cyxwiz::LinearModule>(4, 8, true);
     twice.Add<cyxwiz::TanhModule>();
