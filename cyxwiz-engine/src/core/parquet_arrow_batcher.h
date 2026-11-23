@@ -27,17 +27,20 @@ struct ParquetRowSplit {
     std::array<size_t, 3> counts{};     // rows per split
 };
 
-// ratios: train, validation, test. Unstratified (empty stratify_column):
-// Train is the first floor(rows * train) rows, Validation the next
-// floor(rows * validation) (every other row when its ratio is 0), Test the
-// rest. Stratified: two passes over the column a row group at a time, one to
-// count each class, one to give each row a split from what its class still
-// needs (in file order, or a seeded draw when shuffle). Null with `error`
-// set when the column cannot be read.
+// ratios: train, validation, test. With `shared_rule` (a Data Split) the
+// rows split by the shared rule (split_partitioning.h), in file order or a
+// seeded draw when shuffle, one class or, stratified, each class: two passes
+// over the column a row group at a time, one to count each class, one to give
+// each row a split from what its class still needs. Without it (no Data
+// Split) the batchers' two-way slices: Train is the first floor(rows * train)
+// rows, Validation the next floor(rows * validation) (every other row when its
+// ratio is 0), Test the rest. Null with `error` set when the column cannot be
+// read.
 std::shared_ptr<const ParquetRowSplit> BuildParquetRowSplit(const ParquetBackedDataset& dataset,
                                                             const std::string& stratify_column,
                                                             const std::array<double, 3>& ratios,
-                                                            bool shuffle, uint32_t seed, std::string& error);
+                                                            bool shuffle, bool shared_rule, uint32_t seed,
+                                                            std::string& error);
 
 /**
  * ParquetArrowBatcher - Training batcher for disk-backed Parquet datasets.
@@ -111,6 +114,7 @@ public:
     size_t SourceSampleCount() const override;
     // This batcher's part when the row is in it (it holds one part).
     std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
+    std::optional<std::vector<size_t>> TrainClassCounts() const override;
 
     // Preprocessing (IBatcher)
     void SetNormalization(float mean, float std_dev) override;
@@ -156,6 +160,9 @@ private:
 
     // Column layout (populated by InitializeColumns at construction)
     std::vector<int> feature_cols_;   // column indices that carry feature data
+    // Missing values refused once, from the file's statistics (TOFIX223 0.3).
+    void RefuseMissingValues() const;
+    mutable bool missing_values_checked_ = false;
     int label_col_idx_ = -1;          // column index of the label column, -1 = none
     std::vector<int> label_col_indices_;  // ordered regression target columns
     size_t num_features_ = 0;

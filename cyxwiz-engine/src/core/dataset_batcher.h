@@ -240,7 +240,21 @@ public:
     virtual std::string SourceSampleName(size_t /*index*/) const { return {}; }
     // The classes in label order, when the batcher knows them.
     virtual std::vector<std::string> ClassNames() const { return {}; }
+    // How many items of each class the Train part holds (index = class id),
+    // before any class-balanced resampling; nullopt when this batcher cannot
+    // tell (it serves no Train part, or its labels are not classes).
+    // class_weight=balanced is computed from it (TOFIX223 0.16).
+    virtual std::optional<std::vector<size_t>> TrainClassCounts() const { return std::nullopt; }
 };
+
+// Adds one item of class `label` to per-class `counts`; false for a label
+// below 0, which is no class.
+inline bool CountClass(std::vector<size_t>& counts, int64_t label) {
+    if (label < 0) return false;
+    if (static_cast<size_t>(label) >= counts.size()) counts.resize(static_cast<size_t>(label) + 1, 0);
+    ++counts[static_cast<size_t>(label)];
+    return true;
+}
 
 // `count` items spread evenly over `total` items from `index` (Top images,
 // TOFIX178 6.3e): how many fit and the step between them (every step-th
@@ -548,6 +562,7 @@ public:
     size_t SourceSampleCount() const override;
     // This batcher's part when the row is in it (it holds one part).
     std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
+    std::optional<std::vector<size_t>> TrainClassCounts() const override;
 
     // Preprocessing (IBatcher)
     void SetNormalization(float mean, float std) override;
@@ -585,7 +600,12 @@ public:
         size_t width, const std::string& target_base = {});
 
 private:
-    Batch AssembleBatch(const int64_t* rows, size_t n, bool& assembled);
+    Batch AssembleBatch(const int64_t* rows, size_t n);
+    // Throws when a feature or label column holds missing values (null, or
+    // NaN in a float column): training refuses them unless a step resolved
+    // them first (TOFIX223 0.3, owner decision D4). Checked once per batcher.
+    void RefuseMissingValues(const std::shared_ptr<arrow::Table>& table) const;
+    mutable bool missing_values_checked_ = false;
 
     std::shared_ptr<class ArrowDataset> dataset_;
     std::string label_column_;

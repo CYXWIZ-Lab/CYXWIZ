@@ -1,3 +1,4 @@
+#include "oracle/oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/classification_decision.h"
 #include "../src/core/debug_run_paths.h"
@@ -14,6 +15,7 @@
 #include "../src/core/test_predictions_metrics.h"
 #include "../src/core/training_batcher_setup.h"
 #include "../src/core/training_executor.h"
+#include "../src/core/training_failure.h"
 #include "../src/core/training_trace_collector.h"
 #include "../src/core/execution_device_context.h"
 #include "../src/core/execution_device_preferences.h"
@@ -32,6 +34,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <functional>
 #include <fstream>
 #include <iostream>
@@ -526,6 +529,281 @@ FullBatchMetricOracle EvaluateCurrentModelAsOneBatch(
         }
     }
     return oracle;
+}
+
+// A NaN or infinite loss fails the run with the reason, for a classification
+// graph (loss summed on the device, checked where it is read) and a regression
+// graph (loss read every batch); it does not finish "completed" with NaN
+// weights (TOFIX223 0.6). One feature value is infinite (a NaN cell is a
+// missing value, refused before the first batch: TOFIX223 0.3).
+void TestNonFiniteLossFailsTheRun(const std::filesystem::path& work_dir) {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("label", arrow::float32()),
+    });
+    const float inf = std::numeric_limits<float>::infinity();
+    auto table = arrow::Table::Make(
+        schema,
+        {
+            FinishFloatArray({0.0f, 0.1f, 0.9f, 1.0f, 0.2f, 0.8f}),
+            FinishFloatArray({0.0f, 0.2f, inf, 1.0f, 0.1f, 0.9f}),
+            FinishFloatArray({0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f}),
+        },
+        6);
+    const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(table, "non_finite_loss");
+    for (const bool regression : {false, true}) {
+        auto config = MakeConfig(work_dir / (regression ? "non-finite-regression" : "non-finite-classification"));
+        config.train_ratio = 1.0f;
+        config.val_ratio = 0.0f;
+        config.test_ratio = 0.0f;
+        config.has_data_split = true;
+        config.batch_size = 2;
+        config.log_interval = 0;
+        if (regression) {
+            config.loss_type = gui::NodeType::MSELoss;
+            config.output_size = 1;
+            config.layers.front().units = 1;
+        }
+        cyxwiz::TrainingExecutor executor(config, dataset, "label");
+        std::string error;
+        try {
+            executor.Train(1, config.batch_size, nullptr, nullptr, nullptr);
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
+        Check(error.find("training loss became") != std::string::npos,
+              std::string(regression ? "regression" : "classification") +
+                  ": a non-finite loss fails the run with the reason (got: '" + error + "')");
+    }
+}
+
+// A run refused for missing values keeps the columns on its metrics, for the
+// fix the Training Dashboard offers; a balanced-weights run meets the same
+// refusal when it counts the classes, and keeps them too.
+void TestMissingValuesRefusalKeepsColumns(const std::filesystem::path& work_dir) {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    auto schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("x1", arrow::float32()),
+                                 arrow::field("label", arrow::int64())});
+    arrow::Int64Builder label_builder;
+    (void)label_builder.AppendValues({0, 1, 0, 1, 0, 1});
+    std::shared_ptr<arrow::Array> label_array;
+    (void)label_builder.Finish(&label_array);
+    auto table = arrow::Table::Make(schema,
+                                    {FinishFloatArray({0.0f, 0.1f, 0.9f, 1.0f, 0.2f, 0.8f}),
+                                     FinishFloatArray({0.0f, nan, 0.5f, nan, 0.1f, 0.9f}), label_array},
+                                    6);
+    const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(table, "missing_values_run");
+    for (const bool balanced : {false, true}) {
+        auto config = MakeConfig(work_dir / (balanced ? "missing-values-balanced" : "missing-values"));
+        config.train_ratio = 1.0f;
+        config.val_ratio = 0.0f;
+        config.test_ratio = 0.0f;
+        config.has_data_split = true;
+        config.batch_size = 2;
+        config.log_interval = 0;
+        if (balanced) config.loss_params["class_weight"] = "balanced";
+        cyxwiz::TrainingExecutor executor(config, dataset, "label");
+        try {
+            executor.Train(1, config.batch_size, nullptr, nullptr, nullptr);
+        } catch (const std::exception&) {
+        }
+        const auto metrics = executor.GetMetrics();
+        const std::string name = balanced ? "balanced weights" : "plain";
+        Check(metrics.terminal_status == "failed" &&
+                  metrics.terminal_reason.find("the data has missing values") != std::string::npos,
+              name + ": the run fails with the missing-values refusal (got '" + metrics.terminal_reason + "')");
+        Check(metrics.missing_columns.size() == 1 && metrics.missing_columns[0].name == "x1" &&
+                  metrics.missing_columns[0].rows == 2 && metrics.missing_columns[0].nan_rows == 2 &&
+                  !metrics.missing_columns[0].label && metrics.missing_values_total_rows == 6,
+              name + ": the failed run keeps the column, its count and the rows (" +
+                  std::to_string(metrics.missing_columns.size()) + " columns)");
+        Check(cyxwiz::ClassifyTrainingFailure(metrics.terminal_reason) == cyxwiz::TrainingFailureKind::DataError,
+              name + ": a remote run reports it as a data error");
+    }
+
+    // An empty text label is a missing label (owner, 2026-11-21), as the Row
+    // Filter's IS NOT EMPTY reads it: refused in memory, from a Parquet file
+    // and when balanced weights count the classes. It was the class "" (sorted
+    // first, so class 0) and trained.
+    {
+        auto text_schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("x1", arrow::float32()),
+                                          arrow::field("label", arrow::utf8())});
+        arrow::StringBuilder texts;
+        (void)texts.AppendValues(std::vector<std::string>{"cat", "dog", "", "dog", "cat", "dog"});
+        std::shared_ptr<arrow::Array> text_labels;
+        (void)texts.Finish(&text_labels);
+        auto text_table = arrow::Table::Make(text_schema,
+                                             {FinishFloatArray({0.0f, 0.1f, 0.9f, 1.0f, 0.2f, 0.8f}),
+                                              FinishFloatArray({0.0f, 0.2f, 0.5f, 0.7f, 0.1f, 0.9f}), text_labels},
+                                             6);
+        const auto text_dataset = std::make_shared<cyxwiz::ArrowDataset>(text_table, "empty_text_label");
+        const auto parquet_path = work_dir / "empty-text-label.parquet";
+        WriteParquetWithRowGroupSize(*text_dataset, parquet_path.string(), 3);
+        const auto parquet = cyxwiz::ParquetBackedDataset::Open(parquet_path.string(), "empty_text_label_parquet");
+        Check(parquet != nullptr, "the empty-text-label Parquet fixture opens");
+        for (const bool on_disk : {false, true}) {
+            for (const bool balanced : {false, true}) {
+                if (on_disk && !parquet) continue;
+                auto config = MakeConfig(work_dir / ("empty-text-label-" + std::to_string(on_disk) + std::to_string(balanced)));
+                config.train_ratio = 1.0f;
+                config.val_ratio = 0.0f;
+                config.test_ratio = 0.0f;
+                config.has_data_split = true;
+                config.batch_size = 2;
+                config.log_interval = 0;
+                if (balanced) config.loss_params["class_weight"] = "balanced";
+                std::unique_ptr<cyxwiz::TrainingExecutor> executor =
+                    on_disk ? std::make_unique<cyxwiz::TrainingExecutor>(config, parquet, "label")
+                            : std::make_unique<cyxwiz::TrainingExecutor>(config, text_dataset, "label");
+                try {
+                    executor->Train(1, config.batch_size, nullptr, nullptr, nullptr);
+                } catch (const std::exception&) {
+                }
+                const auto metrics = executor->GetMetrics();
+                const std::string name = std::string(on_disk ? "Parquet" : "in memory") +
+                                         (balanced ? ", balanced weights" : "") + ": an empty text label";
+                Check(metrics.terminal_status == "failed" &&
+                          metrics.terminal_reason.find("the data has missing values") != std::string::npos &&
+                          metrics.missing_columns.size() == 1 && metrics.missing_columns[0].name == "label" &&
+                          metrics.missing_columns[0].label && metrics.missing_columns[0].rows == 1,
+                      name + " is a missing label (got '" + metrics.terminal_status + "': '" +
+                          metrics.terminal_reason + "')");
+            }
+        }
+    }
+
+    // A supplied Validation input read from its own table refuses its NaN
+    // while validating: the failed run names the role, so the Dashboard says
+    // to fix that file (a step after the training input never reaches it).
+    {
+        auto clean = arrow::Table::Make(schema,
+                                        {FinishFloatArray({0.0f, 0.1f, 0.9f, 1.0f}),
+                                         FinishFloatArray({0.0f, 0.2f, 0.5f, 0.7f}), label_array->Slice(0, 4)},
+                                        4);
+        const auto clean_dataset = std::make_shared<cyxwiz::ArrowDataset>(clean, "supplied_validation_train");
+        cyxwiz::ExternalBatcherFactory factory = [clean_dataset, dataset](const cyxwiz::TrainingConfiguration&,
+                                                                          int batch_size) {
+            auto train = std::make_shared<cyxwiz::ArrowDatasetBatcher>(clean_dataset, "label", batch_size, false,
+                                                                       1.0f, true);
+            auto dev = std::make_shared<cyxwiz::ArrowDatasetBatcher>(dataset, "label", batch_size, false, 1.0f, true);
+            train->SetOneHotEncoding(2);
+            dev->SetOneHotEncoding(2);
+            cyxwiz::ResolvedExternalBatchers batchers;
+            batchers.train = train;
+            batchers.dev = dev;
+            batchers.dev_phase = cyxwiz::BatcherPhase::Train;  // the supplied table is read whole
+            return batchers;
+        };
+        auto config = MakeConfig(work_dir / "missing-values-supplied-validation");
+        config.batch_size = 2;
+        config.log_interval = 0;
+        config.dataset_roles.dev.dataset_name = "supplied_validation";
+        config.dataset_roles.dev.label_column = "label";
+        cyxwiz::TrainingExecutor executor(config, factory);
+        try {
+            executor.Train(1, config.batch_size, nullptr, nullptr, nullptr);
+        } catch (const std::exception&) {
+        }
+        const auto metrics = executor.GetMetrics();
+        Check(metrics.terminal_status == "failed" && metrics.missing_columns.size() == 1 &&
+                  metrics.missing_values_supplied_role == "Validation",
+              "a supplied Validation input's refusal names its role (got '" + metrics.terminal_status + "', role '" +
+                  metrics.missing_values_supplied_role + "', reason '" + metrics.terminal_reason + "')");
+    }
+}
+
+// class_weight=balanced comes from the Train part's class counts on every
+// path: a table in memory, a Parquet file, host-built batchers. A Train part
+// without one of the classes stops the run with the reason, never trains
+// unweighted (TOFIX223 0.16).
+void TestBalancedClassWeightsOnEveryPath(const std::filesystem::path& work_dir) {
+    const auto make_dataset = [](const std::vector<int64_t>& labels, const std::string& name) {
+        auto schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("x1", arrow::float32()),
+                                     arrow::field("label", arrow::int64())});
+        std::vector<float> x0, x1;
+        for (size_t i = 0; i < labels.size(); ++i) {
+            x0.push_back(0.1f * static_cast<float>(i));
+            x1.push_back(labels[i] ? 1.0f : 0.0f);
+        }
+        arrow::Int64Builder label_builder;
+        (void)label_builder.AppendValues(labels);
+        std::shared_ptr<arrow::Array> label_array;
+        (void)label_builder.Finish(&label_array);
+        auto table = arrow::Table::Make(schema, {FinishFloatArray(x0), FinishFloatArray(x1), label_array},
+                                        static_cast<int64_t>(labels.size()));
+        return std::make_shared<cyxwiz::ArrowDataset>(table, name);
+    };
+    const auto balanced_config = [&](const std::string& name) {
+        auto config = MakeConfig(work_dir / name);
+        config.has_data_split = true;
+        config.train_ratio = 0.75f;  // Train: the first 6 of 8 rows
+        config.val_ratio = 0.25f;
+        config.test_ratio = 0.0f;
+        config.batch_size = 2;
+        config.log_interval = 0;
+        config.loss_params["class_weight"] = "balanced";
+        return config;
+    };
+    const auto train = [](cyxwiz::TrainingExecutor& executor, int batch_size) {
+        try {
+            executor.Train(1, batch_size, nullptr, nullptr, nullptr);
+        } catch (const std::exception& e) {
+            return std::string(e.what());
+        }
+        const auto metrics = executor.GetMetrics();
+        return metrics.terminal_status == "failed" ? metrics.terminal_reason : std::string();
+    };
+    const auto weights_of = [](const cyxwiz::TrainingExecutor& executor) {
+        const auto& params = executor.GetConfig().loss_params;
+        const auto it = params.find("class_weights");
+        return it == params.end() ? std::string("(none)") : it->second;
+    };
+
+    // Train labels 0,0,0,0,0,1: 6 / (2 x 5) and 6 / (2 x 1).
+    const std::string expected = "[0.60000002, 3]";
+    const auto imbalanced = make_dataset({0, 0, 0, 0, 0, 1, 1, 0}, "balanced_weights");
+    {
+        cyxwiz::TrainingExecutor executor(balanced_config("balanced-arrow"), imbalanced, "label");
+        const std::string error = train(executor, 2);
+        Check(error.empty() && weights_of(executor) == expected,
+              "in memory: balanced weights from the Train counts (got " + weights_of(executor) + ", error '" + error +
+                  "')");
+    }
+    const auto parquet_path = work_dir / "balanced-weights.parquet";
+    WriteParquetWithRowGroupSize(*imbalanced, parquet_path.string(), 3);
+    const auto parquet_dataset = cyxwiz::ParquetBackedDataset::Open(parquet_path.string(), "balanced_weights_parquet");
+    Check(parquet_dataset != nullptr, "the balanced-weights Parquet fixture opens");
+    if (parquet_dataset) {
+        cyxwiz::TrainingExecutor executor(balanced_config("balanced-parquet"), parquet_dataset, "label");
+        const std::string error = train(executor, 2);
+        Check(error.empty() && weights_of(executor) == expected,
+              "from a Parquet file: the same weights (got " + weights_of(executor) + ", error '" + error + "')");
+    }
+    {
+        // Host-built batchers (image, audio, supplied roles and the job's
+        // datasets come this way).
+        cyxwiz::ExternalBatcherFactory factory = [imbalanced](const cyxwiz::TrainingConfiguration&, int batch_size) {
+            auto batcher = std::make_shared<cyxwiz::ArrowDatasetBatcher>(imbalanced, "label", batch_size, false,
+                                                                         0.75f, true);
+            batcher->SetOneHotEncoding(2);
+            cyxwiz::ResolvedExternalBatchers batchers;
+            batchers.train = batcher;
+            return batchers;
+        };
+        cyxwiz::TrainingExecutor executor(balanced_config("balanced-external"), factory);
+        const std::string error = train(executor, 2);
+        Check(error.empty() && weights_of(executor) == expected,
+              "host-built batchers: the same weights (got " + weights_of(executor) + ", error '" + error + "')");
+    }
+    {
+        // No class 1 in the Train rows: its weight would be infinite.
+        const auto one_class = make_dataset({0, 0, 0, 0, 0, 0, 1, 1}, "balanced_weights_one_class");
+        cyxwiz::TrainingExecutor executor(balanced_config("balanced-missing-class"), one_class, "label");
+        const std::string error = train(executor, 2);
+        Check(error.find("no rows of class 1") != std::string::npos,
+              "a Train part without class 1 stops the run with the reason (got '" + error + "')");
+    }
 }
 
 void TestUnevenFinalBatchMetricAggregation(
@@ -2244,7 +2522,7 @@ void CheckHeldOutTestOfPhaseCountedSet(const std::shared_ptr<cyxwiz::ArrowDatase
                    [](int, float, float, float, float, float) {},
                    [&](const cyxwiz::TrainingMetrics& metrics) { final_metrics = metrics; });
     // It was skipped: the gate read the count outside the test phase (0).
-    Check(final_metrics.has_test_metrics && final_metrics.test_sample_count == 2,
+    Check(final_metrics.has_test_metrics && final_metrics.test_sample_count == 1,
           "a test set counted only in its phase is still scored after training");
 }
 
@@ -2332,9 +2610,12 @@ void CheckExternalResolvedRoleLifecycleCase(
         validation_epochs,
         static_cast<int>(expected_epochs.size()),
         case_name + " plugin epoch-end callback");
+    // The shared split rule's counts for 6 rows at 0.5 / 0.25 / 0.25:
+    // 3 / 2 / 1 (the half row left over goes to Validation first; TOFIX228
+    // 1.6, ORA-23: the batchers' floor slicing gave 3 / 1 / 2).
     Check(final_metrics.train_sample_count == 3 &&
-              final_metrics.val_sample_count == 1 &&
-              final_metrics.test_sample_count == 2,
+              final_metrics.val_sample_count == 2 &&
+              final_metrics.test_sample_count == 1,
           case_name + " should retain resolved external role sample counts");
     Check(final_metrics.last_executed_epoch == expected_epochs.back() &&
               final_metrics.loss_history.size() == expected_epochs.size() &&
@@ -2555,9 +2836,10 @@ void CheckSharedPhaseExternalLifecycleCase(
         validation_epochs,
         static_cast<int>(expected_epochs.size()),
         case_name + " plugin epoch-end callback");
+    // One Train reset per epoch started, at its start with its seed
+    // (TOFIX228 1.6, ORA-21; it was at each epoch's end).
     Check(phase_tracking_batcher->TrainResetCount() ==
-              static_cast<int>(expected_epochs.size()) -
-                  (expected_terminal_status == "early_stopped" ? 1 : 0) &&
+              static_cast<int>(expected_epochs.size()) &&
               phase_tracking_batcher->ValResetCount() ==
                   expected_val_batches,
           case_name + " must reset once per executed semantic boundary");
@@ -2876,9 +3158,10 @@ void CheckParquetLifecycleCase(
         validation_epochs,
         static_cast<int>(expected_epochs.size()),
         case_name + " plugin epoch-end callback");
+    // The shared split rule on disk as in memory: 3 / 2 / 1 (ORA-23).
     Check(final_metrics.train_sample_count == 3 &&
-              final_metrics.val_sample_count == 1 &&
-              final_metrics.test_sample_count == 2 &&
+              final_metrics.val_sample_count == 2 &&
+              final_metrics.test_sample_count == 1 &&
               final_metrics.has_test_metrics &&
               std::isfinite(final_metrics.test_loss) &&
               final_metrics.test_accuracy >= 0.0f &&
@@ -3319,7 +3602,19 @@ void CheckPausedControlCase(
     if (!pause_requested.load() || !executor->IsPaused()) {
         executor->Stop();
         training_thread.join();
-        Check(false, label + " should reach the paused state after batch one");
+        std::string why = "after " + std::to_string(batch_callback_count.load()) + " batch callback(s)";
+        if (training_error) {
+            try {
+                std::rethrow_exception(training_error);
+            } catch (const std::exception& e) {
+                why += "; training threw: " + std::string(e.what());
+            } catch (...) {
+                why += "; training threw";
+            }
+        } else if (!executor->GetMetrics().terminal_reason.empty()) {
+            why += "; training ended: " + executor->GetMetrics().terminal_reason;
+        }
+        Check(false, label + " should reach the paused state after batch one (" + why + ")");
     }
     const auto paused_metrics = executor->GetMetrics();
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -4776,6 +5071,9 @@ int main(int argc, char** argv) {
     fs::create_directories(work_dir);
     const cyxwiz::ScopedDebugRunRootOverrideForTesting debug_root(
         work_dir / "debug_runs");
+    // The requested device when one is asked. Not pinned for every run: the
+    // route tests here set, clear and check the device selection themselves.
+    if (!cyxwiz::test::BeginOracleTest("test_training_executor_arrow_parquet")) return 1;
     cyxwiz::test::InstallQualifiedRouteSnapshot();
 
     if (argc >= 2 &&
@@ -4849,6 +5147,9 @@ int main(int argc, char** argv) {
     TestSequenceLifecycleCadence(work_dir);
     TestMetricReportingCadenceInvariance(dataset, work_dir);
     TestUnevenFinalBatchMetricAggregation(work_dir);
+    TestNonFiniteLossFailsTheRun(work_dir);
+    TestBalancedClassWeightsOnEveryPath(work_dir);
+    TestMissingValuesRefusalKeepsColumns(work_dir);
     const auto training_core_fixture = LoadTrainingCoreFixture(
         argc > 0 ? fs::path(argv[0]) : fs::path{});
     TestGradientAccumulationPyTorchParity(

@@ -54,14 +54,16 @@ void SectionHeader(const char* title, const char* subtitle) {
     ImGui::Spacing();
 }
 
-void BeginCard(const char* id) {
+void BeginCard(const char* id, bool raised) {
     const Tokens& t = CurrentTokens();
     ImGui::PushID(id);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, t.rounding_card);
     // A card is a tinted area, not an outline (owner rule 2026-10-01).
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, t.card_padding);
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
+    // Raised: halfway from the panel to the button tone (both the theme's).
+    const ImVec4 fill = raised ? Mix(t.bg_panel, t.bg_raised, 0.5f) : t.bg_panel;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, fill);
     ImGui::PushStyleColor(ImGuiCol_Border, t.border);
     // A card grows with its content and never scrolls: while it grows (a
     // fold opened, rows added) it neither flashes a scrollbar nor takes the
@@ -148,11 +150,11 @@ void KpiCard(const char* id, const char* label, const ImVec4& dot, const char* v
     ImGui::GetWindowDrawList()->AddText(font, size, ImGui::GetCursorScreenPos(), ImGui::GetColorU32(t.text), value);
     ImGui::Dummy(extent);
     if (tooltip && tooltip[0]) Tooltip(tooltip);
-    ImGui::PushTextWrapPos(0.0f);
-    if (line1 && line1[0]) ImGui::TextColored(line1_colour, "%s", line1);
-    if (line2 && line2[0]) ImGui::TextColored(line2_colour, "%s", line2);
-    if (line3 && line3[0]) ImGui::TextColored(line3_colour, "%s", line3);
-    ImGui::PopTextWrapPos();
+    // Wrapped at spaces: ImGui's own wrap also breaks after a full stop,
+    // which split "0.09s" in a narrow card.
+    if (line1 && line1[0]) TextWrapAnywhere(line1, line1_colour);
+    if (line2 && line2[0]) TextWrapAnywhere(line2, line2_colour);
+    if (line3 && line3[0]) TextWrapAnywhere(line3, line3_colour);
     EndCard();
 }
 
@@ -366,14 +368,16 @@ bool SearchField(const char* id, char* buffer, size_t size, const char* hint, fl
 // Flow row
 
 FlowRow::FlowRow(float right_edge)
-    : right(right_edge > 0.0f ? right_edge : ImGui::GetWindowContentRegionMax().x) {}
+    : right(right_edge > 0.0f ? right_edge : ImGui::GetWindowContentRegionMax().x + ImGui::GetScrollX()) {}
 
 bool FlowRow::Next(float item_width) {
     if (first) {
         first = false;
         return false;
     }
-    const float x = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetStyle().ItemSpacing.x;
+    // Content coordinates, as GetCursorPosX (a window scrolled sideways)
+    const float x = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetScrollX() +
+                    ImGui::GetStyle().ItemSpacing.x;
     if (x + item_width <= right) {
         ImGui::SameLine();
         return false;

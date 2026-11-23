@@ -235,6 +235,11 @@ std::string CopyText(const Report& r) {
     std::ostringstream out;
     out << r.title << "\n" << r.verdict << "\n";
     if (!r.subtitle.empty()) out << r.subtitle << "\n";
+    if (!r.missing_values.empty()) {
+        out << "\nMissing values\n";
+        for (const auto& card : r.missing_values)
+            for (const auto& line : card.copy_lines) out << "  " << line << "\n";
+    }
     out << "\nFindings\n";
     if (r.findings.empty()) out << "  none\n";
     for (const auto& f : r.findings) {
@@ -375,6 +380,41 @@ Report BuildReport(const Input& in) {
 
     if (in.has_config) AddConfig(r, in.config);
     r.offer_train = in.mode == Mode::Compile && r.ready;
+
+    // Missing values (the one-click fix, decision M-1): the cards replace the
+    // verdict; each open card is an error.
+    if (in.mode == Mode::TrainBlocked && !in.missing_values.empty()) {
+        r.missing_values = in.missing_values;
+        bool resolved = true;
+        size_t columns = 0, open_cards = 0;
+        for (const auto& card : r.missing_values) {
+            columns += card.open_columns;
+            r.missing_value_groups += missing_values_fix::GroupCount(card);
+            if (card.resolved) continue;
+            resolved = false;
+            ++open_cards;
+            if (card.fix_all_steps.empty())
+                r.fix_and_train_blocked = "The missing values of " + card.input_name +
+                                          " cannot be fixed with a step here: fix them in its file.";
+        }
+        r.errors += open_cards;
+        r.chips.front() = {Count(r.errors, "error", "errors"), r.errors ? Tone::Error : Tone::Neutral};
+        if (resolved) {
+            r.verdict = r.missing_values.size() == 1 ? r.missing_values.front().resolved_verdict
+                                                     : "Fixed: every input's missing values have their steps";
+            r.verdict_tone = Tone::Ok;
+            r.subtitle = r.missing_values.front().resolved_subtitle;
+            r.offer_train = r.errors == 0;
+        } else {
+            r.verdict = r.missing_values.size() == 1
+                            ? r.missing_values.front().verdict
+                            : "Training did not start: " + Count(columns, "column has", "columns have") +
+                                  " missing values";
+            r.verdict_tone = Tone::Error;
+            r.subtitle = r.missing_values.front().subtitle;
+            r.offer_fix_and_train = true;
+        }
+    }
     r.copy_text = CopyText(r);
     return r;
 }

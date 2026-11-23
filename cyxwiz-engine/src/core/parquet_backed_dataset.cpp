@@ -6,6 +6,7 @@
 #include <parquet/arrow/writer.h>
 #include <parquet/metadata.h>
 #include <parquet/properties.h>
+#include <parquet/statistics.h>
 #include <arrow/csv/api.h>
 #include <arrow/io/file.h>
 #include <arrow/io/memory.h>
@@ -93,6 +94,17 @@ std::shared_ptr<ParquetBackedDataset> ParquetBackedDataset::Open(
     }
 
     const int num_row_groups = metadata->num_row_groups();
+    // Empty cells per column from the statistics the writer stored.
+    std::vector<std::pair<std::string, int64_t>> null_counts;
+    for (int c = 0; c < metadata->num_columns(); ++c) {
+        int64_t nulls = 0;
+        for (int i = 0; i < num_row_groups && nulls >= 0; ++i) {
+            const auto chunk = metadata->RowGroup(i)->ColumnChunk(c);
+            const auto stats = chunk ? chunk->statistics() : nullptr;
+            nulls = stats && stats->HasNullCount() ? nulls + stats->null_count() : -1;
+        }
+        null_counts.emplace_back(metadata->schema()->Column(c)->name(), nulls);
+    }
     std::vector<int64_t> row_group_sizes;
     row_group_sizes.reserve(num_row_groups);
     int64_t total_rows = 0;
@@ -122,6 +134,7 @@ std::shared_ptr<ParquetBackedDataset> ParquetBackedDataset::Open(
     ds->num_rows_ = total_rows;
     ds->num_columns_ = metadata->num_columns();
     ds->row_group_sizes_ = std::move(row_group_sizes);
+    ds->null_counts_ = std::move(null_counts);
     ds->file_size_ = file_size;
     ds->uncompressed_bytes_ = uncompressed_bytes;
 
@@ -302,6 +315,12 @@ std::vector<std::string> ParquetBackedDataset::GetColumnNames() const {
         names.push_back(schema_->field(i)->name());
     }
     return names;
+}
+
+int64_t ParquetBackedDataset::NullCount(const std::string& column) const {
+    for (const auto& [name, nulls] : null_counts_)
+        if (name == column) return nulls;
+    return -1;
 }
 
 int64_t ParquetBackedDataset::GetRowGroupSize(int row_group_idx) const {

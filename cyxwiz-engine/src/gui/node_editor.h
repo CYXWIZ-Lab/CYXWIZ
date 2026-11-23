@@ -24,6 +24,7 @@ struct ImNodesEditorContext;
 
 // Forward declarations
 // Forward declare ScriptingEngine in global scripting namespace
+#include "../core/code_export.h"
 #include "../core/graph_model.h"
 #include "../core/graph_simulation_session.h"
 #include "../core/simulation_commands.h"
@@ -104,14 +105,6 @@ struct DataBoundaryMigrationResult {
 };
 
 // Graph snapshot for undo/redo
-
-// Supported code generation frameworks
-enum class CodeFramework {
-    PyTorch,
-    TensorFlow,
-    Keras,
-    PyCyxWiz
-};
 
 // Execution modes for the unified canvas (Unified Canvas Phase 2)
 enum class ExecutionMode {
@@ -391,6 +384,10 @@ public:
     // File > Save: writes the graph to its file, asking for one the first time.
     // An empty graph is nothing to save and returns true.
     bool SaveCurrentGraph();
+    // The canvas holds changes not written to its file (an empty canvas never does)
+    bool HasUnsavedGraph() const { return unsaved_ && !nodes_.empty(); }
+    // "mnist_mlp.cyxgraph", or "Untitled graph" before its first save
+    std::string GraphDisplayName() const;
     std::string GetNodeTypeDisplayName(NodeType type) const { return GetNodeTypeName(type); }
 
     // The graph simulation run: Properties reads Scope history and sends
@@ -594,7 +591,7 @@ public:
     // The generated code for a framework, synchronously and without the
     // script editor (headless export: cyxwiz-engine --export-code; TOFIX112
     // export harness). Empty with a log line when the graph cannot be sorted.
-    std::string GenerateCodeText(CodeFramework framework);
+    std::string GenerateCodeText(cyxwiz::CodeFramework framework);
 
     // Load pattern template format as graph (converts string IDs to int, resolves parameters)
     bool LoadPatternAsGraph(const nlohmann::json& j);
@@ -799,6 +796,10 @@ public:
     // The node the last RequestStepAfter / RequestBranchAfter added (-1: none
     // yet); Data Studio's Prepare picks it once it is on the canvas.
     int LastAddedStep() const { return last_added_step_; }
+    // Step inserts, replacements or moves still waiting for the next canvas frame.
+    bool HasPendingStepRequests() const {
+        return !pending_steps_after_.empty() || !pending_replacements_.empty() || !pending_step_moves_.empty();
+    }
     int ReplacedBy(int old_id) const {
         const auto it = replaced_by_.find(old_id);
         return it == replaced_by_.end() ? -1 : it->second;
@@ -1143,37 +1144,6 @@ private:
     bool SetSubgraphPreparationRecipe(int node_id, bool recipe);
     bool IsSubgraphMember(int node_id) const;
 
-    // Framework-specific generators
-    std::string GeneratePyTorchCode(const std::vector<int>& sorted_ids);
-    // PyTorch export of the optimizer node's training recipe (tofix112).
-    const MLNode* FindExportOptimizerNode() const;
-    const MLNode* FindExportSchedulerNode() const;
-    std::string PyTorchOptimizerSetup() const;
-    std::string PyTorchPenaltyLines() const;
-    std::string PyTorchStepLines() const;
-    std::string GenerateTensorFlowCode(const std::vector<int>& sorted_ids);
-    std::string GenerateKerasCode(const std::vector<int>& sorted_ids);
-    std::string GeneratePyCyxWizCode(const std::vector<int>& sorted_ids);
-    std::optional<std::string> FindDenseActivationConfigurationError(
-        const std::vector<int>& sorted_ids) const;
-    std::optional<std::string> FindUnsupportedSequentialLayerError(
-        const std::vector<int>& sorted_ids) const;
-
-    // RL-specific code generation
-    bool IsRLGraph(const std::vector<int>& sorted_ids) const;
-    std::string GenerateRLCode(const std::vector<int>& sorted_ids) const;
-
-    // Framework-specific layer conversion
-    std::string NodeTypeToPythonLayer(const MLNode& node);
-    // Output width of the layer feeding `node` (embedding dim, recurrent
-    // hidden size - doubled when bidirectional - or dense units); empty when
-    // it cannot be read from the graph (TOFIX112 export harness).
-    std::string InferredInputWidth(const MLNode& node) const;
-    std::string NodeTypeToTensorFlowLayer(const MLNode& node, int layer_idx);
-    std::string NodeTypeToKerasLayer(const MLNode& node);
-    std::string NodeTypeToPyCyxWizLayer(const MLNode& node);
-
-    std::vector<int> TopologicalSort();
     const MLNode* FindNodeById(int node_id) const;
     MLNode* FindNodeById(int node_id);  // Non-const version
 
@@ -1202,7 +1172,7 @@ private:
     bool show_context_menu_;
     int context_menu_node_id_;  // -1 if clicking on canvas
     int selected_node_id_;  // Currently selected node for properties panel (-1 = none)
-    CodeFramework selected_framework_;  // Current code generation framework
+    cyxwiz::CodeFramework selected_framework_;  // Current code generation framework
     ExecutionMode execution_mode_;      // Unified Canvas Phase 2: Current execution mode
 
     // ImNodes editor context

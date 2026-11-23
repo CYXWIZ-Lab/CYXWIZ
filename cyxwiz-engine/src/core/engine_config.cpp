@@ -168,9 +168,6 @@ void EngineConfig::SetDefaults() {
     auth_api_url_ = "http://127.0.0.1:3002/api";
     default_deployment_address_ = "localhost:50056";
     default_p2p_port_ = 50052;
-    auto_connect_on_startup_ = false;
-    connection_timeout_ = 10;
-    request_timeout_ = 30;
     system_python_path_ = "";  // Will be auto-detected on first launch
     runtime_log_saved_filters_.clear();
 }
@@ -260,11 +257,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             defaults["auth"] = {
                 {"api_url", auth_api_url_}
             };
-            defaults["connection"] = {
-                {"auto_connect", auto_connect_on_startup_},
-                {"timeout", connection_timeout_},
-                {"request_timeout", request_timeout_}
-            };
             defaults["python"] = {
                 {"system_python_path", system_python_path_},
                 {"auto_create_venv", auto_create_venv_},
@@ -273,7 +265,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             defaults["debug"] = {
                 {"require_debug_before_train", require_debug_before_train_}
             };
-            defaults["recent_projects"] = recent_projects_;
 
             json config = defaults;
 
@@ -325,11 +316,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                 template_config["auth"] = {
                     {"api_url", auth_api_url_}
                 };
-                template_config["connection"] = {
-                    {"auto_connect", auto_connect_on_startup_},
-                    {"timeout", connection_timeout_},
-                    {"request_timeout", request_timeout_}
-                };
                 template_config["python"] = {
                     {"system_python_path", system_python_path_},
                     {"auto_create_venv", auto_create_venv_},
@@ -338,7 +324,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                 template_config["debug"] = {
                     {"require_debug_before_train", require_debug_before_train_}
                 };
-                template_config["recent_projects"] = recent_projects_;
 
                 std::ofstream tmpl(template_path);
                 if (tmpl.is_open()) {
@@ -393,23 +378,16 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
-        // Connection settings
-        if (config.contains("connection")) {
-            const auto& conn = config["connection"];
-            if (conn.contains("auto_connect")) {
-                auto_connect_on_startup_ = conn["auto_connect"].get<bool>();
-            }
-            if (conn.contains("timeout")) {
-                connection_timeout_ = conn["timeout"].get<int>();
-            }
-            if (conn.contains("request_timeout")) {
-                request_timeout_ = conn["request_timeout"].get<int>();
-            }
-        }
-
         // Python settings
+        python_start_ = {};
         if (config.contains("python")) {
             const auto& python = config["python"];
+            python_start_.startup_scripts = python.value("startup_scripts", std::vector<std::string>());
+            python_start_.import_numpy = python.value("import_numpy", true);
+            python_start_.import_pycyxwiz = python.value("import_pycyxwiz", true);
+            python_start_.console_commands_kept =
+                std::clamp(python.value("console_commands_kept", 500), PythonStartConfig::kMinCommandsKept,
+                           PythonStartConfig::kMaxCommandsKept);
             if (python.contains("system_python_path")) {
                 system_python_path_ = python["system_python_path"].get<std::string>();
             }
@@ -435,6 +413,25 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
+        studio_ = StudioConfig{};
+        if (config.contains("studio") && config["studio"].is_object()) {
+            const auto& s = config["studio"];
+            studio_.auto_save_at_start = s.value("auto_save_at_start", false);
+            studio_.minimap = s.value("minimap", true);
+        }
+        training_dashboard_ = TrainingDashboardConfig{};
+        if (config.contains("training_dashboard") && config["training_dashboard"].is_object()) {
+            const auto& d = config["training_dashboard"];
+            using TD = TrainingDashboardConfig;
+            training_dashboard_.auto_scale = d.value("auto_scale", true);
+            training_dashboard_.follow_current_epoch = d.value("follow_current_epoch", false);
+            training_dashboard_.epoch_window =
+                std::clamp(d.value("epoch_window", 30), TD::kMinEpochWindow, TD::kMaxEpochWindow);
+            training_dashboard_.log_loss_axis = d.value("log_loss_axis", false);
+            training_dashboard_.smooth = d.value("smooth", false);
+            training_dashboard_.smooth_window =
+                std::clamp(d.value("smooth_window", 5), TD::kMinSmoothWindow, TD::kMaxSmoothWindow);
+        }
         training_defaults_ = TrainingDefaultsConfig{};
         if (config.contains("training_defaults") && config["training_defaults"].is_object()) {
             training_defaults_.frozen_batchnorm_keeps_statistics =
@@ -654,9 +651,33 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
-        // Recent projects
-        if (config.contains("recent_projects")) {
-            recent_projects_ = config["recent_projects"].get<std::vector<std::string>>();
+        // The Script Editor
+        editor_ = {};
+        if (config.contains("editor") && config["editor"].is_object()) {
+            const auto& e = config["editor"];
+            const int tab = e.value("tab_size", 4);
+            editor_.tab_size = tab == 2 || tab == 8 ? tab : 4;
+            editor_.show_whitespace = e.value("show_whitespace", true);
+            editor_.syntax_colours = e.value("syntax_colours", true);
+            editor_.minimap = e.value("minimap", true);
+            editor_.word_wrap = e.value("word_wrap", false);
+            editor_.auto_indent = e.value("auto_indent", true);
+            const std::string eol = e.value("new_file_line_endings", std::string("system"));
+            editor_.new_file_line_endings = eol == "lf" ? 1 : eol == "crlf" ? 2 : 0;
+            editor_.trim_trailing_whitespace = e.value("trim_trailing_whitespace", false);
+            editor_.final_newline = e.value("final_newline", true);
+        }
+
+        // General: how the Engine starts and closes
+        start_with_last_project_ = false;
+        recent_projects_kept_ = kDefaultRecentProjects;
+        ask_before_closing_always_ = false;
+        if (config.contains("general") && config["general"].is_object()) {
+            const auto& general = config["general"];
+            start_with_last_project_ = general.value("start", std::string("start_page")) == "last_project";
+            recent_projects_kept_ =
+                std::clamp(general.value("recent_projects", kDefaultRecentProjects), kMinRecentProjects, kMaxRecentProjects);
+            ask_before_closing_always_ = general.value("ask_before_closing", std::string("when_lost")) == "always";
         }
 
         config_path_ = config_path;
@@ -731,18 +752,15 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"api_url", auth_api_url_}
         };
 
-        // Connection settings
-        config["connection"] = {
-            {"auto_connect", auto_connect_on_startup_},
-            {"timeout", connection_timeout_},
-            {"request_timeout", request_timeout_}
-        };
-
         // Python settings
         config["python"] = {
             {"system_python_path", system_python_path_},
             {"auto_create_venv", auto_create_venv_},
-            {"default_venv_packages", default_venv_packages_}
+            {"default_venv_packages", default_venv_packages_},
+            {"startup_scripts", python_start_.startup_scripts},
+            {"import_numpy", python_start_.import_numpy},
+            {"import_pycyxwiz", python_start_.import_pycyxwiz},
+            {"console_commands_kept", python_start_.console_commands_kept}
         };
 
         // Local Debug settings
@@ -777,6 +795,13 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
         config["training_defaults"] = {
             {"frozen_batchnorm_keeps_statistics", training_defaults_.frozen_batchnorm_keeps_statistics}
         };
+        config["studio"] = {{"auto_save_at_start", studio_.auto_save_at_start}, {"minimap", studio_.minimap}};
+        config["training_dashboard"] = {{"auto_scale", training_dashboard_.auto_scale},
+                                        {"follow_current_epoch", training_dashboard_.follow_current_epoch},
+                                        {"epoch_window", training_dashboard_.epoch_window},
+                                        {"log_loss_axis", training_dashboard_.log_loss_axis},
+                                        {"smooth", training_dashboard_.smooth},
+                                        {"smooth_window", training_dashboard_.smooth_window}};
 
         config["studio_debugger"] = {
             {"capture_when", studio_debugger_.capture_when == LayerCaptureWhen::LocalDebug ? "local_debug"
@@ -863,8 +888,20 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"train_best", architecture_search_defaults_.train_best}
         };
 
-        // Recent projects
-        config["recent_projects"] = recent_projects_;
+        config["editor"] = {{"tab_size", editor_.tab_size},
+                            {"show_whitespace", editor_.show_whitespace},
+                            {"syntax_colours", editor_.syntax_colours},
+                            {"minimap", editor_.minimap},
+                            {"word_wrap", editor_.word_wrap},
+                            {"auto_indent", editor_.auto_indent},
+                            {"new_file_line_endings", editor_.new_file_line_endings == 1   ? "lf"
+                                                      : editor_.new_file_line_endings == 2 ? "crlf"
+                                                                                           : "system"},
+                            {"trim_trailing_whitespace", editor_.trim_trailing_whitespace},
+                            {"final_newline", editor_.final_newline}};
+        config["general"] = {{"start", start_with_last_project_ ? "last_project" : "start_page"},
+                             {"recent_projects", recent_projects_kept_},
+                             {"ask_before_closing", ask_before_closing_always_ ? "always" : "when_lost"}};
 
         std::ofstream file(config_path);
         if (!file.is_open()) {
@@ -1012,46 +1049,6 @@ void EngineConfig::SetDefaultDeploymentAddress(const std::string& address) {
     }
 }
 
-
-bool EngineConfig::AutoConnectOnStartup() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return auto_connect_on_startup_;
-}
-
-void EngineConfig::SetAutoConnectOnStartup(bool auto_connect) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (auto_connect_on_startup_ != auto_connect) {
-        auto_connect_on_startup_ = auto_connect;
-        modified_ = true;
-    }
-}
-
-int EngineConfig::GetConnectionTimeout() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return connection_timeout_;
-}
-
-void EngineConfig::SetConnectionTimeout(int seconds) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (connection_timeout_ != seconds) {
-        connection_timeout_ = seconds;
-        modified_ = true;
-    }
-}
-
-int EngineConfig::GetRequestTimeout() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return request_timeout_;
-}
-
-void EngineConfig::SetRequestTimeout(int seconds) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (request_timeout_ != seconds) {
-        request_timeout_ = seconds;
-        modified_ = true;
-    }
-}
-
 int EngineConfig::GetDefaultP2PPort() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return default_p2p_port_;
@@ -1064,7 +1061,6 @@ void EngineConfig::SetDefaultP2PPort(int port) {
         modified_ = true;
     }
 }
-
 
 // ===== Python Settings =====
 
@@ -1199,6 +1195,36 @@ void EngineConfig::SetStudioDebugger(const StudioDebuggerConfig& studio_debugger
     std::lock_guard<std::mutex> lock(mutex_);
     if (!(studio_debugger_ == value)) {
         studio_debugger_ = value;
+        modified_ = true;
+    }
+}
+
+StudioConfig EngineConfig::GetStudio() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return studio_;
+}
+
+void EngineConfig::SetStudio(const StudioConfig& studio) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(studio_ == studio)) {
+        studio_ = studio;
+        modified_ = true;
+    }
+}
+
+TrainingDashboardConfig EngineConfig::GetTrainingDashboard() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return training_dashboard_;
+}
+
+void EngineConfig::SetTrainingDashboard(const TrainingDashboardConfig& dashboard) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    using TD = TrainingDashboardConfig;
+    TD d = dashboard;
+    d.epoch_window = std::clamp(d.epoch_window, TD::kMinEpochWindow, TD::kMaxEpochWindow);
+    d.smooth_window = std::clamp(d.smooth_window, TD::kMinSmoothWindow, TD::kMaxSmoothWindow);
+    if (!(training_dashboard_ == d)) {
+        training_dashboard_ = d;
         modified_ = true;
     }
 }
@@ -1475,29 +1501,76 @@ void EngineConfig::SetRuntimeLogSavedFilters(
     }
 }
 
-std::vector<std::string> EngineConfig::GetRecentProjects() const {
+PythonStartConfig EngineConfig::GetPythonStart() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return recent_projects_;
+    return python_start_;
 }
 
-void EngineConfig::AddRecentProject(const std::string& project_path) {
+void EngineConfig::SetPythonStart(const PythonStartConfig& start) {
     std::lock_guard<std::mutex> lock(mutex_);
-
-    // Remove if already exists
-    auto it = std::find(recent_projects_.begin(), recent_projects_.end(), project_path);
-    if (it != recent_projects_.end()) {
-        recent_projects_.erase(it);
+    PythonStartConfig s = start;
+    s.console_commands_kept = std::clamp(s.console_commands_kept, PythonStartConfig::kMinCommandsKept,
+                                         PythonStartConfig::kMaxCommandsKept);
+    if (!(python_start_ == s)) {
+        python_start_ = s;
+        modified_ = true;
     }
+}
 
-    // Add to front
-    recent_projects_.insert(recent_projects_.begin(), project_path);
+EditorConfig EngineConfig::GetEditor() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return editor_;
+}
 
-    // Limit to 10 recent projects
-    if (recent_projects_.size() > 10) {
-        recent_projects_.resize(10);
+void EngineConfig::SetEditor(const EditorConfig& editor) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    EditorConfig e = editor;
+    if (e.tab_size != 2 && e.tab_size != 8) e.tab_size = 4;
+    e.new_file_line_endings = std::clamp(e.new_file_line_endings, 0, 2);
+    if (!(editor_ == e)) {
+        editor_ = e;
+        modified_ = true;
     }
+}
 
-    modified_ = true;
+bool EngineConfig::StartWithLastProject() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return start_with_last_project_;
+}
+
+void EngineConfig::SetStartWithLastProject(bool last_project) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (start_with_last_project_ != last_project) {
+        start_with_last_project_ = last_project;
+        modified_ = true;
+    }
+}
+
+int EngineConfig::RecentProjectsKept() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return recent_projects_kept_;
+}
+
+void EngineConfig::SetRecentProjectsKept(int kept) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    kept = std::clamp(kept, kMinRecentProjects, kMaxRecentProjects);
+    if (recent_projects_kept_ != kept) {
+        recent_projects_kept_ = kept;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::AskBeforeClosingAlways() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return ask_before_closing_always_;
+}
+
+void EngineConfig::SetAskBeforeClosingAlways(bool always) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (ask_before_closing_always_ != always) {
+        ask_before_closing_always_ = always;
+        modified_ = true;
+    }
 }
 
 } // namespace cyxwiz::core

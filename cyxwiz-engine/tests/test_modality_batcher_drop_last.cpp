@@ -1,3 +1,4 @@
+#include "oracle/oracle_test.h"
 #include "../src/core/audio_dataset_batcher.h"
 #include "../src/core/image_dataset_batcher.h"
 #include "../src/core/image_utils.h"
@@ -391,6 +392,86 @@ void TestGrayscaleImages(const fs::path& root) {
           "a 16-bit grayscale pixel 32768 reads as 0.5 in R, G, B");
 }
 
+// Clips that cannot be read are never trained on (TOFIX223 0.12): a folder
+// where no clip decodes is refused with the reason, and a corrupt clip among
+// good ones is left out of its batch instead of entering it as zeros with its
+// label.
+void TestAudioUnreadableClips(const fs::path& root) {
+    const auto write_corrupt = [](const fs::path& path) {
+        fs::create_directories(path.parent_path());
+        std::ofstream out(path, std::ios::binary);
+        out << "RIFF this is not a wave file at all";
+    };
+    cyxwiz::AudioPreprocessingConfig preprocessing;
+    preprocessing.has_feature_node = true;
+    preprocessing.feature_type = cyxwiz::AudioFeatureType::Spectrogram;
+    preprocessing.n_fft = 16;
+    preprocessing.hop_length = 8;
+    const cyxwiz::SampleSplitSettings all_train{1.0f, 0.0f, 0.0f, false, 23};
+
+    const auto none_root = root / "audio_unreadable";
+    write_corrupt(none_root / "class_a" / "a0.wav");
+    write_corrupt(none_root / "class_b" / "b0.wav");
+    cyxwiz::DataRegistry::AudioDatasetEntry none;
+    none.folder_path = none_root.string();
+    none.labeled_subdirs = true;
+    none.target_sr = 8000;
+    none.max_duration = 0.016f;
+    none.num_classes = 2;
+    cyxwiz::AudioDatasetBatcher refused(none, preprocessing, 2, all_train, false, 0, 19);
+    Check(refused.GetNumSamples() == 0 && refused.LoadError().find("could be read") != std::string::npos,
+          "a folder where no clip decodes is refused with the reason (got " +
+              std::to_string(refused.GetNumSamples()) + " samples, '" + refused.LoadError() + "')");
+
+    const auto mixed_root = root / "audio_mixed";
+    WriteMonoWav16(mixed_root / "class_a" / "a0.wav", MakeWave(0), 8000);
+    WriteMonoWav16(mixed_root / "class_a" / "a1.wav", MakeWave(1), 8000);
+    write_corrupt(mixed_root / "class_b" / "b0.wav");
+    WriteMonoWav16(mixed_root / "class_b" / "b1.wav", MakeWave(3), 8000);
+    cyxwiz::DataRegistry::AudioDatasetEntry mixed;
+    mixed.folder_path = mixed_root.string();
+    mixed.labeled_subdirs = true;
+    mixed.target_sr = 8000;
+    mixed.max_duration = 0.016f;
+    mixed.num_classes = 2;
+    for (const int workers : {0, 2}) {
+        cyxwiz::AudioDatasetBatcher batcher(mixed, preprocessing, 4, all_train, false, workers, 19);
+        batcher.SetOneHotEncoding(2);
+        batcher.Reset();
+        const auto batch = batcher.GetNextBatch();
+        bool corrupt_used = false;
+        for (const int64_t row : batch.row_ids)
+            corrupt_used = corrupt_used || batcher.SourceSampleName(static_cast<size_t>(row)) == "b0.wav";
+        Check(batch.size == 3 && batch.row_ids.size() == 3 && !corrupt_used,
+              "workers " + std::to_string(workers) + ": the corrupt clip is left out of the batch (size " +
+                  std::to_string(batch.size) + ")");
+        Check(batch.labels.Shape() == std::vector<size_t>({3, 2}) && batch.data.Shape().front() == 3,
+              "workers " + std::to_string(workers) + ": data and labels hold the three readable clips");
+    }
+
+    // Items by number (Local Debug, layer snapshots) come back all or not at
+    // all: a batch without the corrupt clip would show the next clips under
+    // the names asked for.
+    cyxwiz::AudioDatasetBatcher by_number(mixed, preprocessing, 4, all_train, false, 0, 19);
+    size_t corrupt = by_number.SourceSampleCount();
+    for (size_t i = 0; i < by_number.SourceSampleCount(); ++i)
+        if (by_number.SourceSampleName(i) == "b0.wav") corrupt = i;
+    Check(corrupt < by_number.SourceSampleCount(), "the corrupt clip has a number");
+    std::vector<size_t> all;
+    for (size_t i = 0; i < by_number.SourceSampleCount(); ++i) all.push_back(i);
+    std::string refusal;
+    try {
+        (void)by_number.GetSourceSamples(all);
+    } catch (const std::exception& e) {
+        refusal = e.what();
+    }
+    Check(refusal.find("b0.wav") != std::string::npos,
+          "items by number that include an unreadable clip are refused, naming it (got '" + refusal + "')");
+    const size_t good = corrupt == 0 ? 1 : 0;
+    const auto one = by_number.GetSourceSamples({good});
+    Check(one && one->size == 1, "a readable clip by number still comes back");
+}
+
 void TestAudioBatcher(const fs::path& root) {
     const auto audio_root = root / "audio";
     WriteMonoWav16(audio_root / "class_a" / "a0.wav", MakeWave(0), 8000);
@@ -501,6 +582,7 @@ void TestAudioBatcher(const fs::path& root) {
 } // namespace
 
 int main() {
+    if (!cyxwiz::test::BeginOracleTest("test_modality_batcher_drop_last")) return 1;
     const auto root = fs::temp_directory_path() /
         "cyxwiz_modality_batcher_drop_last";
     fs::remove_all(root);
@@ -510,6 +592,7 @@ int main() {
     TestImageThreeParts(root);
     TestGrayscaleImages(root);
     TestAudioBatcher(root);
+    TestAudioUnreadableClips(root);
 
     fs::remove_all(root);
     std::cout << "Image/audio batch-boundary and seed contracts passed\n";

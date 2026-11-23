@@ -1,3 +1,4 @@
+#include "../oracle/oracle_test.h"
 #include <cyxwiz/layers/attention.h>
 #include <cyxwiz/layers/transformer.h>
 #include <cyxwiz/sequential.h>
@@ -204,12 +205,14 @@ json MemoryCase(bool pre) {
 } // namespace
 int main(int argc,char**argv) {
     try {
+        cyxwiz::test::PrintOracleHeader("test_transformer_dropout");
         Check(argc==3,"Usage: test_transformer_dropout cpu|cuda|opencl output.json");
         std::string backend=argv[1];
         Check(backend=="cpu"||backend=="cuda"||backend=="opencl","backend");
         auto activation=cyxwiz::Device(backend=="cpu"?cyxwiz::DeviceType::CPU:
             backend=="cuda"?cyxwiz::DeviceType::CUDA:cyxwiz::DeviceType::OPENCL,0).ActivateExact(true);
         Check(activation.success && activation.execution_validated,activation.message);
+        std::printf("device: %s %d\n",backend.c_str(),activation.effective_device_id);
         auto policy=cyxwiz::ExecutionPolicy::Strict;
         auto context=cyxwiz::CaptureCurrentExecutionDeviceContext(policy);
         cyxwiz::ScopedActiveExecutionDeviceContext active;

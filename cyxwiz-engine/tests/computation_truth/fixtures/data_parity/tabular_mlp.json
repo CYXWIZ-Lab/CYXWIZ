@@ -1,0 +1,17 @@
+{
+  "batch_size": 8,
+  "dataloader_seed": 11,
+  "epochs": 2,
+  "model": "tabular_mlp",
+  "modules": [
+    {
+      "module": "layer0",
+      "node": "Hidden"
+    },
+    {
+      "module": "layer1",
+      "node": "Head"
+    }
+  ],
+  "split_seed": 7
+}

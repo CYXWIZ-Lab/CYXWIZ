@@ -1,5 +1,7 @@
 #include "image_dataset_batcher.h"
+#include "batch_uploads.h"
 #include "device_data_budget.h"
+#include "class_label_range.h"
 #include "cyxwiz/portable_random.h"
 #include <arrayfire.h>
 #include <spdlog/spdlog.h>
@@ -16,6 +18,9 @@
 namespace cyxwiz {
 
 namespace {
+
+// The copy budget's name for this batcher's uploads (batch_uploads.h).
+constexpr const char* kUploader = "ImageDatasetBatcher";
 
 // The images the split is made over: every one except `excluded` (a
 // Quality node's rejects and the images the index found unreadable, as the
@@ -122,6 +127,8 @@ Tensor ImageDatasetBatcher::GatherRows(const size_t* indices, size_t n) {
                 resident->images = af::array(static_cast<dim_t>(row_bytes),
                                              static_cast<dim_t>(images_->Count()), images_->Row(0));
                 resident->images.eval();
+                RecordBatchUpload(kUploader, "images", BatchUploadReason::Resident, {images_->Count(), row_bytes},
+                                  DataType::UInt8);
                 resident_ = std::move(resident);
                 resident_on_ = true;
                 spdlog::info("ImageDatasetBatcher: {} images ({:.1f} MB) on the device for the run",
@@ -141,11 +148,13 @@ Tensor ImageDatasetBatcher::GatherRows(const size_t* indices, size_t n) {
     if (resident_on_) {
         std::vector<int32_t> ids(n);
         for (size_t i = 0; i < n; ++i) ids[i] = static_cast<int32_t>(indices[i]);
+        RecordBatchUpload(kUploader, "row positions", BatchUploadReason::Index, {n}, DataType::Int32);
         rows = af::lookup(resident_->images, af::array(static_cast<dim_t>(n), ids.data()), 1);
     } else {
         std::vector<uint8_t> host(n * row_bytes);
         for (size_t i = 0; i < n; ++i) std::memcpy(host.data() + i * row_bytes, images_->Row(indices[i]), row_bytes);
         rows = af::array(static_cast<dim_t>(row_bytes), static_cast<dim_t>(n), host.data());
+        RecordBatchUpload(kUploader, "images", BatchUploadReason::Batch, {n, row_bytes}, DataType::UInt8);
     }
     // One column per image is the row-major [n, H * W * 3] order.
     return Tensor::FromRowMajorFlatArray(af::flat(rows.as(f32) / 255.0f), {n, row_bytes});
@@ -175,6 +184,15 @@ std::optional<Batch> ImageDatasetBatcher::GetSourceSamples(const std::vector<siz
     return AssembleBatch(indices.data(), indices.size(), /*train=*/false);
 }
 
+std::optional<std::vector<size_t>> ImageDatasetBatcher::TrainClassCounts() const {
+    if (!images_) return std::nullopt;
+    const auto& labels = images_->Labels();
+    std::vector<size_t> counts;
+    for (const size_t index : Part(BatcherPhase::Train))
+        if (index < labels.size()) CountClass(counts, labels[index]);
+    return counts;
+}
+
 std::optional<BatcherPhase> ImageDatasetBatcher::SourceSamplePart(size_t index) const {
     for (BatcherPhase phase : {BatcherPhase::Train, BatcherPhase::Val, BatcherPhase::Test}) {
         const auto& part = Part(phase);
@@ -197,18 +215,18 @@ Batch ImageDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_si
     for (size_t i = 0; i < actual_size; ++i) {
         const int label = images_->Labels()[indices[i]];
         if (onehot) {
-            if (label >= 0 && static_cast<size_t>(label) < num_classes_)
-                batch_labels[i * num_classes_ + static_cast<size_t>(label)] = 1.0f;
+            CheckClassLabelInWidth("ImageDatasetBatcher", label, num_classes_);
+            batch_labels[i * num_classes_ + static_cast<size_t>(label)] = 1.0f;
         } else {
             batch_labels[i] = static_cast<float>(label);
         }
     }
     if (onehot) {
-        batch.labels = Tensor({actual_size, num_classes_}, batch_labels.data(), DataType::Float32);
+        batch.labels = HostBatchTensor(kUploader, "labels", {actual_size, num_classes_}, batch_labels.data());
     } else if (scalar_label_mode_) {
-        batch.labels = Tensor({actual_size, 1}, batch_labels.data(), DataType::Float32);
+        batch.labels = HostBatchTensor(kUploader, "labels", {actual_size, 1}, batch_labels.data());
     } else {
-        batch.labels = Tensor({actual_size}, batch_labels.data(), DataType::Float32);
+        batch.labels = HostBatchTensor(kUploader, "labels", {actual_size}, batch_labels.data());
     }
 
     // The transforms, the batch mix (one-hot labels mixed alongside) and
@@ -231,6 +249,11 @@ Batch ImageDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_si
 void ImageDatasetBatcher::Reset() {
     // The current phase's part; only train batches are shuffled.
     epoch_order_ = Part(current_phase_);
+    if (current_phase_ == BatcherPhase::Train && pending_epoch_seed_) {
+        rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_));
+        augmentation_rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_ ^ 0x9E3779B97F4A7C15ull));
+        pending_epoch_seed_.reset();
+    }
     if (current_phase_ == BatcherPhase::Train && shuffle_) cyxwiz::portable::Shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
     current_idx_ = 0;
 }

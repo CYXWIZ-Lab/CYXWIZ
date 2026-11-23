@@ -15,28 +15,6 @@
 namespace cyxwiz {
 
 /**
- * Editor settings stored in project file
- */
-struct EditorSettings {
-    // Script Editor settings
-    float font_scale = 1.3f; // 1.0=Small 14px, 1.3=Medium 16px, 1.6=Large 20px, 2.0=Extra Large 24px
-    int tab_size = 4;        // 2, 4, or 8
-    bool show_whitespace = true;
-    bool syntax_highlighting = true;
-    bool word_wrap = false;
-    bool show_line_numbers = true;
-    bool auto_indent = true;
-
-    // Application-wide settings
-    int app_theme = 0;       // 0=CyxWizDark, 1=CyxWizLight, 2=VSCodeDark, 3=UnrealEngine, 4=ModernDark, 5=HighContrast
-    float ui_scale = 1.0f;   // Global UI scale (0.8 to 2.0)
-
-    // JSON serialization
-    static EditorSettings FromJson(const nlohmann::json& j);
-    nlohmann::json ToJson() const;
-};
-
-/**
  * Project configuration stored in .cyxwiz files
  */
 struct ProjectConfig {
@@ -44,16 +22,16 @@ struct ProjectConfig {
     std::string version;
     std::time_t created;
     std::string description;
-    std::vector<std::string> recent_files;
     // Filter definitions (custom filters can be added)
     std::map<std::string, std::vector<std::string>> filters; // filter_name -> extensions
 
-    // Editor/UI settings
-    EditorSettings editor_settings;
 
     // Open files in Script Editor (to restore on project load)
     std::vector<std::string> open_scripts;
     int active_script_index = 0;
+    // The graph open on the canvas when the project was last saved or closed
+    // (core/project_session StoredGraph: relative inside the project)
+    std::string open_graph;
 
     // JSON serialization
     static ProjectConfig FromJson(const nlohmann::json& j);
@@ -163,7 +141,9 @@ public:
     void ClearRecentProjects();
     // Start page > Actions > Remove from this list. The project itself is untouched.
     void RemoveRecentProject(const std::string& path);
-    static constexpr size_t MAX_RECENT_PROJECTS = 10;
+    // How many recent projects are kept (Preferences > General); a smaller
+    // limit trims the list at once
+    void SetRecentProjectsLimit(size_t limit);
 
 private:
     ProjectManager();
@@ -193,6 +173,7 @@ private:
 
     // Recent projects
     std::vector<RecentProject> recent_projects_;
+    size_t recent_limit_ = 10;
 
     // Callbacks
     ProjectCallback on_opened_;

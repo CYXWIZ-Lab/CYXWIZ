@@ -1,0 +1,27 @@
+{
+  "batch_size": 8,
+  "classes": 4,
+  "image_rows": false,
+  "input_shape": [
+    8
+  ],
+  "model": "bilstm_tagger",
+  "modules": [
+    {
+      "module": "layer0",
+      "node": "Tokens"
+    },
+    {
+      "module": "layer1",
+      "node": "Recurrent"
+    },
+    {
+      "module": "layer2",
+      "node": "Tags"
+    }
+  ],
+  "rows": 40,
+  "summary": "Embedding 20 x 6, bidirectional LSTM 5 (every step), Dense 4 per token; token cross-entropy (padding ignored); Adam clip",
+  "task": "token_classification",
+  "token_ids": 20
+}

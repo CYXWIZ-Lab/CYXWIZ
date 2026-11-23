@@ -1,7 +1,7 @@
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_metadata_registry.h"
 #include "../src/core/data_convert_formats.h"
-#include "../src/gui/activation_codegen_contract.h"
+#include "../src/core/activation_codegen_contract.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/core/simulation_runtime_capabilities.h"
 #include "../src/gui/node_import_guardrails.h"

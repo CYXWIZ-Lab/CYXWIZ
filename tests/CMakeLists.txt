@@ -37,6 +37,7 @@ add_executable(cyxwiz-tests
     unit/test_arrayfire_backend_utils.cpp
     unit/test_arrayfire_backend_smoke.cpp
     unit/test_loss.cpp
+    unit/test_audio_fftw_threads.cpp
     unit/test_model_evaluation.cpp
     unit/test_device.cpp
     unit/test_loaded_library.cpp
@@ -290,7 +291,9 @@ include(CTest)
 # Register the core suite as one process. Per-case Catch2 discovery made CTest
 # restart ArrayFire and hardware detection hundreds of times, turning an
 # 18-second suite into an impractical validation command.
-add_test(NAME CyxWizCoreTests COMMAND cyxwiz-tests "~[oneapi]")
+# From the source root: the source-scan cases open repository files by their
+# relative path (ORA-10; they failed when ctest ran them from the build folder).
+add_test(NAME CyxWizCoreTests COMMAND cyxwiz-tests "~[oneapi]" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 add_test(NAME ModelBuilderUpsamplingContracts COMMAND test_model_builder_upsampling)
 
 # ONNX Export Tests (conditional on ONNX export support)

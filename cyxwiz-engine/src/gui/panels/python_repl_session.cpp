@@ -25,7 +25,6 @@ namespace cyxwiz {
 
 namespace {
 
-constexpr size_t kMaxEntries = 500;
 constexpr size_t kMaxFieldBytes = 256 * 1024;
 constexpr size_t kMaxHistory = 100;
 constexpr const char *kInputLabel = "##repl_input";
@@ -1330,8 +1329,11 @@ void PythonReplSession::Submit() {
 
 PythonReplSession::Entry &PythonReplSession::AddEntry(Entry entry) {
   entries_.push_back(std::move(entry));
-  if (entries_.size() > kMaxEntries) {
-    const int drop = static_cast<int>(entries_.size() - kMaxEntries);
+  // Preferences > Python > Commands kept
+  const size_t kept = static_cast<size_t>(
+      cyxwiz::core::EngineConfig::Instance().GetPythonStart().console_commands_kept);
+  if (entries_.size() > kept) {
+    const int drop = static_cast<int>(entries_.size() - kept);
     entries_.erase(entries_.begin(), entries_.begin() + drop);
     running_entry_ = running_entry_ >= drop ? running_entry_ - drop : -1;
     selected_entry_ = selected_entry_ >= drop ? selected_entry_ - drop : -1;

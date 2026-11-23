@@ -55,6 +55,6 @@ input); its Key / Value pins stay unused.
 - Code export (PyTorch / TensorFlow / Keras / PyCyxWiz) does not support Cross
   Attention yet and says so; train it in Studio.
 - No attention mask yet: every Query position sees every Key position.
-- Checked against PyTorch: `cross_attention_graph_pytorch_parity` (forward,
+- Checked against PyTorch: `oracle_cross_attention_graph_training_cpu` (forward,
   input gradient and every parameter gradient, Key = Value from one branch and
   from separate branches).

@@ -1,6 +1,7 @@
 #include "debug_loss_metric_explainer.h"
 
 #include "classification_decision.h"
+#include "loss_node_types.h"
 
 #include <algorithm>
 #include <optional>
@@ -17,29 +18,6 @@ const char* ReductionName(Reduction reduction) {
         case Reduction::Sum: return "sum";
     }
     return "mean";
-}
-
-bool IsLossNode(gui::NodeType type) {
-    switch (type) {
-        case gui::NodeType::MSELoss:
-        case gui::NodeType::CrossEntropyLoss:
-        case gui::NodeType::BCELoss:
-        case gui::NodeType::BCEWithLogits:
-        case gui::NodeType::L1Loss:
-        case gui::NodeType::SmoothL1Loss:
-        case gui::NodeType::HuberLoss:
-        case gui::NodeType::NLLLoss:
-        case gui::NodeType::FocalLoss:
-        case gui::NodeType::SoftDiceLoss:
-        case gui::NodeType::TverskyLoss:
-        case gui::NodeType::JaccardLoss:
-        case gui::NodeType::ContrastiveLoss:
-        case gui::NodeType::CosineEmbeddingLoss:
-        case gui::NodeType::TripletLoss:
-            return true;
-        default:
-            return false;
-    }
 }
 
 bool IsMetricNode(gui::NodeType type) {
@@ -376,7 +354,7 @@ DebugTraceRecord DebugLossMetricExplainer::BuildTrace(
     size_t total_rows = 2;
 
     for (const auto& node : nodes) {
-        if (IsLossNode(node.type) && node.id != config.loss_node_id) {
+        if (IsBuiltInLossNodeType(node.type) && node.id != config.loss_node_id) {
             ++total_rows;
             if (rows.size() < kMaxRows) {
                 rows.push_back(ConfiguredNodeRow(node, "loss", false));

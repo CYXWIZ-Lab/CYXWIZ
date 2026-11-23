@@ -5,7 +5,7 @@
 // fixtures/dimensionality_reduction_pytorch.json
 // (generate_dimensionality_reduction_fixtures.py). Runs on the active ArrayFire
 // backend (CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu).
-#include "test_device_selection.h"
+#include "../oracle/oracle_test.h"
 
 #include <cyxwiz/clustering.h>
 #include <cyxwiz/dimensionality_reduction.h>
@@ -144,7 +144,7 @@ void RunCase(const json& c, const std::string& name) {
 }  // namespace
 
 int main(int, char** argv) {
-    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
+    Check(cyxwiz::test::BeginOracleTest("test_computation_truth_dimensionality_reduction"), "requested test device");
     std::ifstream in(FixturePath(argv[0]));
     Check(static_cast<bool>(in), "cannot open the dimensionality reduction fixture");
     const json fixture = json::parse(in);

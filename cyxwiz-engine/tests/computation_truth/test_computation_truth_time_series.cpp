@@ -6,7 +6,7 @@
 // intervals; and the rules of our own (seasonality detection, the suggested
 // differencing, the seasonal naive baseline, refusals).
 
-#include "test_device_selection.h"
+#include "../oracle/oracle_test.h"
 
 #include <cyxwiz/time_series.h>
 
@@ -205,7 +205,7 @@ void CheckArima(const std::string& name, const std::vector<double>& y, const jso
 }  // namespace
 
 int main() {
-    if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) return 1;
+    if (!cyxwiz::test::BeginOracleTest("test_computation_truth_time_series")) return 1;
     std::ifstream in(CYXWIZ_TIME_SERIES_FIXTURE);
     Check(in.good(), std::string("cannot open ") + CYXWIZ_TIME_SERIES_FIXTURE);
     const json f = json::parse(in);

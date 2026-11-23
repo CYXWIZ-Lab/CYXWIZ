@@ -59,9 +59,6 @@ bool ThemeCard(::gui::ThemePreset preset, bool selected, float width) {
         dl->AddText(ImVec2(max.x - 8.0f - mark_w, sw_max.y + 6.0f),
                     ImGui::GetColorU32(palette.accent_text), mark);
         dl->AddRect(pos, max, ImGui::GetColorU32(palette.accent), 8.0f, 0, 2.0f);
-    } else {
-        dl->AddRect(pos, max, ImGui::GetColorU32(hovered ? palette.border : palette.inner_border),
-                    8.0f);
     }
     if (hovered) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -184,10 +181,15 @@ void ToolbarPanel::RenderAppearancePreferences() {
     const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - editor_w;
     if (right > ImGui::GetCursorPosX())
         ImGui::SetCursorPosX(right);
+    else
+        ImGui::NewLine();  // no room on the title's line: the link goes under it
     // The Theme Editor is a window of the Engine; Preferences is modal and kept
-    // it behind and out of reach. Close Preferences as OK does, then open it.
-    if (ui::LinkButton(editor_label) && open_theme_editor_callback_ && CommitPreferences())
+    // it behind and out of reach. Close Preferences (everything is saved), then open it.
+    if (ui::LinkButton(editor_label) && open_theme_editor_callback_) {
+        show_preferences_dialog_ = false;
+        ImGui::CloseCurrentPopup();
         open_theme_editor_callback_();
+    }
     ImGui::Spacing();
     RenderThemeGrid();
 
@@ -232,7 +234,6 @@ void ToolbarPanel::RenderAppearancePreferences() {
             if (ui::SegmentedControl("code_text", labels.data(), static_cast<int>(labels.size()),
                                      &index)) {
                 ::gui::SetCodeTextScale(cyxwiz::appearance::kCodeTextSizes[index].scale);
-                editor_font_size_ = cyxwiz::appearance::kCodeTextSizes[index].pixels;
             }
             ImGui::TextDisabled("Script Editor, Python REPL, Logs, Commands and terminals");
         }
@@ -291,12 +292,6 @@ void ToolbarPanel::RenderAppearancePreferences() {
         ImGui::EndTable();
     }
 
-    ImGui::Spacing();
-    if (ui::LinkButton("Reset appearance to defaults"))
-        ::gui::ResetAppearance();
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("CyxWiz Dark, 15 px interface text, 16 px code text, sidebar on the right, "
-                          "Font Awesome node icons");
     ImGui::EndChild();
 
     if (side_by_side)

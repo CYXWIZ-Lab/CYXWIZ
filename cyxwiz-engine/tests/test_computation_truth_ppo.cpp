@@ -8,7 +8,7 @@
 #include <cyxwiz/rl/ppo.h>
 #include <cyxwiz/tensor.h>
 
-#include "computation_truth/test_device_selection.h"
+#include "oracle/oracle_test.h"
 #include "algorithms/arrayfire_backend_utils.h"
 
 #include <nlohmann/json.hpp>
@@ -237,7 +237,7 @@ void CheckErrors() {
 
 int main(int, char** argv) {
     // The device CYXWIZ_TEST_ARRAYFIRE_BACKEND names: on CUDA the NVIDIA provider's PPO kernels
-    if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) return EXIT_FAILURE;
+    if (!cyxwiz::test::BeginOracleTest("test_computation_truth_ppo")) return EXIT_FAILURE;
     std::ifstream in(FixturePath(argv[0]));
     Check(in.good(), "ppo_pytorch.json is readable");
     if (!in.good()) return EXIT_FAILURE;

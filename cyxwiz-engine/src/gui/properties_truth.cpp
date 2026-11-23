@@ -1207,11 +1207,9 @@ void AddLossTruth(NodeTruthReport& report, const MLNode& node) {
             false,
             false);
         if (class_weight.effective_value == "balanced") {
-            class_weight.statuses.clear();
-            AddStatus(class_weight, TruthStatus::Unsupported);
             class_weight.message =
-                "class_weight=balanced is not resolved before loss construction; "
-                "training falls back to unweighted CrossEntropy.";
+                "Computed when training starts from the Train part's class counts: "
+                "rows / (classes x rows of the class). A class with no Train rows stops the run.";
         } else if (class_weight.effective_value == "manual" &&
                    !HasNonEmptyParameter(node, "class_weights")) {
             class_weight.statuses.clear();

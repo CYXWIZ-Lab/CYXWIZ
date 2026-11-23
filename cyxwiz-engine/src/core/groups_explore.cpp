@@ -1,4 +1,5 @@
 #include "groups_explore.h"
+#include "column_list.h"
 #include "tsne_learning_rate.h"
 
 #include "explore_read.h"
@@ -391,12 +392,6 @@ ProjectionAnswer RunProjection(const std::string& table, const ProjectionRequest
 
 namespace {
 
-std::string Joined(const std::vector<std::string>& columns) {
-    std::string out;
-    for (const auto& c : columns) out += (out.empty() ? "" : ",") + c;
-    return out;
-}
-
 std::string Number(double v) {
     char buf[40];
     std::snprintf(buf, sizeof(buf), "%.10g", v);
@@ -406,7 +401,7 @@ std::string Number(double v) {
 }  // namespace
 
 std::map<std::string, std::string> NodeParameters(const GroupsRequest& r) {
-    std::map<std::string, std::string> p = {{"feature_cols", Joined(r.columns)}, {"standardise", r.standardise ? "true" : "false"}};
+    std::map<std::string, std::string> p = {{"feature_cols", FormatColumnList(r.columns)}, {"standardise", r.standardise ? "true" : "false"}};
     switch (r.method) {
         case Method::KMeans:
             p["n_clusters"] = std::to_string(r.k);
@@ -433,7 +428,7 @@ std::map<std::string, std::string> NodeParameters(const GroupsRequest& r) {
 }
 
 std::map<std::string, std::string> NodeParameters(const ProjectionRequest& r) {
-    std::map<std::string, std::string> p = {{"feature_cols", Joined(r.columns)}, {"keep_columns", "true"}};
+    std::map<std::string, std::string> p = {{"feature_cols", FormatColumnList(r.columns)}, {"keep_columns", "true"}};
     switch (r.method) {
         case ProjectionMethod::PCA:
             p["n_components"] = "2";

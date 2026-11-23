@@ -1,5 +1,6 @@
 #include "transform_step_view.h"
 
+#include "../../core/column_list.h"
 #include "../../core/data_registry.h"
 #include "../../core/node_metadata_registry.h"
 #include "../../core/preprocessing_state.h"
@@ -13,7 +14,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <sstream>
 
 namespace cyxwiz {
 
@@ -39,24 +39,6 @@ std::string Text(double v) {
     char text[32];
     std::snprintf(text, sizeof(text), "%.6g", v);
     return text;
-}
-
-std::vector<std::string> Split(const std::string& text) {
-    std::vector<std::string> out;
-    std::stringstream in(text);
-    std::string item;
-    while (std::getline(in, item, ',')) {
-        const auto b = item.find_first_not_of(" \t");
-        const auto e = item.find_last_not_of(" \t");
-        if (b != std::string::npos) out.push_back(item.substr(b, e - b + 1));
-    }
-    return out;
-}
-
-std::string Join(const std::vector<std::string>& items) {
-    std::string out;
-    for (const auto& item : items) out += (out.empty() ? "" : ",") + item;
-    return out;
 }
 
 // A dim label before a row of controls.
@@ -370,10 +352,10 @@ void TransformStepView::RenderSettings(const studio::GraphNode& node, const std:
 
 void TransformStepView::RenderColumns(const std::map<std::string, std::string>& params) {
     const ui::Tokens& t = ui::CurrentTokens();
-    const std::vector<std::string> chosen = Split(P(params, "columns"));
+    const std::vector<std::string> chosen = ParseColumnList(P(params, "columns"));
     const bool automatic = chosen.empty();
     const std::string label = P(params, "label_col");
-    const std::vector<std::string> excluded = Split(P(params, "exclude_columns"));
+    const std::vector<std::string> excluded = ParseColumnList(P(params, "exclude_columns"));
     std::vector<std::string> shown = chosen;
     if (automatic)
         for (const auto& name : number_columns_)
@@ -397,7 +379,7 @@ void TransformStepView::RenderColumns(const std::map<std::string, std::string>& 
             } else {
                 std::vector<std::string> rest = shown;
                 rest.erase(rest.begin() + static_cast<std::ptrdiff_t>(i));
-                Set("columns", Join(rest));
+                Set("columns", FormatColumnList(rest));
             }
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Leave this column out");
@@ -427,7 +409,7 @@ void TransformStepView::RenderColumns(const std::map<std::string, std::string>& 
                     const bool keep = n == name ? !on : std::find(shown.begin(), shown.end(), n) != shown.end();
                     if (keep) next.push_back(n);
                 }
-                Set("columns", Join(next));
+                Set("columns", FormatColumnList(next));
             }
         }
         ImGui::EndPopup();

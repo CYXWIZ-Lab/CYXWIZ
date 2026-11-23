@@ -4,6 +4,7 @@
 // differ), ModelBuilder sizes each Dense from the pin that feeds it, and the
 // GraphExecutableModel's forward pass and per-pin backward match
 // fixtures/branch_graph_pytorch.json (generate_branch_graph_fixtures.py).
+#include "oracle/training_oracle_test.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_document.h"
@@ -605,7 +606,7 @@ void CheckGraphTrainingKeepsBestCheckpoint() {
     config.num_workers = 0;
     config.log_interval = 0;
 
-    cyxwiz::test::InstallQualifiedRouteSnapshot();  // a test run trains on this PC's devices
+    cyxwiz::test::PinTrainingDevice();  // the test device, qualified, Strict
     cyxwiz::TrainingExecutor executor(config, dataset, "label");
     cyxwiz::TrainingMetrics final_metrics;
     executor.Train(config.epochs, config.batch_size, nullptr, nullptr,
@@ -864,6 +865,7 @@ std::filesystem::path FixturePath(const char* argv0) {
 }  // namespace
 
 int main(int, char** argv) {
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_branch_graph_training")) return 1;
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
     cyxwiz::SetGraphCompilerDatasetHooks(hooks);
@@ -991,6 +993,8 @@ int main(int, char** argv) {
               std::string("a saved ") + name + " node is refused with a message naming its replacement: " + error);
     }
 
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     std::cout << "Branched graphs match PyTorch: " << fixture.at("cases").size() << " cases\n";
     return 0;
 }

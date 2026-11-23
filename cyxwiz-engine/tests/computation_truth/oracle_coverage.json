@@ -1,0 +1,2020 @@
+{
+ "schema_version": 1,
+ "about": "Evidence map for scripts/checks/check_oracle_coverage.py (TOFIX228 1.4, ORA-09). One row per public component; evidence = an oracle test (CYXWIZ_ORACLE_TESTS), a fixture under tests/computation_truth/fixtures and the case key paths it reads for this component; or a gap with its reason.",
+ "components": {
+  "AdaGradOptimizer": {
+   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss; 3-step fixture; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_optimizer_trajectory",
+     "fixture": "optimizer_trajectory_pytorch.json",
+     "cases": [
+      "cases/adagrad_tiny_float32",
+      "cases/adagrad_tiny_float64",
+      "cases/adagrad_zeros_float32",
+      "cases/adagrad_zeros_float64"
+     ]
+    },
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/adaptive_optimizer_multistep_f32/adagrad"
+     ]
+    }
+   ]
+  },
+  "AdadeltaOptimizer": {
+   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss; 3-step fixture; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_optimizer_trajectory",
+     "fixture": "optimizer_trajectory_pytorch.json",
+     "cases": [
+      "cases/adadelta_tiny_float32",
+      "cases/adadelta_tiny_float64",
+      "cases/adadelta_zeros_float32",
+      "cases/adadelta_zeros_float64"
+     ]
+    },
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/adaptive_optimizer_multistep_f32/adadelta"
+     ]
+    }
+   ]
+  },
+  "AdamOptimizer": {
+   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss; 3-step fixture; Adam after global-norm clipping (host, device, fused StepTogether) incl. NaN/Inf norms; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
+   "evidence": [
+    {
+     "test": "test_computation_truth_optimizer_trajectory",
+     "fixture": "optimizer_trajectory_pytorch.json",
+     "cases": [
+      "cases/adam_tiny_float32",
+      "cases/adam_tiny_float64",
+      "cases/adam_zeros_float32",
+      "cases/adam_zeros_float64"
+     ]
+    },
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/adam_family_multistep_f32/adam"
+     ]
+    },
+    {
+     "test": "test_computation_truth_gradient_clipping",
+     "fixture": "gradient_clipping_pytorch.json",
+     "cases": [
+      "adam/three_clipped_steps",
+      "adam/three_idle_clip_steps",
+      "adam/nan_norm_step",
+      "adam/inf_norm_step"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/gru_regressor"
+     ]
+    }
+   ]
+  },
+  "AdamWOptimizer": {
+   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss; 3-step fixture; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
+   "evidence": [
+    {
+     "test": "test_computation_truth_optimizer_trajectory",
+     "fixture": "optimizer_trajectory_pytorch.json",
+     "cases": [
+      "cases/adamw_tiny_float32",
+      "cases/adamw_tiny_float64",
+      "cases/adamw_zeros_float32",
+      "cases/adamw_zeros_float64"
+     ]
+    },
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/adam_family_multistep_f32/adamw"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/transformer_classifier"
+     ]
+    }
+   ]
+  },
+  "AdaptiveAvgPool2DLayer": {
+   "checks": "through AdaptiveAvgPool2DModule (which wraps it): forward, input gradient (4 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/adaptive_avg_pool_5_to_2",
+      "cases/adaptive_avg_pool_7x6_to_3x4",
+      "cases/adaptive_avg_pool_3_to_4",
+      "cases/adaptive_avg_pool_8_to_1"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "AdaptiveAvgPool2DModule": {
+   "checks": "forward, input gradient vs PyTorch (4 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/adaptive_avg_pool_5_to_2",
+      "cases/adaptive_avg_pool_7x6_to_3x4",
+      "cases/adaptive_avg_pool_3_to_4",
+      "cases/adaptive_avg_pool_8_to_1"
+     ]
+    }
+   ],
+   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+  },
+  "ArrowDatasetBatcher": {
+   "checks": "class balancing: 4096 weighted draws, class probabilities vs torch.utils.data.WeightedRandomSampler (inverse frequency, within 0.03); level 3: a CSV through Data Input, the split, a fitted scaler and these batchers vs the Python port of the split rule and the epoch shuffle and a torch DataLoader (order, values, labels, 2 epochs of training); level 3 batch level: every Train epoch's order, the Validation / Test rows, every row's values and label vs Python reading the same files (text, series)",
+   "evidence": [
+    {
+     "test": "test_training_batcher_setup",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/weighted_sampler_inverse_frequency"
+     ]
+    },
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_tabular_pytorch.json",
+     "cases": [
+      "partition",
+      "unshuffled_partition",
+      "epochs",
+      "steps"
+     ]
+    },
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_text.json",
+     "cases": [
+      "epochs",
+      "values",
+      "labels"
+     ]
+    },
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_series.json",
+     "cases": [
+      "epochs",
+      "values",
+      "labels"
+     ]
+    }
+   ],
+   "gap": "the copy budget (uploads / copies per batch) is not measured: no upload counter exists"
+  },
+  "AudioDatasetBatcher": {
+   "gap": "batch level only; the spectrogram (Mel / MFCC not yet against Python)",
+   "evidence": [
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_audio.json",
+     "cases": [
+      "epochs",
+      "values",
+      "labels"
+     ]
+    }
+   ],
+   "checks": "; level 3 batch level: every Train epoch's order, the Validation / Test rows, every row's values and label vs Python reading the same files (audio)"
+  },
+  "AvgPool2DLayer": {
+   "checks": "through AvgPool2DModule (which wraps it): forward, input gradient (3 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/avgpool2d_2_2",
+      "cases/avgpool2d_image_32_k3_p1",
+      "cases/avgpool2d_8x5_k2_s2_b1"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "AvgPool2DModule": {
+   "checks": "forward, input gradient vs PyTorch (3 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/avgpool2d_2_2",
+      "cases/avgpool2d_image_32_k3_p1",
+      "cases/avgpool2d_8x5_k2_s2_b1"
+     ]
+    }
+   ],
+   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+  },
+  "BCELoss": {
+   "checks": "forward and gradient vs PyTorch, none/mean/sum reductions; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/probability_loss_matrix_f32/bce_scalar_sum",
+      "cases/probability_loss_matrix_f32/bce_rank2_none_fractional_targets",
+      "cases/probability_loss_matrix_f32/bce_boundary_mean",
+      "cases/probability_loss_matrix_f32/bce_rank3_sum"
+     ]
+    }
+   ]
+  },
+  "BCEWithLogitsLoss": {
+   "checks": "forward and gradient vs PyTorch: weights, extreme logits, label smoothing, rank 2-4; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/probability_loss_matrix_f32/bce_logits_rank2_none",
+      "cases/probability_loss_matrix_f32/bce_logits_fractional_mean_weighted",
+      "cases/probability_loss_matrix_f32/bce_logits_extreme_sum_weighted",
+      "cases/probability_loss_matrix_f32/bce_logits_rank4_none",
+      "cases/probability_loss_matrix_f32/bce_logits_label_smoothing_mean",
+      "cases/probability_loss_matrix_f32/bce_logits_label_smoothing_weighted_none"
+     ]
+    }
+   ]
+  },
+  "BatchNorm2DLayer": {
+   "checks": "through BatchNorm2DModule (which wraps it): forward, input gradient, parameter gradients, running statistics after (train x2, eval x1) (3 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/batchnorm2d_train_c4",
+      "cases/batchnorm2d_train_c8_16x16",
+      "cases/batchnorm2d_eval_c4"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "BatchNorm2DModule": {
+   "checks": "forward, input gradient, parameter gradients, running statistics after (train x2, eval x1) vs PyTorch (3 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); also in CNN graph cases incl. frozen BN; level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/batchnorm2d_train_c4",
+      "cases/batchnorm2d_train_c8_16x16",
+      "cases/batchnorm2d_eval_c4"
+     ]
+    },
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "cnn_graph_pytorch.json",
+     "cases": [
+      "cases/resnet_downsampling_block",
+      "cases/squeeze_excitation_block",
+      "cases/resnet_stem",
+      "cases/frozen_stem_keep",
+      "cases/frozen_stem_update"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/resnet_block"
+     ]
+    }
+   ],
+   "gap": "small shapes, float32 only; one 5-step block trajectory"
+  },
+  "BatchNormModule": {
+   "checks": "BatchNorm 1D vs torch.nn.BatchNorm1d: 4 training batches in a row (output, input gradient, gamma/beta gradients, running mean/var after each), then evaluation; batch 2/7/64, eps 1e-3 + momentum 0.3, variance near eps (eps x10 must miss); device-selectable; level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
+   "evidence": [
+    {
+     "test": "test_computation_truth_batchnorm1d",
+     "fixture": "batchnorm1d_pytorch.json",
+     "cases": [
+      "cases/batch2_f3",
+      "cases/batch7_f5",
+      "cases/batch64_f4",
+      "cases/eps1e-3_momentum0.3_batch7_f3",
+      "cases/variance_near_eps_batch7_f4"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/mlp_batchnorm"
+     ]
+    }
+   ]
+  },
+  "ContrastiveLoss": {
+   "checks": "forward and gradient vs PyTorch formula (3 cases); also batch losses and trained parameters of a 3-epoch MLP+SGD metric graph; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/metric_learning_loss_matrix_f32/contrastive_mixed_none",
+      "cases/metric_learning_loss_matrix_f32/contrastive_zero_distance_mean",
+      "cases/metric_learning_loss_matrix_f32/contrastive_boundary_sum"
+     ]
+    },
+    {
+     "test": "test_metric_graph_training",
+     "fixture": "metric_graph_pytorch.json",
+     "cases": [
+      "cases/contrastive_margin_1",
+      "cases/contrastive_margin_0_3",
+      "cases/contrastive_hard"
+     ]
+    }
+   ]
+  },
+  "Conv1DLayer": {
+   "checks": "through Conv1DModule (which wraps it): forward, input gradient, parameter gradients (4 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/conv1d_same_k3",
+      "cases/conv1d_valid_k5_s2",
+      "cases/conv1d_text_64",
+      "cases/conv1d_dilated_pad_over_k"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "Conv1DModule": {
+   "checks": "forward, input gradient, parameter gradients vs PyTorch (4 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); also 3 Conv1D graph cases (output, parameter gradients)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/conv1d_same_k3",
+      "cases/conv1d_valid_k5_s2",
+      "cases/conv1d_text_64",
+      "cases/conv1d_dilated_pad_over_k"
+     ]
+    },
+    {
+     "test": "test_conv1d_graph_training",
+     "fixture": "conv1d_graph_pytorch.json",
+     "cases": [
+      "cases/rows_flatten",
+      "cases/embedding_global_avg_pool",
+      "cases/embedding_global_max_pool"
+     ]
+    }
+   ],
+   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+  },
+  "Conv2DLayer": {
+   "checks": "through Conv2DModule (which wraps it): forward, input gradient, parameter gradients (7 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/conv2d_same_k3",
+      "cases/conv2d_valid_s2",
+      "cases/conv2d_image_32",
+      "cases/conv2d_k3_p3",
+      "cases/conv2d_9x6_s2_b7",
+      "cases/conv2d_5x11_b1",
+      "cases/conv2d_5x3_b64"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "Conv2DModule": {
+   "checks": "forward, input gradient, parameter gradients vs PyTorch (7 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); also in 7 CNN graph cases (output, input gradient, parameter gradients); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/conv2d_same_k3",
+      "cases/conv2d_valid_s2",
+      "cases/conv2d_image_32",
+      "cases/conv2d_k3_p3",
+      "cases/conv2d_9x6_s2_b7",
+      "cases/conv2d_5x11_b1",
+      "cases/conv2d_5x3_b64"
+     ]
+    },
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "cnn_graph_pytorch.json",
+     "cases": [
+      "cases/resnet_downsampling_block",
+      "cases/squeeze_excitation_block",
+      "cases/squeeze_excitation_hard",
+      "cases/resnet_stem",
+      "cases/flatten_head",
+      "cases/frozen_stem_keep",
+      "cases/frozen_stem_update"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/resnet_block"
+     ]
+    }
+   ],
+   "gap": "small shapes, float32 only; one 5-step block trajectory (stride 1, same padding)"
+  },
+  "Conv3DModule": {
+   "checks": "graph Data Input -> Conv3D (-> ReLU -> Conv3D) -> Flatten -> Dense -> MSE: forward, input gradient, every parameter gradient vs torch.nn.Conv3d (4 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_conv3d_training",
+     "fixture": "conv3d_pytorch.json",
+     "cases": [
+      "cases/one_channel_same",
+      "cases/two_channels_valid_stride2",
+      "cases/stacked_with_relu",
+      "cases/pointwise_three_channels"
+     ]
+    }
+   ],
+   "gap": "checked only inside a graph with a Dense head; no training trajectory"
+  },
+  "ConvTranspose2DLayer": {
+   "checks": "through ConvTranspose2DModule (which wraps it): forward, input gradient, parameter gradients (4 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/convtranspose2d_k3_s2",
+      "cases/convtranspose2d_pad_over_k2",
+      "cases/convtranspose2d_image_16",
+      "cases/convtranspose2d_3x5_k3_s2_b7"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "ConvTranspose2DModule": {
+   "checks": "forward, input gradient, parameter gradients vs PyTorch (4 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/convtranspose2d_k3_s2",
+      "cases/convtranspose2d_pad_over_k2",
+      "cases/convtranspose2d_image_16",
+      "cases/convtranspose2d_3x5_k3_s2_b7"
+     ]
+    }
+   ],
+   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+  },
+  "CosineAnnealingLR": {
+   "checks": "graph scheduler node -> TrainingExecutor: per-epoch learning rate vs torch.optim.lr_scheduler (6 epochs, 1e-9)",
+   "evidence": [
+    {
+     "test": "test_scheduler_node_training",
+     "fixture": "scheduler_node_pytorch.json",
+     "cases": [
+      "cases/cosine"
+     ]
+    }
+   ]
+  },
+  "CosineEmbeddingLoss": {
+   "checks": "forward and gradient vs PyTorch (3 cases); also batch losses and trained parameters of a 3-epoch MLP+SGD metric graph; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/metric_learning_loss_matrix_f32/cosine_embedding_mixed_none",
+      "cases/metric_learning_loss_matrix_f32/cosine_embedding_zero_mean",
+      "cases/metric_learning_loss_matrix_f32/cosine_embedding_similar_sum"
+     ]
+    },
+    {
+     "test": "test_metric_graph_training",
+     "fixture": "metric_graph_pytorch.json",
+     "cases": [
+      "cases/cosine_margin_0",
+      "cases/cosine_margin_0_5",
+      "cases/cosine_hard"
+     ]
+    }
+   ]
+  },
+  "CrossAttentionModule": {
+   "checks": "graph Split -> Cross Attention -> Flatten -> Dense -> MSE: forward, input gradient per pin, parameter gradients vs torch.nn.MultiheadAttention (2 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_cross_attention_graph_training",
+     "fixture": "cross_attention_graph_pytorch.json",
+     "cases": [
+      "cases/kv_shared",
+      "cases/kv_separate"
+     ]
+    }
+   ],
+   "gap": "checked only inside a graph; no training trajectory"
+  },
+  "CrossEntropyLoss": {
+   "checks": "forward and gradient vs PyTorch (12 cases: rank 1-3, index and soft targets, weights, ignore_index, label smoothing); also a Linear+CE+SGD gradient-accumulation trajectory through TrainingExecutor; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/cross_entropy_index_mean_f32",
+      "cases/cross_entropy_matrix_f32"
+     ]
+    },
+    {
+     "test": "test_training_executor_arrow_parquet",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/gradient_accumulation_linear_ce_sgd_f32"
+     ]
+    }
+   ]
+  },
+  "DatasetBatcherAdapter": {
+   "gap": "legacy adapter; no reference comparison found"
+  },
+  "DenseLayer": {
+   "checks": "forward and backward (3 cases) and 2-batch SGD update vs PyTorch nn.Linear; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/linear_forward_backward_f32",
+      "cases/linear_multibatch_sgd_f32"
+     ]
+    }
+   ]
+  },
+  "DepthwiseConv2DLayer": {
+   "checks": "through DepthwiseConv2DModule (which wraps it): forward, input gradient, parameter gradients (5 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/depthwise_same_k3",
+      "cases/depthwise_m2_k3_s2",
+      "cases/depthwise_image_32",
+      "cases/depthwise_pad_over_k2",
+      "cases/depthwise_7x10_m2_b1"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "DepthwiseConv2DModule": {
+   "checks": "forward, input gradient, parameter gradients vs PyTorch (5 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); also thin MobileNetV2/V3 graph logits (forward, eval and train mode)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/depthwise_same_k3",
+      "cases/depthwise_m2_k3_s2",
+      "cases/depthwise_image_32",
+      "cases/depthwise_pad_over_k2",
+      "cases/depthwise_7x10_m2_b1"
+     ]
+    },
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "mobilenet_v2_thin_pytorch.json"
+    },
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "mobilenet_v3_small_thin_pytorch.json"
+    }
+   ],
+   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+  },
+  "DropoutLayer": {
+   "gap": "no oracle test: dropout_semantics_f32 is read only by the non-oracle tests/unit/test_dropout_layer.cpp; test_transformer_dropout checks seed replay and finite differences, its PyTorch driver is not run by ctest"
+  },
+  "DropoutModule": {
+   "gap": "no oracle test: dropout_semantics_f32 (training_core_pytorch.json) is read only by the non-oracle tests/unit/test_dropout_layer.cpp; test_fused_mlp is engine vs engine"
+  },
+  "ELUActivation": {
+   "checks": "forward and backward vs torch (elu) via CreateActivation; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/elementwise_activation_forward_backward_f32/elu"
+     ]
+    }
+   ]
+  },
+  "ELUModule": {
+   "gap": "no oracle test drives the module; the ELUActivation it wraps is checked separately; test_fused_mlp compares it with the fused kernel only (engine vs engine)"
+  },
+  "EmbeddingLayer": {
+   "checks": "through EmbeddingModule (which wraps it): forward and weight gradient vs PyTorch; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    },
+    {
+     "test": "test_conv1d_graph_training",
+     "fixture": "conv1d_graph_pytorch.json",
+     "cases": [
+      "cases/embedding_global_avg_pool",
+      "cases/embedding_global_max_pool"
+     ]
+    }
+   ],
+   "gap": "checked only through EmbeddingModule"
+  },
+  "EmbeddingModule": {
+   "checks": "lookup forward and weight gradient vs torch.nn.Embedding (inline reference: live LibTorch in Release builds with CYXWIZ_HAS_PYTORCH, else torch-derived constants); conv1d graph cases with an Embedding front (output, parameter gradients); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: a bidirectional LSTM after an embedding, 5 steps vs PyTorch running the Engine's export (Adam, clip)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    },
+    {
+     "test": "test_conv1d_graph_training",
+     "fixture": "conv1d_graph_pytorch.json",
+     "cases": [
+      "cases/embedding_global_avg_pool",
+      "cases/embedding_global_max_pool"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/bilstm_classifier"
+     ]
+    }
+   ]
+  },
+  "ExponentialLR": {
+   "checks": "graph scheduler node -> TrainingExecutor: per-epoch learning rate vs torch.optim.lr_scheduler (6 epochs, 1e-9)",
+   "evidence": [
+    {
+     "test": "test_scheduler_node_training",
+     "fixture": "scheduler_node_pytorch.json",
+     "cases": [
+      "cases/exponential"
+     ]
+    }
+   ]
+  },
+  "FlattenLayer": {
+   "gap": "no oracle test: flatten_forward_backward_f32 (training_core_pytorch.json) is read only by the non-oracle tests/unit/test_flatten_layer.cpp"
+  },
+  "FlattenModule": {
+   "gap": "not found: graph Flatten in the oracle graphs builds Spatial/SequenceFlattenModule for image/sequence heads (conv3d / attention graphs may reach FlattenModule(1), not verified); flatten_forward_backward_f32 is read only by the non-oracle tests/unit/test_flatten_layer.cpp"
+  },
+  "FocalLoss": {
+   "checks": "forward and gradient vs PyTorch formula (4 cases, gamma 0 and 2, extreme logits); ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/focal_loss_matrix_f32"
+     ]
+    }
+   ]
+  },
+  "GELUActivation": {
+   "checks": "forward and backward vs torch (gelu_tanh) via CreateActivation; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/elementwise_activation_forward_backward_f32/gelu_tanh"
+     ]
+    }
+   ]
+  },
+  "GELUExactActivation": {
+   "checks": "as the decoder FFN activation (mlp and gated) in the LibTorch block oracle: output, input and parameter gradients; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    }
+   ],
+   "gap": "LibTorch Release builds only, and only inside a TransformerDecoderLayer; no standalone case"
+  },
+  "GELUModule": {
+   "gap": "no oracle test drives the module; the GELUActivation it wraps is checked separately; test_fused_mlp compares it with the fused kernel only (engine vs engine)"
+  },
+  "GRULayer": {
+   "checks": "through GRUModule (5 cases) and directly for the bidirectional cases (2): output, input gradient, forward and reverse gradients; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_recurrent",
+     "fixture": "recurrent_pytorch.json",
+     "cases": [
+      "cases/gru_h8_l1_seq",
+      "cases/gru_h16_l2_last",
+      "cases/gru_bi_h8_l1_seq",
+      "cases/gru_bi_h16_l2_last",
+      "cases/gru_h64_l1_seq"
+     ]
+    }
+   ],
+   "gap": "no multi-step trajectory vs PyTorch"
+  },
+  "GRUModule": {
+   "checks": "output, input gradient, every weight/bias gradient vs torch.nn.GRU (5 cases: uni/bi, 1-2 layers, hidden 8/16/64), provider and ArrayFire paths; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
+   "evidence": [
+    {
+     "test": "test_computation_truth_recurrent",
+     "fixture": "recurrent_pytorch.json",
+     "cases": [
+      "cases/gru_h8_l1_seq",
+      "cases/gru_h16_l2_last",
+      "cases/gru_bi_h8_l1_seq",
+      "cases/gru_bi_h16_l2_last",
+      "cases/gru_h64_l1_seq"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/gru_regressor"
+     ]
+    }
+   ],
+   "gap": "the trajectory is unidirectional, one layer; Strict CUDA refuses the run (ORA-22)"
+  },
+  "GlobalAvgPool2DLayer": {
+   "checks": "through GlobalAvgPool2DModule (which wraps it): forward, input gradient (3 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/global_avg_pool_c3",
+      "cases/global_avg_pool_image_16",
+      "cases/global_avg_pool_3x5_b64"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "GlobalAvgPool2DModule": {
+   "checks": "forward, input gradient vs PyTorch (3 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); also inside CNN graph cases",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/global_avg_pool_c3",
+      "cases/global_avg_pool_image_16",
+      "cases/global_avg_pool_3x5_b64"
+     ]
+    },
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "cnn_graph_pytorch.json",
+     "cases": [
+      "cases/resnet_downsampling_block",
+      "cases/resnet_stem"
+     ]
+    }
+   ],
+   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+  },
+  "GlobalMaxPool2DLayer": {
+   "checks": "through GlobalMaxPool2DModule (which wraps it): forward, input gradient (2 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/global_max_pool_c3",
+      "cases/global_max_pool_image_16"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "GlobalMaxPool2DModule": {
+   "checks": "forward, input gradient vs PyTorch (2 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/global_max_pool_c3",
+      "cases/global_max_pool_image_16"
+     ]
+    }
+   ],
+   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+  },
+  "GroupNormLayer": {
+   "checks": "through GroupNormModule (which wraps it): forward, input gradient, parameter gradients (4 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/groupnorm_g2_c4",
+      "cases/groupnorm_g1_c6_noaffine",
+      "cases/groupnorm_g6_c6_affine",
+      "cases/groupnorm_g3_c6_16x16"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "GroupNormModule": {
+   "checks": "forward, input gradient, parameter gradients vs PyTorch (4 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/groupnorm_g2_c4",
+      "cases/groupnorm_g1_c6_noaffine",
+      "cases/groupnorm_g6_c6_affine",
+      "cases/groupnorm_g3_c6_16x16"
+     ]
+    }
+   ],
+   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+  },
+  "HardsigmoidActivation": {
+   "checks": "as the Squeeze-Excitation gate in a CNN graph case (output, gradients); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "cnn_graph_pytorch.json",
+     "cases": [
+      "cases/squeeze_excitation_hard"
+     ]
+    }
+   ],
+   "gap": "only inside the SE block; no standalone elementwise case"
+  },
+  "HardsigmoidModule": {
+   "gap": "no oracle test drives the module; the HardsigmoidActivation it wraps is checked separately; test_fused_mlp compares it with the fused kernel only (engine vs engine)"
+  },
+  "HardswishActivation": {
+   "checks": "forward and backward vs torch (hardswish) via CreateActivation; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/elementwise_activation_forward_backward_f32/hardswish"
+     ]
+    }
+   ]
+  },
+  "HardswishModule": {
+   "checks": "thin MobileNetV3-small graph logits vs PyTorch (forward, eval and train mode); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "mobilenet_v3_small_thin_pytorch.json"
+    }
+   ],
+   "gap": "forward only, inside a network; no backward oracle for the module"
+  },
+  "HuberLoss": {
+   "checks": "forward and gradient vs PyTorch, none/mean/sum reductions; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/regression_loss_matrix_f32/huber_delta_half_none",
+      "cases/regression_loss_matrix_f32/huber_delta_one_mean",
+      "cases/regression_loss_matrix_f32/huber_delta_two_sum"
+     ]
+    }
+   ]
+  },
+  "ImageDatasetBatcher": {
+   "gap": "batch level only (no training trajectory); 4 x 4 PNG, Exact resize, no augmentation",
+   "evidence": [
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_image.json",
+     "cases": [
+      "epochs",
+      "values",
+      "labels"
+     ]
+    }
+   ],
+   "checks": "; level 3 batch level: every Train epoch's order, the Validation / Test rows, every row's values and label vs Python reading the same files (image)"
+  },
+  "InstanceNorm2DLayer": {
+   "checks": "through InstanceNorm2DModule (which wraps it): forward, input gradient, parameter gradients (2 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/instancenorm_c3",
+      "cases/instancenorm_c4_affine"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "InstanceNorm2DModule": {
+   "checks": "forward, input gradient, parameter gradients vs PyTorch (2 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/instancenorm_c3",
+      "cases/instancenorm_c4_affine"
+     ]
+    }
+   ],
+   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+  },
+  "JaccardLoss": {
+   "checks": "forward and gradient vs PyTorch formula (4 cases); ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/overlap_loss_matrix_f32/jaccard_rank1_none",
+      "cases/overlap_loss_matrix_f32/jaccard_rank2_sum_zero_smooth",
+      "cases/overlap_loss_matrix_f32/jaccard_rank4_mean",
+      "cases/overlap_loss_matrix_f32/jaccard_degenerate_zero_mask"
+     ]
+    }
+   ]
+  },
+  "KLDivLoss": {
+   "checks": "forward and gradient vs PyTorch, none/mean/sum reductions; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/probability_loss_matrix_f32/kl_probability_none_zero_target",
+      "cases/probability_loss_matrix_f32/kl_probability_mean",
+      "cases/probability_loss_matrix_f32/kl_probability_rank3_sum",
+      "cases/probability_loss_matrix_f32/kl_log_target_rank2_none",
+      "cases/probability_loss_matrix_f32/kl_log_target_extreme_mean"
+     ]
+    }
+   ]
+  },
+  "L1Loss": {
+   "checks": "forward and gradient vs PyTorch, none/mean/sum reductions; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/regression_loss_matrix_f32/l1_none",
+      "cases/regression_loss_matrix_f32/l1_mean",
+      "cases/regression_loss_matrix_f32/l1_sum"
+     ]
+    }
+   ]
+  },
+  "LAMBOptimizer": {
+   "checks": "3 steps vs an independent PyTorch tensor implementation of the LAMB equations (torch has no LAMB class), zero-grad and zero-norm edges; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/lamb_multistep_f32"
+     ]
+    }
+   ],
+   "gap": "3 steps with gradients 0.1-1 only (epsilon-blind, ORA-03); not in the 50-step trajectory fixture"
+  },
+  "LSTMLayer": {
+   "checks": "through LSTMModule (5 cases) and directly for the bidirectional cases (2): output, input gradient, forward and reverse gradients; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_recurrent",
+     "fixture": "recurrent_pytorch.json",
+     "cases": [
+      "cases/lstm_h8_l1_seq",
+      "cases/lstm_h16_l2_last",
+      "cases/lstm_bi_h8_l1_seq",
+      "cases/lstm_bi_h16_l2_last",
+      "cases/lstm_h64_l1_seq"
+     ]
+    }
+   ],
+   "gap": "no multi-step trajectory vs PyTorch"
+  },
+  "LSTMModule": {
+   "checks": "output, input gradient, every weight/bias gradient vs torch.nn.LSTM (5 cases: uni/bi, 1-2 layers, hidden 8/16/64), provider and ArrayFire paths; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: a bidirectional LSTM after an embedding, 5 steps vs PyTorch running the Engine's export (Adam, clip)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_recurrent",
+     "fixture": "recurrent_pytorch.json",
+     "cases": [
+      "cases/lstm_h8_l1_seq",
+      "cases/lstm_h16_l2_last",
+      "cases/lstm_bi_h8_l1_seq",
+      "cases/lstm_bi_h16_l2_last",
+      "cases/lstm_h64_l1_seq"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/bilstm_classifier"
+     ]
+    }
+   ],
+   "gap": "no multi-step trajectory vs PyTorch (the 30-step SGD run only checks the loss halves)"
+  },
+  "LayerNormLayer": {
+   "checks": "inside TransformerEncoderLayer / TransformerDecoderLayer (norm1/norm2) in their forward and backward oracles; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    }
+   ],
+   "gap": "no standalone LayerNormLayer case: TestLayerNormParity checks the free functions LayerNormForwardCpu/LayerNormBackwardCpu, not this class"
+  },
+  "LayerNormModule": {
+   "gap": "no oracle test drives LayerNormModule (graph LayerNorm node); only the CPU helper functions and the layer inside transformer blocks are checked"
+  },
+  "LeakyReLUActivation": {
+   "checks": "forward and backward vs torch (leaky_relu) via CreateActivation; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/elementwise_activation_forward_backward_f32/leaky_relu"
+     ]
+    }
+   ]
+  },
+  "LeakyReLUModule": {
+   "gap": "no oracle test drives the module; the LeakyReLUActivation it wraps is checked separately; test_fused_mlp compares it with the fused kernel only (engine vs engine)"
+  },
+  "LearnedPositionalEmbeddingModule": {
+   "gap": "no oracle test found: only the out-of-ctest Python driver (reference/verify_transformer_stacks.py) touches learned positions"
+  },
+  "LinearAttentionModule": {
+   "checks": "graph -> Linear Attention -> Flatten -> Dense -> MSE: forward, input gradient, parameter gradients vs a PyTorch full-kernel reference (4 cases: elu/relu, causal or not, 1-4 heads); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_linear_attention_training",
+     "fixture": "linear_attention_pytorch.json",
+     "cases": [
+      "cases/elu_two_heads",
+      "cases/elu_causal",
+      "cases/relu_one_head_no_bias",
+      "cases/relu_causal_four_heads"
+     ]
+    }
+   ],
+   "gap": "checked only inside a graph; no training trajectory"
+  },
+  "LinearLayer": {
+   "checks": "forward and backward (3 cases), 2-batch SGD update, SoftDice + SGD update vs PyTorch; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/linear_forward_backward_f32",
+      "cases/linear_multibatch_sgd_f32",
+      "cases/overlap_linear_multibatch_sgd_f32"
+     ]
+    },
+    {
+     "test": "test_training_executor_arrow_parquet",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/gradient_accumulation_linear_ce_sgd_f32"
+     ]
+    }
+   ]
+  },
+  "LinearModule": {
+   "checks": "graph Dense nodes: forward, per-pin backward, parameter gradients vs PyTorch in branched graphs; CNN graph Head gradients; transformer heads; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export; level 3: on CSR rows from the sparse batcher, 2 epochs vs PyTorch on the dense rows",
+   "evidence": [
+    {
+     "test": "test_branch_graph_training",
+     "fixture": "branch_graph_pytorch.json",
+     "cases": [
+      "cases/split_concat",
+      "cases/split_one_branch",
+      "cases/split_add_last_dim",
+      "cases/split_bmm",
+      "cases/fanout_residual_concat"
+     ]
+    },
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "cnn_graph_pytorch.json",
+     "cases": [
+      "cases/resnet_downsampling_block",
+      "cases/squeeze_excitation_block",
+      "cases/squeeze_excitation_hard",
+      "cases/resnet_stem",
+      "cases/flatten_head",
+      "cases/frozen_stem_keep",
+      "cases/frozen_stem_update"
+     ]
+    },
+    {
+     "test": "test_regularization_node_training",
+     "fixture": "regularization_node_pytorch.json",
+     "cases": [
+      "cases/none",
+      "cases/sgd_weight_decay"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/mlp_batchnorm",
+      "models/gru_regressor",
+      "models/transformer_classifier",
+      "models/resnet_block"
+     ]
+    },
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_sparse.json",
+     "cases": [
+      "training"
+     ]
+    }
+   ]
+  },
+  "LinearWarmupLR": {
+   "checks": "graph scheduler node -> TrainingExecutor: per-epoch learning rate vs torch.optim.lr_scheduler (6 epochs, 1e-9) (Warmup node compiles to LinearWarmupLR)",
+   "evidence": [
+    {
+     "test": "test_scheduler_node_training",
+     "fixture": "scheduler_node_pytorch.json",
+     "cases": [
+      "cases/warmup"
+     ]
+    }
+   ]
+  },
+  "MSELoss": {
+   "checks": "forward and gradient vs PyTorch (3 reductions); also a 3-epoch Dense+MSE+SGD trajectory through TrainingExecutor; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/regression_loss_matrix_f32/mse_none",
+      "cases/regression_loss_matrix_f32/mse_mean",
+      "cases/regression_loss_matrix_f32/mse_sum"
+     ]
+    },
+    {
+     "test": "test_regularization_node_training",
+     "fixture": "regularization_node_pytorch.json",
+     "cases": [
+      "cases/none"
+     ]
+    }
+   ]
+  },
+  "MaxPool2DLayer": {
+   "checks": "through MaxPool2DModule (which wraps it): forward, input gradient (4 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/maxpool2d_2_2",
+      "cases/maxpool2d_3_2",
+      "cases/maxpool2d_image_32_k3_p1",
+      "cases/maxpool2d_9x6_k3_s2_p1_b7"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "MaxPool2DModule": {
+   "checks": "forward, input gradient vs PyTorch (4 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); also inside CNN graph cases",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/maxpool2d_2_2",
+      "cases/maxpool2d_3_2",
+      "cases/maxpool2d_image_32_k3_p1",
+      "cases/maxpool2d_9x6_k3_s2_p1_b7"
+     ]
+    },
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "cnn_graph_pytorch.json",
+     "cases": [
+      "cases/resnet_stem",
+      "cases/frozen_stem_keep"
+     ]
+    }
+   ],
+   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+  },
+  "MetricBatchSampler": {
+   "gap": "picks are checked against a Python mirror of the Engine's own picker in metric_graph_pytorch.json (not a library reference); the losses and trained parameters downstream are checked vs PyTorch"
+  },
+  "MishActivation": {
+   "checks": "forward and backward vs torch (mish) via CreateActivation; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/elementwise_activation_forward_backward_f32/mish"
+     ]
+    }
+   ]
+  },
+  "MishModule": {
+   "gap": "no oracle test drives the module; the MishActivation it wraps is checked separately; test_fused_mlp compares it with the fused kernel only (engine vs engine)"
+  },
+  "MultiHeadAttentionLayer": {
+   "checks": "self- and cross-attention forward and backward vs torch multi-head attention, fully blocked rows; inline reference: live LibTorch in Release builds with CYXWIZ_HAS_PYTORCH, else torch-derived constants; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    }
+   ]
+  },
+  "MultiHeadAttentionModule": {
+   "gap": "no oracle: test_transformer_constructor only compares the module with MultiHeadAttentionLayer (engine vs engine); the layer it wraps is checked in test_computation_truth_transformer_primitives"
+  },
+  "NAdamOptimizer": {
+   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss; 3-step fixture; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_optimizer_trajectory",
+     "fixture": "optimizer_trajectory_pytorch.json",
+     "cases": [
+      "cases/nadam_tiny_float32",
+      "cases/nadam_tiny_float64",
+      "cases/nadam_zeros_float32",
+      "cases/nadam_zeros_float64"
+     ]
+    },
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/adam_family_multistep_f32/nadam"
+     ]
+    }
+   ]
+  },
+  "NLLLoss": {
+   "checks": "forward and gradient vs PyTorch (5 cases incl. ignore_index, class-last rank 3); ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/nll_loss_matrix_f32"
+     ]
+    }
+   ]
+  },
+  "OneCycleLR": {
+   "gap": "no oracle test: one_cycle_two_phase_cosine_sequence (training_core scheduler_lr_sequences) is read only by the non-oracle tests/unit/test_scheduler.cpp; not a case of scheduler_node_pytorch.json"
+  },
+  "PReLUActivation": {
+   "checks": "forward, input and alpha gradients, shared and per-channel (3 cases); ArrayFire CPU, then every CUDA/OpenCL route (or the one requested); also via PReLUModule",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/prelu_forward_backward_f32"
+     ]
+    },
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/prelu_shared",
+      "cases/prelu_per_feature"
+     ]
+    }
+   ]
+  },
+  "PReLUModule": {
+   "checks": "forward, input and alpha gradients, shared and per-feature (2 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/prelu_shared",
+      "cases/prelu_per_feature"
+     ]
+    }
+   ]
+  },
+  "ParquetArrowBatcher": {
+   "gap": "no PyTorch DataLoader comparison: Arrow vs Parquet and seed determinism are engine vs engine"
+  },
+  "ParquetSequenceBatcher": {
+   "gap": "no reference comparison found (engine contracts only)"
+  },
+  "PermuteModule": {
+   "gap": "no oracle test drives this module; the tensor ops it calls have PyTorch fixtures (training_core tensor_* cases) read only by non-oracle tests"
+  },
+  "PixelShuffleLayer": {
+   "checks": "through PixelShuffleModule (which wraps it): forward, input gradient (3 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/pixel_shuffle_r2",
+      "cases/pixel_shuffle_image_16_r2",
+      "cases/pixel_shuffle_3x5_r2_b1"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "PixelShuffleModule": {
+   "checks": "forward, input gradient vs PyTorch (3 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/pixel_shuffle_r2",
+      "cases/pixel_shuffle_image_16_r2",
+      "cases/pixel_shuffle_3x5_r2_b1"
+     ]
+    }
+   ],
+   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+  },
+  "PositionalEncodingModule": {
+   "checks": "sinusoidal table forward vs PyTorch formula (no parameters; backward is identity); inline reference: live LibTorch in Release builds with CYXWIZ_HAS_PYTORCH, else torch-derived constants; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    }
+   ]
+  },
+  "PrefetchBatcher": {
+   "gap": "wrapper (prefetches another batcher); no reference comparison, the weighted-sampler oracle runs with prefetch off"
+  },
+  "RMSNormLayer": {
+   "checks": "inside TransformerDecoderLayer (norm_type RMSNorm, eps 1e-5 / 1e-6) in the LibTorch block oracle: output, input and gamma gradients; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    }
+   ],
+   "gap": "LibTorch Release builds only, and only inside a decoder block; no standalone case"
+  },
+  "RMSpropOptimizer": {
+   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss; 3-step fixture; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
+   "evidence": [
+    {
+     "test": "test_computation_truth_optimizer_trajectory",
+     "fixture": "optimizer_trajectory_pytorch.json",
+     "cases": [
+      "cases/rmsprop_tiny_float32",
+      "cases/rmsprop_tiny_float64",
+      "cases/rmsprop_zeros_float32",
+      "cases/rmsprop_zeros_float64"
+     ]
+    },
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/adaptive_optimizer_multistep_f32/rmsprop"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/resnet_block"
+     ]
+    }
+   ]
+  },
+  "RNNLayer": {
+   "checks": "through RNNModule (5 cases) and directly for the bidirectional cases (2): output, input gradient, forward and reverse gradients; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_recurrent",
+     "fixture": "recurrent_pytorch.json",
+     "cases": [
+      "cases/rnn_tanh_h8_l1_seq",
+      "cases/rnn_relu_h16_l2_last",
+      "cases/rnn_tanh_bi_h8_l2_seq",
+      "cases/rnn_relu_bi_h16_l1_last",
+      "cases/rnn_tanh_h64_l1_seq"
+     ]
+    }
+   ],
+   "gap": "no multi-step trajectory vs PyTorch"
+  },
+  "RNNModule": {
+   "checks": "output, input gradient, every weight/bias gradient vs torch.nn.RNN (5 cases: uni/bi, 1-2 layers, hidden 8/16/64), provider and ArrayFire paths; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_recurrent",
+     "fixture": "recurrent_pytorch.json",
+     "cases": [
+      "cases/rnn_tanh_h8_l1_seq",
+      "cases/rnn_relu_h16_l2_last",
+      "cases/rnn_tanh_bi_h8_l2_seq",
+      "cases/rnn_relu_bi_h16_l1_last",
+      "cases/rnn_tanh_h64_l1_seq"
+     ]
+    }
+   ],
+   "gap": "no multi-step trajectory vs PyTorch (the 30-step SGD run only checks the loss halves)"
+  },
+  "ReLU": {
+   "checks": "through ReLUModule (which owns it) in graph cases checked vs PyTorch; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "cnn_graph_pytorch.json",
+     "cases": [
+      "cases/resnet_downsampling_block",
+      "cases/flatten_head"
+     ]
+    },
+    {
+     "test": "test_conv3d_training",
+     "fixture": "conv3d_pytorch.json",
+     "cases": [
+      "cases/stacked_with_relu"
+     ]
+    }
+   ],
+   "gap": "only inside graphs; no standalone case (the elementwise fixture drives ReLUActivation, a different class)"
+  },
+  "ReLU6Activation": {
+   "checks": "through ReLU6Module inside CNN graph cases (both clamps exercised); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "cnn_graph_pytorch.json",
+     "cases": [
+      "cases/resnet_stem",
+      "cases/frozen_stem_keep",
+      "cases/frozen_stem_update"
+     ]
+    }
+   ],
+   "gap": "only inside graphs; no standalone elementwise case"
+  },
+  "ReLU6Module": {
+   "checks": "inside CNN graph cases (ReLU6 after BatchNorm, both clamps exercised): output, input gradient; thin MobileNetV2 logits; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "cnn_graph_pytorch.json",
+     "cases": [
+      "cases/resnet_stem",
+      "cases/frozen_stem_keep",
+      "cases/frozen_stem_update"
+     ]
+    },
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "mobilenet_v2_thin_pytorch.json"
+    }
+   ],
+   "gap": "only inside graphs; no standalone elementwise case"
+  },
+  "ReLUActivation": {
+   "checks": "forward and backward vs torch (relu) via CreateActivation; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/elementwise_activation_forward_backward_f32/relu"
+     ]
+    }
+   ]
+  },
+  "ReLUModule": {
+   "checks": "graph ReLU nodes inside cases checked vs PyTorch (output, gradients); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "cnn_graph_pytorch.json",
+     "cases": [
+      "cases/resnet_downsampling_block",
+      "cases/squeeze_excitation_block",
+      "cases/flatten_head"
+     ]
+    },
+    {
+     "test": "test_conv3d_training",
+     "fixture": "conv3d_pytorch.json",
+     "cases": [
+      "cases/stacked_with_relu"
+     ]
+    },
+    {
+     "test": "test_branch_graph_training",
+     "fixture": "branch_graph_pytorch.json",
+     "cases": [
+      "cases/fanout_residual_concat"
+     ]
+    }
+   ],
+   "gap": "only inside graphs; no standalone case for the module (ReLUActivation has one)"
+  },
+  "ReduceLROnPlateau": {
+   "gap": "no oracle: test_scheduler_node_training replays the run's validation losses through the backend ReduceLROnPlateau (engine vs engine); the torch plateau sequences in training_core scheduler_lr_sequences are read only by the non-oracle tests/unit/test_scheduler.cpp"
+  },
+  "ReshapeModule": {
+   "gap": "no oracle test drives this module; the tensor ops it calls have PyTorch fixtures (training_core tensor_* cases) read only by non-oracle tests"
+  },
+  "SELUActivation": {
+   "checks": "forward and backward vs torch (selu) via CreateActivation; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/elementwise_activation_forward_backward_f32/selu"
+     ]
+    },
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/selu"
+     ]
+    }
+   ]
+  },
+  "SELUModule": {
+   "checks": "forward and input gradient vs torch.selu (1 case); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/selu"
+     ]
+    }
+   ]
+  },
+  "SGDOptimizer": {
+   "checks": "50 steps vs torch.optim at steps 1/5/10/25/50, tiny and zero gradients, float32 (the float64 cases are refused: the Engine optimizers take float32 only), state export/import at 25, epsilon x10 must miss (momentum; Nesterov + weight decay); 3-step momentum fixture; Linear/Dense SGD updates; regularization-node SGD runs (weight decay, Nesterov) through TrainingExecutor; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
+   "evidence": [
+    {
+     "test": "test_computation_truth_optimizer_trajectory",
+     "fixture": "optimizer_trajectory_pytorch.json",
+     "cases": [
+      "cases/sgd_momentum_tiny_float32",
+      "cases/sgd_momentum_tiny_float64",
+      "cases/sgd_momentum_zeros_float32",
+      "cases/sgd_momentum_zeros_float64",
+      "cases/sgd_nesterov_decay_tiny_float32",
+      "cases/sgd_nesterov_decay_tiny_float64",
+      "cases/sgd_nesterov_decay_zeros_float32",
+      "cases/sgd_nesterov_decay_zeros_float64"
+     ]
+    },
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/sgd_momentum_multistep_f32",
+      "cases/linear_multibatch_sgd_f32"
+     ]
+    },
+    {
+     "test": "test_regularization_node_training",
+     "fixture": "regularization_node_pytorch.json",
+     "cases": [
+      "cases/sgd_weight_decay",
+      "cases/sgd_nesterov",
+      "cases/sgd_nesterov_decay_no_bias"
+     ]
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/mlp_batchnorm"
+     ]
+    }
+   ]
+  },
+  "SequenceBatcher": {
+   "gap": "no reference comparison found: drop_last, padding and seed checks are engine contracts"
+  },
+  "SequenceFeatureFusionModule": {
+   "gap": "no oracle fixture or test found"
+  },
+  "Sigmoid": {
+   "gap": "no oracle test drives this class (SigmoidModule's activation); the elementwise fixture drives SigmoidActivation, a different class"
+  },
+  "SigmoidActivation": {
+   "checks": "forward and backward vs torch (sigmoid) via CreateActivation; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/elementwise_activation_forward_backward_f32/sigmoid"
+     ]
+    }
+   ]
+  },
+  "SigmoidModule": {
+   "gap": "no oracle test drives the module (it wraps the Sigmoid class, not SigmoidActivation); test_fused_mlp is engine vs engine"
+  },
+  "SmoothL1Loss": {
+   "checks": "forward and gradient vs PyTorch, none/mean/sum reductions; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/regression_loss_matrix_f32/smooth_l1_beta_zero_none",
+      "cases/regression_loss_matrix_f32/smooth_l1_beta_half_mean",
+      "cases/regression_loss_matrix_f32/smooth_l1_beta_two_sum"
+     ]
+    }
+   ]
+  },
+  "SoftDiceLoss": {
+   "checks": "forward and gradient vs PyTorch formula (4 cases) and a 2-batch Linear+SoftDice+SGD update; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/overlap_loss_matrix_f32/soft_dice_scalar_none",
+      "cases/overlap_loss_matrix_f32/soft_dice_rank2_mean",
+      "cases/overlap_loss_matrix_f32/soft_dice_rank4_sum",
+      "cases/overlap_loss_matrix_f32/soft_dice_degenerate_zero_mask",
+      "cases/overlap_linear_multibatch_sgd_f32"
+     ]
+    }
+   ]
+  },
+  "SoftmaxActivation": {
+   "checks": "forward and backward vs torch.softmax (7 cases incl. extreme logits); ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/softmax_forward_backward_f32"
+     ]
+    }
+   ]
+  },
+  "SoftmaxModule": {
+   "checks": "forward and backward vs torch.softmax on ranks 1-4, extreme logits, empty axis (7 cases); ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/softmax_forward_backward_f32"
+     ]
+    }
+   ]
+  },
+  "SparseFeatureDatasetBatcher": {
+   "gap": "batch level only; TF-IDF without stop words",
+   "evidence": [
+    {
+     "test": "test_oracle_data",
+     "fixture": "data_parity_sparse.json",
+     "cases": [
+      "epochs",
+      "values",
+      "labels"
+     ]
+    }
+   ],
+   "checks": "; level 3 batch level: every Train epoch's order, the Validation / Test rows, every row's values and label vs Python reading the same files (sparse)"
+  },
+  "SquaredReLUActivation": {
+   "checks": "as the decoder FFN activation (mlp and gated) in the LibTorch block oracle: output, input and parameter gradients; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    }
+   ],
+   "gap": "LibTorch Release builds only, and only inside a TransformerDecoderLayer; no standalone case"
+  },
+  "SqueezeExcitationModule": {
+   "checks": "CNN graph Conv -> BN -> ReLU -> SE -> GAP -> Head: output, input gradient, SE parameter gradients vs torchvision SqueezeExcitation arithmetic (relu/sigmoid and hardswish/hardsigmoid, no bias); thin MobileNetV3 logits; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "cnn_graph_pytorch.json",
+     "cases": [
+      "cases/squeeze_excitation_block",
+      "cases/squeeze_excitation_hard"
+     ]
+    },
+    {
+     "test": "test_cnn_graph_training",
+     "fixture": "mobilenet_v3_small_thin_pytorch.json"
+    }
+   ],
+   "gap": "checked only inside graph cases; no training trajectory"
+  },
+  "StepLR": {
+   "checks": "graph scheduler node -> TrainingExecutor: per-epoch learning rate vs torch.optim.lr_scheduler (6 epochs, 1e-9); resume from a checkpoint continues torch's schedule",
+   "evidence": [
+    {
+     "test": "test_scheduler_node_training",
+     "fixture": "scheduler_node_pytorch.json",
+     "cases": [
+      "cases/step"
+     ]
+    }
+   ]
+  },
+  "SwishActivation": {
+   "checks": "forward and backward vs torch (silu) via CreateActivation; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/elementwise_activation_forward_backward_f32/silu"
+     ]
+    }
+   ]
+  },
+  "SwishModule": {
+   "gap": "no oracle test drives the module; the SwishActivation it wraps is checked separately; test_fused_mlp compares it with the fused kernel only (engine vs engine)"
+  },
+  "Tanh": {
+   "checks": "through TanhModule in a branched graph case and the tied-embedding LibTorch oracle; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_branch_graph_training",
+     "fixture": "branch_graph_pytorch.json",
+     "cases": [
+      "cases/fanout_residual_concat"
+     ]
+    },
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    }
+   ],
+   "gap": "only inside composite cases; the elementwise fixture drives TanhActivation, a different class"
+  },
+  "TanhActivation": {
+   "checks": "forward and backward vs torch (tanh) via CreateActivation; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/elementwise_activation_forward_backward_f32/tanh"
+     ]
+    }
+   ]
+  },
+  "TanhModule": {
+   "checks": "graph Tanh node in a branched graph (forward, backward) and in the tied-embedding LibTorch oracle; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_branch_graph_training",
+     "fixture": "branch_graph_pytorch.json",
+     "cases": [
+      "cases/fanout_residual_concat"
+     ]
+    },
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    }
+   ],
+   "gap": "only inside composite cases; no standalone case for the module"
+  },
+  "TensorMaskModule": {
+   "gap": "no oracle test drives this module; the tensor ops it calls have PyTorch fixtures (training_core tensor_* cases) read only by non-oracle tests"
+  },
+  "TensorReductionModule": {
+   "gap": "no oracle test drives this module; the tensor ops it calls have PyTorch fixtures (training_core tensor_* cases) read only by non-oracle tests"
+  },
+  "TensorShapeModule": {
+   "gap": "no oracle test drives this module; the tensor ops it calls have PyTorch fixtures (training_core tensor_* cases) read only by non-oracle tests"
+  },
+  "TensorUnaryModule": {
+   "gap": "no oracle test drives this module; the tensor ops it calls have PyTorch fixtures (training_core tensor_* cases) read only by non-oracle tests"
+  },
+  "TiedOutputProjectionModule": {
+   "checks": "Embedding -> Tanh -> tied projection: logits and shared-table gradient vs LibTorch; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    }
+   ],
+   "gap": "runs only when built with LibTorch (CYXWIZ_HAS_PYTORCH, Release); no fixture fallback"
+  },
+  "TimeDistributedDenseModule": {
+   "checks": "BERT token-head logits forward vs PyTorch; inline reference: live LibTorch in Release builds with CYXWIZ_HAS_PYTORCH, else torch-derived constants; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    }
+   ],
+   "gap": "forward only; no backward / parameter-gradient oracle"
+  },
+  "TransformerDecoderLayer": {
+   "checks": "causal forward, cross-attention backward, two-block causal stack backward; LibTorch block oracle over every block option (RMSNorm, gated FFN, 12 FFN activations, RoPE, ALiBi, GQA/MQA, qk-norm, softcap, parallel/sandwich), output, input and parameter gradients; inline reference: live LibTorch in Release builds with CYXWIZ_HAS_PYTORCH, else torch-derived constants; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    }
+   ],
+   "gap": "the block-option oracle runs only in LibTorch Release builds; no training trajectory"
+  },
+  "TransformerDecoderModule": {
+   "checks": "causal forward and two-block causal stack backward vs PyTorch; inline reference: live LibTorch in Release builds with CYXWIZ_HAS_PYTORCH, else torch-derived constants; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    }
+   ],
+   "gap": "evidence inline (no fixture file); no training trajectory"
+  },
+  "TransformerEncoderLayer": {
+   "checks": "through TransformerEncoderModule (which wraps it): forward and two-block backward vs PyTorch; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    }
+   ],
+   "gap": "checked through its Module wrapper only; test_transformer_constructor / test_transformer_dropout are engine vs engine (the dropout PyTorch driver verify_transformer_dropout.py is not run by ctest)"
+  },
+  "TransformerEncoderModule": {
+   "checks": "one-block forward and two-block stack backward (input and parameter gradients) vs PyTorch, BERT head logits; inline reference: live LibTorch in Release builds with CYXWIZ_HAS_PYTORCH, else torch-derived constants; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi); level 2: 5 steps of a model through TrainingExecutor vs PyTorch running the Engine's export",
+   "evidence": [
+    {
+     "test": "test_computation_truth_transformer_primitives"
+    },
+    {
+     "test": "test_oracle_train",
+     "fixture": "train_trajectory_pytorch.json",
+     "cases": [
+      "models/transformer_classifier"
+     ]
+    }
+   ],
+   "gap": "evidence for single blocks inline; the trajectory is one post-norm block, dropout 0"
+  },
+  "TripletLoss": {
+   "checks": "forward and gradient vs PyTorch (euclidean and cosine, 6 cases); also batch losses and trained parameters of a 3-epoch MLP+SGD metric graph; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/metric_learning_loss_matrix_f32/triplet_euclidean_mixed_none",
+      "cases/metric_learning_loss_matrix_f32/triplet_euclidean_coincident_mean",
+      "cases/metric_learning_loss_matrix_f32/triplet_euclidean_sum",
+      "cases/metric_learning_loss_matrix_f32/triplet_cosine_mixed_none",
+      "cases/metric_learning_loss_matrix_f32/triplet_cosine_zero_mean",
+      "cases/metric_learning_loss_matrix_f32/triplet_cosine_sum"
+     ]
+    },
+    {
+     "test": "test_metric_graph_training",
+     "fixture": "metric_graph_pytorch.json",
+     "cases": [
+      "cases/triplet_margin_1",
+      "cases/triplet_margin_0_2",
+      "cases/triplet_hard",
+      "cases/triplet_semi_hard"
+     ]
+    }
+   ]
+  },
+  "TverskyLoss": {
+   "checks": "forward and gradient vs PyTorch formula (4 cases); ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_tfidf_loss",
+     "fixture": "training_core_pytorch.json",
+     "cases": [
+      "cases/overlap_loss_matrix_f32/tversky_rank1_sum",
+      "cases/overlap_loss_matrix_f32/tversky_rank3_none",
+      "cases/overlap_loss_matrix_f32/tversky_rank4_mean",
+      "cases/overlap_loss_matrix_f32/tversky_degenerate_zero_mask"
+     ]
+    }
+   ]
+  },
+  "Upsample2DLayer": {
+   "checks": "through Upsample2DModule (which wraps it): forward, input gradient (6 cases); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/upsample_nearest_x2",
+      "cases/upsample_bilinear_x2",
+      "cases/upsample_bilinear_image_16_x2",
+      "cases/upsample_nearest_image_16_x3",
+      "cases/upsample_nearest_3x5_x2_b7",
+      "cases/upsample_bilinear_3x5_x2_b7"
+     ]
+    }
+   ],
+   "gap": "checked only through its Module wrapper; no multi-step training trajectory vs PyTorch"
+  },
+  "Upsample2DModule": {
+   "checks": "forward, input gradient vs PyTorch (6 cases, one forward/backward each); device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
+   "evidence": [
+    {
+     "test": "test_computation_truth_spatial_layers",
+     "fixture": "spatial_layers_pytorch.json",
+     "cases": [
+      "cases/upsample_nearest_x2",
+      "cases/upsample_bilinear_x2",
+      "cases/upsample_bilinear_image_16_x2",
+      "cases/upsample_nearest_image_16_x3",
+      "cases/upsample_nearest_3x5_x2_b7",
+      "cases/upsample_bilinear_3x5_x2_b7"
+     ]
+    }
+   ],
+   "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
+  },
+  "WarmupDecayLR": {
+   "gap": "no PyTorch fixture or oracle test found (lifecycle tests only)"
+  }
+ }
+}

@@ -1,0 +1,27 @@
+{
+  "batch_size": 8,
+  "classes": 3,
+  "image_rows": false,
+  "input_shape": [
+    8
+  ],
+  "model": "bilstm_classifier",
+  "modules": [
+    {
+      "module": "layer0",
+      "node": "Tokens"
+    },
+    {
+      "module": "layer1",
+      "node": "Recurrent"
+    },
+    {
+      "module": "layer2",
+      "node": "Head"
+    }
+  ],
+  "rows": 40,
+  "summary": "Embedding 20 x 6, bidirectional LSTM 5 (last step), Dense 3; cross-entropy; Adam clip",
+  "task": "classification",
+  "token_ids": 20
+}

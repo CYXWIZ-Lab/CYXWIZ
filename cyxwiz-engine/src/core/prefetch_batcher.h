@@ -92,6 +92,7 @@ public:
 
     size_t GetNumBatches() const override { return source_->GetNumBatches(); }
     size_t GetNumSamples() const override { return source_->GetNumSamples(); }
+    std::optional<std::vector<size_t>> TrainClassCounts() const override { return source_->TrainClassCounts(); }
 
     void AdoptSourceOwnership(std::shared_ptr<IBatcher> source) {
         StopWorker();

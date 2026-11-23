@@ -27,11 +27,19 @@ namespace cyxwiz::plot {
 namespace {
 
 // The table a plot reads (TOFIX154): a table in memory, or about this many
-// rows from row groups spread over a table kept on disk; `rows` is the
-// dataset's own count.
+// rows from row groups spread over a table kept on disk, or an image
+// folder's list of images (its index: file, class, size; built in the
+// background after it loads, null until then); `rows` is the dataset's own
+// count.
 constexpr int64_t kPlotRowsFromDisk = 500000;
 std::shared_ptr<arrow::Table> PlotTable(const std::string& name, int64_t& rows) {
     auto& registry = DataRegistry::Instance();
+    if (registry.IsImageDataset(name)) {
+        const auto index = registry.GetArrowDataset(DataRegistry::ImageIndexName(name));
+        auto table = index ? index->GetArrowTable() : nullptr;
+        rows = table ? table->num_rows() : 0;
+        return table;
+    }
     if (const auto memory = registry.GetArrowDataset(name)) {
         auto table = memory->GetArrowTable();
         rows = table ? table->num_rows() : 0;
@@ -58,7 +66,13 @@ std::string ClockNow() {
     return buf;
 }
 
-bool Loaded(const std::string& name) { return DataRegistry::Instance().IsArrowDataset(name); }
+// A loaded Data Input's table, as PlotTable reads it: in memory or kept on
+// disk (a large file loads disk-backed; it read as "not read yet" and the
+// plot loaded it again in a run of its own)
+bool Loaded(const std::string& name) {
+    const auto& registry = DataRegistry::Instance();
+    return registry.IsArrowDataset(name) || registry.IsParquetBackedDataset(name) || registry.IsImageDataset(name);
+}
 
 // A fitted tree model's file as a table of its nodes (TOFIX134 P4.7): the
 // Plot opens it as a Tree. Empty with `error` set when it cannot be read.

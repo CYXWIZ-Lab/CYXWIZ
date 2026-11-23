@@ -18,7 +18,7 @@
 // paths       Optimization::FollowOptimizer (the training optimizers) against
 //             torch.optim in float32.
 
-#include "test_device_selection.h"
+#include "../oracle/oracle_test.h"
 
 #include <cyxwiz/calculus.h>
 #include <cyxwiz/expression.h>
@@ -431,7 +431,7 @@ void CheckPaths(const json& cases) {
 }  // namespace
 
 int main() {
-    if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) return 1;
+    if (!cyxwiz::test::BeginOracleTest("test_computation_truth_optimization")) return 1;
     std::ifstream in(CYXWIZ_OPTIMIZATION_FIXTURE);
     Check(in.good(), std::string("cannot open ") + CYXWIZ_OPTIMIZATION_FIXTURE);
     const json fixture = json::parse(in);

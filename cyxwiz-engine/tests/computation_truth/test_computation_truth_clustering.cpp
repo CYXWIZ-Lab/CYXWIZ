@@ -5,7 +5,7 @@
 // fixtures/clustering_pytorch.json (generate_clustering_fixtures.py). Runs on the
 // active ArrayFire backend (CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu). Random
 // starts (K-Means, GMM) are checked against the fixed point of well-separated blobs.
-#include "test_device_selection.h"
+#include "../oracle/oracle_test.h"
 
 #include <cyxwiz/clustering.h>
 
@@ -196,7 +196,7 @@ void RunCase(const json& c, const std::string& name) {
 }  // namespace
 
 int main(int, char** argv) {
-    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
+    Check(cyxwiz::test::BeginOracleTest("test_computation_truth_clustering"), "requested test device");
     std::ifstream in(FixturePath(argv[0]));
     Check(static_cast<bool>(in), "cannot open the clustering fixture");
     const json fixture = json::parse(in);

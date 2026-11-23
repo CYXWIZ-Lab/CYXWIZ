@@ -108,8 +108,28 @@ int main() {
     nodes[0].parameters.erase("file_path");
     p = PlanNodeResult(9, nodes, direct, none_loaded);
     Check(p.state == NodeResultPlan::State::Unavailable &&
-              p.reason == "Data Input has no data yet: open it, choose a file and Apply." && p.alternative_id == -1,
+              p.reason == "Data Input has no data yet: open it, choose a file or folder and Apply." &&
+              p.alternative_id == -1,
           "Data Input without a file: " + p.reason);
+    // An image folder not loaded yet: load it (the data run reads files only)
+    nodes[0].parameters["folder_path"] = "examples/datasets/cats_dogs_sample";
+    nodes[0].parameters["file_category"] = "image";
+    p = PlanNodeResult(9, nodes, direct, none_loaded);
+    Check(p.state == NodeResultPlan::State::Unavailable &&
+              p.reason == "Data Input is an image folder: open it and Apply, and the plot reads its list of images "
+                          "(file, class, size).",
+          "image folder not loaded: " + p.reason);
+    // Loaded, it is read directly (the lane reads its list of images)
+    nodes[0].parameters["dataset_name"] = "cats_dogs_sample";
+    p = PlanNodeResult(9, nodes, direct, [](const std::string& name) { return name == "cats_dogs_sample"; });
+    Check(p.state == NodeResultPlan::State::Loaded && p.dataset_name == "cats_dogs_sample", "loaded image folder: read");
+    nodes[0].parameters["file_category"] = "audio";
+    p = PlanNodeResult(9, nodes, direct, none_loaded);
+    Check(p.reason == "Data Input is a folder of sounds: plots read tables, and a folder has none to plot.",
+          "audio folder: " + p.reason);
+    nodes[0].parameters.erase("folder_path");
+    nodes[0].parameters.erase("file_category");
+    nodes[0].parameters["dataset_name"] = "mnist_784";
     nodes[0].parameters["file_path"] = "mnist_784.csv";
 
     // Nothing wired in.

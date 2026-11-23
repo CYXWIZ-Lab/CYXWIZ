@@ -116,7 +116,6 @@
 #include "../core/async_task_manager.h"
 #include "../core/dataset_catalog.h"
 #include "../scripting/scripting_engine.h"
-#include "../scripting/startup_script_manager.h"
 #include "../network/job_manager.h"
 #include "../network/grpc_client.h"
 #include "../network/reservation_client.h"
@@ -126,6 +125,7 @@
 #include "../core/pipeline_execution_task.h"
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
+#include "../core/project_session.h"
 #include "../core/cache_prune.h"
 #include "../core/data_budget.h"
 #include "../core/data_registry.h"
@@ -516,6 +516,8 @@ MainWindow::MainWindow()
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     training_plot_panel_ = std::make_shared<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
+    training_plot_panel_->SetViewDefaults(cyxwiz::core::EngineConfig::Instance().GetTrainingDashboard());
+    WireMissingValuesDashboard();
     // Prepared-data cache actions from the dashboard's Data preparation card.
     training_plot_panel_->SetSavePathCallback([](const std::string& title, const std::string& default_name) {
         const std::string root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
@@ -2104,7 +2106,12 @@ MainWindow::MainWindow()
 
     // Set minimap visibility pointers for View -> Minimaps menu
     toolbar_->SetNodeEditorMinimapPtr(node_editor_->GetShowMinimapPtr());
-    toolbar_->SetScriptEditorMinimapPtr(script_editor_->GetShowMinimapPtr());
+    // How the Studio starts (Preferences > Studio); the menus change it for the session
+    {
+        const auto studio = cyxwiz::core::EngineConfig::Instance().GetStudio();
+        node_editor_->SetShowMinimap(studio.minimap);
+        toolbar_->SetAutoSaveEnabled(studio.auto_save_at_start);
+    }
 
     // Register callbacks with ProjectManager for project lifecycle events.
     auto& lifecycle_project_manager = cyxwiz::ProjectManager::Instance();
@@ -2204,6 +2211,7 @@ MainWindow::MainWindow()
         SaveAllFiles();
         spdlog::info("All files saved via toolbar");
     });
+    toolbar_->SetAutoSaveCallback([this]() { AutoSaveFiles(); });
 
     // Set up Exit callback (called when user confirms exit)
     toolbar_->SetExitCallback([this]() {
@@ -2379,61 +2387,19 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up editor settings callbacks (Preferences -> Script Editor synchronization)
-
-    toolbar_->SetEditorTabSizeCallback([this](int tab_size) {
-        if (script_editor_) {
-            script_editor_->SetTabSize(tab_size);
-            spdlog::info("Editor tab size changed to {}", tab_size);
-        }
-    });
-
-    toolbar_->SetEditorFontScaleCallback([](float scale) {
-        gui::SetCodeTextScale(scale);
-        spdlog::info("Code text scale changed to {}", scale);
-    });
-
-    toolbar_->SetEditorShowWhitespaceCallback([this](bool show) {
-        if (script_editor_) {
-            script_editor_->SetShowWhitespace(show);
-            spdlog::info("Editor show whitespace changed to {}", show);
-        }
-    });
-
-    toolbar_->SetEditorWordWrapCallback([this](bool wrap) {
-        if (script_editor_) {
-            script_editor_->SetWordWrap(wrap);
-            spdlog::info("Editor word wrap changed to {}", wrap);
-        }
-    });
-
-    toolbar_->SetEditorAutoIndentCallback([this](bool indent) {
-        if (script_editor_) {
-            script_editor_->SetAutoIndent(indent);
-            spdlog::info("Editor auto indent changed to {}", indent);
-        }
-    });
-
-    // Initialize toolbar editor settings from script editor's current values
+    // The Script Editor's settings are Engine-wide (Preferences > Script
+    // Editor, TOFIX129 B9-8): applied at start, from Preferences, and the
+    // editor's View menu saves what it changes.
     if (script_editor_) {
-        toolbar_->SetEditorTabSize(script_editor_->GetTabSize());
-        toolbar_->SetEditorFontScale(script_editor_->GetFontScale());
-        toolbar_->SetEditorShowWhitespace(script_editor_->GetShowWhitespace());
-        toolbar_->SetEditorWordWrap(script_editor_->GetWordWrap());
-        toolbar_->SetEditorAutoIndent(script_editor_->GetAutoIndent());
-
-        // Set up callback for when settings change in Script Editor (View menu)
-        // This syncs changes back to the Preferences dialog and saves to project
+        script_editor_->ApplyEditorSettings(cyxwiz::core::EngineConfig::Instance().GetEditor());
+        toolbar_->SetEditorSettingsCallback([this](const cyxwiz::core::EditorConfig& settings) {
+            if (script_editor_) script_editor_->ApplyEditorSettings(settings);
+        });
         script_editor_->SetOnSettingsChangedCallback([this]() {
-            if (toolbar_ && script_editor_) {
-                toolbar_->SetEditorTabSize(script_editor_->GetTabSize());
-                toolbar_->SetEditorFontScale(script_editor_->GetFontScale());
-                toolbar_->SetEditorShowWhitespace(script_editor_->GetShowWhitespace());
-                toolbar_->SetEditorWordWrap(script_editor_->GetWordWrap());
-                toolbar_->SetEditorAutoIndent(script_editor_->GetAutoIndent());
-            }
-            // Save settings to project file immediately
-            SaveProjectSettings();
+            if (!script_editor_) return;
+            auto& config = cyxwiz::core::EngineConfig::Instance();
+            config.SetEditor(script_editor_->EditorSettings());
+            config.Save();
         });
     }
 
@@ -2479,17 +2445,6 @@ MainWindow::MainWindow()
     asset_browser_->SetOnOpenInNodeEditor([this](const std::string& path) {
         OpenGraphInNodeEditor(path);
     });
-
-    // Initialize startup script manager
-    startup_script_manager_ = std::make_unique<scripting::StartupScriptManager>(scripting_engine_);
-
-    // Load and execute startup scripts
-    if (startup_script_manager_->LoadConfig()) {
-        spdlog::debug("Executing startup scripts...");
-        startup_script_manager_->ExecuteAll(console_.get());
-    } else {
-        spdlog::debug("No startup scripts configured or startup_scripts.txt not found");
-    }
 
     // Install custom dock node handler for Unreal-style tabs
     DockStyle::InstallCustomHandler();
@@ -2575,8 +2530,6 @@ MainWindow::~MainWindow() {
     variable_explorer_.reset();
     spdlog::info("~MainWindow: plot_output_panel_ (holds scripting_engine)");
     plot_output_panel_.reset();
-    spdlog::info("~MainWindow: startup_script_manager_ (holds scripting_engine)");
-    startup_script_manager_.reset();
 
     // NOW reset MainWindow's scripting_engine_ - it should be the last reference
     spdlog::info("~MainWindow: scripting_engine_");
@@ -2816,28 +2769,42 @@ void MainWindow::StopRunningScript() {
     }
 }
 
+// Unsaved work: the Script Editor's scripts and the canvas's graph (closing
+// the Engine asked about scripts only, so a changed graph closed silently)
 bool MainWindow::HasUnsavedFiles() const {
-    if (script_editor_) {
-        return script_editor_->HasUnsavedFiles();
-    }
-    return false;
+    if (node_editor_ && node_editor_->HasUnsavedGraph()) return true;
+    return script_editor_ && script_editor_->HasUnsavedFiles();
 }
 
 std::vector<std::string> MainWindow::GetUnsavedFileNames() const {
+    std::vector<std::string> names;
+    if (node_editor_ && node_editor_->HasUnsavedGraph()) names.push_back(node_editor_->GraphDisplayName() + " (graph)");
     if (script_editor_) {
-        return script_editor_->GetUnsavedFileNames();
+        for (auto& name : script_editor_->GetUnsavedFileNames()) names.push_back(std::move(name));
     }
-    return {};
+    return names;
 }
 
 void MainWindow::SaveAllFiles() {
-    if (script_editor_) {
-        script_editor_->SaveAllFiles();
-    }
+    // An untitled graph asks where to save it; cancelled, it stays unsaved
+    if (node_editor_ && node_editor_->HasUnsavedGraph()) node_editor_->SaveCurrentGraph();
+    if (script_editor_) script_editor_->SaveAllFiles();
+}
+
+void MainWindow::AutoSaveFiles() {
+    // A Save dialog every minute for an untitled graph or script would be no
+    // help: those wait for File > Save
+    if (node_editor_ && node_editor_->HasUnsavedGraph() && !node_editor_->GetCurrentFilePath().empty())
+        node_editor_->SaveCurrentGraph();
+    if (script_editor_) script_editor_->SaveFilesThatHaveAPath();
 }
 
 void MainWindow::PrepareForShutdown() {
     spdlog::info("MainWindow: Preparing for shutdown...");
+
+    // The project remembers what was open (scripts, the graph) for the next
+    // time it opens, also when the Engine reopens it at start
+    if (cyxwiz::ProjectManager::Instance().HasActiveProject()) SaveProjectSettings();
 
     // Stop any running script first (this can take time to interrupt Python)
     if (scripting_engine_ && scripting_engine_->IsScriptRunning()) {
@@ -3043,6 +3010,7 @@ void MainWindow::Render() {
 
     // Render the Compile Graph result popup (triggered from Train -> Compile Graph menu)
     RenderCompileResultPopup();
+    TrackMissingValuesSteps();
     RenderOperationErrorPopup();
     RenderMaterializationMemoryConfirmationPopup();
 
@@ -3968,6 +3936,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     accepted_materialization_memory_estimated_bytes_ = 0;
     try {
         spdlog::info("StartTrainingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
+        missing_values_.clear();  // a new attempt: its own check
+        dashboard_missing_ = MissingValuesEntry{};  // and a refused run gets a fresh card
 
         // === Pre-flight compile gate ===
         // Run the same Compile pass the explicit Compile button uses, and
@@ -4221,8 +4191,32 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         }
 
         auto dispatch_training = marked ? marked->dispatch : MakeEngineGraphTrainingDispatch(registry, tm);
+        const std::string source_dataset = config.dataset_name;  // the Data Input's own (its column roles)
         const std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel =
             marked ? std::weak_ptr<cyxwiz::TrainingPlotPanel>() : std::weak_ptr<cyxwiz::TrainingPlotPanel>(training_plot_panel_);
+
+        // Training would refuse missing values: the launch task finds them
+        // off the UI thread and the report offers the fix. Nothing started:
+        // the canvas is free again for the fix's steps (its pins unchanged).
+        // The report is for this graph only: one opened or cleared during
+        // the check gets no card for these columns and node ids.
+        const uint64_t launch_graph = node_editor_ ? node_editor_->GraphGeneration() : 0;
+        auto on_missing_values = [this, nodes, source_dataset, launch_graph, held = static_cast<bool>(node_editor_callback),
+                                  not_started = marked ? marked->not_started : nullptr](
+                                     std::vector<MissingValuesBlock> blocks) {
+            const std::string why = "Not started: the data has missing values (the report says where).";
+            if (held && node_editor_) node_editor_->SetTrainingActive(false);
+            if (not_started) not_started(why);
+            // Loading the data or running its steps first left the Dashboard
+            // preparing (its last run was cleared then): end that here.
+            if (training_plot_panel_ && training_plot_panel_->IsPreparing())
+                training_plot_panel_->SetPreparationFailed(why);
+            if (!node_editor_ || node_editor_->GraphGeneration() != launch_graph) {
+                spdlog::info("Missing values: the graph changed during the check; no report");
+                return;
+            }
+            ShowMissingValuesReport(blocks, nodes, source_dataset);
+        };
 
         auto launch_result = StartGraphTrainingFromCompiledConfig(
             nodes, links, std::move(config), registry, plot_panel,
@@ -4233,16 +4227,16 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 : std::nullopt,
             cyxwiz::ProjectManager::Instance().GetProjectRoot(),
             canvas_dataset,
-            prepared_key);
+            prepared_key,
+            std::move(on_missing_values));
 
+        // Started: the launch task checks the data, then prepares and
+        // dispatches (the Dashboard shows itself once the check passes).
         if (launch_result.started && marked) {
             marked_launch_.reset();  // the preparation runs, then its dispatch
             spdlog::info("{} started", marked->what);
         } else if (launch_result.started) {
-            spdlog::info("Training started successfully");
-            if (training_plot_panel_) {
-                training_plot_panel_->SetVisible(true);
-            }
+            spdlog::info("Training launch queued");
         } else {
             compile_result_success_ = false;
             compile_result_issues_.clear();
@@ -6144,16 +6138,8 @@ void MainWindow::SaveProjectSettings() {
         return;
     }
 
-    // Get current editor settings from script editor
-    cyxwiz::EditorSettings& settings = pm.GetConfig().editor_settings;
+    // The project keeps what was open (its editor settings are Engine-wide)
     if (script_editor_) {
-        settings.font_scale = script_editor_->GetFontScale();
-        settings.tab_size = script_editor_->GetTabSize();
-        settings.show_whitespace = script_editor_->GetShowWhitespace();
-        settings.word_wrap = script_editor_->GetWordWrap();
-        settings.auto_indent = script_editor_->GetAutoIndent();
-        settings.syntax_highlighting = script_editor_->GetSyntaxHighlighting();
-
         // Persist open scripts for project restore
         pm.GetConfig().open_scripts.clear();
         auto open_paths = script_editor_->GetOpenFilePaths();
@@ -6162,15 +6148,15 @@ void MainWindow::SaveProjectSettings() {
         }
         pm.GetConfig().active_script_index = script_editor_->GetActiveTabIndex();
     }
-
-    // Save application-wide settings
-    settings.app_theme = static_cast<int>(GetTheme().GetCurrentPreset());
-    settings.ui_scale = ImGui::GetIO().FontGlobalScale;
+    // The graph on the canvas, reopened with the project (Preferences > General)
+    if (node_editor_) {
+        pm.GetConfig().open_graph =
+            cyxwiz::project_session::StoredGraph(node_editor_->GetCurrentFilePath(), pm.GetProjectRoot());
+    }
 
     // Save layout file
     SaveLayout();
 
-    // Save project file (includes editor settings)
     pm.SaveProject();
     spdlog::info("Saved project settings");
 }
@@ -6181,28 +6167,8 @@ void MainWindow::LoadProjectSettings() {
         return;
     }
 
-    const cyxwiz::EditorSettings& settings = pm.GetConfig().editor_settings;
-
-    // Apply editor settings to script editor
-    if (script_editor_) {
-        script_editor_->SetTabSize(settings.tab_size);
-        script_editor_->SetShowWhitespace(settings.show_whitespace);
-        script_editor_->SetWordWrap(settings.word_wrap);
-        script_editor_->SetAutoIndent(settings.auto_indent);
-        script_editor_->SetSyntaxHighlighting(settings.syntax_highlighting);
-    }
-
-    // Sync settings to toolbar/preferences
-    if (toolbar_) {
-        toolbar_->SetEditorTabSize(settings.tab_size);
-        toolbar_->SetEditorFontScale(gui::CodeTextScale());
-        toolbar_->SetEditorShowWhitespace(settings.show_whitespace);
-        toolbar_->SetEditorWordWrap(settings.word_wrap);
-        toolbar_->SetEditorAutoIndent(settings.auto_indent);
-    }
-
-    // Theme and text sizes are Engine-wide (Preferences > Appearance); the
-    // project's older app_theme / ui_scale fields are no longer applied.
+    // Theme, text sizes and the Script Editor's settings are Engine-wide
+    // (Preferences); the project brings back what was open.
     ImGui::GetIO().FontGlobalScale = 1.0f;
 
     // Restore open scripts
@@ -6221,7 +6187,7 @@ void MainWindow::LoadProjectSettings() {
         script_editor_->SetActiveTabIndex(pm.GetConfig().active_script_index);
     }
 
-    spdlog::debug("Loaded project settings (font_scale={:.1f}, tab_size={})", settings.font_scale, settings.tab_size);
+    spdlog::debug("Loaded project settings ({} open scripts)", open_scripts.size());
 }
 
 void MainWindow::OnProjectOpened(const std::string& project_root) {

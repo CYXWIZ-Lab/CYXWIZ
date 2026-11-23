@@ -147,10 +147,10 @@ straight after Conv1D, a kernel longer than the sequence.
 
 ## Checked against PyTorch
 
-`spatial_layers_pytorch_parity` replays every layer above, the global pools
+`oracle_computation_truth_spatial_layers_cpu` replays every layer above, the global pools
 and Conv1D included, against torch (forward, input gradient and parameter gradients;
 `tests/computation_truth/fixtures/spatial_layers_pytorch.json`).
-`cnn_graph_training_contract` compiles the example graph with Flatten and with
+`oracle_cnn_graph_training_cpu` compiles the example graph with Flatten and with
 Global Avg Pool, checks the shapes and parameter counts against torch's, and
 runs it forward and backward; it also builds Conv -> BatchNorm -> ReLU, an
 identity residual block and a downsampling block, and sets torch's weights on a
@@ -158,7 +158,7 @@ residual CNN (stem, downsampling block with a projection shortcut, Global Avg
 Pool, Dense) to match torch's logits, input gradient, every layer's gradients and
 BatchNorm's running statistics on CUDA, OpenCL and CPU
 (`tests/computation_truth/fixtures/cnn_graph_pytorch.json`). The same fixture
-holds a stem followed by the Squeeze-Excitation node, matched the same way. `conv1d_graph_pytorch_parity` builds a Conv1D
+holds a stem followed by the Squeeze-Excitation node, matched the same way. `oracle_conv1d_graph_training_cpu` builds a Conv1D
 graph on table rows (Flatten) and on an Embedding (Global Avg Pool, and the
 text CNN with Global Max Pool), sets
 torch's parameters on the built model and matches torch's output and every

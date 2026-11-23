@@ -604,9 +604,9 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
         int loaded_next_group_id = 1;
         int loaded_next_annotation_id = 1;
 
-        CodeFramework loaded_framework = selected_framework_;
+        cyxwiz::CodeFramework loaded_framework = selected_framework_;
         if (graph_json.contains("framework")) {
-            loaded_framework = static_cast<CodeFramework>(
+            loaded_framework = static_cast<cyxwiz::CodeFramework>(
                 graph_json["framework"].get<int>());
         }
 
@@ -846,6 +846,11 @@ void NodeEditor::SaveAsFromStudio() {
         return;
     }
     ShowSaveDialog();
+}
+
+std::string NodeEditor::GraphDisplayName() const {
+    return current_file_path_.empty() ? std::string("Untitled graph")
+                                      : std::filesystem::path(current_file_path_).filename().string();
 }
 
 bool NodeEditor::SaveCurrentGraph() {

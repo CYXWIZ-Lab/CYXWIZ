@@ -2,13 +2,15 @@
 
 #include "toolbar.h"
 #include "../separate_windows.h"
+#include "../appearance_settings.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_widgets.h"
 #include "../../core/compute_runtime_config.h"
 #include "../../core/compute_runtime_paths.h"
 #include "../../core/engine_config.h"
-#include "../../core/utilities_presentation.h"
+#include "../../core/appearance_options.h"
+#include "../../core/project_manager.h"
 #include "../../core/data_budget.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/execution_device_preferences.h"
@@ -24,7 +26,9 @@
 #include "../ui_widgets.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
+#include <imgui_stdlib.h>
 #include <exception>
 #include <filesystem>
 #include <stdexcept>
@@ -72,15 +76,85 @@ const char* ArrayFireBackendDisplayName(DeviceType type) {
     }
 }
 
+// The pages of Preferences, in the rail's groups; `keys` are what the
+// search matches besides the name.
+struct PreferencePage {
+    const char* id;
+    const char* icon;
+    const char* group;
+    const char* keys;
+};
+constexpr PreferencePage kPreferencePages[] = {
+    {"General", ICON_FA_GEAR, "ENGINE", "start startup reopen last project recent closing ask exit logs debug windows data budget memory"},
+    {"Appearance", ICON_FA_PALETTE, "ENGINE", "theme colours colors font text size code sidebar node icons scale"},
+    {"Shortcuts", ICON_FA_KEYBOARD, "ENGINE", "keyboard keys bindings hotkeys"},
+    {"Storage", ICON_FA_HARD_DRIVE, "ENGINE", "cache caches disk space clear folders"},
+    {"Servers", ICON_FA_SERVER, "ENGINE", "server address central gateway sign in account deployment node p2p port"},
+    {"Studio", ICON_FA_DIAGRAM_PROJECT, "STUDIO", "auto save minimap canvas local debug before train"},
+    {"Script Editor", ICON_FA_PEN, "STUDIO", "editor tab size whitespace syntax colours minimap word wrap indent line endings trim newline utf-8 files"},
+    {"Python", ICON_FA_CODE, "STUDIO", "interpreter venv virtual environment packages pip startup script numpy pycyxwiz console commands"},
+    {"Nodes panel", ICON_FA_CUBES, "STUDIO", "nodes grid list recent"},
+    {"Training", ICON_FA_GRADUATION_CAP, "TRAINING", "batchnorm frozen fine-tuning dashboard charts auto scale smooth log loss follow epochs"},
+    {"Search", ICON_FA_SLIDERS, "TRAINING", "hyperparameter search nas neural architecture trials grid random bayesian"},
+    {"Studio Debugger", ICON_FA_BUG, "TRAINING", "debugger layer capture views"},
+    {"Simulation", ICON_FA_WAVE_SQUARE, "TRAINING", "mujoco simulation viewport watch ppo policy stress test"},
+    {"Devices", ICON_FA_MICROCHIP, "TRAINING", "gpu cpu cuda opencl oneapi device arrayfire backend packs execution policy"},
+    {"Tools", ICON_FA_TOOLBOX, "TOOLS", "utilities calculator units hash json regex monitoring sample readings diagnostics frame rate overlay python commands log"},
+};
+
+std::string Lower(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+bool PageMatches(const PreferencePage& page, const std::string& query) {
+    if (query.empty()) return true;
+    const std::string words = Lower(std::string(page.id) + " " + page.keys);
+    // Every word typed is found (in any order)
+    size_t start = 0;
+    const std::string q = Lower(query);
+    while (start < q.size()) {
+        const size_t end = q.find(' ', start);
+        const std::string word = q.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        if (!word.empty() && words.find(word) == std::string::npos) return false;
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return true;
+}
+
 } // namespace
+
+void ToolbarPanel::RenderPreferencesRail(float footer_height) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const float width = (std::max)(180.0f, ImGui::CalcTextSize("Studio Debugger").x + ImGui::GetFontSize() * 4.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
+    ImGui::BeginChild("##preferences_rail", ImVec2(width, -footer_height), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##preferences_search", ICON_FA_MAGNIFYING_GLASS " Search settings", &preferences_search_);
+    const char* group = nullptr;
+    bool any = false;
+    for (const auto& page : kPreferencePages) {
+        if (!PageMatches(page, preferences_search_)) continue;
+        if (!group || std::strcmp(group, page.group) != 0) {
+            group = page.group;
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", page.group);
+        }
+        any = true;
+        const std::string label = std::string(page.icon) + "  " + page.id;
+        if (ImGui::Selectable(label.c_str(), preferences_page_ == page.id)) preferences_page_ = page.id;
+    }
+    if (!any) ImGui::TextDisabled("No page matches.");
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
 
 void ToolbarPanel::RenderPreferencesDialog() {
     const ui::Tokens& t = ui::CurrentTokens();
     // ========== Preferences Dialog ==========
     if (show_preferences_dialog_) {
-
-        // Python settings have been moved to PythonSettingsPanel
-        // This initialization code is no longer needed
 
         ImGui::OpenPopup("Preferences");
         ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -89,59 +163,92 @@ void ToolbarPanel::RenderPreferencesDialog() {
         // clipped the OK / Cancel footer.
         const ImVec2 viewport = ImGui::GetMainViewport()->WorkSize;
         const ImVec2 limit(viewport.x * 0.92f, viewport.y * 0.92f);
-        // Wide enough for every tab's whole name when the Engine window allows
-        // it; narrower, the tabs scroll and the list button names them all.
-        static const char* const kTabLabels[] = {
-            ICON_FA_GEAR " General", ICON_FA_PEN " Editor", ICON_FA_PALETTE " Appearance", ICON_FA_FILE " Files",
-            ICON_FA_CODE " Python", ICON_FA_KEYBOARD " Shortcuts", ICON_FA_MICROCHIP " Devices",
-            ICON_FA_BUG " Studio Debugger", ICON_FA_GRADUATION_CAP " Training", ICON_FA_CUBES " Nodes panel",
-            ICON_FA_SLIDERS " Search", ICON_FA_HARD_DRIVE " Storage", ICON_FA_SERVER " Servers"};
-        const ImGuiStyle& style = ImGui::GetStyle();
-        float tabs_width = style.WindowPadding.x * 2.0f + ImGui::GetFrameHeight() * 2.0f;
-        for (const char* label : kTabLabels)
-            tabs_width += ImGui::CalcTextSize(label).x + style.FramePadding.x * 2.0f + style.ItemInnerSpacing.x;
-        ImGui::SetNextWindowSize(
-            ImVec2((std::min)((std::max)(1000.0f, tabs_width), limit.x), (std::min)(760.0f, limit.y)),
-            ImGuiCond_Appearing);
+        ImGui::SetNextWindowSize(ImVec2((std::min)(1000.0f, limit.x), (std::min)(760.0f, limit.y)),
+                                 ImGuiCond_Appearing);
         ImGui::SetNextWindowSizeConstraints(
             ImVec2((std::min)(560.0f, limit.x), (std::min)(360.0f, limit.y)), limit);
 
         if (ImGui::BeginPopupModal("Preferences", &show_preferences_dialog_)) {
-            // Tabs scroll inside their own region so OK / Cancel stay visible
-            // at the bottom however long a tab is.
-            const float footer_height = ImGui::GetTextLineHeight() + 16.0f +
-                ImGui::GetStyle().ItemSpacing.y * 4.0f + 6.0f;
-            ImGui::BeginChild("PreferencesBody", ImVec2(0.0f, -footer_height));
-            // Tab bar for different preference sections
-            if (ImGui::BeginTabBar("PreferenceTabs",
-                                   ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_TabListPopupButton)) {
+            // Pages in a rail on the left, in four groups, with a search over
+            // them (TOFIX129 B9-1). Every change applies and is saved at once,
+            // so the footer has Close only (B9-2).
+            if (!preferences_select_tab_.empty()) {
+                preferences_page_ = preferences_select_tab_;
+                preferences_select_tab_.clear();
+            }
+            if (preferences_open_appearance_) {
+                preferences_page_ = "Appearance";
+                preferences_open_appearance_ = false;
+            }
+            const float footer_height = ImGui::GetFrameHeight() * 2.0f + ImGui::GetStyle().ItemSpacing.y * 3.0f;
+            RenderPreferencesRail(footer_height);
+            ImGui::SameLine();
+            ImGui::BeginChild("PreferencesBody", ImVec2(0.0f, -footer_height), ImGuiChildFlags_AlwaysUseWindowPadding);
+            const std::string page = preferences_page_;
+            ImGui::TextColored(t.text_bright, "%s", page.c_str());
+            // Long texts wrap at the page's edge instead of clipping (B9-11)
+            ImGui::PushTextWrapPos(0.0f);
+            {
 
                 // ========== General Tab ==========
-                if (ImGui::BeginTabItem(ICON_FA_GEAR " General")) {
-                    preferences_tab_ = 0;
+                if (page == "General") {
                     ImGui::Spacing();
 
-                    ImGui::Text("Startup");
+                    ImGui::Text("Starting");
                     ImGui::Separator();
                     ImGui::Spacing();
-
-                    ImGui::Checkbox("Restore last session on startup", &general_restore_last_session_);
-                    ImGui::Checkbox("Check for updates on startup", &general_check_updates_);
+                    {
+                        // Engine-wide, saved at once (TOFIX129 B9-3, B9-5)
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        static const char* const kStart[] = {"Show the start page", "Reopen the last project"};
+                        int start = engine_config.StartWithLastProject() ? 1 : 0;
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("When the Engine starts");
+                        if (ui::SegmentedControl("##general_start", kStart, 2, &start)) {
+                            engine_config.SetStartWithLastProject(start == 1);
+                            engine_config.Save();
+                        }
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled("Reopen: the last project with its scripts and the graph that was open. If "
+                                            "its folder is gone, the start page. A project named on the command line "
+                                            "always wins.");
+                        ImGui::PopTextWrapPos();
+                        ImGui::Spacing();
+                        int kept = engine_config.RecentProjectsKept();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Recent projects kept");
+                        ImGui::SameLine();
+                        if (ui::NumberField("##recent_projects", &kept, cyxwiz::core::EngineConfig::kMinRecentProjects,
+                                            cyxwiz::core::EngineConfig::kMaxRecentProjects, 1, 60.0f,
+                                            "File > Open Recent and the start page")) {
+                            engine_config.SetRecentProjectsKept(kept);
+                            engine_config.Save();
+                            cyxwiz::ProjectManager::Instance().SetRecentProjectsLimit(
+                                static_cast<size_t>(engine_config.RecentProjectsKept()));
+                        }
+                    }
 
                     ImGui::Spacing();
-                    ImGui::Text("Recent Files Limit:");
-                    ImGui::SetNextItemWidth(100);
-                    ImGui::InputInt("##recent_limit", &general_recent_files_limit_);
-                    if (general_recent_files_limit_ < 1) general_recent_files_limit_ = 1;
-                    if (general_recent_files_limit_ > 50) general_recent_files_limit_ = 50;
-
                     ImGui::Spacing();
-                    ImGui::Spacing();
-                    ImGui::Text("Exit Behavior");
+                    ImGui::Text("Closing");
                     ImGui::Separator();
                     ImGui::Spacing();
-
-                    ImGui::Checkbox("Confirm before exit with unsaved changes", &general_confirm_on_exit_);
+                    {
+                        // TOFIX129 B9-6: losing work always asks; Always asks every time
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        static const char* const kAsk[] = {"When something would be lost", "Always"};
+                        int ask = engine_config.AskBeforeClosingAlways() ? 1 : 0;
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Ask before closing");
+                        if (ui::SegmentedControl("##general_ask_close", kAsk, 2, &ask)) {
+                            engine_config.SetAskBeforeClosingAlways(ask == 1);
+                            engine_config.Save();
+                        }
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled("Unsaved scripts or graph, a running script or data in memory always ask; "
+                                            "Always asks every time.");
+                        ImGui::PopTextWrapPos();
+                    }
 
                     ImGui::Spacing();
                     ImGui::Spacing();
@@ -193,9 +300,12 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         // at once (TOFIX154).
                         auto& engine_config = cyxwiz::core::EngineConfig::Instance();
                         int budget_mb = static_cast<int>(engine_config.DataBudgetBytes() >> 20);
+                        ImGui::AlignTextToFramePadding();
                         ImGui::Text("Data budget (MB):");
-                        ImGui::SetNextItemWidth(160.0f);
-                        if (ImGui::InputInt("##data_budget_mb", &budget_mb, 256, 1024)) {
+                        ImGui::SameLine();
+                        if (ui::NumberField("##data_budget_mb", &budget_mb, 0,
+                                            static_cast<int>(cyxwiz::MaxDataBudgetBytes() >> 20), 256, 90.0f,
+                                            "MB of memory for data; 0 uses half of this PC's memory")) {
                             budget_mb = std::clamp(budget_mb, 0, 2000000);
                             engine_config.SetDataBudgetBytes(static_cast<uint64_t>(budget_mb) << 20);
                             engine_config.Save();
@@ -222,351 +332,109 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::PopTextWrapPos();
                     }
 
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    ImGui::Text("Tools > Utilities");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-                    {
-                        // The Utilities window's defaults (TOFIX129 D12), saved at
-                        // once; the window also has "Save as my default".
-                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
-                        cyxwiz::core::UtilitiesConfig u = engine_config.GetUtilities();
-                        bool changed = false;
-                        const auto combo = [&changed](const char* label, std::string& value,
-                                                      const std::vector<std::pair<std::string, std::string>>& items) {
-                            std::string shown = value;
-                            for (const auto& [id, text] : items)
-                                if (id == value) shown = text;
-                            ImGui::SetNextItemWidth(180.0f);
-                            if (ImGui::BeginCombo(label, shown.c_str())) {
-                                for (const auto& [id, text] : items) {
-                                    if (ImGui::Selectable(text.c_str(), id == value)) {
-                                        value = id;
-                                        changed = true;
-                                    }
-                                }
-                                ImGui::EndCombo();
-                            }
-                        };
-                        std::vector<std::pair<std::string, std::string>> tabs;
-                        for (const auto tab : cyxwiz::utilities_view::kTabs)
-                            tabs.push_back({cyxwiz::utilities_view::TabId(tab), cyxwiz::utilities_view::TabLabel(tab)});
-                        combo("Opens on##util_tab", u.tab, tabs);
-                        ImGui::Text("Digits shown:");
-                        ImGui::SameLine();
-                        changed |= ui::NumberField("##util_digits", &u.digits, 1, 17, 1, 40.0f, "Significant digits (1 to 17)");
-                        changed |= ImGui::Checkbox("Calculator in degrees##util_degrees", &u.degrees);
-                        std::vector<std::pair<std::string, std::string>> categories;
-                        for (const auto& c : cyxwiz::Utilities::GetUnitCategories())
-                            categories.push_back({c, cyxwiz::utilities_view::CategoryLabel(c)});
-                        combo("Unit category##util_units", u.unit_category, categories);
-                        combo("Hash algorithm##util_hash", u.hash_algorithm,
-                              {{"md5", "MD5"}, {"sha1", "SHA-1"}, {"sha256", "SHA-256"}, {"sha512", "SHA-512"}});
-                        ImGui::Text("JSON indent:");
-                        ImGui::SameLine();
-                        changed |= ui::NumberField("##util_indent", &u.json_indent, 0, 8, 1, 36.0f);
-                        changed |= ImGui::Checkbox("Regex: ignore case##util_icase", &u.regex_ignore_case);
-                        changed |= ImGui::Checkbox("Regex: multiline##util_multiline", &u.regex_multiline);
-                        if (changed) {
-                            engine_config.SetUtilities(u);
-                            engine_config.Save();
-                        }
-                        ImGui::TextDisabled("Used when the Engine starts.");
-                    }
-
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    ImGui::Text("Tools > Monitoring and Diagnostics");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-                    {
-                        // The Monitor window's defaults (TOFIX129 D13), saved at
-                        // once; the window also has "Save as my default".
-                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
-                        cyxwiz::core::MonitorConfig m = engine_config.GetMonitor();
-                        bool changed = false;
-                        ImGui::Text("Sample every:");
-                        ImGui::SameLine();
-                        ui::NumberFieldOptions interval;
-                        interval.min = 0.25;
-                        interval.max = 60.0;
-                        interval.step = 1.0;
-                        interval.format = "%.2g";
-                        interval.width = 56.0f;
-                        interval.hint = "Seconds between the Monitor window's readings";
-                        changed |= ui::NumberField("##monitor_interval", &m.interval_seconds, interval);
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("s");
-                        const std::pair<double, const char*> keeps[] = {{300.0, "5 min"}, {900.0, "15 min"}, {3600.0, "1 hour"}};
-                        const char* keep_shown = "15 min";
-                        for (const auto& [seconds, text] : keeps)
-                            if (m.keep_seconds == seconds) keep_shown = text;
-                        ImGui::SetNextItemWidth(160.0f);
-                        if (ImGui::BeginCombo("Keep readings for##monitor_keep", keep_shown)) {
-                            for (const auto& [seconds, text] : keeps)
-                                if (ImGui::Selectable(text, m.keep_seconds == seconds)) {
-                                    m.keep_seconds = seconds;
-                                    changed = true;
-                                }
-                            ImGui::EndCombo();
-                        }
-                        const std::pair<const char*, const char*> tabs[] = {
-                            {"system", "System"}, {"memory", "Memory"}, {"loaded_data", "Loaded data"}, {"frames", "Frames"}};
-                        const char* tab_shown = "System";
-                        for (const auto& [id, text] : tabs)
-                            if (m.tab == id) tab_shown = text;
-                        ImGui::SetNextItemWidth(160.0f);
-                        if (ImGui::BeginCombo("Monitor opens on##monitor_tab", tab_shown)) {
-                            for (const auto& [id, text] : tabs)
-                                if (ImGui::Selectable(text, m.tab == id)) {
-                                    m.tab = id;
-                                    changed = true;
-                                }
-                            ImGui::EndCombo();
-                        }
-                        if (changed) {
-                            engine_config.SetMonitor(m);
-                            engine_config.Save();
-                        }
-                        ImGui::TextDisabled("Used when the Engine starts.");
-
-                        // The Tools > Diagnostics switches: on at once, and kept.
-                        ImGui::Spacing();
-                        bool switched = false;
-                        if (idle_log_ptr_) {
-                            switched |= ImGui::Checkbox("Log frame-rate changes##diag_pace", idle_log_ptr_);
-                            ui::Tooltip("One log line when the Engine slows or speeds its frames:\n"
-                                        "idle (10 a second), not in front (30 a second), minimised.");
-                        }
-                        if (verbose_python_log_ptr_) {
-                            bool verbose = verbose_python_log_ptr_->load();
-                            if (ImGui::Checkbox("Log every Python command##diag_python", &verbose)) {
-                                verbose_python_log_ptr_->store(verbose);
-                                switched = true;
-                            }
-                            ui::Tooltip("Each command the Engine sends to Python, with how long it took.");
-                        }
-                        if (frame_overlay_ptr_) {
-                            switched |= ImGui::Checkbox("Frame time overlay##diag_overlay", frame_overlay_ptr_);
-                            ui::Tooltip("The whole frame time and the Engine's own interface-building time,\n"
-                                        "at the top right of the window. More in Tools > Monitoring > Frames.");
-                        }
-                        if (switched) SaveDiagnostics();
-                    }
-
                     RenderPluginPreferences("General");
-                    ImGui::EndTabItem();
                 }
 
-                // ========== Editor Tab ==========
-                if (ImGui::BeginTabItem(ICON_FA_PEN " Editor")) {
-                    preferences_tab_ = 1;
-                    ImGui::Spacing();
+                // ========== Tools (TOFIX129 B9-1: moved from General) ==========
+                if (page == "Tools") {
+                    RenderToolsPreferences();
+                }
 
-                    ImGui::Text("Theme & Colors");
+                // ========== Studio (TOFIX129 B9-10) ==========
+                if (page == "Studio") {
+                    RenderStudioPreferences();
+                }
+
+                // ========== Script Editor (Editor + Files, TOFIX129 B9-7, B9-8) ==========
+                if (page == "Script Editor") {
+                    ImGui::Spacing();
+                    // Engine-wide, saved at once; the editor's View menu edits the same values
+                    auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                    cyxwiz::core::EditorConfig editor = engine_config.GetEditor();
+                    bool changed = false;
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("For every project. The Script Editor's View menu changes the same settings.");
+                    ImGui::PopTextWrapPos();
+
+                    ImGui::Spacing();
+                    ImGui::Text("Text");
                     ImGui::Separator();
                     ImGui::Spacing();
-
-                    // Code colours follow the Engine theme (TOFIX133 P1); there is
-                    // no separate editor theme any more.
+                    static const char* const kTabSizes[] = {"2", "4", "8"};
+                    int tab_index = editor.tab_size == 2 ? 0 : editor.tab_size == 8 ? 2 : 1;
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted("Tab size (spaces)");
+                    ImGui::SameLine();
+                    if (ui::SegmentedControl("##tab_size", kTabSizes, 3, &tab_index)) {
+                        editor.tab_size = tab_index == 0 ? 2 : tab_index == 2 ? 8 : 4;
+                        changed = true;
+                    }
+                    changed |= ImGui::Checkbox("Show whitespace", &editor.show_whitespace);
+                    changed |= ImGui::Checkbox("Syntax colours", &editor.syntax_colours);
+                    changed |= ImGui::Checkbox("Minimap", &editor.minimap);
+                    changed |= ImGui::Checkbox("Word wrap", &editor.word_wrap);
+                    changed |= ImGui::Checkbox("Auto indent", &editor.auto_indent);
+                    ImGui::AlignTextToFramePadding();
+                    const auto& sizes = cyxwiz::appearance::kCodeTextSizes;
+                    ImGui::Text("Code text size: %d px",
+                                sizes[cyxwiz::appearance::CodeScaleIndex(::gui::CodeTextScale())].pixels);
+                    ImGui::SameLine();
+                    if (ui::LinkButton("set under Appearance##editor_font")) preferences_open_appearance_ = true;
                     ImGui::PushTextWrapPos(0.0f);
-                    ImGui::TextDisabled("Code colours follow the Engine theme (View > Theme).");
+                    ImGui::TextDisabled("Line numbers are always shown and the current line is highlighted. Code "
+                                        "colours follow the Engine theme (View > Theme).");
                     ImGui::PopTextWrapPos();
 
                     ImGui::Spacing();
                     ImGui::Spacing();
-                    ImGui::Text("Font & Display");
+                    ImGui::Text("Saving files");
                     ImGui::Separator();
                     ImGui::Spacing();
-
-                    ImGui::Text("Font Size:");
-                    ImGui::TextDisabled("Code text size is set for the whole Engine under Appearance.");
-                    if (ui::LinkButton("Open Appearance settings##editor_font")) {
-                        preferences_open_appearance_ = true;
+#ifdef _WIN32
+                    static const char* const kEndings[] = {"As the system (CRLF here)", "LF", "CRLF"};
+#else
+                    static const char* const kEndings[] = {"As the system (LF here)", "LF", "CRLF"};
+#endif
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted("Line endings of new files");
+                    if (ui::SegmentedControl("##new_file_eol", kEndings, 3, &editor.new_file_line_endings)) changed = true;
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("A file keeps the line endings it has; the Script Editor's status bar changes "
+                                        "them for one file.");
+                    ImGui::PopTextWrapPos();
+                    changed |= ImGui::Checkbox("Trim trailing whitespace on save", &editor.trim_trailing_whitespace);
+                    changed |= ImGui::Checkbox("Insert a final newline on save", &editor.final_newline);
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("Files are written as UTF-8 (a file with a byte-order mark keeps it). Notebooks "
+                                        "are saved as they are.");
+                    ImGui::PopTextWrapPos();
+                    if (changed) {
+                        engine_config.SetEditor(editor);
+                        engine_config.Save();
+                        if (editor_settings_callback_) editor_settings_callback_(engine_config.GetEditor());
                     }
-
-                    ImGui::Spacing();
-
-                    ImGui::Text("Tab Size:");
-                    ImGui::SetNextItemWidth(200);
-                    const char* tab_size_items[] = { "2 Spaces", "4 Spaces", "8 Spaces" };
-                    int tab_size_index = (editor_tab_size_ == 2) ? 0 : (editor_tab_size_ == 8) ? 2 : 1;
-                    int prev_tab_index = tab_size_index;
-                    if (ImGui::Combo("##tab_size", &tab_size_index, tab_size_items, IM_ARRAYSIZE(tab_size_items))) {
-                        int sizes[] = { 2, 4, 8 };
-                        editor_tab_size_ = sizes[tab_size_index];
-                        if (editor_tab_size_callback_ && tab_size_index != prev_tab_index) {
-                            editor_tab_size_callback_(editor_tab_size_);
-                        }
-                    }
-
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    ImGui::Text("Editor Features");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    bool prev_show_whitespace = editor_show_whitespace_;
-                    if (ImGui::Checkbox("Show Whitespace Characters", &editor_show_whitespace_)) {
-                        if (editor_show_whitespace_callback_ && editor_show_whitespace_ != prev_show_whitespace) {
-                            editor_show_whitespace_callback_(editor_show_whitespace_);
-                        }
-                    }
-
-                    bool prev_word_wrap = editor_word_wrap_;
-                    if (ImGui::Checkbox("Word Wrap", &editor_word_wrap_)) {
-                        if (editor_word_wrap_callback_ && editor_word_wrap_ != prev_word_wrap) {
-                            editor_word_wrap_callback_(editor_word_wrap_);
-                        }
-                    }
-
-                    bool prev_auto_indent = editor_auto_indent_;
-                    if (ImGui::Checkbox("Auto Indent", &editor_auto_indent_)) {
-                        if (editor_auto_indent_callback_ && editor_auto_indent_ != prev_auto_indent) {
-                            editor_auto_indent_callback_(editor_auto_indent_);
-                        }
-                    }
-
-                    ImGui::Spacing();
-                    ImGui::TextDisabled("Line numbers are always shown. Current line is highlighted.");
-                    ImGui::TextDisabled("These settings will be saved with your project.");
 
                     RenderPluginPreferences("Editor");
-                    ImGui::EndTabItem();
+                    RenderPluginPreferences("Files");
                 }
 
                 // ========== Appearance Tab ==========
-                const ImGuiTabItemFlags appearance_flags =
-                    preferences_open_appearance_ ? ImGuiTabItemFlags_SetSelected
-                                                 : ImGuiTabItemFlags_None;
-                preferences_open_appearance_ = false;
-                if (ImGui::BeginTabItem(ICON_FA_PALETTE " Appearance", nullptr, appearance_flags)) {
-                    preferences_tab_ = 2;
+                if (page == "Appearance") {
                     ImGui::Spacing();
                     RenderAppearancePreferences();
-                    ImGui::EndTabItem();
-                }
-
-                // ========== Files Tab ==========
-                if (ImGui::BeginTabItem(ICON_FA_FILE " Files")) {
-                    preferences_tab_ = 3;
-                    ImGui::Spacing();
-
-                    ImGui::Text("File Encoding");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    ImGui::Text("Default Encoding:");
-                    const char* encodings[] = { "UTF-8", "UTF-16", "ASCII" };
-                    ImGui::SetNextItemWidth(150);
-                    ImGui::Combo("##encoding", &files_default_encoding_, encodings, IM_ARRAYSIZE(encodings));
-
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    ImGui::Text("Line Endings");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    ImGui::Text("Default Line Ending:");
-                    const char* line_endings[] = { "Auto (OS default)", "LF (Unix/macOS)", "CRLF (Windows)" };
-                    ImGui::SetNextItemWidth(200);
-                    ImGui::Combo("##line_ending", &files_line_ending_, line_endings, IM_ARRAYSIZE(line_endings));
-
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    ImGui::Text("Save Options");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    ImGui::Checkbox("Trim trailing whitespace on save", &files_trim_trailing_whitespace_);
-                    ImGui::Checkbox("Insert final newline on save", &files_insert_final_newline_);
-
-                    RenderPluginPreferences("Files");
-                    ImGui::EndTabItem();
                 }
 
                 // ========== Python/Scripting Tab ==========
-                if (ImGui::BeginTabItem(ICON_FA_CODE " Python")) {
-                    preferences_tab_ = 4;
+                if (page == "Python") {
                     ImGui::Spacing();
 
-                    python_settings_panel_.Render();
-
-                    ImGui::Spacing();
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    // Startup Script
-                    ImGui::Text("Startup Script (run on launch):");
-                    ImGui::SetNextItemWidth(-100);
-                    ImGui::InputText("##startup_script", python_startup_script_, sizeof(python_startup_script_));
-                    ImGui::SameLine();
-                    if (ImGui::Button("Browse##startup")) {
-                        std::string path = OpenFileDialog("Python Scripts (*.py)\0*.py\0CyxWiz Scripts (*.cyx)\0*.cyx\0All Files (*.*)\0*.*\0", "Select Startup Script");
-                        if (!path.empty()) {
-                            strncpy(python_startup_script_, path.c_str(), sizeof(python_startup_script_) - 1);
-                        }
-                    }
-
-                    ImGui::Spacing();
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    // Auto-import options
-                    ImGui::Text("Auto-Import Libraries:");
-                    ImGui::Checkbox("Import NumPy as 'np'", &python_auto_import_numpy_);
-                    ImGui::Checkbox("Import CyxWiz module", &python_auto_import_cyxwiz_);
-
-                    ImGui::Spacing();
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    // Output limit
-                    ImGui::Text("Console Output Limit (lines):");
-                    ImGui::SetNextItemWidth(150);
-                    ImGui::InputInt("##output_limit", &python_output_limit_);
-                    if (python_output_limit_ < 100) python_output_limit_ = 100;
-                    if (python_output_limit_ > 10000) python_output_limit_ = 10000;
-                    ImGui::TextDisabled("Range: 100 - 10000 lines");
-
-                    ImGui::Spacing();
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    if (ImGui::Button("Show Runtime Details")) {
-                        if (python_diagnostics_callback_) {
-                            python_diagnostics_text_ = python_diagnostics_callback_();
-                        } else {
-                            python_diagnostics_text_ = "Python diagnostics are not available.";
-                        }
-                        show_python_diagnostics_popup_ = true;
-                        ImGui::OpenPopup("Python Runtime Details");
-                    }
-
-                    if (ImGui::BeginPopupModal("Python Runtime Details", &show_python_diagnostics_popup_, ImGuiWindowFlags_AlwaysAutoResize)) {
-                        ImGui::BeginChild("##python_diag_text", ImVec2(560, 300), true, ImGuiWindowFlags_HorizontalScrollbar);
-                        ImGui::TextUnformatted(python_diagnostics_text_.c_str());
-                        ImGui::EndChild();
-
-                        if (ImGui::Button("Copy")) {
-                            ImGui::SetClipboardText(python_diagnostics_text_.c_str());
-                        }
-                        ImGui::SameLine();
-                        if (ImGui::Button("Close")) {
-                            show_python_diagnostics_popup_ = false;
-                            ImGui::CloseCurrentPopup();
-                        }
-
-                        ImGui::EndPopup();
-                    }
+                    python_settings_panel_.Render(python_diagnostics_callback_);
 
                     RenderPluginPreferences("Python");
-                    ImGui::EndTabItem();
                 }
 
                 // ========== Simulation Tab (graph runs) ==========
-                if (ImGui::BeginTabItem(ICON_FA_WAVE_SQUARE " Simulation")) {
+                if (page == "Simulation") {
                     ImGui::Spacing();
                     ImGui::TextDisabled("Defaults for graph runs (Run Sim). They apply to the next run.");
                     ImGui::Spacing();
@@ -694,23 +562,15 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::EndTable();
                     }
                     RenderPluginPreferences("Simulation");
-                    ImGui::EndTabItem();
                 }
 
                 // ========== Keyboard Shortcuts Tab ==========
-                const ImGuiTabItemFlags shortcuts_flags =
-                    preferences_select_tab_ == "Shortcuts" ? ImGuiTabItemFlags_SetSelected
-                                                           : ImGuiTabItemFlags_None;
-                if (ImGui::BeginTabItem(ICON_FA_KEYBOARD " Shortcuts", nullptr, shortcuts_flags)) {
-                    preferences_tab_ = 5;
-                    preferences_select_tab_.clear();
+                if (page == "Shortcuts") {
                     RenderShortcutsPreferences();
-                    ImGui::EndTabItem();
                 }
 
                 // ========== Devices Tab ==========
-                if (ImGui::BeginTabItem(ICON_FA_MICROCHIP " Devices")) {
-                    preferences_tab_ = 6;
+                if (page == "Devices") {
                     ImGui::Spacing();
 
                     bool backend_manager_verify_requested = false;
@@ -882,29 +742,23 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     if (training_active) {
                         ImGui::BeginDisabled();
                     }
-                    const bool compatibility_clicked = ImGui::RadioButton(
-                        "Compatibility##execution_policy",
-                        selected_policy ==
-                            cyxwiz::ExecutionPolicy::Compatibility);
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip(
-                            "May finish on ArrayFire's CPU backend when the selected GPU is not verified,\n"
-                            "runs stages the placement plan does not put on the device, and dumps the\n"
-                            "first batch's debug samples.");
-                    }
-                    ImGui::SameLine();
-                    const bool strict_clicked = ImGui::RadioButton(
-                        "Strict residency##execution_policy",
-                        selected_policy ==
-                            cyxwiz::ExecutionPolicy::Strict);
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip(
-                            "Stays on the selected device: no ArrayFire CPU recovery, and the run is\n"
-                            "refused before training if any stage is not placed on the device.");
-                    }
+                    static const char* const kPolicies[] = {"Compatibility", "Strict residency"};
+                    int policy_index = selected_policy == cyxwiz::ExecutionPolicy::Strict ? 1 : 0;
+                    const bool policy_clicked =
+                        ui::SegmentedControl("##execution_policy", kPolicies, 2, &policy_index);
+                    const bool compatibility_clicked = policy_clicked && policy_index == 0;
+                    const bool strict_clicked = policy_clicked && policy_index == 1;
                     if (training_active) {
                         ImGui::EndDisabled();
                     }
+                    ImGui::TextDisabled(
+                        "%s",
+                        selected_policy == cyxwiz::ExecutionPolicy::Strict
+                            ? "Stays on the selected device: no ArrayFire CPU recovery, and the run is refused "
+                              "before training if any stage is not placed on the device."
+                            : "May finish on ArrayFire's CPU backend when the selected GPU is not verified, runs "
+                              "stages the placement plan does not put on the device, and dumps the first "
+                              "batch's debug samples.");
                     const auto persist_policy = [&](auto policy,
                                                     const char* description) {
                         std::string persistence_error;
@@ -945,15 +799,30 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Separator();
                     ImGui::Spacing();
                     ImGui::TextDisabled(
-                        "Choose a candidate ArrayFire route. OK validates and commits it.");
+                        "Choose a candidate ArrayFire route, then Use this device: it is checked, then used.");
                     if (training_active) {
                         ImGui::TextColored(
                             t.warning,
                             "%s The device is in use (a training run or a playing policy); device changes are disabled until it ends.",
                             ICON_FA_TRIANGLE_EXCLAMATION);
-                    } else {
-                        ImGui::TextDisabled(
-                            "The candidate remains local until you click OK.");
+                    } else if (device_selection_dirty_ && selected_device_index_ >= 0 &&
+                               selected_device_index_ < static_cast<int>(cached_devices_.size())) {
+                        const auto& candidate = cached_devices_[static_cast<size_t>(selected_device_index_)];
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::Text("Candidate: %s / %s",
+                                    ArrayFireBackendDisplayName(static_cast<cyxwiz::DeviceType>(candidate.type)),
+                                    candidate.name.c_str());
+                        ImGui::SameLine();
+                        if (ui::PrimaryButton("Use this device", true, nullptr, ui::ButtonSize::Small)) {
+                            CommitDeviceSelection();
+                        }
+                        ImGui::SameLine();
+                        if (ui::LinkButton("Keep the current one##device")) {
+                            device_selection_dirty_ = false;
+                            selected_device_index_ = -1;
+                            selected_backend_type_ = -1;
+                            pending_oneapi_device_index_ = -1;
+                        }
                     }
                     ImGui::Spacing();
 
@@ -1510,12 +1379,9 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         const size_t completed = progress.route_index *
                                                      progress.operation_count +
                                                  progress.operation_index;
-                        ImGui::ProgressBar(
-                            total == 0
-                                ? 0.0f
-                                : static_cast<float>(completed) /
-                                      static_cast<float>(total),
-                            ImVec2(-1.0f, 0.0f));
+                        ui::ProgressLine(total == 0 ? 0.0f
+                                                    : static_cast<float>(completed) / static_cast<float>(total),
+                                         t.accent);
                         ImGui::TextWrapped(
                             "Verifying %s device %d: %s (route %zu of %zu, operation %zu of %zu)",
                             progress.backend.c_str(), progress.device_id,
@@ -1630,70 +1496,54 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Separator();
                     ImGui::Spacing();
 
-                    ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_BUG " Studio Debugger")) {
+                if (page == "Studio Debugger") {
                     RenderStudioDebuggerPreferences();
-                    ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_GRADUATION_CAP " Training")) {
+                if (page == "Training") {
                     RenderTrainingPreferences();
-                    ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_CUBES " Nodes panel")) {
+                if (page == "Nodes panel") {
                     RenderNodesPanelPreferences();
-                    ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_SLIDERS " Search")) {
+                if (page == "Search") {
                     RenderSearchPreferences();
-                    ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_HARD_DRIVE " Storage")) {
+                if (page == "Storage") {
                     RenderStorageTab();
-                    ImGui::EndTabItem();
                 } else {
                     storage_stale_ = true;  // measured again when it opens
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_SERVER " Servers", nullptr,
-                                        preferences_select_tab_ == "Servers" ? ImGuiTabItemFlags_SetSelected
-                                                                             : ImGuiTabItemFlags_None)) {
-                    preferences_select_tab_.clear();
+                if (page == "Servers") {
                     RenderServersTab();
-                    ImGui::EndTabItem();
                 } else {
                     servers_loaded_ = false;  // read from the config again when it opens
                 }
 
-                ImGui::EndTabBar();
+                RenderRestoreDefaults(page);
             }
+            ImGui::PopTextWrapPos();
             ImGui::EndChild();
 
-            ImGui::Separator();
+            // Every change is already saved: Close only
             ImGui::Spacing();
-
-            // Dialog buttons
-            float button_width = 100.0f;
-            float total_width = button_width * 2 + ImGui::GetStyle().ItemSpacing.x;
-            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - total_width) * 0.5f);
-
-            if (ui::PrimaryButton("OK", true, nullptr, ui::ButtonSize::Regular, button_width)) {
-                CommitPreferences();
-            }
-            ImGui::SameLine();
-            if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular, button_width)) {
-                device_selection_dirty_ = false;
-                devices_initialized_ = false;
-                selected_device_index_ = -1;
-                selected_backend_type_ = -1;
-                pending_oneapi_device_index_ = -1;
-                device_selection_recommendation_indices_.clear();
+            const char* close_label = "Close";
+            const float close_width = ui::ButtonWidth(close_label, ui::ButtonSize::Regular);
+            ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x - close_width - ImGui::GetStyle().ItemSpacing.x * 2.0f);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Changes apply at once and are saved. The device choice and the Python interpreter have "
+                                "their own Use buttons.");
+            ImGui::PopTextWrapPos();
+            ImGui::SameLine(ImGui::GetContentRegionMax().x - close_width);
+            if (ui::SecondaryButton(close_label, true, nullptr, ui::ButtonSize::Regular)) {
                 show_preferences_dialog_ = false;
+                ImGui::CloseCurrentPopup();
             }
 
             if (show_device_selection_error_) {
@@ -1747,7 +1597,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         device_selection_recommendation_indices_.clear();
                     }
                     ImGui::TextDisabled(
-                        "The alternative remains a candidate until OK is clicked.");
+                        "The alternative remains a candidate until Use this device.");
                 }
                 ImGui::Spacing();
                 if (ui::SecondaryButton("Close", true, nullptr, ui::ButtonSize::Regular)) {
@@ -1770,10 +1620,9 @@ void ToolbarPanel::RenderPreferencesDialog() {
 }
 
 
-// OK: commits what Preferences does not apply at once (a compute device
-// switch), saves and closes. False when the commit failed: the dialog stays
-// open with the reason. The Theme Editor link closes Preferences this way too.
-bool ToolbarPanel::CommitPreferences() {
+// Use this device: checks and switches to the candidate compute device.
+// False when it failed: the reason and the passing alternatives show.
+bool ToolbarPanel::CommitDeviceSelection() {
     bool selection_committed = true;
     if (device_selection_dirty_) {
         if (selected_device_index_ < 0 ||
@@ -1817,14 +1666,10 @@ bool ToolbarPanel::CommitPreferences() {
         }
     }
     if (selection_committed) {
-        if (save_project_settings_callback_) {
-            save_project_settings_callback_();
-        }
         device_selection_dirty_ = false;
         device_selection_recommendation_indices_.clear();
-        devices_initialized_ = false;
-        show_preferences_dialog_ = false;
-        spdlog::info("Preferences saved");
+        devices_initialized_ = false;  // the list shows the device in use
+        spdlog::info("Compute device switched");
     } else {
         device_selection_recommendation_indices_.clear();
         if (selected_device_index_ >= 0 &&

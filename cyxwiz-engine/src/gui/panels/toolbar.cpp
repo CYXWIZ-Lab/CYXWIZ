@@ -30,15 +30,6 @@ ToolbarPanel::ToolbarPanel()
 
 }
 
-void ToolbarPanel::SetEditorFontScale(float scale) {
-    // Convert editor scale to the native atlas font size shown in Preferences
-    // 1.0 -> 14px, 1.3 -> 16px, 1.6 -> 20px, 2.0 -> 24px
-    if (scale <= 1.15f) editor_font_size_ = 14;
-    else if (scale <= 1.45f) editor_font_size_ = 16;
-    else if (scale <= 1.8f) editor_font_size_ = 20;
-    else editor_font_size_ = 24;
-}
-
 void ToolbarPanel::Render() {
     if (!visible_) return;
 

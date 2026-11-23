@@ -1,5 +1,6 @@
 #include "transform_step_presentation.h"
 
+#include "column_list.h"
 #include "explore_presentation.h"
 
 #include <cyxwiz/data_transform.h>
@@ -8,7 +9,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <sstream>
 
 namespace cyxwiz::transform_step {
 
@@ -19,18 +19,6 @@ namespace {
 std::string Param(const std::map<std::string, std::string>& params, const char* key, const char* fallback = "") {
     const auto it = params.find(key);
     return it == params.end() || it->second.empty() ? fallback : it->second;
-}
-
-std::vector<std::string> SplitList(const std::string& text) {
-    std::vector<std::string> out;
-    std::stringstream in(text);
-    std::string item;
-    while (std::getline(in, item, ',')) {
-        const auto b = item.find_first_not_of(" \t");
-        const auto e = item.find_last_not_of(" \t");
-        if (b != std::string::npos) out.push_back(item.substr(b, e - b + 1));
-    }
-    return out;
 }
 
 bool IsNumber(const arrow::DataType& type) {
@@ -126,10 +114,10 @@ std::vector<std::string> NumberColumns(const arrow::Schema& schema) {
 }
 
 std::vector<std::string> StepColumns(const std::map<std::string, std::string>& params, const arrow::Schema& schema) {
-    std::vector<std::string> chosen = SplitList(Param(params, "columns"));
+    std::vector<std::string> chosen = ParseColumnList(Param(params, "columns"));
     if (!chosen.empty()) return chosen;
     const std::string label = Param(params, "label_col");
-    const std::vector<std::string> excluded = SplitList(Param(params, "exclude_columns"));
+    const std::vector<std::string> excluded = ParseColumnList(Param(params, "exclude_columns"));
     for (const auto& name : NumberColumns(schema))
         if (name != label && std::find(excluded.begin(), excluded.end(), name) == excluded.end()) chosen.push_back(name);
     return chosen;

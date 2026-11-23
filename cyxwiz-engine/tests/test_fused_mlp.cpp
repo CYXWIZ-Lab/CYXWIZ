@@ -13,7 +13,7 @@
 #include <cyxwiz/neural_provider.h>
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
-#include "computation_truth/test_device_selection.h"
+#include "oracle/oracle_test.h"
 
 #include <algorithm>
 #include <chrono>
@@ -405,7 +405,7 @@ int CountMode(int argc, char** argv) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) return EXIT_FAILURE;
+    if (!cyxwiz::test::BeginOracleTest("test_fused_mlp")) return EXIT_FAILURE;
     if (argc >= 4 && std::string(argv[1]) == "count") return CountMode(argc, argv);
     CheckRefusals();
     auto probe = Chain(4, {64, 64}, 2, Activations()[0].add);

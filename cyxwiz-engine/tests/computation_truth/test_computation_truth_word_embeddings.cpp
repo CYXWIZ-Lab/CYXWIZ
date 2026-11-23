@@ -8,7 +8,7 @@
 // - fastText hash, pieces, steps and vectors against gensim / PyTorch and training quality against gensim:
 //   fixtures/fasttext_reference.json (reference/generate_fasttext_fixtures.py). Runs on the active ArrayFire
 // backend (CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|oneapi|cpu).
-#include "test_device_selection.h"
+#include "../oracle/oracle_test.h"
 
 #include <cyxwiz/word_embeddings.h>
 
@@ -661,7 +661,7 @@ void CheckOwnRules(const fs::path& root) {
 }  // namespace
 
 int main(int, char** argv) {
-    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
+    Check(cyxwiz::test::BeginOracleTest("test_computation_truth_word_embeddings"), "requested test device");
     const fs::path root = FixtureRoot(argv[0]);
     std::ifstream in(root / "word_embeddings_gensim.json");
     Check(static_cast<bool>(in), "cannot open the word embeddings fixture");

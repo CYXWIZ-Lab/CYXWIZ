@@ -202,9 +202,9 @@ void ToolbarPanel::RenderComputeDeviceCards(
 
     for (const auto& card : cards) {
         ImGui::PushID(card.key.c_str());
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);  // a card: tinted, no outline
         ImGui::BeginChild("card", ImVec2(0.0f, 0.0f),
-                          ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
-                              ImGuiChildFlags_AlwaysUseWindowPadding);
+                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
         ImGui::TextColored(t.text_dim, "%s", ICON_FA_MICROCHIP);
         ImGui::SameLine();
         ImGui::Text("%s", card.title.c_str());
@@ -240,15 +240,15 @@ void ToolbarPanel::RenderComputeDeviceCards(
                 ImGui::TableNextColumn();
                 const bool can_select = route.selectable && index >= 0 &&
                     !context.training_active;
-                if (!can_select) ImGui::BeginDisabled();
-                if (ImGui::RadioButton("##select",
-                                       index >= 0 && selected_device_index_ == index) &&
+                const bool picked = index >= 0 && selected_device_index_ == index;
+                if (ui::GhostButton(picked ? ICON_FA_CIRCLE_DOT "##select" : ICON_FA_CIRCLE "##select", can_select,
+                                    "This route cannot be picked now", picked, ui::ButtonSize::Small,
+                                    picked ? nullptr : &t.text_dim) &&
                     can_select) {
                     context.request_device(static_cast<size_t>(index));
                 }
-                if (!can_select) ImGui::EndDisabled();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                    ImGui::SetTooltip("Use this route for the next training run (applied with OK)");
+                if (can_select && ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Pick this route, then Use this device");
                 }
                 ImGui::SameLine();
                 ImGui::Text("%s", route.route_label.c_str());
@@ -291,9 +291,7 @@ void ToolbarPanel::RenderComputeDeviceCards(
             }
             if (compute_route_details_open_.count(row_key) > 0 &&
                 ImGui::BeginTable("details", 4,
-                                  ImGuiTableFlags_SizingStretchProp |
-                                      ImGuiTableFlags_BordersOuter |
-                                      ImGuiTableFlags_PadOuterX)) {
+                                  ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) {
                 ImGui::TableSetupColumn("k1", ImGuiTableColumnFlags_WidthStretch, 0.8f);
                 ImGui::TableSetupColumn("v1", ImGuiTableColumnFlags_WidthStretch, 1.6f);
                 ImGui::TableSetupColumn("k2", ImGuiTableColumnFlags_WidthStretch, 0.8f);
@@ -312,6 +310,7 @@ void ToolbarPanel::RenderComputeDeviceCards(
             ImGui::PopID();
         }
         ImGui::EndChild();
+        ImGui::PopStyleColor();
         ImGui::PopID();
         ImGui::Spacing();
     }

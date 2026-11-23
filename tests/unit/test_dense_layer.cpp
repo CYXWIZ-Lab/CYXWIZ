@@ -2,11 +2,13 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cyxwiz/layer.h>
+#include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
 #include "algorithms/arrayfire_backend_utils.h"
 #include <map>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 TEST_CASE("DenseLayer supports unbiased rank-1 affine gradients",
@@ -92,6 +94,26 @@ TEST_CASE("DenseLayer rejects invalid state before compute",
             {"bias", cyxwiz::Tensor::Zeros({2})},
         }),
         std::invalid_argument);
+}
+
+TEST_CASE("DenseLayer with one input feature keeps [out, 1] weights through an optimizer step",
+          "[dense][layer][optimizer]") {
+    cyxwiz::DenseLayer layer(1, 4, true);
+    REQUIRE(layer.GetParameters().at("weights").Shape() == std::vector<size_t>({4, 1}));
+    const float input_values[] = {0.5f, -1.5f};
+    const auto output = layer.Forward(cyxwiz::Tensor({2, 1}, input_values, cyxwiz::DataType::Float32));
+    REQUIRE(output.Shape() == std::vector<size_t>({2, 4}));
+    std::vector<float> ones(8, 1.0f);
+    (void)layer.Backward(cyxwiz::Tensor({2, 4}, ones.data(), cyxwiz::DataType::Float32));
+    auto all = layer.GetParameters();
+    std::map<std::string, cyxwiz::Tensor> params{{"weights", all.at("weights")}};
+    std::map<std::string, cyxwiz::Tensor> grads{{"weights", all.at("grad_weights")}};
+    const float before = params.at("weights").Data<float>()[0];
+    cyxwiz::SGDOptimizer optimizer(0.1);
+    REQUIRE_NOTHROW(optimizer.Step(params, grads));
+    REQUIRE(params.at("weights").Shape() == std::vector<size_t>({4, 1}));
+    // d(sum y)/dW[0] = sum of the inputs = -1; SGD adds 0.1.
+    REQUIRE(params.at("weights").Data<float>()[0] == Catch::Approx(before + 0.1f));
 }
 
 TEST_CASE("DenseLayer computes deterministic forward and backward values", "[dense][layer]") {

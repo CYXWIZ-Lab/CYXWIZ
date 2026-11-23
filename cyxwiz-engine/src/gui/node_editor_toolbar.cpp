@@ -247,7 +247,7 @@ void NodeEditor::DrawViewItems() {
 void NodeEditor::DrawFrameworkItems() {
     for (int i = 0; i < 4; ++i)
         if (ImGui::MenuItem(kFrameworks[i], nullptr, static_cast<int>(selected_framework_) == i)) {
-            selected_framework_ = static_cast<CodeFramework>(i);
+            selected_framework_ = static_cast<cyxwiz::CodeFramework>(i);
             code_result_.clear();
             spdlog::info("Code generation framework: {}", kFrameworks[i]);
         }
@@ -391,8 +391,7 @@ void NodeEditor::ShowToolbar() {
     };
 
     // ---- Every item's width (approved mockup).
-    const std::string name = current_file_path_.empty() ? std::string("Untitled graph")
-                                                       : std::filesystem::path(current_file_path_).filename().string();
+    const std::string name = GraphDisplayName();
     const std::string chip = std::string(ICON_FA_DIAGRAM_PROJECT "  ") + name + (unsaved_ ? "    " : "  ") +
                              ICON_FA_CHEVRON_DOWN "##graph_chip";
     // The narrowest bar: the icon and the unsaved mark (the window's tab names the graph)

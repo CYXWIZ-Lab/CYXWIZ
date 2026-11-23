@@ -58,6 +58,10 @@ inline TrainingFailureKind ClassifyTrainingFailure(const std::string& reason) {
     std::transform(text.begin(), text.end(), text.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     const auto has = [&text](std::string_view part) { return text.find(part) != std::string::npos; };
+    // The data has empty cells or NaN in a column training uses: fix the data,
+    // not the graph or the device. First: the refusal names its columns, and a
+    // column called "is_cancelled" must not make it a cancellation.
+    if (has("the data has missing values")) return TrainingFailureKind::DataError;
     if (has("out of memory") || has("af_err_no_mem") || has("bad_alloc") || has("memory allocation failed") ||
         has("cl_mem_object_allocation_failure") || has("cuda_error_out_of_memory")) {
         return TrainingFailureKind::OutOfMemory;

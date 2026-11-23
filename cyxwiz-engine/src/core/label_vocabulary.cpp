@@ -13,8 +13,9 @@ namespace {
 template <typename ArrayType>
 void CollectValues(const arrow::Array& chunk, std::set<std::string>& out) {
     const auto& strings = static_cast<const ArrayType&>(chunk);
+    // An empty text is a missing label, never a class "" (as IS NOT EMPTY reads it).
     for (int64_t i = 0; i < strings.length(); ++i)
-        if (!strings.IsNull(i)) out.emplace(strings.GetView(i));
+        if (!strings.IsNull(i) && !strings.GetView(i).empty()) out.emplace(strings.GetView(i));
 }
 
 template <typename ArrayType>
@@ -22,7 +23,8 @@ arrow::Status EncodeChunk(const arrow::Array& chunk, const LabelVocabulary& voca
     const auto& strings = static_cast<const ArrayType&>(chunk);
     ARROW_RETURN_NOT_OK(builder.Reserve(strings.length()));
     for (int64_t i = 0; i < strings.length(); ++i) {
-        if (strings.IsNull(i)) {
+        // An empty text is a missing label: null, which training refuses.
+        if (strings.IsNull(i) || strings.GetView(i).empty()) {
             builder.UnsafeAppendNull();
             continue;
         }

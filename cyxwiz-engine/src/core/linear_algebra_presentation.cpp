@@ -1,5 +1,6 @@
 #include "linear_algebra_presentation.h"
 
+#include "column_list.h"
 #include "session_query_engine.h"
 
 #include <cyxwiz/linear_algebra.h>
@@ -891,8 +892,7 @@ std::vector<HandOff> HandOffs(Op op, const Sources& sources, int keep, const std
         return p;
     };
     const TableChoice& a = *sources.a;
-    std::string features;
-    for (const auto& c : a.columns) features += (features.empty() ? "" : ",") + c;
+    const std::string features = FormatColumnList(a.columns);
     const std::string components = std::to_string(std::clamp<int>(keep, 1, static_cast<int>(a.columns.size())));
     if (op == Op::SVD && a.matrix == FromTable::Rows) {
         out.push_back({"Add as a step: Truncated SVD", "Fits the top " + components + " directions on the Train rows of every run and maps each row onto them",
@@ -909,8 +909,7 @@ std::vector<HandOff> HandOffs(Op op, const Sources& sources, int keep, const std
                            "Whitening", "Whitening (PCA)", beside({{"feature_cols", features}, {"method", "pca"}, {"n_components", "0"}})});
     }
     if ((op == Op::Solve || op == Op::LeastSquares) && a.matrix == FromTable::Rows && sources.b && !sources.b->columns.empty()) {
-        std::string b_cols;
-        for (const auto& c : sources.b->columns) b_cols += (b_cols.empty() ? "" : ",") + c;
+        const std::string b_cols = FormatColumnList(sources.b->columns);
         const bool two = sources.b->table != a.table;
         out.push_back({"Keep as a node: Linear Solve", std::string("Solves for x on the Train rows of every run") + (two ? " (b's table into its b input)" : ""),
                        "LinearSolve", "Linear Solve (" + b_cols + ")",

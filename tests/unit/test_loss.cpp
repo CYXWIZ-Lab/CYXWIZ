@@ -472,6 +472,49 @@ TEST_CASE("CrossEntropyLoss supports token-level logits and ignored targets", "[
     REQUIRE(grad_data[5] == Catch::Approx(0.0f));
 }
 
+// A class-index target that is not ignored must be a class, as PyTorch raises
+// (TOFIX223 0.19): out of range it read a logit outside the row.
+TEST_CASE("Class-index losses refuse targets outside the classes", "[loss][language_model]") {
+    float logit_values[] = {2.0f, 1.0f, 0.0f, 0.0f, 1.0f, 2.0f};
+    cyxwiz::Tensor logits({1, 2, 3}, logit_values, cyxwiz::DataType::Float32);
+    const auto targets_of = [](int64_t first, int64_t second) {
+        int64_t values[] = {first, second};
+        return cyxwiz::Tensor({1, 2}, values, cyxwiz::DataType::Int64);
+    };
+    const auto error_of = [](const std::function<void()>& run) {
+        try {
+            run();
+        } catch (const std::exception& e) {
+            return std::string(e.what());
+        }
+        return std::string();
+    };
+
+    cyxwiz::CrossEntropyLoss ignore_minus_100(cyxwiz::Reduction::Mean, -100);
+    REQUIRE(error_of([&] { (void)ignore_minus_100.Forward(logits, targets_of(2, -100)); }).empty());
+    REQUIRE(error_of([&] { (void)ignore_minus_100.Forward(logits, targets_of(3, 0)); })
+                .find("target class 3 is outside the 3 classes") != std::string::npos);
+
+    // The finding's case: the loss skips 0, the targets carry -100.
+    cyxwiz::CrossEntropyLoss ignore_zero(cyxwiz::Reduction::Mean, 0);
+    REQUIRE(error_of([&] { (void)ignore_zero.Forward(logits, targets_of(1, -100)); })
+                .find("target class -100") != std::string::npos);
+    REQUIRE(error_of([&] { (void)ignore_zero.Forward(logits, targets_of(1, 0)); }).empty());
+
+    float log_probability_values[] = {-0.4f, -1.4f, -2.4f, -2.4f, -1.4f, -0.4f};
+    cyxwiz::Tensor log_probabilities({1, 2, 3}, log_probability_values, cyxwiz::DataType::Float32);
+    cyxwiz::NLLLoss nll(cyxwiz::Reduction::Mean, -100);
+    REQUIRE(error_of([&] { (void)nll.Forward(log_probabilities, targets_of(0, 5)); })
+                .find("NLL: target class 5") != std::string::npos);
+
+    float row_logits[] = {2.0f, 1.0f, 0.0f, 0.0f, 1.0f, 2.0f};
+    cyxwiz::Tensor rows({2, 3}, row_logits, cyxwiz::DataType::Float32);
+    int64_t row_targets[] = {0, -1};
+    cyxwiz::FocalLoss focal(0.25f, 2.0f, cyxwiz::Reduction::Mean);
+    REQUIRE(error_of([&] { (void)focal.Forward(rows, cyxwiz::Tensor({2}, row_targets, cyxwiz::DataType::Int64)); })
+                .find("Focal: target class -1") != std::string::npos);
+}
+
 TEST_CASE("CrossEntropy backward recomputes unless given Forward's own tensors",
           "[loss][language_model][arrayfire][device_switch]") {
     const cyxwiz::Device* current = cyxwiz::Device::GetCurrentDevice();

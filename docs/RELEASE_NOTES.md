@@ -35,6 +35,82 @@ private Data Studio tickets (`tofix*/track*`).
 - **An RNN layer reads its nonlinearity in any case.** "Tanh" passed the
   compile check but stopped the model build with "RNNLayer nonlinearity must
   be tanh or relu"; it now means tanh.
+- **Preferences: "Restore this page's defaults" on every page with
+  settings** (only Appearance and Search could go back before). It asks
+  first and keeps what is yours (the Python interpreter, Favourite and Recent
+  nodes, plugin settings).
+- **Preferences: pages in a rail, with a search, and Close.** The 14 tabs
+  scrolled (Storage and Servers were hidden behind arrows); the pages are
+  now in a rail in four groups with **Search settings**. Settings were
+  already saved at once, so OK / Cancel (Cancel undid only a device pick)
+  are replaced by **Close**; a compute device is taken with **Use this
+  device** on the Devices page.
+- **Preferences: defaults for choices that had none.** A new **Studio** page
+  sets whether Auto Save is on and the canvas minimap shows when the Engine
+  starts, and whether Train requires a passing Local Debug run (saved
+  before only by editing the config file). **Training** sets how the
+  Training Dashboard's charts start (auto scale, follow, log loss axis,
+  smoothing). **Servers** shows the deployment server node and P2P port.
+- **Preferences > Python: the settings that did nothing now work.** The
+  venv switch and the packages for new projects were saved but never read
+  (every project got an environment, with no packages); the startup script,
+  the two imports and the console limit were not even saved. Now a new
+  project gets an environment only when the switch is on, with the listed
+  packages installed before Python starts in it; each Python session runs
+  the chosen imports and startup scripts; the Python console keeps the chosen
+  number of commands. The interpreter is taken with **Use this Python**
+  (no separate Apply / Revert), and checking or finding interpreters no
+  longer freezes the window.
+- **Startup scripts are set in Preferences > Python.** The list of scripts
+  each Python session runs first is set there (Add a script..., order,
+  remove) and saved with the Engine settings. The old `startup_scripts.txt`
+  next to the Engine is no longer read: add its scripts in Preferences.
+  They run in each session (after Restart too), not once on the window's
+  thread at start.
+- **Preferences > Script Editor: one place for the editor's settings, for
+  every project.** Tab size, whitespace, syntax colours, minimap, word wrap
+  and auto indent were saved into the open project only, on OK, and were
+  lost with no project open; they are Engine-wide now and the Script
+  Editor's View menu saves the same values. The Files tab (all four
+  settings did nothing) is folded in and real: **Line endings of new
+  files**, **Trim trailing whitespace on save**, **Insert a final newline on
+  save**; files are written as UTF-8.
+- **A Plot or Dashboard on an image Data Input reads its images.** It said
+  "Data Input has no data yet: open it, choose a file and Apply" even with
+  the images loaded (it looked for a file, and an image folder has a
+  folder). Loaded, it reads the folder's list of images (file, class, width,
+  height, channels, size); before that it says to open the Data Input and
+  Apply. A folder of sounds says it has no table to plot. A table loaded
+  disk-backed (a large file) also counts as loaded now; the plot used to
+  read it again in a run of its own.
+- **Preferences > General does what it says.** Restore last session, Check
+  for updates, Recent Files Limit and Confirm before exit were switches
+  nothing read. Now: **When the Engine starts** (show the start page, or
+  reopen the last project with its scripts and the graph that was open),
+  **Recent projects kept** (1 to 50; File > Open Recent and the start page),
+  and **Ask before closing** (when something would be lost, or always).
+  Check for updates is gone until the Engine has an update check (the
+  installer has one). A project now remembers its open graph, and its open
+  scripts and graph are kept when the Engine closes.
+- **Closing the Engine asks about an unsaved graph.** The close dialog
+  listed unsaved scripts only, so a changed graph on the canvas closed
+  without a word. It is listed under **Unsaved work** now, and **Save and
+  close** (and File > Save All) saves it too; an untitled graph asks where.
+- **Release packages carry the examples.** The start page's starter graphs
+  (and their sample datasets), the RL graphs and the example scripts ship in
+  `examples/` beside the Engine; the start page said "No starter graphs
+  found" in an installed Engine. Only the files the repository tracks ship,
+  without its test folders.
+- **A chart's legend no longer hides a rising curve.** On line and scatter
+  charts the legend goes to the corner the data leaves free (a falling loss
+  keeps it top right; a rising accuracy curve moves it out of the way) and
+  keeps off a target line's label.
+- **A chart's toolbar fits a narrow place.** Fit, Log Y, Legend, Export and
+  the window button move under the data label when they do not fit beside
+  it, and wrap when the place is narrower than all of them; they ran past
+  the edge.
+- **Figure cards break lines between words.** "0.09s each" split after the
+  full stop in a narrow card (ImGui's wrap also breaks after punctuation).
 - **The RL Training Dashboard says what happened, on the Training
   Dashboard's parts.** The pill reads Training, Paused, Waiting for the GPU,
   Reached its target, Ran all its steps, Stopped or Failed (a run that
@@ -126,7 +202,6 @@ private Data Studio tickets (`tofix*/track*`).
   in `examples/datasets` (60 photos of cats and dogs, 1,797 8x8 handwritten
   digits, 3,000 review sentences, 400 spoken digits, the airline passengers
   series): press Train, offline. A starter saved with Save As keeps its data.
-  (A source checkout: release packages do not ship the examples yet.)
   Before, four had no data and the text one pointed at a file on one PC. The text starter is now a
   positive / negative review classifier; the audio starter classifies spoken
   digits and has a BatchNorm after Flatten (without it, it barely learned).
@@ -819,6 +894,28 @@ private Data Studio tickets (`tofix*/track*`).
   freeze dialogs were drawn at the canvas zoom: zoomed out, too small to read.
 - A text link beside a button (Cancel beside Replace, Show in folder beside
   Insert) sits on the button's line; it was 4 px higher.
+- **Arabic text is drawn.** The interface fonts had no Arabic, so Arabic
+  data (dashboard cards, tables, plot labels, legends and hover) showed as
+  "???". Noto Sans Arabic is now part of the interface fonts, and the
+  dashboard and plots draw Arabic with its letters joined and right to left
+  (numbers inside stay left to right). Other windows show the letters but do
+  not join them yet.
+- **Plot legend colours match the Colour list.** After changing the plot's
+  kind or columns, scatter, pie and grouped-bar legends could be one colour
+  (or more) off the swatches in the Plot window's Colour list; they now
+  always show the colour each series is drawn in, also a colour you picked.
+- **The decoder example graph compiles.** `examples/cyxgraph/text` (and
+  `task50_gpt_generation_controls`) `causal_lm_decoder_generation_experiment`
+  still used the old split Data/Labels pins with its label links removed, so
+  it opened with compile errors (and a data path from another machine). It
+  is rebuilt on the current graph: a text corpus, a Tokenizer making causal
+  windows, Split, Loader, two decoder blocks, a per-position token head, the
+  loss and Adam.
+- **A language model that tokenizes its text in the graph can be trained.**
+  Train refused a graph whose Tokenizer (Causal document windows) sits
+  before the Data Split, saying the source table had no token column: it
+  checked the raw text before the Tokenizer had run. That check now waits
+  for the prepared windows.
 - The node icon pack you choose is kept: View > Node Icon Pack and the new
   Node icons row of Preferences > Appearance set it, the next launch starts
   with it, and Reset appearance goes back to Font Awesome.

@@ -1,0 +1,43 @@
+{
+  "id": "missing_values_fix",
+  "name": "Missing values: fix them in one click",
+  "description": "A small classifier on a table with gaps: empty cells in age and cholesterol, NaN in bmi, and rows without a diagnosis. Training never uses an empty cell or NaN as 0 or as class 0, so Train (F5) stops before the run and the Cannot start training report offers the fix: Fill the feature columns (mean, median or 0, learned from the Train rows), Drop their rows, or drop the rows without a label. Fix and train adds the steps and trains. Data: examples/datasets/patients_missing.csv (300 made-up rows, 5 features, 3 classes).",
+  "category": "Classification",
+  "tags": ["missing values", "data quality", "classification", "tabular"],
+  "parameters": [
+    {
+      "name": "epochs",
+      "type": "int",
+      "default_value": "20",
+      "description": "Number of training epochs"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "in", "type": "DataInput", "name": "Patients CSV", "pos": [0, 120],
+       "params": {"file_path": "examples/datasets/patients_missing.csv", "file_category": "tabular", "file_type": "csv",
+                  "has_header": "true", "label_column": "diagnosis"}},
+      {"id": "split", "type": "DataSplit", "name": "Split 80 / 10 / 10", "pos": [260, 120],
+       "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1", "seed": "42", "stratified": "false"}},
+      {"id": "loader", "type": "DataLoader", "name": "Loader", "pos": [520, 120],
+       "params": {"batch_size": "32", "epochs": "$epochs", "shuffle": "true", "drop_last": "false", "num_workers": "0"}},
+      {"id": "dense1", "type": "Dense", "name": "Dense 16", "pos": [1020, 120], "params": {"units": "16"}},
+      {"id": "relu", "type": "ReLU", "name": "ReLU", "pos": [1240, 120], "params": {}},
+      {"id": "head", "type": "Dense", "name": "Classes (3)", "pos": [1460, 120], "params": {"units": "3"}},
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "Cross Entropy", "pos": [1680, 120], "params": {}},
+      {"id": "adam", "type": "Adam", "name": "Adam", "pos": [1900, 120], "params": {"learning_rate": "0.01"}},
+      {"id": "out", "type": "Output", "name": "Output", "pos": [2120, 120], "params": {"num_classes": "3"}}
+    ],
+    "links": [
+      {"from": "in", "to": "split"},
+      {"from": "split", "to": "loader"},
+      {"from": "loader", "to": "dense1"},
+      {"from": "dense1", "to": "relu"},
+      {"from": "relu", "to": "head"},
+      {"from": "head", "to": "loss"},
+      {"from": "loader", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "adam"},
+      {"from": "adam", "to": "out"}
+    ]
+  }
+}

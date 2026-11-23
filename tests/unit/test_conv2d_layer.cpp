@@ -396,3 +396,37 @@ TEST_CASE("Conv2D runs padding wider than the kernel on the device",
          0.0f, 0.0f, 0.0f});
 }
 
+
+// Layers built from their constructors alone, with shapes that end in 1: one
+// output filter, kernel 1, one depthwise output. Their initial weights keep the
+// full rank and the first Forward runs (TOFIX223 0.14: the shape was guessed
+// from ArrayFire's dims, trailing 1s dropped, and Forward threw).
+TEST_CASE("Convolutions built from their constructors keep trailing size-1 weight dims",
+          "[conv][correctness][layout]") {
+    const auto random_input = [](std::vector<size_t> shape) {
+        size_t n = 1;
+        for (size_t d : shape) n *= d;
+        std::vector<float> values(n);
+        for (size_t i = 0; i < n; ++i) values[i] = static_cast<float>((i * 37 % 17)) / 17.0f - 0.5f;
+        return cyxwiz::Tensor(shape, values.data(), cyxwiz::DataType::Float32);
+    };
+
+    SECTION("Conv2D with one filter") {
+        cyxwiz::Conv2DLayer layer(3, 1, 3);
+        REQUIRE(layer.GetParameters().at("weights").Shape() == std::vector<size_t>{3, 3, 3, 1});
+        const cyxwiz::Tensor out = layer.Forward(random_input({5, 5, 3, 2}));
+        REQUIRE(out.Shape() == std::vector<size_t>{3, 3, 1, 2});
+    }
+    SECTION("Conv1D with kernel 1") {
+        cyxwiz::Conv1DLayer layer(4, 3, 1);
+        REQUIRE(layer.GetParameters().at("weights").Shape() == std::vector<size_t>{3, 4, 1});
+        const cyxwiz::Tensor out = layer.Forward(random_input({5, 4, 2}));  // [L, C, N]
+        REQUIRE(out.Shape() == std::vector<size_t>{5, 3, 2});
+    }
+    SECTION("DepthwiseConv2D with one output") {
+        cyxwiz::DepthwiseConv2DLayer layer(1, 1, 3);
+        REQUIRE(layer.GetParameters().at("weights").Shape() == std::vector<size_t>{3, 3, 1, 1});
+        const cyxwiz::Tensor out = layer.Forward(random_input({5, 5, 1, 2}));
+        REQUIRE(out.Shape() == std::vector<size_t>{3, 3, 1, 2});
+    }
+}

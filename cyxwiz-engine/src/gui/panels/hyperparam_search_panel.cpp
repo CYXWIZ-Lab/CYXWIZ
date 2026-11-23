@@ -315,7 +315,7 @@ bool SearchSettingsFields(SearchConfig& config, bool show_combinations) {
     const auto& objectives = sp::Objectives();
     const auto current = std::find_if(objectives.begin(), objectives.end(),
                                       [&config](const sp::Objective& o) { return config.objective == o.key; });
-    ImGui::SetNextItemWidth(240.0f);
+    ImGui::SetNextItemWidth(std::min(240.0f, ImGui::GetContentRegionAvail().x));
     if (ImGui::BeginCombo("##objective", current != objectives.end() ? current->label : objectives.front().label)) {
         for (const auto& objective : objectives) {
             if (ImGui::Selectable(objective.label, config.objective == objective.key)) {

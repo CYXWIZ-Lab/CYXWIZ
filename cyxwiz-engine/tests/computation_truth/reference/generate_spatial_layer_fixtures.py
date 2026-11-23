@@ -378,6 +378,59 @@ def build() -> list[dict[str, Any]]:
         built["state"] = before
         built["state_after"] = {"running_mean": plain(running_mean), "running_var": plain(running_var)}
         cases.append(built)
+
+    # TOFIX228 1.4 (ORA-08): height != width for every layer that had square
+    # inputs only (a swapped H / W passed), and batch sizes 1, 7 (prime) and 64
+    # next to the 2 of most cases. Appended so earlier cases keep their draws.
+    for name, n, cin, cout, h, w_, k, s_, p_ in [("conv2d_9x6_s2_b7", 7, 3, 4, 9, 6, 3, 2, 1),
+                                                 ("conv2d_5x11_b1", 1, 2, 3, 5, 11, 3, 1, 1),
+                                                 ("conv2d_5x3_b64", 64, 1, 2, 5, 3, 3, 1, 1)]:
+        x = torch.randn(n, cin, h, w_)
+        wt = torch.randn(cout, cin, k, k) * 0.3
+        b = torch.randn(cout) * 0.1
+        cases.append(case(
+            name, "Conv2D", {"filters": cout, "kernel_size": k, "stride": s_, "padding": p_},
+            x, lambda t, wt=wt, b=b, s_=s_, p_=p_: functional.conv2d(t, wt, b, stride=s_, padding=p_),
+            {"weights": wt, "bias": b}, {"weights": conv_weight, "bias": plain}, tolerance=(2e-4, 2e-4)))
+    x = torch.randn(7, 3, 9, 6)
+    cases.append(case(
+        "maxpool2d_9x6_k3_s2_p1_b7", "MaxPool2D", {"pool_size": 3, "stride": 2, "padding": 1},
+        x, lambda t: functional.max_pool2d(t, kernel_size=3, stride=2, padding=1), {}, {}))
+    x = torch.randn(1, 2, 8, 5)
+    cases.append(case(
+        "avgpool2d_8x5_k2_s2_b1", "AvgPool2D", {"pool_size": 2, "stride": 2, "padding": 0},
+        x, lambda t: functional.avg_pool2d(t, kernel_size=2, stride=2), {}, {}))
+    x = torch.randn(7, 3, 3, 5)
+    wt = torch.randn(3, 2, 3, 3) * 0.3
+    b = torch.randn(2) * 0.1
+    cases.append(case(
+        "convtranspose2d_3x5_k3_s2_b7", "ConvTranspose2D",
+        {"out_channels": 2, "kernel_size": 3, "stride": 2, "padding": 1, "output_padding": 1},
+        x, lambda t: functional.conv_transpose2d(t, wt, b, stride=2, padding=1, output_padding=1),
+        {"weights": wt, "bias": b}, {"weights": transpose_weight, "bias": plain}, tolerance=(2e-4, 2e-4)))
+    x = torch.randn(1, 3, 7, 10)
+    wt = torch.randn(6, 1, 3, 3) * 0.4
+    b = torch.randn(6) * 0.1
+    cases.append(case(
+        "depthwise_7x10_m2_b1", "DepthwiseConv2D", {"depth_multiplier": 2, "kernel_size": 3, "stride": 1, "padding": 1},
+        x, lambda t: functional.conv2d(t, wt, b, stride=1, padding=1, groups=3),
+        {"weights": wt, "bias": b}, {"weights": conv_weight, "bias": plain}, tolerance=(2e-4, 2e-4)))
+    x = torch.randn(7, 3, 3, 5)
+    cases.append(case(
+        "upsample_nearest_3x5_x2_b7", "Upsample", {"scale_factor": 2, "mode": 0},
+        x, lambda t: functional.interpolate(t, scale_factor=2, mode="nearest"), {}, {}))
+    x = torch.randn(7, 3, 3, 5)
+    cases.append(case(
+        "upsample_bilinear_3x5_x2_b7", "Upsample", {"scale_factor": 2, "mode": 1},
+        x, lambda t: functional.interpolate(t, scale_factor=2, mode="bilinear", align_corners=False), {}, {}))
+    x = torch.randn(1, 8, 3, 5)
+    cases.append(case(
+        "pixel_shuffle_3x5_r2_b1", "PixelShuffle", {"upscale_factor": 2},
+        x, lambda t: functional.pixel_shuffle(t, 2), {}, {}))
+    x = torch.randn(64, 2, 3, 5)
+    cases.append(case(
+        "global_avg_pool_3x5_b64", "GlobalAvgPool", {},
+        x, lambda t: functional.adaptive_avg_pool2d(t, 1).flatten(1), {}, {}, rows_out=True))
     return cases
 
 

@@ -124,6 +124,28 @@ void ValidateClassIndexTargets(const Tensor& targets, const ClassAxisShape& shap
     }
 }
 
+// Every class-index target that is not ignored names one of the `classes`
+// classes, as PyTorch raises (TOFIX223 0.19, audit TXT-02 / BE-03: a target
+// outside 0..classes-1 read a logit outside the row, so the loss was wrong
+// while the run went on). Checked on the device: one scalar (any target
+// outside?) comes back per step, attributed as loss input validation; the
+// first bad value is read only when there is one.
+void ValidateClassIndexRange(const Tensor& targets, size_t classes, const char* name, const int* ignore_index) {
+    const af::array ids = af::flat(TensorToAf(targets)).as(s64);
+    af::array outside = ids < 0 || ids >= static_cast<long long>(classes);
+    if (ignore_index) outside = outside && ids != static_cast<long long>(*ignore_index);
+    {
+        const ScopedArrayFireHostSyncAttribution validation(ArrayFireHostSyncCategory::LossInputValidation, name);
+        if (!af::anyTrue<bool>(outside)) return;
+    }
+    const af::array bad = af::where(outside);
+    const Tensor first = Tensor::FromSemanticArray(ids(bad).as(f32), {static_cast<size_t>(bad.elements())});
+    const long long value = static_cast<long long>(first.ReadData<float>()[0]);
+    throw std::runtime_error(std::string(name) + ": target class " + std::to_string(value) + " is outside the " +
+                             std::to_string(classes) + " classes 0.." + std::to_string(classes - 1) +
+                             (ignore_index ? " (ignore_index " + std::to_string(*ignore_index) + ")" : std::string()));
+}
+
 
 
 void ValidateClassWeights(const std::vector<float>& class_weights,
@@ -415,6 +437,7 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
         ValidateFloat32Pair(predictions, targets, "CrossEntropy");
     }
     try {
+        if (class_indices) ValidateClassIndexRange(targets, shape.classes, "CrossEntropy", &ignore_index_);
         if (class_indices && class_weights_.empty() && label_smoothing_ == 0.0f &&
             (reduction_ == Reduction::Mean || reduction_ == Reduction::Sum)) {
             const af::array logits = TensorToAf(predictions);
@@ -566,6 +589,7 @@ Tensor NLLLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     ValidateClassIndexTargets(targets, shape, "NLL");
 
     try {
+        ValidateClassIndexRange(targets, shape.classes, "NLL", &ignore_index_);
         const af::array log_probability_rows = ToCrossEntropyRows(
             TensorToAf(predictions), predictions.Shape());
         const af::array target_indices = ToCrossEntropyIndexRows(
@@ -644,6 +668,7 @@ Tensor FocalLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         ValidateClassAxisPredictions(predictions, "Focal");
     ValidateClassIndexTargets(targets, shape, "Focal");
     try {
+        ValidateClassIndexRange(targets, shape.classes, "Focal", nullptr);
         const af::array prediction_rows = ToCrossEntropyRows(
             TensorToAf(predictions), predictions.Shape());
         const ArrayFireLogSoftmax normalized =

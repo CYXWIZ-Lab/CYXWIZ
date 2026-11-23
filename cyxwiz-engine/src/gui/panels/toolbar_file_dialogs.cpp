@@ -12,10 +12,4 @@ std::string ToolbarPanel::OpenFolderDialog() {
     return result.value_or("");
 }
 
-std::string ToolbarPanel::OpenFileDialog(const char* filter, const char* title) {
-    (void)filter;  // Filter format differs from nfd, using generic dialog
-    auto result = FileDialogs::OpenFile(title, {{"All Files", "*"}});
-    return result.value_or("");
-}
-
 } // namespace cyxwiz
