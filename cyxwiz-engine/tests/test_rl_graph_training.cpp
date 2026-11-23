@@ -243,8 +243,8 @@ void CheckCartPole() {
     Check(cyxwiz::FusedNetworksExpected(*config, cyxwiz::DeviceType::CUDA, 0) == cuda_provider,
           "CartPole's 64-64 networks are expected fused on CUDA exactly when a provider serves CUDA");
     auto wide = *config;
-    wide.policy_layers.front().units = 300;
-    Check(!cyxwiz::FusedNetworksExpected(wide, cyxwiz::DeviceType::CUDA, 0), "a 300-unit layer is not expected fused");
+    wide.policy_layers.front().units = 600;  // the kernels take up to 512 units
+    Check(!cyxwiz::FusedNetworksExpected(wide, cyxwiz::DeviceType::CUDA, 0), "a 600-unit layer is not expected fused");
     if (cuda_provider) {
         auto mixed = *config;  // two LeakyReLU slopes in one network: FusedMlp refuses them
         for (auto& layer : mixed.policy_layers)
