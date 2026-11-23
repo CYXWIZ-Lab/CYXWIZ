@@ -136,6 +136,10 @@ bool GRULayer::TryProviderForward(const Tensor& input, Tensor& output) {
         NeuralOp::GruForward, CaptureCurrentNeuralDeviceTarget(),
         {input_shape[0], input_shape[1], input_shape[2], static_cast<size_t>(hidden_size_),
          static_cast<size_t>(num_layers_)});
+    // Training: a provider forward only where the backward is served too.
+    if (training_ && !RecurrentProviderServesBackward(provider_request)) {
+        return false;
+    }
     const size_t hidden = static_cast<size_t>(hidden_size_);
     const size_t layers = static_cast<size_t>(num_layers_);
     Tensor result(std::vector<size_t>{input_shape[0], input_shape[1], hidden});

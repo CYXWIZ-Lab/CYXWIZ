@@ -977,7 +977,8 @@ void TrainingTraceCollector::RecordArrayFireHostSync(
 void TrainingTraceCollector::RecordHostUpload(
     const TrainingTraceHostSyncGroup& upload) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (run_id_.empty()) {
+    // A finished run keeps its id: a later Run Test must not add to it.
+    if (run_id_.empty() || status_ != "running") {
         return;
     }
     // Counted, not logged as events: a batcher uploads every batch and the
@@ -992,7 +993,8 @@ void TrainingTraceCollector::RecordProviderDispatch(
     bool first_problem = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (run_id_.empty()) {
+        // A finished run keeps its id: a later Run Test must not add to it.
+        if (run_id_.empty() || status_ != "running") {
             return;
         }
         // Counted, not logged as events: a provider layer dispatches every batch.

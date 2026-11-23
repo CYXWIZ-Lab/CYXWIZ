@@ -267,6 +267,15 @@ void TestLayer() {
         }
     }
     Check(threw, "Strict: the layer's Forward stops on the provider failure");
+
+    // A provider that runs the forward but declines the backward is not asked
+    // for a training forward: the batch would otherwise be recomputed on
+    // ArrayFire for its backward, a route the placement did not declare.
+    stub = RegisterStub(StubMode::DeclineBackward);
+    cyxwiz::LSTMLayer training_layer(static_cast<int>(kInput), static_cast<int>(kHidden));
+    training_layer.SetTraining(true);
+    (void)training_layer.Forward(input);
+    Check(stub->executions == 0, "a training forward stays on ArrayFire when the backward is not served");
     cyxwiz::NeuralProviderRegistry::Instance().UnregisterForTesting("cyxwiz.test-cpu-stub");
 }
 
@@ -298,6 +307,9 @@ void TestTrace() {
     for (const auto& warning : summary.warnings)
         if (warning.find("a shorter last batch") != std::string::npos) ++warnings;
     Check(warnings == 1, "a declined group is warned about once");
+    // A finished run keeps its id; a later dispatch (a Run Test) is not its.
+    cyxwiz::RecordNeuralDispatchForActiveTrace(event);
+    Check(trace.Snapshot().provider_dispatch_count == 4, "a finished run takes no more dispatches");
 }
 
 }  // namespace

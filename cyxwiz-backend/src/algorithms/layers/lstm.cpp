@@ -61,6 +61,10 @@ bool LSTMLayer::TryProviderForward(const Tensor& input, Tensor& output) {
     const NeuralOpRequest provider_request = RecurrentProviderRequest(
         NeuralOp::LstmForward, CaptureCurrentNeuralDeviceTarget(),
         {input_shape[0], input_shape[1], input_shape[2], hidden, layers});
+    // Training: a provider forward only where the backward is served too.
+    if (training_ && !RecurrentProviderServesBackward(provider_request)) {
+        return false;
+    }
     Tensor result(std::vector<size_t>{input_shape[0], input_shape[1], hidden});
     Tensor final_hidden(std::vector<size_t>{layers, input_shape[0], hidden});
     Tensor final_cell(std::vector<size_t>{layers, input_shape[0], hidden});

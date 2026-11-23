@@ -122,6 +122,10 @@ bool RNNLayer::TryProviderForward(const Tensor& input, Tensor& output) {
         NeuralOp::RnnForward, CaptureCurrentNeuralDeviceTarget(),
         {shape[0], shape[1], shape[2], static_cast<size_t>(hidden_size_),
          static_cast<size_t>(num_layers_), use_tanh_ ? NeuralActivation::Tanh : NeuralActivation::Relu});
+    // Training: a provider forward only where the backward is served too.
+    if (training_ && !RecurrentProviderServesBackward(provider_request)) {
+        return false;
+    }
     const size_t hidden = static_cast<size_t>(hidden_size_);
     const size_t layers = static_cast<size_t>(num_layers_);
     Tensor result(std::vector<size_t>{shape[0], shape[1], hidden});

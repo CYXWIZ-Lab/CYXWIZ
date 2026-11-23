@@ -53,6 +53,20 @@ bool RecurrentLayerAsksProvider(bool batch_first, bool training, float dropout, 
     return batch_first && !(training && dropout > 0.0f && layers > 1);
 }
 
+bool RecurrentProviderServesBackward(const NeuralOpRequest& forward) {
+    NeuralOp backward;
+    switch (forward.op) {
+        case NeuralOp::LstmForward: backward = NeuralOp::LstmBackward; break;
+        case NeuralOp::GruForward: backward = NeuralOp::GruBackward; break;
+        case NeuralOp::RnnForward: backward = NeuralOp::RnnBackward; break;
+        default: return false;
+    }
+    const RecurrentProviderShape shape{forward.batch, forward.seq,    forward.input,
+                                       forward.hidden, forward.layers, forward.activation};
+    return NeuralProviderRegistry::Instance().FindSupporting(RecurrentProviderRequest(backward, forward.target, shape)) !=
+           nullptr;
+}
+
 NeuralOpRequest Conv2dProviderRequest(NeuralOp op, const NeuralDeviceTarget& target,
                                       const Conv2dProviderShape& shape) {
     NeuralOpRequest request;
@@ -148,7 +162,8 @@ bool DispatchNeuralProviderOp(const NeuralOpRequest& request, const char* layer,
     }
     const NeuralOpStatus status = execute(*provider);
     if (status.ok) {
-        Notify(MakeEvent(request, layer, *provider, NeuralDispatchOutcome::Ran));
+        // The common case, every batch: no event built unless someone observes.
+        if (g_dispatch_observer) Notify(MakeEvent(request, layer, *provider, NeuralDispatchOutcome::Ran));
         return true;
     }
     NeuralDispatchEvent event = MakeEvent(request, layer, *provider, NeuralDispatchOutcome::Failed);

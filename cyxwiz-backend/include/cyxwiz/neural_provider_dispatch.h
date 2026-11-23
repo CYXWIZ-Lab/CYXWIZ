@@ -41,6 +41,11 @@ CYXWIZ_API NeuralOpRequest RecurrentProviderRequest(NeuralOp op, const NeuralDev
 // The layer also asks only when it starts from a zero state.
 CYXWIZ_API bool RecurrentLayerAsksProvider(bool batch_first, bool training, float dropout,
                                            size_t layers);
+// Whether a provider serves the backward of this recurrent forward request on
+// its device. A training layer runs its forward on a provider only then: a
+// provider forward whose backward is declined would recompute the batch on
+// ArrayFire, a route the placement (which asks for both) did not declare.
+CYXWIZ_API bool RecurrentProviderServesBackward(const NeuralOpRequest& forward);
 
 // Conv2D on [H, W, Cin, N] (NeuralOpRequest's conv contract).
 struct Conv2dProviderShape {
