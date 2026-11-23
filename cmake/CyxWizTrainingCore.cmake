@@ -22,6 +22,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/rl/off_policy_trainer.cpp
     ${_cyxwiz_engine_src}/core/rl/sac_trainer.cpp
     ${_cyxwiz_engine_src}/core/rl/td3_trainer.cpp
+    ${_cyxwiz_engine_src}/core/rl/dqn_trainer.cpp
     ${_cyxwiz_engine_src}/core/rl/rl_reference.cpp
     ${_cyxwiz_engine_src}/core/rl_graph_presentation.cpp
     ${_cyxwiz_engine_src}/core/rl_graph_compile.cpp

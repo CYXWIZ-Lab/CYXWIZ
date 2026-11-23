@@ -1,13 +1,15 @@
 #pragma once
 
 // The off-policy training loop (TOFIX216), as Stable-Baselines3 2.7's
-// OffPolicyAlgorithm runs SAC and TD3: uniform random actions until
-// learning_starts, then the learner's exploring actions; each step's
-// transitions into a replay buffer on the training device (an ended copy's
-// next observation is its final one); every train_freq steps, gradient_steps
-// updates of the learner from minibatches drawn from it; a report every
-// report_every environment steps. The learner (SacLearner, Td3Learner) holds
-// the networks and its algorithm's update. GUI-free.
+// OffPolicyAlgorithm runs SAC, TD3 and DQN: uniform random actions (DQN:
+// random choices) until learning_starts, then the learner's exploring
+// actions; each step's transitions into a replay buffer on the training
+// device (an ended copy's next observation is its final one; a choice kept as
+// one value), then the learner's AfterStep (SB3's _on_step); every train_freq
+// steps, gradient_steps updates of the learner from minibatches drawn from
+// it; a report every report_every environment steps. The learner (SacLearner,
+// Td3Learner, DqnLearner) holds the networks and its algorithm's update.
+// GUI-free.
 
 #include "../executable_model.h"
 #include "replay_buffer.h"
@@ -53,9 +55,10 @@ struct OffPolicyUpdateMetrics {
     int episodes = 0;
     float mean_episode_return = 0.0f;  // over the last 100 episodes (NaN before the first)
     float mean_episode_length = 0.0f;
-    float critic_loss = 0.0f;
+    float critic_loss = 0.0f;          // the Q networks' loss (DQN: its Huber loss)
     float actor_loss = 0.0f;
-    float mean_q = 0.0f;               // the critics' value of the actor's actions
+    float mean_q = 0.0f;               // the critics' value of the actor's actions (DQN: of the chosen ones)
+    float exploration_rate = 0.0f;     // DQN: the share of random choices now (epsilon)
     float ent_coef = 0.0f;             // SAC: the entropy weight
     float ent_coef_loss = 0.0f;        // SAC, when the weight is learned
     int64_t buffer_size = 0;
@@ -74,13 +77,18 @@ public:
     using NextSeed = std::function<uint64_t()>;
     virtual ~OffPolicyLearner() = default;
 
-    // Actions in [-1, 1] [N, A] to explore with, for observations [N, obs]
-    // (past the random steps)
+    // Actions to explore with, for observations [N, obs] (past the random
+    // steps): in [-1, 1] [N, A] for continuous actions; for a choice of
+    // actions, N choice indices (as floats)
     virtual Tensor Explore(const Tensor& observations, const NextSeed& next_seed) = 0;
     // The random steps' uniform actions [N, A] as the environment gets them:
     // as they are, unless the learner adds its exploration noise to them too
     // (TD3, as SB3 does)
     virtual Tensor Warmup(const Tensor& actions, const NextSeed& /*next_seed*/) { return actions; }
+    // After each step of the copies, its transitions stored (SB3's _on_step):
+    // timesteps, the environment steps so far; vector_steps, the steps of the
+    // copies so far. DQN moves its target network and its epsilon here.
+    virtual void AfterStep(int64_t /*timesteps*/, int64_t /*vector_steps*/) {}
     // One gradient step on a replay batch; gradient_step counts within this
     // training call (SB3's train(), whose counters some settings follow)
     virtual void Learn(const ReplayBuffer::Batch& batch, int gradient_step, const NextSeed& next_seed) = 0;
@@ -93,10 +101,11 @@ public:
 };
 
 // The environment and the loop's settings every off-policy learner needs:
-// continuous, bounded actions; counts of at least 1 (the random steps first at
-// least 0). algorithm names it in the reasons ("SAC").
+// continuous, bounded actions (choices: a choice of actions, DQN's); counts of
+// at least 1 (the random steps first at least 0). algorithm names it in the
+// reasons ("SAC").
 bool CheckOffPolicySetup(const TrainingEnvironment& environment, const OffPolicySettings& settings,
-                         const std::string& algorithm, std::string& error);
+                         const std::string& algorithm, std::string& error, bool choices = false);
 
 class OffPolicyLoop {
 public:
@@ -154,12 +163,15 @@ float FirstValue(const Tensor& t);
 // entropy weight): in one launch when the device's provider steps Adam
 // (AdamOptimizer::StepTogether), else each through ApplyOptimizerStep.
 // together: whether to try one launch; cleared, for good, when it cannot.
+// max_grad_norm > 0: all the gradients' global norm clipped to it first
+// (clip_grad_norm_, DQN's).
 struct OffPolicyUpdate {
     Optimizer* optimizer;
     IExecutableModel* model;                    // its parameters, or (null)
     std::map<std::string, Tensor>* parameters;  // these, updated in place
     std::map<std::string, Tensor>* gradients;
 };
-void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, bool& together, const char* learner);
+void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, bool& together, const char* learner,
+                              float max_grad_norm = 0.0f);
 
 }  // namespace cyxwiz::rl

@@ -3,6 +3,7 @@
 #include "../optimizer_step.h"
 
 #include <cyxwiz/optimizers/adam.h>
+#include <cyxwiz/optimizers/gradient_clipping.h>
 #include <cyxwiz/rl/sac.h>
 
 #include <arrayfire.h>
@@ -111,7 +112,8 @@ void PolyakUpdate(IExecutableModel& network, IExecutableModel& target, float tau
 
 float FirstValue(const Tensor& t) { return Host(t).at(0); }
 
-void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, bool& together, const char* learner) {
+void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, bool& together, const char* learner,
+                              float max_grad_norm) {
     if (together) {
         std::vector<std::map<std::string, Tensor>> params(updates.size());
         std::vector<AdamOptimizer::Group> groups;
@@ -121,7 +123,7 @@ void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, bool& 
             groups.push_back({dynamic_cast<AdamOptimizer*>(u.optimizer), &params[i], u.gradients});
         }
         std::string why;
-        if (AdamOptimizer::StepTogether(groups, 0.0f, why)) {
+        if (AdamOptimizer::StepTogether(groups, max_grad_norm, why)) {
             for (size_t i = 0; i < updates.size(); ++i) {
                 if (updates[i].model) updates[i].model->SetParameters(params[i]);
                 else *updates[i].parameters = params[i];
@@ -130,6 +132,15 @@ void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, bool& 
         }
         together = false;
         spdlog::debug("{}: the optimizers step per tensor ({})", learner, why);
+    }
+    // One global norm over every gradient, as one optimizer over all of them clips
+    if (max_grad_norm > 0.0f) {
+        std::map<std::string, Tensor> all;
+        for (size_t i = 0; i < updates.size(); ++i)
+            for (const auto& [k, g] : *updates[i].gradients) all[std::to_string(i) + ":" + k] = g;
+        ClipGradientsByGlobalNormOnDevice(all, max_grad_norm);
+        for (size_t i = 0; i < updates.size(); ++i)
+            for (auto& [k, g] : *updates[i].gradients) g = all.at(std::to_string(i) + ":" + k);
     }
     for (const OffPolicyUpdate& u : updates) {
         if (u.model) ApplyOptimizerStep(*u.model, *u.optimizer, *u.gradients, {});
@@ -140,18 +151,24 @@ void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, bool& 
 // ---------------------------------------------------------------- the loop
 
 bool CheckOffPolicySetup(const TrainingEnvironment& environment, const OffPolicySettings& s,
-                         const std::string& algorithm, std::string& error) {
+                         const std::string& algorithm, std::string& error, bool choices) {
     const auto& info = environment.info;
     const auto finite = [](const std::vector<float>& v) {
         return std::all_of(v.begin(), v.end(), [](float x) { return std::isfinite(x); });
     };
     if (environment.count < 1 || !environment.reset || !environment.step) error = algorithm + " needs an environment.";
-    else if (info.discrete_actions)
+    else if (!choices && info.discrete_actions)
         error = algorithm + " learns continuous actions; " + info.name + " has a choice of actions.";
-    else if (info.observation_size < 1 || info.action_size < 1) error = "The environment observes or acts on nothing.";
-    else if (info.action_low.size() != static_cast<size_t>(info.action_size) ||
+    else if (choices && !info.discrete_actions)
+        error = algorithm + " chooses among actions; " + info.name + " has continuous actions.";
+    else if (info.observation_size < 1 || info.action_size < 1 || (choices && info.action_count < 1))
+        error = "The environment observes or acts on nothing.";
+    else if (choices && info.action_size != 1)
+        error = algorithm + " takes one choice a step; " + info.name + " asks for " + std::to_string(info.action_size) +
+                ".";
+    else if (!choices && (info.action_low.size() != static_cast<size_t>(info.action_size) ||
              info.action_high.size() != static_cast<size_t>(info.action_size) || !finite(info.action_low) ||
-             !finite(info.action_high))
+             !finite(info.action_high)))
         error = algorithm + " needs bounded actions; " + info.name + " has actions without finite bounds.";
     else if (s.total_timesteps < 1 || s.buffer_size < 1 || s.learning_starts < 0 || s.batch_size < 1 ||
              s.train_freq < 1 || s.gradient_steps < 1 || s.report_every < 1)
@@ -169,7 +186,8 @@ bool OffPolicyLoop::Run(OffPolicyLearner& learner, const std::function<void(cons
     const auto& s = settings_;
     const size_t n = static_cast<size_t>(environment_.count);
     const size_t obs_size = static_cast<size_t>(info.observation_size);
-    const size_t act_size = static_cast<size_t>(info.action_size);
+    const size_t act_size = static_cast<size_t>(info.action_size);  // 1 for a choice of actions
+    const bool discrete = info.discrete_actions;
     const size_t batch = static_cast<size_t>(s.batch_size);
     Random random(s.seed ^ 0x5AC5AC5AC5ull);
     const OffPolicyLearner::NextSeed next_seed = [&random]() { return random.Next(); };
@@ -232,15 +250,25 @@ bool OffPolicyLoop::Run(OffPolicyLearner& learner, const std::function<void(cons
         while (metrics.timesteps < s.total_timesteps && !stop_) {
             while (paused_ && !stop_) std::this_thread::sleep_for(std::chrono::milliseconds(50));
             if (stop_) break;
-            // ---- Act: uniform random until learning starts, then the learner's
+            // ---- Act: uniform random until learning starts (a random choice for
+            // each copy when the actions are choices), then the learner's
             std::vector<float> actions;
-            if (metrics.timesteps < s.learning_starts)
+            if (metrics.timesteps < s.learning_starts && discrete) {
+                actions.resize(n);
+                for (auto& a : actions) a = static_cast<float>(random.Next() % static_cast<uint64_t>(info.action_count));
+            } else if (metrics.timesteps < s.learning_starts) {
                 actions = Host(learner.Warmup(SacUniformActions(n, act_size, random.Next()), next_seed));
-            else
+            } else {
                 actions = Host(learner.Explore(Tensor({n, obs_size}, obs.data()), next_seed));
-            for (size_t i = 0; i < n * act_size; ++i) {  // [-1, 1] to the environment's bounds
+            }
+            if (actions.size() != n * act_size)
+                throw std::runtime_error("the learner gave " + std::to_string(actions.size()) + " action values for " +
+                                         std::to_string(n * act_size));
+            for (size_t i = 0; i < n * act_size; ++i) {  // [-1, 1] to the environment's bounds; a choice as it is
                 const size_t j = i % act_size;
-                env_actions[i] = info.action_low[j] + 0.5f * (actions[i] + 1.0f) * (info.action_high[j] - info.action_low[j]);
+                env_actions[i] = discrete ? actions[i]
+                                          : info.action_low[j] + 0.5f * (actions[i] + 1.0f) *
+                                                                     (info.action_high[j] - info.action_low[j]);
             }
             if (!environment_.step(env_actions.data(), out, error)) return false;
 
@@ -264,6 +292,7 @@ bool OffPolicyLoop::Run(OffPolicyLearner& learner, const std::function<void(cons
             normalizer_->Step(obs.data(), rewards.data(), terminated.data(), truncated.data(), final_obs.data());
             metrics.timesteps += static_cast<int64_t>(n);
             ++vec_steps;
+            learner.AfterStep(metrics.timesteps, vec_steps);
 
             // ---- Train every train_freq steps once past learning_starts
             metrics.learning = metrics.timesteps > s.learning_starts;
