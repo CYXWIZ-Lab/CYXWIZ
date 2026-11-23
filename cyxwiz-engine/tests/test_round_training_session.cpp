@@ -88,7 +88,8 @@ bool WriteBatches(const fs::path& path, const json& batches, int repeat = 1) {
 }
 
 // Data Input -> Split -> Loader -> Dense 144 -> ReLU -> Dense 4 -> cross entropy -> Adam -> Output.
-std::string Graph(int hidden, const nlohmann::json& optimizer_extra = nlohmann::json::object(), bool step_schedule = false) {
+std::string Graph(int hidden, const nlohmann::json& optimizer_extra = nlohmann::json::object(), bool step_schedule = false,
+                  bool batch_norm = false) {
     using gui::NodeType;
     json nodes = json::array();
     const auto add = [&nodes](int id, NodeType type, const char* name, json parameters) {
@@ -102,6 +103,7 @@ std::string Graph(int hidden, const nlohmann::json& optimizer_extra = nlohmann::
         {{"batch_size", "8"}, {"epochs", "2"}, {"shuffle", "true"}, {"seed", "11"}, {"model_seed", "7"}});
     add(4, NodeType::Dense, "Hidden", {{"units", std::to_string(hidden)}});
     add(5, NodeType::ReLU, "ReLU", json::object());
+    if (batch_norm) add(11, NodeType::BatchNorm, "Norm", json::object());
     add(6, NodeType::Dense, "Classes", {{"units", "4"}});
     add(7, NodeType::CrossEntropyLoss, "Cross entropy", json::object());
     json adam = {{"learning_rate", "0.01"}};
@@ -119,7 +121,12 @@ std::string Graph(int hidden, const nlohmann::json& optimizer_extra = nlohmann::
     link(1, 0, 2, 0);
     link(2, 0, 3, 0);
     link(3, 0, 4, 0);
-    link(4, 0, 5, 0);
+    if (batch_norm) {
+        link(4, 0, 11, 0);
+        link(11, 0, 5, 0);
+    } else {
+        link(4, 0, 5, 0);
+    }
     link(5, 0, 6, 0);
     link(6, 0, 7, 0);
     link(3, 1, 7, 1);
@@ -144,7 +151,14 @@ std::vector<size_t> ReferenceToEngine(const json& reference_layout, const cyxwiz
         const std::string name = reference.at("name").get<std::string>();
         const std::string layer = name.substr(0, name.find('.'));
         if (reference_layers.empty() || reference_layers.back() != layer) reference_layers.push_back(layer);
-        const std::string wanted = engine_layers.at(reference_layers.size() - 1) + name.substr(name.find('.'));
+        const std::string engine_layer = engine_layers.at(reference_layers.size() - 1);
+        // PyTorch calls BatchNorm's scale and shift weight and bias; the Engine, gamma and beta.
+        const bool norm = std::any_of(layout.segments.begin(), layout.segments.end(),
+                                      [&](const auto& candidate) { return candidate.name == engine_layer + ".gamma"; });
+        std::string parameter = name.substr(name.find('.'));
+        if (norm && parameter == ".weight") parameter = ".gamma";
+        if (norm && parameter == ".bias") parameter = ".beta";
+        const std::string wanted = engine_layer + parameter;
         const auto segment = std::find_if(layout.segments.begin(), layout.segments.end(),
                                           [&](const auto& candidate) { return candidate.name == wanted; });
         if (segment == layout.segments.end() || segment->count != reference.at("count").get<size_t>()) {
@@ -277,6 +291,70 @@ int main() {
                   cyxwiz::DecodeUpdate(encoded, layout, cyxwiz::UpdateWire::Float32, decoded, error) && decoded == outcome.delta,
               name + ": the update encodes and decodes");
         if (name == "fast") first_delta_of_fast = outcome.delta;
+    }
+
+    std::cout << "one round of a model with BatchNorm against PyTorch\n";
+    {
+        const json& norm_round = fixture.at("rounds").at(2);
+        Check(norm_round.at("batch_norm").get<bool>(), "the fixture's third round has BatchNorm");
+        const std::string norm_graph = Graph(hidden, json::object(), false, true);
+        for (const json& worker : norm_round.at("workers")) {
+            const std::string name = worker.at("name").get<std::string>();
+            SelectArrayFireCpu();
+            cyxwiz::RoundFailure failure;
+            auto session = cyxwiz::RoundTrainingSession::Open(Request(norm_graph, work / "fast.parquet"), {}, failure);
+            Check(session != nullptr, name + ": the session opens " + failure.text);
+            const cyxwiz::ModelStateLayout& layout = session->Layout();
+            size_t statistics = 0;
+            for (const auto& segment : layout.segments) {
+                if (segment.role == cyxwiz::ModelStateRole::Statistic) statistics += segment.count;
+            }
+            Check(statistics == 2 * static_cast<size_t>(hidden), name + ": the running mean and variance are in the exchanged state");
+
+            const std::vector<size_t> position = ReferenceToEngine(norm_round.at("layout"), layout);
+            const std::vector<float> reference_theta = norm_round.at("theta").at("values").get<std::vector<float>>();
+            Check(position.size() == layout.exchanged_count, name + ": the reference and the Engine exchange the same number of values");
+            std::vector<float> theta(layout.exchanged_count);
+            for (size_t i = 0; i < position.size(); ++i) theta[position[i]] = reference_theta[i];
+            std::string error;
+            Check(session->LoadInitialState(theta, error), name + ": the starting state is accepted " + error);
+            cyxwiz::RoundData leases;
+            leases.leases.push_back({work / (name + ".parquet"), 0, 0});
+            cyxwiz::RoundBudget budget;
+            budget.max_steps = worker.at("steps").get<uint64_t>();
+            cyxwiz::RoundOutcome outcome;
+            SelectArrayFireCpu();
+            Check(session->TrainRound({1, 0, 0}, theta, leases, budget, {}, outcome, failure), name + ": the round trains " + failure.text);
+            const std::vector<float> reference_delta = worker.at("delta").at("values").get<std::vector<float>>();
+            double worst = 0.0;
+            double worst_statistic = 0.0;
+            // The bias of a layer that feeds BatchNorm has no gradient but rounding noise
+            // (BatchNorm subtracts the mean it adds), and Adam turns noise into full steps
+            // whose sign no two implementations share. It and the running mean it shifts
+            // are left out; every other tensor, the running variance included, must agree.
+            size_t at = 0;
+            size_t compared = 0;
+            for (const json& reference : norm_round.at("layout")) {
+                const std::string tensor = reference.at("name").get<std::string>();
+                const size_t count = reference.at("count").get<size_t>();
+                if (tensor != "fc1.bias" && tensor != "bn.running_mean") {
+                    for (size_t i = at; i < at + count; ++i) {
+                        worst = std::max(worst, static_cast<double>(std::abs(outcome.delta[position[i]] - reference_delta[i])));
+                    }
+                    compared += count;
+                }
+                at += count;
+            }
+            Check(compared == position.size() - 2 * static_cast<size_t>(hidden), name + ": all tensors but those two are compared");
+            for (const auto& segment : layout.segments) {
+                if (segment.role != cyxwiz::ModelStateRole::Statistic) continue;
+                for (size_t i = 0; i < segment.count; ++i) {
+                    worst_statistic = std::max(worst_statistic, static_cast<double>(std::abs(outcome.delta[segment.exchanged_offset + i])));
+                }
+            }
+            Check(worst_statistic > 0.0, name + ": the statistics moved in training");
+            Check(worst <= tolerance, name + ": weights and the running variance equal PyTorch's (largest difference " + std::to_string(worst) + ")");
+        }
     }
 
     std::cout << "rounds on a kept model\n";
