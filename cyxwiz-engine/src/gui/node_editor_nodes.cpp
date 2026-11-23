@@ -62,8 +62,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 // Helper: if this node owns a dataset (a Data Input with a non-empty
 // dataset_name parameter: its dialog loaded it), drop it from every registry
 // so the next graph rebuild doesn't see a stale entry under the same name.
-// A Dataset Input only names a dataset something else loaded (Data Studio),
-// so removing the node leaves it. Used by DeleteNode and ClearGraph.
+// Used by DeleteNode and ClearGraph.
 static void UnregisterNodeDatasetIfOwned(const MLNode& node) {
     if (node.type != NodeType::DataInput) {
         return;
