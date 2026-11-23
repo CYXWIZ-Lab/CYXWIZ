@@ -806,12 +806,12 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
     }
 
     // The RL graph's nodes: compiled by GraphCompiler's RL branch and trained
-    // by the Engine's PPO (TOFIX195 S4.3) or SAC (TOFIX216 S4)
+    // by the Engine's PPO (TOFIX195 S4.3), SAC (TOFIX216 S4) or TD3 (TOFIX216 TD3 U4)
     const std::string rl_reason =
-        "GraphCompiler compiles the RL graph and the Engine's PPO or SAC (core/rl) trains it on the environment's "
-        "copies; PipelineExecutor and the supervised trainer do not run it.";
+        "GraphCompiler compiles the RL graph and the Engine's PPO, SAC or TD3 (core/rl) trains it on the "
+        "environment's copies; PipelineExecutor and the supervised trainer do not run it.";
     for (NodeType node_type : {NodeType::RLEnvironment, NodeType::PolicyHead, NodeType::ValueHead, NodeType::PPO,
-                               NodeType::QHead, NodeType::SAC}) {
+                               NodeType::QHead, NodeType::SAC, NodeType::TD3}) {
         auto it = metadata_.find(node_type);
         if (it == metadata_.end()) continue;
         apply_workflow_lane_guidance(node_type, "reinforcement_learning", rl_reason.c_str());
@@ -4836,8 +4836,8 @@ void NodeMetadataRegistry::InitializeRLNodes() {
           "Normalise"}},
         NodeImplementationStatus::Implemented, 0});
 
-    // TOFIX216 TD3: the same graph shape as SAC's, a deterministic actor.
-    // Planned (Template) until the Engine's TD3 trainer runs it.
+    // TOFIX216 TD3: the same graph shape as SAC's, a deterministic actor,
+    // trained by the Engine's TD3 (core/rl/td3_trainer).
     ParameterDefinition action_noise{"action_noise", "enum", "normal",
         "Gaussian: noise of Noise std added to the policy's actions after the random steps (NormalActionNoise, as "
         "RL Zoo trains TD3); None: the policy's own actions (Stable-Baselines3's default)",
@@ -4896,7 +4896,7 @@ void NodeMetadataRegistry::InitializeRLNodes() {
          {"normalize_observations", "bool", "false",
           "Running mean and variance of the observations, as VecNormalize (norm_obs)", {}, "", "Observations",
           "Normalise"}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

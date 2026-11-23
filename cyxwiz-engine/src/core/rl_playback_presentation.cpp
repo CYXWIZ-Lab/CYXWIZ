@@ -27,6 +27,17 @@ bool StartsWith(const std::string& s, const char* prefix) { return s.rfind(prefi
 }  // namespace
 
 namespace {
+// "2nd", "3rd", "11th"
+std::string Ordinal(int n) {
+    const int last_two = n % 100, last = n % 10;
+    const char* suffix = last_two >= 11 && last_two <= 13 ? "th"
+                         : last == 1                      ? "st"
+                         : last == 2                      ? "nd"
+                         : last == 3                      ? "rd"
+                                                          : "th";
+    return std::to_string(n) + suffix;
+}
+
 // Decimal, as device memory is sold
 std::string Megabytes(double bytes) {
     const double mb = bytes / 1e6;
@@ -35,9 +46,12 @@ std::string Megabytes(double bytes) {
 }
 }  // namespace
 
-std::string SacProgress(int64_t steps, int64_t total, int64_t updates, int64_t learning_starts) {
+std::string OffPolicyProgress(int64_t steps, int64_t total, int64_t updates, int64_t learning_starts,
+                              int policy_delay) {
     std::string text = Thousands(steps) + " of " + Thousands(total) + " steps";
     if (updates > 0) text += " \xC2\xB7 " + Thousands(updates) + (updates == 1 ? " update" : " updates");
+    if (updates > 0 && policy_delay > 1)
+        text += " \xC2\xB7 the policy every " + Ordinal(policy_delay) + " (" + Thousands(updates / policy_delay) + ")";
     if (learning_starts > 0)
         text += steps > learning_starts ? " \xC2\xB7 learning started at " + Thousands(learning_starts) +
                                               " (random steps before)"
@@ -45,7 +59,7 @@ std::string SacProgress(int64_t steps, int64_t total, int64_t updates, int64_t l
     return text;
 }
 
-CardText SacReplayBufferCard(int64_t size, int64_t capacity, uint64_t bytes, const std::string& place) {
+CardText ReplayBufferCard(int64_t size, int64_t capacity, uint64_t bytes, const std::string& place) {
     CardText card;
     if (capacity <= 0) {
         card.value = "-";
@@ -63,17 +77,27 @@ CardText SacReplayBufferCard(int64_t size, int64_t capacity, uint64_t bytes, con
     return card;
 }
 
+CardText Td3ExplorationCard(bool noise, float noise_std, float target_policy_noise, float target_noise_clip) {
+    CardText card;
+    const std::string smoothing = "targets smoothed " + Number(target_policy_noise, "%g") + ", clipped at " +
+                                  Number(target_noise_clip, "%g");
+    card.value = noise ? Number(noise_std, "%g") : std::string("none");
+    card.detail = (noise ? std::string("Gaussian noise std") : std::string("the policy's own actions")) +
+                  " \xC2\xB7 " + smoothing;
+    return card;
+}
+
 std::string SacEntropyDetail(bool learned, float start, float target) {
     if (!learned) return "fixed";
     return "learned (started at " + Number(start, "%g") + ") \xC2\xB7 target " + Number(target, "%g");
 }
 
-std::string SacSpeedDetail(double updates_per_step) {
+std::string OffPolicySpeedDetail(double updates_per_step) {
     if (std::fabs(updates_per_step - 1.0) < 1e-9) return "steps a second (one update each)";
     return "steps a second (" + Number(updates_per_step, "%.3g") + " updates each)";
 }
 
-std::string SacCriticDetail(int64_t updates_since_report, int64_t learning_starts) {
+std::string CriticDetail(int64_t updates_since_report, int64_t learning_starts) {
     if (updates_since_report <= 0) return "learning starts at " + Thousands(learning_starts);
     return "both Q networks, last " + Thousands(updates_since_report) +
            (updates_since_report == 1 ? " update" : " updates");

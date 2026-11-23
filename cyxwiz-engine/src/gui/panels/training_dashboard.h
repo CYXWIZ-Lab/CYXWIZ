@@ -4,7 +4,7 @@
 // and policy metrics a run reports, drawn with the shared PlotView in the
 // theme colours. Two sources: a script (pycyxwiz.rl_update_metric, one value
 // per report) and the Engine's own run (TOFIX195 S4.3, R9; SAC since TOFIX216
-// S4): one row per PPO update or SAC report by environment step, progress,
+// S4, TD3 since U4): one row per PPO update or SAC / TD3 report by environment step, progress,
 // speed, Pause / Stop, the learner's own cards (SAC: critic and actor loss,
 // entropy weight, replay buffer) and the Stable-Baselines3 reference of the
 // same settings. UI thread only, except SetRLTrainingState (a script's
@@ -41,21 +41,29 @@ public:
     void SetRLTrainingState(bool is_rl_training);
     void ResetRLMetrics();
 
-    // The Engine's run (PPO or SAC)
+    // The Engine's run (PPO, SAC or TD3)
     struct RunInfo {
         std::string title;  // "PPO on CartPole-v1 x 8"
         long long total_timesteps = 0;
         float target_return = 0.0f;  // NaN: no target
         bool continuous = false;
         std::optional<rl::RLReference> reference;
-        // A SAC run: its own cards and progress
-        bool sac = false;
+        // A SAC or TD3 run: its own cards and progress
+        bool off_policy = false;
         long long learning_starts = 0;  // random actions before
         int report_every = 0;           // steps between two reports (the watch's unit)
         double updates_per_step = 1.0;  // gradient steps per environment step
+        // SAC's entropy weight
         bool ent_coef_auto = true;
         float ent_coef_start = 1.0f;
         float target_entropy = 0.0f;    // resolved (auto: minus the actions)
+        // TD3's exploration and policy delay (td3: the run is TD3's)
+        bool td3 = false;
+        bool action_noise = true;
+        float action_noise_std = 0.1f;
+        float target_policy_noise = 0.2f;
+        float target_noise_clip = 0.5f;
+        int policy_delay = 1;
     };
     struct RunControls {
         std::function<void()> pause;
@@ -87,13 +95,13 @@ public:
     // The device the run trains on, once its preflight is done
     // (core/rl_device_presentation): the chip, its route on hover, a note
     void SetRunDevice(std::string chip, std::string tooltip, bool fallback, std::string note);
-    // Where a SAC run's replay buffer lives: "the GPU", "the CPU's memory"
+    // Where a SAC or TD3 run's replay buffer lives: "the GPU", "the CPU's memory"
     void SetRunMemoryPlace(std::string place) { memory_place_ = std::move(place); }
     // How the run computes (fused kernels or ArrayFire operations), shown with the chip's route
     void SetRunComputePath(std::string path) { device_compute_path_ = std::move(path); }
     void SetRunNote(std::string note) { device_note_ = std::move(note); }
     void AddPpoUpdate(const rl::PpoUpdateMetrics& m);
-    void AddSacReport(const rl::OffPolicyUpdateMetrics& m);
+    void AddOffPolicyReport(const rl::OffPolicyUpdateMetrics& m);
     // Watch progress set from outside (a policy playback took the view: 0, off)
     void SetWatch(int watch) { watch_ = watch; }
     void EndRun(const std::string& outcome, bool failed);
@@ -109,7 +117,7 @@ private:
 
     void RenderRunHeader();
     void RenderKpis();
-    void RenderSacKpis();
+    void RenderOffPolicyKpis();
     void RenderWatch();  // Watch progress (an Engine run)
     void RenderMetric(const std::string& name, float height);
     void Push(const std::string& name, double value, double steps);
@@ -132,8 +140,8 @@ private:
     std::string device_compute_path_;
     std::string memory_place_;
     std::optional<rl::PpoUpdateMetrics> last_update_;
-    std::optional<rl::OffPolicyUpdateMetrics> last_sac_;
-    long long sac_report_updates_ = 0;  // gradient steps the last SAC report averaged
+    std::optional<rl::OffPolicyUpdateMetrics> last_report_;
+    long long report_updates_ = 0;  // gradient steps the last SAC report averaged
     // Watch progress: from Preferences > Simulation at each run's start
     int watch_ = 0;
     int watch_every_ = 20;

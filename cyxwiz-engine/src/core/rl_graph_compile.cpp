@@ -111,6 +111,10 @@ const char* RLAlgorithmName(RLAlgorithm algorithm) {
 
 bool UsesQNetworks(RLAlgorithm algorithm) { return algorithm == RLAlgorithm::SAC || algorithm == RLAlgorithm::TD3; }
 
+uint64_t RLSeed(const RLTrainingConfiguration& c) {
+    return c.algorithm == RLAlgorithm::SAC ? c.sac.seed : c.algorithm == RLAlgorithm::TD3 ? c.td3.seed : c.ppo.seed;
+}
+
 bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType platform, int device_id) {
     if (platform == DeviceType::CPU) return false;
     const bool sac = config.algorithm == RLAlgorithm::SAC;

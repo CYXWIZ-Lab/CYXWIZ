@@ -509,10 +509,9 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
                                       : "TD3 learns continuous actions; this environment has a choice of actions: "
                                         "train it with PPO.");
     }
-    // Its trained policy (TOFIX195 S5; SAC's since TOFIX216 S4; TD3's comes
-    // with its trainer): play, save, load
+    // Its trained policy (TOFIX195 S5; SAC's since TOFIX216 S4, TD3's since U4): play, save, load
     const cyxwiz::ui::Tokens& tokens = cyxwiz::ui::CurrentTokens();
-    if (!td3) {
+    {
         properties_rows::Label("Trained policy", false, "The policy of the last run, or one loaded from a .cyxmodel");
         properties_rows::Value(editor.RLPolicyLine(), editor.HasRLPolicy() ? tokens.text : tokens.text_dim);
         properties_rows::Status("");

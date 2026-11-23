@@ -105,7 +105,7 @@ TrainingDashboardPanel::TrainingDashboardPanel() : Panel("RL Training Dashboard"
     RegisterCustomPlot("approx_kl", "Approx KL");
     RegisterCustomPlot("clip_fraction", "Clip fraction");
     RegisterCustomPlot("action_std", "Action std");
-    // A SAC run's (TOFIX216 S4)
+    // A SAC or TD3 run's (TOFIX216 S4, TD3 U4); the entropy weight is SAC's
     RegisterCustomPlot("critic_loss", "Critic loss");
     RegisterCustomPlot("actor_loss", "Actor loss");
     RegisterCustomPlot("ent_coef", "Entropy weight");
@@ -171,8 +171,8 @@ void TrainingDashboardPanel::ResetRLMetrics() {
     device_compute_path_.clear();
     memory_place_.clear();
     last_update_.reset();
-    last_sac_.reset();
-    sac_report_updates_ = 0;
+    last_report_.reset();
+    report_updates_ = 0;
     outcome_.clear();
     failed_ = false;
 }
@@ -211,25 +211,25 @@ void TrainingDashboardPanel::AddPpoUpdate(const rl::PpoUpdateMetrics& m) {
     last_update_ = m;
 }
 
-void TrainingDashboardPanel::AddSacReport(const rl::OffPolicyUpdateMetrics& m) {
+void TrainingDashboardPanel::AddOffPolicyReport(const rl::OffPolicyUpdateMetrics& m) {
     const double steps = static_cast<double>(m.timesteps);
     if (!std::isnan(m.mean_episode_return)) {
         Push("episode_reward", m.mean_episode_return, steps);
         Push("episode_length", m.mean_episode_length, steps);
     }
     // The losses average the gradient steps since the last report (none before learning starts)
-    sac_report_updates_ = m.updates - (last_sac_ ? last_sac_->updates : 0);
-    if (sac_report_updates_ > 0) {
+    report_updates_ = m.updates - (last_report_ ? last_report_->updates : 0);
+    if (report_updates_ > 0) {
         Push("critic_loss", m.critic_loss, steps);
         Push("actor_loss", m.actor_loss, steps);
         Push("mean_q", m.mean_q, steps);
     }
-    Push("ent_coef", m.ent_coef, steps);
-    last_sac_ = m;
+    if (run_ && !run_->td3) Push("ent_coef", m.ent_coef, steps);
+    last_report_ = m;
 }
 
 long long TrainingDashboardPanel::RunSteps() const {
-    if (run_ && run_->sac) return last_sac_ ? static_cast<long long>(last_sac_->timesteps) : 0;
+    if (run_ && run_->off_policy) return last_report_ ? static_cast<long long>(last_report_->timesteps) : 0;
     return last_update_ ? static_cast<long long>(last_update_->timesteps) : 0;
 }
 
@@ -286,7 +286,7 @@ void TrainingDashboardPanel::Render() {
         if (ImGui::BeginTabItem("Policy diagnostics")) {
             // Every diagnostic with values, in registration order; the learner's
             // main loss even before its first value
-            const char* main_loss = run_ && run_->sac ? "critic_loss" : "policy_loss";
+            const char* main_loss = run_ && run_->off_policy ? "critic_loss" : "policy_loss";
             std::vector<std::string> shown;
             for (const auto& name : order_)
                 if (name != "episode_reward" && name != "episode_length" &&
@@ -378,12 +378,12 @@ void TrainingDashboardPanel::RenderRunHeader() {
     if (ui::SecondaryButton(reset, !running, "Stop the run first")) ResetRLMetrics();
     if (!run_) return;
 
-    // Progress: steps of the total, the update (SAC: its updates and random steps), the target
+    // Progress: steps of the total, the update (SAC, TD3: its updates and random steps), the target
     const long long steps = RunSteps();
     std::string progress;
-    if (run_->sac) {
-        progress = rl_playback::SacProgress(steps, run_->total_timesteps, last_sac_ ? last_sac_->updates : 0,
-                                            run_->learning_starts);
+    if (run_->off_policy) {
+        progress = rl_playback::OffPolicyProgress(steps, run_->total_timesteps, last_report_ ? last_report_->updates : 0,
+                                                  run_->learning_starts, run_->td3 ? run_->policy_delay : 1);
     } else {
         const int update = last_update_ ? last_update_->update : 0;
         progress = plot::Thousands(steps) + " of " + plot::Thousands(run_->total_timesteps) + " steps";
@@ -429,8 +429,8 @@ void TrainingDashboardPanel::RenderWatch() {
     }
     ui::SegmentedControl("##watch_progress", pb::kWatchChoices, pb::kWatchChoiceCount, &watch_);
     if (watch_ == 1) {
-        // A SAC run copies its actor at a report (every report_every steps)
-        const bool sac = run_ && run_->sac;
+        // A SAC or TD3 run copies its actor at a report (every report_every steps)
+        const bool sac = run_ && run_->off_policy;
         const std::string every_tip =
             sac ? "Reports between two copies of the actor (a report every " +
                       plot::Thousands(static_cast<long long>(run_->report_every)) + " steps)"
@@ -478,8 +478,8 @@ void TrainingDashboardPanel::RenderKpis() {
     const auto& reward = metrics_["episode_reward"].history;
     const auto& length = metrics_["episode_length"].history;
     const auto& policy = metrics_["policy_loss"].history;
-    if (run_ && run_->sac) {
-        RenderSacKpis();
+    if (run_ && run_->off_policy) {
+        RenderOffPolicyKpis();
         return;
     }
     const auto mean = [](const std::vector<double>& v) {
@@ -518,9 +518,10 @@ void TrainingDashboardPanel::RenderKpis() {
     }
 }
 
-// A SAC run's cards (approved board 2): reward, critic and actor loss,
-// entropy weight, replay buffer; then length, speed and the environment's own
-void TrainingDashboardPanel::RenderSacKpis() {
+// A SAC or TD3 run's cards (approved boards 2): reward, critic and actor loss,
+// entropy weight (SAC) or exploration (TD3), replay buffer; then length, speed
+// and the environment's own
+void TrainingDashboardPanel::RenderOffPolicyKpis() {
     namespace pb = rl_playback;
     CardRows cards(5);
     const auto& reward = metrics_["episode_reward"].history;
@@ -534,23 +535,29 @@ void TrainingDashboardPanel::RenderSacKpis() {
                              : "mean of last 100 \xC2\xB7 best " +
                                    Format(*std::max_element(reward.begin(), reward.end()), "%.1f"));
     cards.Add("##kpi_critic", "Critic loss", critic.empty() ? "-" : Format(critic.back(), "%.4g"),
-              pb::SacCriticDetail(critic.empty() ? 0 : sac_report_updates_, run_->learning_starts));
+              pb::CriticDetail(critic.empty() ? 0 : report_updates_, run_->learning_starts));
     cards.Add("##kpi_actor", "Actor loss", actor.empty() ? "-" : Format(actor.back(), "%.4g"),
               mean_q.empty() ? "" : "mean Q " + Format(mean_q.back(), "%.4g"));
-    cards.Add("##kpi_alpha", "Entropy weight", alpha.empty() ? "-" : Format(alpha.back(), "%.3g"),
-              pb::SacEntropyDetail(run_->ent_coef_auto, run_->ent_coef_start, run_->target_entropy));
-    const auto buffer = last_sac_ ? pb::SacReplayBufferCard(last_sac_->buffer_size, last_sac_->buffer_capacity,
-                                                            last_sac_->buffer_bytes, memory_place_)
+    if (run_->td3) {
+        const auto exploration = pb::Td3ExplorationCard(run_->action_noise, run_->action_noise_std,
+                                                        run_->target_policy_noise, run_->target_noise_clip);
+        cards.Add("##kpi_noise", "Exploration", exploration.value, exploration.detail);
+    } else {
+        cards.Add("##kpi_alpha", "Entropy weight", alpha.empty() ? "-" : Format(alpha.back(), "%.3g"),
+                  pb::SacEntropyDetail(run_->ent_coef_auto, run_->ent_coef_start, run_->target_entropy));
+    }
+    const auto buffer = last_report_ ? pb::ReplayBufferCard(last_report_->buffer_size, last_report_->buffer_capacity,
+                                                            last_report_->buffer_bytes, memory_place_)
                                   : pb::CardText{"-", "fills from the first step"};
     cards.Add("##kpi_buffer", "Replay buffer", buffer.value, buffer.detail);
     // Length, speed and the environment's own numbers (falls, a curriculum's difficulty) start a row
     cards.NewRow();
     cards.Add("##kpi_length", "Episode length", length.empty() ? "-" : Format(length.back(), "%.1f"),
               "mean of last 100");
-    cards.Add("##kpi_speed", "Speed", last_sac_ ? Format(last_sac_->steps_per_second, "%.0f") : "-",
-              pb::SacSpeedDetail(run_->updates_per_step));
-    if (last_sac_) {
-        const auto& stats = last_sac_->environment_stats;
+    cards.Add("##kpi_speed", "Speed", last_report_ ? Format(last_report_->steps_per_second, "%.0f") : "-",
+              pb::OffPolicySpeedDetail(run_->updates_per_step));
+    if (last_report_) {
+        const auto& stats = last_report_->environment_stats;
         for (size_t i = 0; i < stats.size(); ++i) {
             const std::string id = "##kpi_env_" + std::to_string(i);
             cards.Add(id.c_str(), stats[i].label.c_str(), stats[i].value, stats[i].note);

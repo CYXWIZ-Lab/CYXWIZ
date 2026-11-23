@@ -52,6 +52,7 @@ int failures = 0;
 
 void Check(bool ok, const std::string& what);
 void CheckSac(const rl_graph_test::Graph& ppo_graph);
+void CheckTd3(const rl_graph_test::Graph& ppo_graph);
 
 // The route for the next run, chosen as Preferences > Devices chooses it
 void SelectRoute(cyxwiz::DeviceType type, int device_id, cyxwiz::ExecutionPolicy policy) {
@@ -147,7 +148,7 @@ void CheckSaveAndLoad(cyxwiz::rl::TrainedPolicy& trained, const std::string& fil
               "and the same sampled actions for the same seed");
         Check(loaded->config.environment_key == trained.config.environment_key, "it names the same environment");
         Check(loaded->updates.size() == trained.updates.size() &&
-                  loaded->sac_reports.size() == trained.sac_reports.size() && loaded->steps == trained.steps &&
+                  loaded->reports.size() == trained.reports.size() && loaded->steps == trained.steps &&
                   loaded->IsSac() == trained.IsSac(),
               "its learner, its PPO updates or SAC reports, and its steps come back");
         bool same_optimizers = loaded->optimizers.size() == trained.optimizers.size();
@@ -474,6 +475,7 @@ void CheckContinuous(const std::filesystem::path& plugin) {
         longer->ppo.total_timesteps = 2560;  // long enough to watch a few updates
         CheckWatchInView(longer);
         CheckSac(g);
+        CheckTd3(g);
     }
     manager.UnloadPlugin("com.cyxwiz.simulation.mujoco");
 }
@@ -484,9 +486,9 @@ std::vector<cyxwiz::rl::OffPolicyUpdateMetrics> WaitSac(cyxwiz::rl::RLTrainingRu
     while (run.Active() &&
            std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() < seconds) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        for (const auto& m : run.TakeSacReports()) all.push_back(m);
+        for (const auto& m : run.TakeOffPolicyReports()) all.push_back(m);
     }
-    for (const auto& m : run.TakeSacReports()) all.push_back(m);
+    for (const auto& m : run.TakeOffPolicyReports()) all.push_back(m);
     return all;
 }
 
@@ -556,7 +558,7 @@ void CheckSac(const rl_graph_test::Graph& ppo_graph) {
               trained->q2_target && trained->log_ent_coef.NumElements() == 1 && !trained->value,
           "the run keeps the actor, the twin critics, their targets and log alpha");
     if (!trained) return;
-    Check(trained->sac_reports.size() == reports.size() && trained->steps == 3000 && trained->optimizers.size() == 4,
+    Check(trained->reports.size() == reports.size() && trained->steps == 3000 && trained->optimizers.size() == 4,
           "with its reports, steps and the four optimizers (actor, q1, q2, entropy)");
     const auto& info = trained->config.environment;
     const auto obs = SampleObservations(16, 4);
@@ -611,7 +613,7 @@ void CheckSac(const rl_graph_test::Graph& ppo_graph) {
     const auto start = std::chrono::steady_clock::now();
     while (stopped.Active() && std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() < 300.0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        for (const auto& m : stopped.TakeSacReports()) seen.push_back(m);
+        for (const auto& m : stopped.TakeOffPolicyReports()) seen.push_back(m);
         if (!seen.empty() && seen.back().updates > 0) break;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -621,6 +623,86 @@ void CheckSac(const rl_graph_test::Graph& ppo_graph) {
     const auto kept = stopped.Trained();
     Check(kept && !seen.empty() && kept->steps == seen.back().timesteps && seen.back().timesteps % 500 != 0,
           "a stopped SAC run reports where it stopped and keeps its policy");
+}
+
+// The TD3 pattern on InvertedPendulum (the MuJoCo plugin loaded), trained the
+// Engine's way (TOFIX216 TD3 U4)
+void CheckTd3(const rl_graph_test::Graph& ppo_graph) {
+    rl_graph_test::Ids id{};
+    auto g = rl_graph_test::Pattern(id, 64, gui::NodeType::ReLU, gui::NodeType::TD3);
+    g.At(id.env).parameters["environment"] = "com.cyxwiz.simulation.mujoco:InvertedPendulum-v5";
+    g.At(id.env).parameters["copies"] = "1";
+    auto& td3 = g.At(id.ppo).parameters;
+    td3["total_timesteps"] = "3000";
+    td3["learning_starts"] = "500";
+    td3["buffer_size"] = "2000";
+    td3["batch_size"] = "64";
+    const auto config = Compile(g);
+    if (!config) return;
+    Check(config->algorithm == cyxwiz::RLAlgorithm::TD3, "the TD3 pattern compiles to TD3");
+    auto run_config = std::make_shared<cyxwiz::RLTrainingConfiguration>(*config);
+    run_config->td3.report_every = 500;
+    std::string error;
+    cyxwiz::rl::RLTrainingRun run;
+    SelectCpu();
+    run.SetWatch(cyxwiz::rl::RLTrainingRun::Watch::Preview, 1);
+    Check(run.Start(run_config, rl_graph_test::Json(g), error), "the TD3 run starts: " + error);
+    const auto reports = WaitSac(run, 600.0);
+    Check(run.GetState() == cyxwiz::rl::RLTrainingRun::State::Finished, "the TD3 run finishes: " + run.Message());
+    Check(run.TakeUpdates().empty(), "a TD3 run reports no PPO updates");
+    Check(reports.size() == 6 && reports.back().timesteps == 3000, "a report every 500 steps to the end");
+    if (!reports.empty()) {
+        const auto& last = reports.back();
+        Check(last.learning && last.updates == 2500 && last.buffer_size == 2000,
+              "random steps first, then a gradient step a step, the buffer full");
+        Check(std::isfinite(last.critic_loss) && std::isfinite(last.actor_loss) && last.ent_coef == 0.0f,
+              "the losses are numbers; no entropy weight");
+    }
+    const auto preview = run.PreviewPolicy();
+    Check(preview && preview->IsTd3() && preview->policy && !preview->q1, "the live preview holds a copy of the actor");
+    const auto trained = run.Trained();
+    Check(trained && trained->IsTd3() && trained->policy && trained->actor_target && trained->q1 && trained->q2 &&
+              trained->q1_target && trained->q2_target && !trained->value && trained->log_ent_coef.Shape().empty(),
+          "the run keeps the actor and its target, the twin critics and their targets");
+    if (!trained) return;
+    Check(trained->reports.size() == reports.size() && trained->steps == 3000 && trained->optimizers.size() == 3,
+          "with its reports, steps and the three optimizers (actor, q1, q2)");
+    const auto& info = trained->config.environment;
+    const auto obs = SampleObservations(16, 4);
+    const auto sampled = cyxwiz::rl::PolicyActions(*trained, obs, 16, false, 3);
+    const auto best = cyxwiz::rl::PolicyActions(*trained, obs, 16, true, 0);
+    bool bounded = sampled.size() == 16 && best.size() == 16;
+    for (const float a : sampled) bounded = bounded && a >= info.action_low[0] && a <= info.action_high[0];
+    for (const float a : best) bounded = bounded && a >= info.action_low[0] && a <= info.action_high[0];
+    Check(bounded, "TD3's actions are scaled into the bounds");
+    Check(best == cyxwiz::rl::PolicyActions(*trained, obs, 16, true, 99) && sampled != best,
+          "its own actions are deterministic, with its exploration noise they are not");
+    CheckSaveAndLoad(*trained, "cyxwiz_rl_td3_policy_test.cyxmodel");
+    {
+        const auto path = std::filesystem::temp_directory_path() / "cyxwiz_rl_td3_networks_test.cyxmodel";
+        Check(cyxwiz::rl::SaveTrainedPolicy(*trained, path, error), "the TD3 policy saves: " + error);
+        const cyxwiz::ProbeResult probe = cyxwiz::formats::CyxModelFormat().Probe(path.string());
+        const auto algorithm = probe.custom_metadata.find("rl_algorithm");
+        Check(probe.has_rl_policy && algorithm != probe.custom_metadata.end() && algorithm->second == "TD3",
+              "the TD3 package names TD3 as its learner");
+        auto loaded = cyxwiz::rl::LoadTrainedPolicy(path, error);
+        const cyxwiz::rl::PolicyDeviceScope on_its_device(*trained);
+        Check(loaded && loaded->IsTd3() && SameParameters(*loaded->actor_target, *trained->actor_target) &&
+                  SameParameters(*loaded->q1, *trained->q1) && SameParameters(*loaded->q2_target, *trained->q2_target),
+              "the target actor, the critics and their targets load back as saved: " + error);
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+    Check(cyxwiz::rl::PolicyMismatch(*trained, *config).empty(), "the TD3 policy fits its own graph");
+    cyxwiz::GraphCompiler compiler;
+    const auto ppo = compiler.Compile(ppo_graph.nodes, ppo_graph.links, true);
+    if (ppo.rl)
+        Check(cyxwiz::rl::PolicyMismatch(*trained, *ppo.rl).find("trained by TD3") != std::string::npos,
+              "a PPO graph refuses the TD3 policy: " + cyxwiz::rl::PolicyMismatch(*trained, *ppo.rl));
+    std::printf("TD3: the Stress test\n");
+    CheckStressRun(trained);
+    std::printf("TD3: a ghost beside the policy\n");
+    CheckGhostPlayback(trained, true);
 }
 
 void CheckStopAndFailure() {

@@ -139,35 +139,47 @@ void CheckWatch() {
           "a SAC preview's last return names the step of its networks");
 }
 
-// A SAC run's dashboard cards (TOFIX216 S4, approved board 2)
+// A SAC run's dashboard cards (TOFIX216 S4, approved board 2); TD3's (TD3 U4)
 void CheckSacDashboard() {
-    Check(SacProgress(212480, 1000000, 202480, 10000) ==
+    Check(OffPolicyProgress(212000, 1000000, 202000, 10000, 2) ==
+              "212,000 of 1,000,000 steps \xC2\xB7 202,000 updates \xC2\xB7 the policy every 2nd (101,000) \xC2\xB7 "
+              "learning started at 10,000 (random steps before)",
+          "a TD3 run's progress names its policy updates");
+    Check(OffPolicyProgress(4000, 1000000, 0, 10000, 2) == "4,000 of 1,000,000 steps \xC2\xB7 random actions until 10,000",
+          "no policy count before the first update");
+    const auto noise = Td3ExplorationCard(true, 0.1f, 0.2f, 0.5f);
+    Check(noise.value == "0.1" && noise.detail == "Gaussian noise std \xC2\xB7 targets smoothed 0.2, clipped at 0.5",
+          "TD3's exploration card");
+    const auto quiet = Td3ExplorationCard(false, 0.1f, 0.2f, 0.5f);
+    Check(quiet.value == "none" && quiet.detail.rfind("the policy's own actions", 0) == 0,
+          "TD3 without exploration noise says so");
+    Check(OffPolicyProgress(212480, 1000000, 202480, 10000) ==
               "212,480 of 1,000,000 steps \xC2\xB7 202,480 updates \xC2\xB7 learning started at 10,000 "
               "(random steps before)",
           "the progress of a SAC run past its random steps");
-    Check(SacProgress(4000, 1000000, 0, 10000) ==
+    Check(OffPolicyProgress(4000, 1000000, 0, 10000) ==
               "4,000 of 1,000,000 steps \xC2\xB7 random actions until 10,000",
           "the progress before learning starts");
-    Check(SacProgress(300, 1000, 1, 0) == "300 of 1,000 steps \xC2\xB7 1 update", "no random steps, one update");
-    const auto buffer = SacReplayBufferCard(212480, 1000000, 168000000, "the GPU");
+    Check(OffPolicyProgress(300, 1000, 1, 0) == "300 of 1,000 steps \xC2\xB7 1 update", "no random steps, one update");
+    const auto buffer = ReplayBufferCard(212480, 1000000, 168000000, "the GPU");
     Check(buffer.value == "21 %" && buffer.detail == "212,480 of 1,000,000 \xC2\xB7 36 MB of 168 MB on the GPU",
           "the replay buffer's fill and memory");
-    Check(SacReplayBufferCard(999999, 1000000, 168000000, "").value == "99 %" &&
-              SacReplayBufferCard(1000000, 1000000, 168000000, "").value == "100 %" &&
-              SacReplayBufferCard(3, 1000000, 168000000, "").value == "<1 %" &&
-              SacReplayBufferCard(0, 0, 0, "").value == "-",
+    Check(ReplayBufferCard(999999, 1000000, 168000000, "").value == "99 %" &&
+              ReplayBufferCard(1000000, 1000000, 168000000, "").value == "100 %" &&
+              ReplayBufferCard(3, 1000000, 168000000, "").value == "<1 %" &&
+              ReplayBufferCard(0, 0, 0, "").value == "-",
           "full only when full; a few rows are not 0 %");
-    Check(SacReplayBufferCard(5000000, 5000000, 1680000000, "").detail ==
+    Check(ReplayBufferCard(5000000, 5000000, 1680000000, "").detail ==
               "5,000,000 of 5,000,000 \xC2\xB7 1.7 GB of 1.7 GB on the device",
           "gigabytes, and the device unnamed");
     Check(SacEntropyDetail(true, 1.0f, -6.0f) == "learned (started at 1) \xC2\xB7 target -6" &&
               SacEntropyDetail(false, 0.2f, -6.0f) == "fixed",
           "the entropy weight, learned or fixed");
-    Check(SacSpeedDetail(1.0) == "steps a second (one update each)" &&
-              SacSpeedDetail(0.25) == "steps a second (0.25 updates each)",
+    Check(OffPolicySpeedDetail(1.0) == "steps a second (one update each)" &&
+              OffPolicySpeedDetail(0.25) == "steps a second (0.25 updates each)",
           "updates per environment step");
-    Check(SacCriticDetail(1000, 10000) == "both Q networks, last 1,000 updates" &&
-              SacCriticDetail(0, 10000) == "learning starts at 10,000",
+    Check(CriticDetail(1000, 10000) == "both Q networks, last 1,000 updates" &&
+              CriticDetail(0, 10000) == "learning starts at 10,000",
           "the critic loss's updates");
 }
 

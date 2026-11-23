@@ -157,6 +157,8 @@ public:
     void Stop() { loop_.Stop(); }
     void Pause() { loop_.Pause(); }
     void Resume() { loop_.Resume(); }
+    // Its loop (a run stops, pauses and resumes it there)
+    OffPolicyLoop& Loop() { return loop_; }
 
     // Moves out what Train left (once, after Train). False with the reason.
     bool TakeTrained(SacTrainedState& out, std::string& error);

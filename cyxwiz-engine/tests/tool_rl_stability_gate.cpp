@@ -214,7 +214,7 @@ int main(int argc, char** argv) {
             }
             if (m.update % 10 == 0) write("Running");
         }
-        for (const auto& m : run.TakeSacReports()) {
+        for (const auto& m : run.TakeOffPolicyReports()) {
             compute_path = m.compute_path;
             rows.push_back({m.timesteps, Number(m.mean_episode_return), Number(m.critic_loss), Number(m.actor_loss),
                             Number(m.ent_coef), Number(m.mean_q), Number(m.steps_per_second)});

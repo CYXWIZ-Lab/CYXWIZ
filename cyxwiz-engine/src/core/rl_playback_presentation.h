@@ -92,24 +92,30 @@ std::string PreviewOf(int update, int64_t steps, bool by_steps);
 std::string PreviewEpisodes(int episodes, bool has_last_return, double last_return, int last_return_update,
                             int64_t last_return_steps, bool by_steps);
 
-// A SAC run on the dashboard (TOFIX216 S4, approved board 2). The progress
-// line: "212,480 of 1,000,000 steps · 202,480 updates · learning started at
-// 10,000 (random steps before)"; before then "... · random actions until 10,000"
-std::string SacProgress(int64_t steps, int64_t total, int64_t updates, int64_t learning_starts);
+// A SAC or TD3 run on the dashboard (TOFIX216 S4, approved board 2; TD3's
+// board 2). The progress line: "212,480 of 1,000,000 steps · 202,480 updates ·
+// learning started at 10,000 (random steps before)"; before then "... ·
+// random actions until 10,000"; with a policy delay (TD3) "· the policy every
+// 2nd (101,240)" after the updates
+std::string OffPolicyProgress(int64_t steps, int64_t total, int64_t updates, int64_t learning_starts,
+                              int policy_delay = 1);
 struct CardText {
     std::string value;
     std::string detail;
 };
 // The replay buffer card: "21 %", "212,480 of 1,000,000 · 36 MB of 168 MB on
 // the GPU" (place: where it lives; empty: "the device")
-CardText SacReplayBufferCard(int64_t size, int64_t capacity, uint64_t bytes, const std::string& place);
+CardText ReplayBufferCard(int64_t size, int64_t capacity, uint64_t bytes, const std::string& place);
 // The entropy weight card's detail: "learned (started at 1.0) · target -6", "fixed"
 std::string SacEntropyDetail(bool learned, float start, float target);
+// TD3's exploration card: "0.1" / "Gaussian noise std · targets smoothed 0.2,
+// clipped at 0.5"; without noise "none" / "the policy's own actions · ..."
+CardText Td3ExplorationCard(bool noise, float noise_std, float target_policy_noise, float target_noise_clip);
 // The speed card's detail: "steps a second (one update each)", "(0.25 updates each)"
-std::string SacSpeedDetail(double updates_per_step);
+std::string OffPolicySpeedDetail(double updates_per_step);
 // The critic loss card's detail: "both Q networks, last 1,000 updates"; before
 // any update "learning starts at 10,000"
-std::string SacCriticDetail(int64_t updates_since_report, int64_t learning_starts);
+std::string CriticDetail(int64_t updates_since_report, int64_t learning_starts);
 
 // A second policy played beside the first as a ghost (TOFIX212 P3d): a
 // policy's short name in the view ("half_cheetah_robust" from its file,

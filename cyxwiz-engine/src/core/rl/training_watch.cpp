@@ -38,7 +38,7 @@ void TrainingWatch::Update(RLTrainingRun* run, RLTrainingRun::Watch watch, int e
             finished_steps_ = steps;
         }
         ++started_;
-        const bool by_steps = played.IsSac();
+        const bool by_steps = played.IsOffPolicy();
         if (run->RefreshPreview(played, update, steps)) {
             update_ = update;
             steps_ = steps;
@@ -74,7 +74,7 @@ TrainingWatch::Status TrainingWatch::Get() const {
     const auto snap = playback_.Get();
     s.previewing = previewed_ && (snap.state == PolicyPlayback::State::Playing ||
                                   snap.state == PolicyPlayback::State::Paused);
-    s.by_steps = previewed_ && previewed_->IsSac();
+    s.by_steps = previewed_ && previewed_->IsOffPolicy();
     s.networks_update = update_.load();
     s.networks_steps = steps_.load();
     s.episodes = std::max(0, snap.episode - 1);  // the playback's own count: it records the return with it

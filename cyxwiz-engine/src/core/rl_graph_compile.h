@@ -59,6 +59,9 @@ struct RLTrainingConfiguration {
     int learner_node_id = -1;  // the PPO, SAC or TD3 node
 };
 
+// The learner's seed, whichever learner it is
+uint64_t RLSeed(const RLTrainingConfiguration& config);
+
 // How the compiler finds an environment by key, as the Environment node's
 // settings make it (its observation size may follow them). The Engine sets the
 // plugin environment registry's lookup; unset, no environment is known. False

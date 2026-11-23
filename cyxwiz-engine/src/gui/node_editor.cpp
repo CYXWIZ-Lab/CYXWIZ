@@ -4254,8 +4254,23 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     cyxwiz::TrainingDashboardPanel::RunInfo info;
     info.title = learner + " on " + c.environment.id + " x " + std::to_string(c.copies);
     info.continuous = !c.environment.discrete_actions;
-    if (sac) {
-        info.sac = true;
+    if (c.algorithm == cyxwiz::RLAlgorithm::TD3) {
+        const auto& t = c.td3;
+        info.off_policy = true;
+        info.td3 = true;
+        info.total_timesteps = static_cast<long long>(t.total_timesteps);
+        info.target_return = t.target_return;
+        info.learning_starts = static_cast<long long>(t.learning_starts);
+        info.report_every = static_cast<int>(t.report_every);
+        info.updates_per_step = static_cast<double>(t.gradient_steps) /
+                                (static_cast<double>(t.train_freq) * static_cast<double>(std::max(1, c.copies)));
+        info.action_noise = t.action_noise;
+        info.action_noise_std = t.action_noise_std;
+        info.target_policy_noise = t.target_policy_noise;
+        info.target_noise_clip = t.target_noise_clip;
+        info.policy_delay = t.policy_delay;
+    } else if (sac) {
+        info.off_policy = true;
         info.total_timesteps = static_cast<long long>(c.sac.total_timesteps);
         info.target_return = c.sac.target_return;
         info.learning_starts = static_cast<long long>(c.sac.learning_starts);
@@ -4272,7 +4287,9 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     }
     // The SB3 reference of the same settings, on the environment as recorded
     // (its defaults: a run with grounds, pushes or throws has none)
-    if (cyxwiz::rl::DefaultEnvironmentSettings(c.environment, c.environment_settings))
+    // (TD3's comes with its recorded curves)
+    if (c.algorithm != cyxwiz::RLAlgorithm::TD3 &&
+        cyxwiz::rl::DefaultEnvironmentSettings(c.environment, c.environment_settings))
         info.reference = sac
                              ? cyxwiz::rl::FindSacReference(cyxwiz::rl::ReadReferenceFile("sac_sb3_curves.json"),
                                                             c.environment.id, c.copies, c.sac)
@@ -4303,7 +4320,8 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
         rl_watch_every_ = every_updates;
     };
     controls.watch_now = [this]() { rl_watch_->TakeNow(); };
-    controls.watch_view = [this, view_title, sac]() {
+    const bool by_steps = cyxwiz::UsesQNetworks(c.algorithm);  // SAC and TD3 report by steps
+    controls.watch_view = [this, view_title, by_steps]() {
         cyxwiz::TrainingDashboardPanel::RunControls::WatchView view;
         if (view_title.empty()) {
             view.unavailable = "This environment has no view to watch it in.";
@@ -4311,9 +4329,9 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
         }
         view.view_label = "Show the " + view_title;
         const auto s = rl_watch_->Get();
-        view.preview_of = cyxwiz::rl_playback::PreviewOf(s.networks_update, s.networks_steps, sac);
+        view.preview_of = cyxwiz::rl_playback::PreviewOf(s.networks_update, s.networks_steps, by_steps);
         view.episodes = cyxwiz::rl_playback::PreviewEpisodes(s.episodes, s.has_last_return, s.last_return,
-                                                             s.last_return_update, s.last_return_steps, sac);
+                                                             s.last_return_update, s.last_return_steps, by_steps);
         view.message = s.message;
         return view;
     };
@@ -4372,7 +4390,7 @@ void NodeEditor::PollRLTraining() {
             const auto chip = cyxwiz::rl_device::DeviceChip(device);
             rl_run_device_ = device;
             rl_dashboard_->SetRunDevice(chip.text, chip.tooltip, chip.fallback, note());
-            // Where a SAC run's replay buffer lives (ArrayFire's CPU backend: the computer's memory)
+            // Where a SAC or TD3 run's replay buffer lives (ArrayFire's CPU backend: the computer's memory)
             rl_dashboard_->SetRunMemoryPlace(cyxwiz::rl_device::BackendWord(device.effective_backend) == "CPU"
                                                  ? "the computer's memory"
                                                  : "the GPU");
@@ -4395,10 +4413,10 @@ void NodeEditor::PollRLTraining() {
         rl_status_ = "PPO update " + std::to_string(m.update) + " \xC2\xB7 " +
                      cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps" + rl_device_suffix_;
     }
-    for (const auto& m : rl_run_->TakeSacReports()) {
-        rl_dashboard_->AddSacReport(m);
+    for (const auto& m : rl_run_->TakeOffPolicyReports()) {
+        rl_dashboard_->AddOffPolicyReport(m);
         follow_path(m.compute_path);
-        rl_status_ = "SAC " + cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps" +
+        rl_status_ = learner + " " + cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps" +
                      rl_device_suffix_;
     }
     // Watch progress: the preview starts once the run has copied its networks, and stops with the run
@@ -4462,7 +4480,7 @@ bool NodeEditor::SaveRLPolicy(std::string& error) {
         return false;
     }
     rl_policy_message_ = "Saved to " + *path;
-    spdlog::info("Saved the {} policy to {}", rl_policy_->IsSac() ? "SAC" : "PPO", *path);
+    spdlog::info("Saved the {} policy to {}", cyxwiz::RLAlgorithmName(rl_policy_->config.algorithm), *path);
     return true;
 }
 
@@ -4480,7 +4498,7 @@ void NodeEditor::KeepLoadedRLPolicy(std::unique_ptr<cyxwiz::rl::TrainedPolicy> p
     rl_policy_ = std::shared_ptr<cyxwiz::rl::TrainedPolicy>(std::move(policy));
     rl_policy_file_ = std::filesystem::path(path).filename().string();
     rl_policy_message_ = "Loaded " + rl_policy_file_;
-    spdlog::info("Loaded the {} policy {} ({})", rl_policy_->IsSac() ? "SAC" : "PPO", path,
+    spdlog::info("Loaded the {} policy {} ({})", cyxwiz::RLAlgorithmName(rl_policy_->config.algorithm), path,
                  rl_policy_->config.environment.id);
 }
 
