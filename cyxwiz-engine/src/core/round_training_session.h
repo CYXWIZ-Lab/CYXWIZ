@@ -74,7 +74,11 @@ public:
     // file of the job's data (any part of it): the graph is compiled against
     // its columns. The model is built here. Null with `failure` set when the
     // graph cannot train in rounds.
-    static std::unique_ptr<RoundTrainingSession> Open(const GraphTrainingJobRequest& request, RoundFailure& failure);
+    // `worker` is this worker's number in its group: it is mixed into the
+    // graph's model seed, so the members of a group do not draw the same
+    // dropout masks, while one worker's rounds stay reproducible.
+    static std::unique_ptr<RoundTrainingSession> Open(const GraphTrainingJobRequest& request, uint32_t worker,
+                                                      RoundFailure& failure);
     ~RoundTrainingSession();
 
     const ModelStateLayout& Layout() const { return layout_; }

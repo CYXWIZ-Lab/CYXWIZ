@@ -171,14 +171,14 @@ struct LanguageRound {
     cyxwiz::RoundOutcome outcome;
 };
 LanguageRound TrainLanguageRound(const std::string& graph, const fs::path& sample, const cyxwiz::RoundData& leases,
-                                 const std::vector<float>* start, const std::string& what) {
+                                 const std::vector<float>* start, const std::string& what, uint32_t worker = 0) {
     LanguageRound run;
     SelectArrayFireCpu();
     cyxwiz::RoundFailure failure;
     cyxwiz::GraphTrainingJobRequest request;
     request.graph_json = graph;
     request.dataset_files["tiny_causal_lm_tokens"] = sample.string();
-    auto session = cyxwiz::RoundTrainingSession::Open(request, failure);
+    auto session = cyxwiz::RoundTrainingSession::Open(request, worker, failure);
     Check(session != nullptr, what + ": the session opens " + failure.text);
     run.layout = session->Layout();
     run.start = session->InitialState();
@@ -230,7 +230,8 @@ int main() {
         cyxwiz::RoundFailure failure;
         // The graph is compiled against one part of the job's data (here the
         // fast worker's file); the round's rows come from the worker's own.
-        auto session = cyxwiz::RoundTrainingSession::Open(Request(graph, work / "fast.parquet"), failure);
+        auto session = cyxwiz::RoundTrainingSession::Open(Request(graph, work / "fast.parquet"),
+                                                          static_cast<uint32_t>(layout_hash.empty() ? 0 : 1), failure);
         Check(session != nullptr, name + ": the session opens " + failure.text);
         const cyxwiz::ModelStateLayout& layout = session->Layout();
         if (layout_hash.empty()) layout_hash = layout.hash;
@@ -281,7 +282,7 @@ int main() {
         Check(WriteBatches(data, fast.at("batches"), 400), "a larger file is written");   // 7 x 8 x 400 = 22,400 rows
         SelectArrayFireCpu();
         cyxwiz::RoundFailure failure;
-        auto session = cyxwiz::RoundTrainingSession::Open(Request(graph, data), failure);
+        auto session = cyxwiz::RoundTrainingSession::Open(Request(graph, data), 0, failure);
         Check(session != nullptr, "the session opens " + failure.text);
         const cyxwiz::ModelStateLayout& layout = session->Layout();
         const std::vector<size_t> position = ReferenceToEngine(round.at("layout"), layout);
@@ -370,10 +371,15 @@ int main() {
         Check(std::any_of(one.outcome.delta.begin(), one.outcome.delta.end(), [](float value) { return value != 0.0f; }),
               "training moved the model");
 
-        // Another worker, from the first one's starting state, on the same rows: the same update.
-        const LanguageRound two = TrainLanguageRound(language_graph, first, whole, &one.start, "worker two");
+        // The same worker again, from the same starting state, on the same rows: the same update.
+        const LanguageRound again = TrainLanguageRound(language_graph, first, whole, &one.start, "worker one again");
+        Check(again.layout.hash == one.layout.hash, "the layout is the same every time");
+        Check(again.outcome.delta == one.outcome.delta, "one worker's round can be reproduced");
+
+        // Another member of the group, same state and rows: its own dropout masks, so another update.
+        const LanguageRound two = TrainLanguageRound(language_graph, first, whole, &one.start, "worker two", 1);
         Check(two.layout.hash == one.layout.hash, "both workers build the same layout");
-        Check(two.outcome.delta == one.outcome.delta, "the same state and the same rows give the same update");
+        Check(two.outcome.delta != one.outcome.delta, "two workers do not draw the same dropout masks");
 
         // Rows from two parts in one round; the tokenizer travels with the rows.
         cyxwiz::RoundData mixed;

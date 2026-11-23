@@ -6,6 +6,7 @@
 #include "sequence_arrow_batcher.h"
 #include "training_batcher_setup.h"
 #include "training_executor.h"
+#include "training_resume_checkpoint.h"
 
 #include <arrow/api.h>
 #include <spdlog/spdlog.h>
@@ -54,7 +55,7 @@ RoundTrainingSession::RoundTrainingSession() = default;
 RoundTrainingSession::~RoundTrainingSession() = default;
 
 std::unique_ptr<RoundTrainingSession> RoundTrainingSession::Open(const GraphTrainingJobRequest& request,
-                                                                 RoundFailure& failure) {
+                                                                 uint32_t worker, RoundFailure& failure) {
     failure = {};
     PreparedGraphJob prepared;
     if (auto refused = PrepareGraphJob(request, prepared); !refused.error.empty()) {
@@ -106,6 +107,14 @@ std::unique_ptr<RoundTrainingSession> RoundTrainingSession::Open(const GraphTrai
     config.early_stopping_patience = 0;
     config.generation_preview.enabled = false;
     if (request.batch_size_override > 0) config.batch_size = request.batch_size_override;
+    if (config.model_seed >= 0) {
+        // A seed of this worker's own, kept a non-negative int like the graph's.
+        config.model_seed = static_cast<int>(
+            TrainingEpochSeed(static_cast<std::uint64_t>(config.model_seed), static_cast<int>(worker & 0x7fffffffu)) & 0x7fffffffu);
+    } else {
+        spdlog::warn("Round training session: the graph's Data Loader has no model seed, so this worker's rounds "
+                     "cannot be reproduced");
+    }
 
     std::unique_ptr<RoundTrainingSession> session(new RoundTrainingSession());
     session->sequence_ = sequence;
