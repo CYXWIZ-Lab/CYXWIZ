@@ -26,6 +26,7 @@
 #include "worker_defaults.h"
 #include "node_metadata_registry.h"
 #include "pipeline_runtime_capabilities.h"
+#include "recurrent_configuration_policy.h"
 #include "cyxwiz/recurrent_cuda_placement.h"
 #include "graph_compiler_dataset_hooks.h"
 #include "../gui/node_import_guardrails.h"
@@ -2202,11 +2203,9 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                             : layer.type == gui::NodeType::RNN ? NeuralOp::RnnForward
                                                                : NeuralOp::LstmForward;
         if (layer.type == gui::NodeType::RNN) {
-            const auto nonlinearity = layer.parameters.find("nonlinearity");
-            provider_request.activation =
-                nonlinearity != layer.parameters.end() && nonlinearity->second == "relu"
-                    ? NeuralActivation::Relu
-                    : NeuralActivation::Tanh;
+            provider_request.activation = RnnNonlinearity(layer.parameters) == "relu"
+                                              ? NeuralActivation::Relu
+                                              : NeuralActivation::Tanh;
         }
         provider_request.training = true;  // this is the training path
         provider_request.dtype = DataType::Float32;

@@ -1,6 +1,7 @@
 #include "node_editor.h"
 #include "../plugin/plugin_manager.h"
 #include "../core/rl_graph_compile.h"
+#include "../core/recurrent_configuration_policy.h"
 #include <cstdlib>
 #include "activation_codegen_contract.h"
 #include "panels/script_editor.h"
@@ -2114,8 +2115,7 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             if (it != node.parameters.end()) hidden_size = it->second;
             it = node.parameters.find("num_layers");
             if (it != node.parameters.end()) num_layers = it->second;
-            it = node.parameters.find("nonlinearity");
-            if (it != node.parameters.end() && !it->second.empty()) nonlinearity = it->second;
+            nonlinearity = cyxwiz::RnnNonlinearity(node.parameters);
             code = "nn.RNN(input_size=" + input_size + ", hidden_size=" + hidden_size +
                    ", num_layers=" + num_layers + ", nonlinearity='" + nonlinearity +
                    "', batch_first=True)";
@@ -2606,8 +2606,7 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
             if (it != node.parameters.end()) hidden_size = it->second;
             it = node.parameters.find("num_layers");
             if (it != node.parameters.end()) num_layers = it->second;
-            it = node.parameters.find("nonlinearity");
-            if (it != node.parameters.end() && !it->second.empty()) nonlinearity = it->second;
+            nonlinearity = cyxwiz::RnnNonlinearity(node.parameters);
             code = "cx.RNN(input_size=" + input_size +
                    ", hidden_size=" + hidden_size +
                    ", num_layers=" + num_layers +
