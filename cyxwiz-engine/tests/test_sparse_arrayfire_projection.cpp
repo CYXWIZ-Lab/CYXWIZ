@@ -246,6 +246,32 @@ void TestLinearAndSequentialSparseParity(
                 fixture.expected_weight_grad,
                 "Sequential sparse weight gradient");
 
+    // One upload a step (ORA-32): the backward of a batch reuses the CSR its
+    // forward put on the device. Proof: the host values change between the
+    // two calls (a batcher never does that within a step) and the gradient is
+    // still the forward batch's.
+    {
+        std::vector<float> values = fixture.values;
+        const cyxwiz::LinearSparseCsrBatchView view{
+            rows, in_features, values.size(), fixture.row_offsets.data(), fixture.column_indices.data(),
+            values.data()};
+        cyxwiz::LinearLayer reuse(in_features, out_features, true);
+        reuse.SetParameters({{"weight", weight}, {"bias", bias}});
+        (void)reuse.ForwardSparseCsr(view);
+        for (float& v : values) v *= 3.0f;
+        reuse.BackwardSparseCsr(view, output_gradient);
+        CheckTensor(reuse.GetGradients().at("weight"), fixture.weight_shape, fixture.expected_weight_grad,
+                    "the backward reuses the forward's device CSR (one upload a step)");
+        // The next forward uploads its batch again, even from the same buffers.
+        const cyxwiz::Tensor refilled = reuse.ForwardSparseCsr(view);
+        // Against the unscaled batch's output (the fixture's).
+        const float* base = fixture.expected_output.data();
+        const float* got = refilled.ReadData<float>();
+        bool moved = false;
+        for (size_t i = 0; i < rows * out_features; ++i) moved = moved || std::abs(got[i] - base[i]) > 1e-4f;
+        Check(moved, "a forward on refilled buffers uploads the new values");
+    }
+
     const std::vector<int32_t> empty_offsets(rows + 1, 0);
     const cyxwiz::LinearSparseCsrBatchView empty_view{
         rows,
