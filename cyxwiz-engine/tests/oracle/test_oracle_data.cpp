@@ -535,9 +535,10 @@ void Run(const json& fixture) {
     Check(uploads_for(cyxwiz::BatchUploadReason::Resident) <= 3,
           "copy budget: a set kept on the device goes up once per batcher (" +
               std::to_string(uploads_for(cyxwiz::BatchUploadReason::Resident)) + ")");
-    // Reads with no recorded reason (ORA-30, open): printed, not failed.
-    if (copies.unknown > 0)
-        std::cout << "    copies: " << copies.unknown << " device-to-host reads have no recorded reason (ORA-30)\n";
+    // Every read names its reason (ORA-30: the epoch report's weight
+    // histograms were read without one).
+    Check(copies.unknown == 0, "copy budget: every device-to-host read is named (" + std::to_string(copies.unknown) +
+                                   " are not)");
     fs::remove_all(work);
 }
 
