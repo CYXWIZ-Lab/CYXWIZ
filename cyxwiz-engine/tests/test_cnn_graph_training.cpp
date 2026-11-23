@@ -129,6 +129,70 @@ void CheckClose(const cyxwiz::Tensor& actual, const nlohmann::json& expected, co
 void CheckGraphAgainstPyTorch(cyxwiz::GraphCompiler& compiler, const std::vector<gui::MLNode>& nodes,
                               const std::vector<gui::NodeLink>& links, const nlohmann::json& c);
 
+// ORA-27: a branched graph (a residual Add) that opens with a Reshape of the
+// rows to [H, W, C] reads each row as an image, as a plain layer stack does
+// (ModelBuilder used to refuse it: "spatial layer at index 1 is outside the
+// spatial head").
+void CheckLeadingImageReshapeInBranchedGraph(cyxwiz::GraphCompiler& compiler) {
+    gui::MLNode data;
+    data.id = 1;
+    data.type = gui::NodeType::DataInput;
+    data.name = "Pixels";
+    data.outputs = {Pin(102, gui::PinType::Tensor, "Data", false), Pin(103, gui::PinType::Labels, "Labels", false)};
+    data.parameters = {{"dataset_name", "reshape_rows"}, {"shape", "[32]"}};
+    const auto conv = [](int id, const std::string& n) {
+        return Layer(id, gui::NodeType::Conv2D, n, {{"filters", "2"}, {"kernel_size", "3"}, {"padding", "same"}});
+    };
+    gui::MLNode add = Layer(30, gui::NodeType::Add, "Residual");
+    add.inputs.push_back(Pin(3003, gui::PinType::Tensor, "Input 2", true));
+    gui::MLNode loss;
+    loss.id = 40;
+    loss.type = gui::NodeType::CrossEntropyLoss;
+    loss.name = "Loss";
+    loss.inputs = {Pin(4001, gui::PinType::Tensor, "Predictions", true), Pin(4002, gui::PinType::Labels, "Targets", true)};
+    loss.outputs = {Pin(4003, gui::PinType::Loss, "Loss", false)};
+    gui::MLNode adam;
+    adam.id = 41;
+    adam.type = gui::NodeType::Adam;
+    adam.name = "Adam";
+    adam.inputs = {Pin(4101, gui::PinType::Loss, "Loss", true)};
+    const std::vector<gui::MLNode> nodes = {
+        data, Layer(2, gui::NodeType::Reshape, "Image", {{"shape", "4,4,2"}}), conv(3, "ConvA"), conv(4, "ConvB"),
+        add, Layer(31, gui::NodeType::Flatten, "Flatten"), Layer(32, gui::NodeType::Dense, "Head", {{"units", "3"}}),
+        loss, adam};
+    std::vector<gui::NodeLink> links = {Link(1, 1, 2), Link(2, 2, 3), Link(3, 3, 4), Link(4, 4, 30), Link(6, 30, 31),
+                                        Link(7, 31, 32)};
+    links.front().from_pin = 102;
+    gui::NodeLink skip = Link(5, 2, 30);
+    skip.to_pin = 3003;
+    links.push_back(skip);
+    gui::NodeLink to_loss = Link(8, 32, 40);
+    to_loss.to_pin = 4001;
+    gui::NodeLink labels;
+    labels.id = 9; labels.from_node = 1; labels.from_pin = 103; labels.to_node = 40; labels.to_pin = 4002;
+    gui::NodeLink to_adam;
+    to_adam.id = 10; to_adam.from_node = 40; to_adam.from_pin = 4003; to_adam.to_node = 41; to_adam.to_pin = 4101;
+    links.insert(links.end(), {to_loss, labels, to_adam});
+
+    const auto config = compiler.Compile(nodes, links, true);
+    for (const auto& issue : config.issues)
+        if (issue.level == cyxwiz::IssueLevel::Error) std::cerr << "  issue: " << issue.node_name << ": " << issue.message << "\n";
+    Check(config.is_valid, "a residual graph opening with an image Reshape compiles");
+    Check(config.input_shape == std::vector<size_t>{4, 4, 2}, "its rows are read as [4, 4, 2] images, not " +
+                                                                  ShapeText(config.input_shape));
+    Check(!config.layers.empty() && config.layers.front().type == gui::NodeType::Conv2D,
+          "the Reshape is the data's shape, not a layer");
+    auto built = cyxwiz::BuildExecutableFromConfig(config);
+    Check(built.ok(), "ModelBuilder builds the residual image graph: " + built.error_message);
+    if (!built.ok()) return;
+    std::vector<float> rows(2 * 32);
+    for (size_t i = 0; i < rows.size(); ++i) rows[i] = 0.01f * static_cast<float>(i % 17);
+    const cyxwiz::Tensor batch = cyxwiz::SpatialBatchFromRows(cyxwiz::Tensor({2, 32}, rows.data()), {4, 4, 2});
+    const cyxwiz::Tensor logits = built.model->Forward(batch);
+    Check(logits.Shape() == std::vector<size_t>{2, 3}, "and runs it: [2, 3] logits, not " + ShapeText(logits.Shape()));
+    std::cout << "a residual graph opening with an image Reshape reads its rows as images\n";
+}
+
 void CheckResidualCnnAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
     std::ifstream in(CYXWIZ_CNN_GRAPH_FIXTURE);
     Check(in.good(), std::string("cannot open ") + CYXWIZ_CNN_GRAPH_FIXTURE);
@@ -1163,6 +1227,7 @@ int main() {
     }
 
     CheckResidualCnnAgainstPyTorch(compiler);
+    CheckLeadingImageReshapeInBranchedGraph(compiler);
     CheckSqueezeExcitationAgainstPyTorch(compiler, 1, "squeeze_excitation_block", {{"reduction", "2"}});
     // The node's other choices: a typed width, Hardswish inside, a Hardsigmoid gate, no biases.
     CheckResNetStemAgainstPyTorch(compiler);

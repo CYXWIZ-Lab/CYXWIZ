@@ -6470,8 +6470,19 @@ TrainingConfiguration GraphCompiler::Compile(
     // before a convolution or pooling reads each row as an image (a CSV of
     // pixel columns: MNIST's 784 as 28 x 28 x 1). Rows are already in
     // height, width, channel order, so the Reshape is the data's shape.
+    // A branched graph (a residual Add) does the same when the Reshape reads
+    // the Data node's rows: the graph plan's edges out of it then start at the
+    // data pin (ORA-27).
     const bool layer_stack = config.graph_op_node_ids.empty() && config.multi_input_layer_node_ids.empty();
-    if (!config.HasErrors() && layer_stack && config.layers.size() >= 2) {
+    const auto reads_data_rows = [&config](const CompiledLayer& layer) {
+        const auto& plan = config.graph_plan;
+        if (!plan.available) return false;
+        for (const auto& edge : plan.edges)
+            if (edge.to_node_id == layer.node_id)
+                return edge.from_node_id == plan.data_node_id && edge.from_pin_id == plan.data_pin_id;
+        return false;
+    };
+    if (!config.HasErrors() && config.layers.size() >= 2 && (layer_stack || reads_data_rows(config.layers.front()))) {
         const CompiledLayer first = config.layers.front();
         const gui::NodeType next = config.layers[1].type;
         const auto elements = [](const std::vector<size_t>& shape) {
@@ -6488,6 +6499,20 @@ TrainingConfiguration GraphCompiler::Compile(
             config.input_shape = first.output_shape;
             config.input_size = elements(first.output_shape);
             config.layers.erase(config.layers.begin());
+            if (!layer_stack) {
+                auto& plan = config.graph_plan;
+                plan.nodes.erase(std::remove_if(plan.nodes.begin(), plan.nodes.end(),
+                                                [&](const CompiledGraphNode& node) { return node.node_id == first.node_id; }),
+                                 plan.nodes.end());
+                plan.edges.erase(std::remove_if(plan.edges.begin(), plan.edges.end(),
+                                                [&](const CompiledGraphEdge& edge) { return edge.to_node_id == first.node_id; }),
+                                 plan.edges.end());
+                for (auto& edge : plan.edges) {
+                    if (edge.from_node_id != first.node_id) continue;
+                    edge.from_node_id = plan.data_node_id;
+                    edge.from_pin_id = plan.data_pin_id;
+                }
+            }
             AddIssue(config, IssueLevel::Info,
                      first.name + " reads each row of " + std::to_string(elements(first.output_shape)) + " values as a [" +
                          ShapeListText(first.output_shape) + "] image (height, width, channel order)",
