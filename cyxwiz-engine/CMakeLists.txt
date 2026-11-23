@@ -641,6 +641,7 @@ set(ENGINE_SOURCES
     src/gui/panels/asset_browser.cpp
     src/gui/file_browser_launch.cpp
     src/gui/python_bundle_ui.cpp
+    src/gui/python_node_calls.cpp
     src/gui/panels/create_node_dialog.cpp
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/training_plot_panel.cpp
