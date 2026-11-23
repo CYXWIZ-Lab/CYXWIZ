@@ -534,6 +534,7 @@ set(ENGINE_SOURCES
     src/core/extension_properties_presentation.cpp
     src/core/plugin_presentation.cpp
     src/core/python_bundle_presentation.cpp
+    src/core/python_node_maker.cpp
     src/plugin/plugin_session.cpp
     src/core/start_page_presentation.cpp
     src/core/python_setup_presentation.cpp
@@ -3664,6 +3665,21 @@ set_target_properties(test_pipeline_run_release PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME pipeline_run_release COMMAND test_pipeline_run_release)
+
+# ===== Test: Make a Python node =====
+# The form behind Make a Python node: every starter is valid, Generate and
+# Read round-trip each kind and every setting type, validation in plain words.
+add_executable(test_python_node_maker
+    tests/test_python_node_maker.cpp
+    src/core/python_node_maker.cpp
+)
+target_include_directories(test_python_node_maker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+set_target_properties(test_python_node_maker PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME python_node_maker COMMAND test_python_node_maker)
 
 # ===== Test: CyxQL parser =====
 # Every example query the Query Console offers parses, and function words
