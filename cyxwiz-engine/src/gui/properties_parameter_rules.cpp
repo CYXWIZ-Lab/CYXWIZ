@@ -128,6 +128,12 @@ bool ShouldHideGenericParameter(
         return it == node.parameters.end() || it->second != "true";
     }
 
+    if (type == NodeType::TD3 && param.name == "action_noise_std") {
+        // The noise's std: only with Gaussian noise
+        const auto it = node.parameters.find("action_noise");
+        return it != node.parameters.end() && it->second == "none";
+    }
+
     if (type == NodeType::SAC && param.name == "target_entropy") {
         // The typed target entropy: only when the mode asks for one (auto is shown as a fact)
         const auto it = node.parameters.find("target_entropy_mode");

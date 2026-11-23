@@ -461,7 +461,8 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
     }
     if (node.type == NodeType::QHead) {
         const size_t actions = known && !env.info.discrete_actions ? static_cast<size_t>(env.info.action_size) : 0;
-        FactRows(cyxwiz::rl_graph::QHeadFacts(cyxwiz::rl_graph::UpstreamUnits(nodes, links, node.id), actions));
+        FactRows(cyxwiz::rl_graph::QHeadFacts(cyxwiz::rl_graph::UpstreamUnits(nodes, links, node.id), actions,
+                                              cyxwiz::rl_graph::LearnerFed(nodes, links, node.id)));
         return;
     }
     if (!known) {
@@ -471,19 +472,15 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
         return;
     }
     if (node.type == NodeType::PolicyHead) {
-        // A SAC graph's head when it feeds a SAC node
-        const bool for_sac = std::any_of(links.begin(), links.end(), [&](const NodeLink& l) {
-            if (l.from_node != node.id) return false;
-            return std::any_of(nodes.begin(), nodes.end(),
-                               [&](const MLNode& n) { return n.id == l.to_node && n.type == NodeType::SAC; });
-        });
+        // As the learner it feeds makes it (SAC: a squashed Gaussian; TD3: a tanh action)
         FactRows(cyxwiz::rl_graph::PolicyHeadFacts(env.info, cyxwiz::rl_graph::UpstreamUnits(nodes, links, node.id),
-                                                   for_sac));
+                                                   cyxwiz::rl_graph::LearnerFed(nodes, links, node.id)));
         return;
     }
     const bool sac = node.type == NodeType::SAC;
-    if (sac) {
-        // SAC: what its replay buffer takes on the training device (TOFIX216)
+    const bool td3 = node.type == NodeType::TD3;
+    if (sac || td3) {
+        // SAC, TD3: what the replay buffer takes on the training device (TOFIX216)
         long long buffer = 0;
         try {
             buffer = std::stoll(ParamOr(node, "buffer_size", "1000000"));
@@ -499,16 +496,23 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
             FactRows({{"Replay buffer", fit.text}});
             if (!fit.advice.empty()) properties_rows::Note(fit.advice.c_str());
         }
-        if (!env.info.discrete_actions && ParamOr(node, "target_entropy_mode", "auto") != "typed")
+        if (sac && !env.info.discrete_actions && ParamOr(node, "target_entropy_mode", "auto") != "typed")
             FactRows({{"Target entropy", cyxwiz::rl_graph::AutoTargetEntropyText(
                                              static_cast<size_t>(std::max(env.info.action_size, 0)))}});
+        if (td3 && !env.info.discrete_actions)
+            FactRows({{"Exploration", cyxwiz::rl_graph::ExplorationNoiseText(
+                                          ParamOr(node, "action_noise", "normal") != "none",
+                                          ParamOr(node, "action_noise_std", "0.1"))}});
         if (env.info.discrete_actions)
-            properties_rows::Note("SAC learns continuous actions; this environment has a choice of actions: train it "
-                                  "with PPO.");
+            properties_rows::Note(sac ? "SAC learns continuous actions; this environment has a choice of actions: "
+                                        "train it with PPO."
+                                      : "TD3 learns continuous actions; this environment has a choice of actions: "
+                                        "train it with PPO.");
     }
-    // Its trained policy (TOFIX195 S5; SAC's since TOFIX216 S4): play, save, load
+    // Its trained policy (TOFIX195 S5; SAC's since TOFIX216 S4; TD3's comes
+    // with its trainer): play, save, load
     const cyxwiz::ui::Tokens& tokens = cyxwiz::ui::CurrentTokens();
-    {
+    if (!td3) {
         properties_rows::Label("Trained policy", false, "The policy of the last run, or one loaded from a .cyxmodel");
         properties_rows::Value(editor.RLPolicyLine(), editor.HasRLPolicy() ? tokens.text : tokens.text_dim);
         properties_rows::Status("");
@@ -533,8 +537,9 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
     }
 
     // The tuned settings for its environment
-    const auto preset =
-        sac ? cyxwiz::rl_graph::TunedSacSettings(env.info.id) : cyxwiz::rl_graph::TunedPpoSettings(env.info.id);
+    const auto preset = sac   ? cyxwiz::rl_graph::TunedSacSettings(env.info.id)
+                        : td3 ? cyxwiz::rl_graph::TunedTd3Settings(env.info.id)
+                              : cyxwiz::rl_graph::TunedPpoSettings(env.info.id);
     if (!preset) return;
     properties_rows::Label("Tuned for", false, "Load tuned settings for this environment");
     if (cyxwiz::ui::SecondaryButton(env.info.id.c_str())) {

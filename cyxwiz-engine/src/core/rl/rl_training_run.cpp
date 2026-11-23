@@ -29,6 +29,10 @@ bool RLTrainingRun::Start(std::shared_ptr<const RLTrainingConfiguration> config,
         error = "The graph is not a compiled RL graph.";
         return false;
     }
+    if (config->algorithm == RLAlgorithm::TD3) {
+        error = "TD3 compiles, but the Engine cannot train it yet.";
+        return false;
+    }
     if (worker_.joinable()) worker_.join();
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -136,7 +140,7 @@ bool RLTrainingRun::RefreshPreview(TrainedPolicy& policy, int& update, long long
 }
 
 const char* RLTrainingRun::Learner() const {
-    return config_ && config_->algorithm == RLAlgorithm::SAC ? "SAC" : "PPO";
+    return config_ ? RLAlgorithmName(config_->algorithm) : "PPO";
 }
 
 bool RLTrainingRun::WatchBetweenUpdates(plugin::EnvironmentBatch& batch, int number, int& last_watch,

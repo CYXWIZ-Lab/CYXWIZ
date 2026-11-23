@@ -220,7 +220,7 @@ NodeEditor::NodeEditor()
         if (rl_watch_ && owned(rl_watch_->EnvironmentKey())) rl_watch_->Stop();
         if (rl_run_ && rl_run_->Active() && rl_run_->Config() && owned(rl_run_->Config()->environment_key)) {
             spdlog::info("{} stopped: its environment's plugin {} is stopping",
-                         rl_run_->Config()->algorithm == cyxwiz::RLAlgorithm::SAC ? "SAC" : "PPO", plugin_id);
+                         cyxwiz::RLAlgorithmName(rl_run_->Config()->algorithm), plugin_id);
             rl_run_->StopAndWait();
         }
         // Its playback and its stress test (each steps its own copies)
@@ -2266,7 +2266,8 @@ void NodeEditor::RenderNodes() {
                 break;
             }
             case NodeType::PPO:
-            case NodeType::SAC: {  // TOFIX216
+            case NodeType::SAC:  // TOFIX216
+            case NodeType::TD3: {
                 const auto steps = node.parameters.find("total_timesteps");
                 if (steps != node.parameters.end()) ImGui::TextColored(t.accent_text, "%s steps", steps->second.c_str());
                 break;
@@ -4239,7 +4240,7 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     if (!rl_run_) rl_run_ = std::make_unique<cyxwiz::rl::RLTrainingRun>();
     const auto& c = *config;
     const bool sac = c.algorithm == cyxwiz::RLAlgorithm::SAC;
-    const std::string learner = sac ? "SAC" : "PPO";
+    const std::string learner = cyxwiz::RLAlgorithmName(c.algorithm);
     if (!rl_run_->Start(config, GetGraphJson(), error)) return false;
     rl_run_reported_ = false;
     rl_status_ = learner + " starting";
@@ -4337,13 +4338,12 @@ void NodeEditor::StopRLTraining() {
 void NodeEditor::PollRLTraining() {
     if (!rl_run_ || !rl_dashboard_) return;
     const auto* config = rl_run_->Config();
-    const bool sac = config && config->algorithm == cyxwiz::RLAlgorithm::SAC;
-    const std::string learner = sac ? "SAC" : "PPO";
-    // The dashboard's note on small networks: the policy's and the second network's (PPO value, SAC Q)
+    const std::string learner = config ? cyxwiz::RLAlgorithmName(config->algorithm) : "PPO";
+    // The dashboard's note on small networks: the policy's and the second network's (PPO value, SAC/TD3 Q)
     const auto note = [&]() {
+        const auto& second = cyxwiz::UsesQNetworks(config->algorithm) ? config->q_layers : config->value_layers;
         return cyxwiz::rl_device::DashboardNote(rl_run_device_, cyxwiz::HiddenUnits(config->policy_layers),
-                                                cyxwiz::HiddenUnits(sac ? config->q_layers : config->value_layers),
-                                                rl_compute_path_);
+                                                cyxwiz::HiddenUnits(second), rl_compute_path_);
     };
     // Another training run holds the GPU: the run waits and says so (TOFIX206 3.2 E)
     if (!rl_device_shown_) {

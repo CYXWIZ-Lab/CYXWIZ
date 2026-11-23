@@ -54,9 +54,15 @@ std::vector<Fact> EnvironmentFacts(const plugin::PluginEnvironmentInfo& info) {
     return facts;
 }
 
-std::vector<Fact> PolicyHeadFacts(const plugin::PluginEnvironmentInfo& info, size_t features, bool sac) {
+std::vector<Fact> PolicyHeadFacts(const plugin::PluginEnvironmentInfo& info, size_t features, gui::NodeType learner) {
     const std::string from = features > 0 ? std::to_string(features) + " -> " : std::string();
-    if (sac && !info.discrete_actions)  // SB3 SAC's actor: mean and log std layers, log std clipped to [-20, 2]
+    if (learner == gui::NodeType::TD3 && !info.discrete_actions)  // SB3 TD3's actor: one layer, tanh
+        return {{"Action", "deterministic: tanh of the layer, " + Plural(info.action_size, "action", "actions") +
+                               ", scaled to the action bounds"},
+                {"Output layer", from + Plural(info.action_size, "action", "actions") + " (added)"},
+                {"Target copy", "kept by TD3 for the Q targets (Polyak, Target update)"},
+                {"Exploration", "the TD3 node's noise (no log std)"}};
+    if (learner == gui::NodeType::SAC && !info.discrete_actions)  // SB3 SAC's actor: mean and log std layers, log std clipped to [-20, 2]
         return {{"Distribution", "Gaussian squashed by tanh, " + Plural(info.action_size, "action", "actions")},
                 {"Output layers", from + Plural(info.action_size, "mean", "means") + " and " + from +
                                       Plural(info.action_size, "log std", "log stds") + " (added)"},
@@ -75,14 +81,22 @@ std::vector<Fact> ValueHeadFacts(size_t features) {
             {"Output init gain", "1"}};
 }
 
-std::vector<Fact> QHeadFacts(size_t features, size_t actions) {
+std::vector<Fact> QHeadFacts(size_t features, size_t actions, gui::NodeType learner) {
     std::vector<Fact> facts;
     facts.push_back({"Output layer", (features > 0 ? std::to_string(features) + " -> " : std::string()) + "1 (added)"});
     facts.push_back({"Action", actions > 0 ? "joins the first Q layer's input (" + std::to_string(actions) +
                                                  (actions == 1 ? " value)" : " values)")
                                            : std::string("joins the first Q layer's input")});
-    facts.push_back({"Networks", "2 Q networks and a target copy of each (built by SAC)"});
+    const std::string by = learner == gui::NodeType::TD3 ? "TD3" : "SAC";
+    facts.push_back({"Networks", "2 Q networks and a target copy of each (built by " + by + ")"});
+    if (learner == gui::NodeType::TD3)
+        facts.push_back({"Policy", "learns from Q network 1; both learn toward the smaller target"});
     return facts;
+}
+
+std::string ExplorationNoiseText(bool gaussian, const std::string& std_text) {
+    if (!gaussian) return "None: the policy's own actions after the random steps";
+    return "Gaussian noise, std " + std_text + " of the action range, after the random steps";
 }
 
 std::string ReplayMemoryText(uint64_t bytes) {
@@ -180,6 +194,16 @@ size_t UpstreamUnits(const std::vector<gui::MLNode>& nodes, const std::vector<gu
     return 0;
 }
 
+gui::NodeType LearnerFed(const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links, int node_id) {
+    for (const auto& l : links) {
+        if (l.from_node != node_id) continue;
+        const gui::MLNode* to = FindNode(nodes, l.to_node);
+        if (to && (to->type == gui::NodeType::PPO || to->type == gui::NodeType::SAC || to->type == gui::NodeType::TD3))
+            return to->type;
+    }
+    return gui::NodeType::Unknown;
+}
+
 std::optional<TunedPreset> TunedPpoSettings(const std::string& environment_id) {
     TunedPreset p;
     if (environment_id == "CartPole-v1") {
@@ -236,6 +260,26 @@ std::optional<TunedPreset> TunedSacSettings(const std::string& environment_id) {
                      {"target_update_interval", "1"}, {"ent_coef_mode", "learned"}, {"ent_coef", "1.0"},
                      {"target_entropy_mode", "auto"}, {"stop_at_return", "false"}, {"normalize_observations", "false"}};
         p.layers_note = "RL Zoo trains it with SAC's default two layers of 256 and ReLU in the policy and the Q "
+                        "networks; the preset does not change your layers.";
+        return p;
+    }
+    return std::nullopt;
+}
+
+std::optional<TunedPreset> TunedTd3Settings(const std::string& environment_id) {
+    TunedPreset p;
+    if (environment_id == "HalfCheetah-v5") {
+        // RL Zoo td3.yml HalfCheetah-v4 (its mujoco defaults): n_timesteps 1e6, learning_starts 10000, noise
+        // normal 0.1, learning_rate 1e-3, batch_size 256, train_freq 1, gradient_steps 1, SB3 defaults otherwise
+        p.source = "RL Zoo (rl-baselines3-zoo) TD3 settings for HalfCheetah";
+        p.environment = {{"copies", "1"}};
+        p.learner = {{"total_timesteps", "1000000"}, {"buffer_size", "1000000"}, {"learning_starts", "10000"},
+                     {"batch_size", "256"},          {"learning_rate", "0.001"},  {"gamma", "0.99"},
+                     {"tau", "0.005"},               {"train_freq", "1"},         {"gradient_steps", "1"},
+                     {"policy_delay", "2"},          {"action_noise", "normal"},  {"action_noise_std", "0.1"},
+                     {"target_policy_noise", "0.2"}, {"target_noise_clip", "0.5"}, {"stop_at_return", "false"},
+                     {"normalize_observations", "false"}};
+        p.layers_note = "RL Zoo trains it with TD3's default layers of 400 and 300 and ReLU in the policy and the Q "
                         "networks; the preset does not change your layers.";
         return p;
     }

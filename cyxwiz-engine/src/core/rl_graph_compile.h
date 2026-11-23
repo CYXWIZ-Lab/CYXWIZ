@@ -1,14 +1,15 @@
 #pragma once
 
-// A compiled reinforcement learning graph (TOFIX195 S4.3, SAC TOFIX216):
-// Environment -> ordinary layers -> Policy Head / Value Head -> PPO, or
-// Policy Head / Q Head -> SAC. GraphCompiler fills it (rl_graph_compile.cpp);
-// the run builds the networks from it.
+// A compiled reinforcement learning graph (TOFIX195 S4.3, SAC and TD3
+// TOFIX216): Environment -> ordinary layers -> Policy Head / Value Head -> PPO,
+// or Policy Head / Q Head -> SAC or TD3. GraphCompiler fills it
+// (rl_graph_compile.cpp); the run builds the networks from it.
 
 #include "graph_compiler.h"
 #include <cyxwiz/device.h>
 #include "rl/ppo_trainer.h"
 #include "rl/sac_config.h"
+#include "rl/td3_config.h"
 #include "../plugin/interfaces/i_environment_provider.h"
 
 #include <functional>
@@ -19,7 +20,13 @@
 namespace cyxwiz {
 
 // The learner node of an RL graph
-enum class RLAlgorithm { PPO, SAC };
+enum class RLAlgorithm { PPO, SAC, TD3 };
+
+// The learner's name, as its node is called ("PPO", "SAC", "TD3")
+const char* RLAlgorithmName(RLAlgorithm algorithm);
+// Whether the learner trains twin Q networks from a Q Head (SAC, TD3) rather
+// than a value network from a Value Head (PPO)
+bool UsesQNetworks(RLAlgorithm algorithm);
 
 struct RLTrainingConfiguration {
     RLAlgorithm algorithm = RLAlgorithm::PPO;
@@ -34,21 +41,22 @@ struct RLTrainingConfiguration {
     // (the heads' output layers are added when the networks are built)
     std::vector<CompiledLayer> policy_layers;
     std::vector<CompiledLayer> value_layers;  // PPO
-    // SAC: the Q branch's layers, from the observation (the action joins the
-    // first layer's input); the trainer builds the twin Q networks and their
-    // targets from it
+    // SAC, TD3: the Q branch's layers, from the observation (the action joins
+    // the first layer's input); the trainer builds the twin Q networks and
+    // their targets from it
     std::vector<CompiledLayer> q_layers;
     size_t observation_size = 0;
     size_t policy_outputs = 0;  // logits (discrete) or means (continuous)
 
     rl::PpoConfig ppo;
     rl::SacConfig sac;
+    rl::Td3Config td3;
 
     int environment_node_id = -1;
     int policy_head_node_id = -1;
     int value_head_node_id = -1;
     int q_head_node_id = -1;
-    int learner_node_id = -1;  // the PPO or SAC node
+    int learner_node_id = -1;  // the PPO, SAC or TD3 node
 };
 
 // How the compiler finds an environment by key, as the Environment node's
@@ -65,7 +73,7 @@ void SetRLEnvironmentLookup(RLEnvironmentLookup lookup);
 bool IsRLGraphNode(gui::NodeType type);
 
 // Whether the device's neural provider would run both networks (PPO's policy
-// and value; SAC's actor and Q, the twin and targets alike) as fused
+// and value; SAC's and TD3's actor and Q, the twin and targets alike) as fused
 // small-network kernels (Dense layers of at most 256 units with the fused
 // activations, one LeakyReLU slope and one ELU alpha per network, the
 // minibatch within the backward's rows): asked of the provider registry's

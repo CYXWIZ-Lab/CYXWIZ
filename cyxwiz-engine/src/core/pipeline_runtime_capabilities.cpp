@@ -2112,7 +2112,8 @@ bool HasTrainingGraphStructure(
     const auto has_type = [&nodes](gui::NodeType type) {
         return std::any_of(nodes.begin(), nodes.end(), [type](const gui::MLNode& n) { return n.type == type; });
     };
-    if (has_type(gui::NodeType::RLEnvironment) && (has_type(gui::NodeType::PPO) || has_type(gui::NodeType::SAC)))
+    if (has_type(gui::NodeType::RLEnvironment) && (has_type(gui::NodeType::PPO) || has_type(gui::NodeType::SAC) ||
+                                                has_type(gui::NodeType::TD3)))
         return true;
 
     bool has_source = false;

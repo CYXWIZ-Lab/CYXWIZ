@@ -376,7 +376,8 @@ void NodeEditor::ShowToolbar() {
     train_in.require_debug = require_debug_before_train_ && !rl_graph;
     train_in.rl_graph = rl_graph;
     for (const auto& n : nodes_)
-        if (n.type == NodeType::PPO || n.type == NodeType::SAC) train_in.rl_learner = n.type == NodeType::SAC ? "SAC" : "PPO";
+        if (n.type == NodeType::PPO || n.type == NodeType::SAC || n.type == NodeType::TD3)
+            train_in.rl_learner = n.type == NodeType::SAC ? "SAC" : n.type == NodeType::TD3 ? "TD3" : "PPO";
     train_in.debug = local_debug_status_;
     // What keeps the graph busy before a run can start (a Data Input loading, a test, a pipeline)
     if (!training_active && !rl_active) train_in.busy = locked;

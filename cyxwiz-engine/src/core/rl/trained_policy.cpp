@@ -431,7 +431,7 @@ std::string PolicyMismatch(const TrainedPolicy& p, const RLTrainingConfiguration
     if (p.config.environment_key != graph.environment_key)
         return "This policy plays " + p.config.environment.id + "; this graph's Environment is " +
                graph.environment.id + ".";
-    const auto learner = [](RLAlgorithm a) { return std::string(a == RLAlgorithm::SAC ? "SAC" : "PPO"); };
+    const auto learner = [](RLAlgorithm a) { return std::string(RLAlgorithmName(a)); };
     if (p.config.algorithm != graph.algorithm)
         return "This policy was trained by " + learner(p.config.algorithm) + "; this graph's learner is " +
                learner(graph.algorithm) + ".";

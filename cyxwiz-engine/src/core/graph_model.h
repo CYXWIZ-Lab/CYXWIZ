@@ -679,6 +679,7 @@ enum class NodeType {
     // ===== Appended off-policy reinforcement learning (TOFIX216) =====
     QHead,              // Ends the Q layers: one output, the value of an action in a state
     SAC,                // Soft Actor-Critic over an environment, a policy and twin Q networks
+    TD3,                // Twin Delayed DDPG over an environment, a deterministic policy and twin Q networks
 
     // Special sentinel value
     Unknown

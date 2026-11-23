@@ -111,12 +111,13 @@ Truth TruthFrom(const gui::properties_truth::PropertyTruth& property) {
 }
 
 // A setting another node of the graph makes moot: a Policy Head's starting log
-// std when it feeds SAC, whose log std comes from the state (TOFIX216)
+// std when it feeds SAC, whose log std comes from the state, or TD3, which has
+// none (TOFIX216)
 bool MootInGraph(const Inputs& in, const gui::MLNode& node, const ParameterDefinition& param) {
     if (node.type != gui::NodeType::PolicyHead || param.name != "log_std_init" || !in.nodes || !in.links) return false;
     return std::any_of(in.links->begin(), in.links->end(), [&](const gui::NodeLink& l) {
         return l.from_node == node.id && std::any_of(in.nodes->begin(), in.nodes->end(), [&](const gui::MLNode& n) {
-                   return n.id == l.to_node && n.type == gui::NodeType::SAC;
+                   return n.id == l.to_node && (n.type == gui::NodeType::SAC || n.type == gui::NodeType::TD3);
                });
     });
 }

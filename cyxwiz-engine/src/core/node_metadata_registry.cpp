@@ -4695,8 +4695,9 @@ void NodeMetadataRegistry::InitializeRLNodes() {
         "Adds the output layer sized from the environment: one logit per choice (categorical) for discrete "
         "actions, one mean per action (Gaussian, with one learned log standard deviation per action) for "
         "continuous ones. Its weights start orthogonal with gain 0.01, as Stable-Baselines3 does. Under SAC it "
-        "is a Gaussian squashed by tanh: a mean and a log standard deviation per action, both from the state "
-        "(Log std at start is PPO's only). Do not put a Softmax before it.",
+        "is a Gaussian squashed by tanh: a mean and a log standard deviation per action, both from the state; "
+        "under TD3 a deterministic action, tanh of one output per action (Log std at start is PPO's only). Do "
+        "not put a Softmax before it.",
         "Environment -> Dense -> Tanh -> Dense -> Tanh -> Policy Head -> PPO",
         {{"Features", PinType::Tensor, true, "The last policy layer's output (reached from the Environment's Observation)."}},
         {{"Policy", PinType::Tensor, true, "The policy: connect it to the Policy of PPO or SAC."}},
@@ -4770,11 +4771,11 @@ void NodeMetadataRegistry::InitializeRLNodes() {
         {"q", "critic", "head", "rl", "sac", "td3", "twin"}, 0, false,
         "Ends the Q layers: one output, the value of an action in a state",
         "Adds a one-output layer that estimates the return of taking an action in a state. The action joins the "
-        "first Q layer's input (observation and action side by side), and SAC builds two Q networks of this "
-        "shape plus a slowly following target copy of each, as Stable-Baselines3's SAC does.",
+        "first Q layer's input (observation and action side by side), and SAC or TD3 builds two Q networks of "
+        "this shape plus a slowly following target copy of each, as Stable-Baselines3 does.",
         "Environment -> Dense -> ReLU -> Dense -> ReLU -> Q Head -> SAC",
         {{"Features", PinType::Tensor, true, "The last Q layer's output (reached from the Environment's Observation)."}},
-        {{"Q", PinType::Tensor, true, "The Q estimate: connect it to SAC's Q."}},
+        {{"Q", PinType::Tensor, true, "The Q estimate: connect it to SAC's or TD3's Q."}},
         {},
         NodeImplementationStatus::Implemented, 0});
 
@@ -4834,6 +4835,68 @@ void NodeMetadataRegistry::InitializeRLNodes() {
           "Running mean and variance of the observations, as VecNormalize (norm_obs)", {}, "", "Observations",
           "Normalise"}},
         NodeImplementationStatus::Implemented, 0});
+
+    // TOFIX216 TD3: the same graph shape as SAC's, a deterministic actor.
+    // Planned (Template) until the Engine's TD3 trainer runs it.
+    ParameterDefinition action_noise{"action_noise", "enum", "normal",
+        "Gaussian: noise of Noise std added to the policy's actions after the random steps (NormalActionNoise, as "
+        "RL Zoo trains TD3); None: the policy's own actions (Stable-Baselines3's default)",
+        {"normal", "none"}, "", "Action noise", "Exploration (noise)"};
+    action_noise.enum_labels = {"Gaussian", "None"};
+    RegisterNode({NodeType::TD3, NodeCategory::RL, "TD3", ICON_FA_ARROWS_ROTATE,
+        {"td3", "twin", "delayed", "ddpg", "actor", "critic", "off-policy", "replay", "reinforcement", "rl",
+         "training"}, 0, false,
+        "Twin Delayed DDPG: trains a deterministic policy and twin Q networks from a replay buffer",
+        "Stable-Baselines3's TD3 for continuous actions: keeps the last steps in a replay buffer on the training "
+        "device, and after the random steps updates the twin Q networks every step and the policy (a tanh "
+        "action) every Policy every steps from minibatches drawn from it, with Polyak-averaged target networks "
+        "and smoothed target actions. It explores with Gaussian noise on its actions. The defaults are SB3's "
+        "except the noise (RL Zoo's 0.1); Tuned for loads RL Zoo's values for the environment.",
+        "Environment -> ... -> Policy Head / Q Head -> TD3",
+        {{"Policy", PinType::Tensor, true, "From the Policy Head."},
+         {"Environment", PinType::Environment, true, "From the Environment's Environment pin."},
+         {"Q", PinType::Tensor, true, "From the Q Head."}},
+        {{"Trained policy", PinType::Parameters, true, "The trained policy and Q networks."}},
+        {{"total_timesteps", "int", "1000000", "Environment steps to train for, over all copies (total_timesteps)", {},
+          "1-1000000000", "Total steps", "Run", true},
+         {"stop_at_return", "bool", "false", "Stop early once the last 100 episodes average the target", {}, "",
+          "Stop at a mean return", "Run"},
+         {"target_return", "float", "4000", "Mean return of the last 100 episodes that stops the run", {}, "",
+          "Target return", "Run"},
+         {"seed", "int", "1", "Seeds the copies, the network weights, the noise and the minibatches (seed)", {},
+          "0-2147483647", "Seed", "Run"},
+         {"buffer_size", "int", "1000000", "Steps the replay buffer keeps on the training device (buffer_size)", {},
+          "1-100000000", "Buffer size", "Replay buffer", true},
+         {"learning_starts", "int", "100", "Steps of uniform random actions before learning starts (learning_starts)",
+          {}, "0-1000000000", "Random steps first", "Replay buffer", true},
+         {"batch_size", "int", "256", "Steps in one minibatch drawn from the buffer (batch_size)", {}, "1-1000000",
+          "Batch size", "Updates", true},
+         {"learning_rate", "float", "0.001", "Adam's learning rate for the policy and the Q networks (learning_rate)",
+          {}, "", "Learning rate", "Updates", true},
+         {"gamma", "float", "0.99", "Discount of future rewards (gamma)", {}, "0-1", "Discount", "Updates"},
+         {"tau", "float", "0.005",
+          "How far the target policy and Q networks move toward theirs at each policy update (tau)", {}, "0-1",
+          "Target update", "Updates"},
+         {"train_freq", "int", "1", "Environment steps between updates (train_freq)", {}, "1-1000000", "Train every",
+          "Updates"},
+         {"gradient_steps", "int", "1", "Gradient steps each time it trains (gradient_steps)", {}, "1-1000000",
+          "Gradient steps", "Updates"},
+         {"policy_delay", "int", "2",
+          "Q network updates for each policy update; the targets move with the policy (policy_delay)", {},
+          "1-1000000", "Policy every", "Updates"},
+         action_noise,
+         {"action_noise_std", "float", "0.1",
+          "The noise's standard deviation, on the actions scaled to [-1, 1] (NormalActionNoise sigma)", {}, "",
+          "Noise std", "Exploration (noise)"},
+         {"target_policy_noise", "float", "0.2",
+          "Noise on the target policy's actions when the Q targets are computed (target_policy_noise)", {}, "",
+          "Noise", "Target smoothing"},
+         {"target_noise_clip", "float", "0.5", "That noise clipped to plus or minus this (target_noise_clip)", {}, "",
+          "Clipped at", "Target smoothing"},
+         {"normalize_observations", "bool", "false",
+          "Running mean and variance of the observations, as VecNormalize (norm_obs)", {}, "", "Observations",
+          "Normalise"}},
+        NodeImplementationStatus::Template, 0});
 }
 
 // =============================================================================

@@ -365,6 +365,9 @@ int main() {
         v = Build(in);
         Check(FindRow(v, "log_std_init") == nullptr && v.groups.empty() && v.settings_note.empty(),
               "under SAC the log std at start is hidden and no dialog is promised: " + v.settings_note);
+        nodes[1].type = gui::NodeType::TD3;
+        v = Build(in);
+        Check(FindRow(v, "log_std_init") == nullptr, "under TD3 (a deterministic action) the log std is hidden too");
     }
 
     // ---- Cache key --------------------------------------------------------------

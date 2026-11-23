@@ -393,9 +393,60 @@ std::string SacCode(const cyxwiz::RLTrainingConfiguration& rl) {
     return code + RLLearnCode("sac", rl.environment.id, c.total_timesteps, c.target_return, c.normalize_observations);
 }
 
+std::string Td3Code(const cyxwiz::RLTrainingConfiguration& rl) {
+    const auto& c = rl.td3;
+    std::vector<std::string> notes;
+    std::string policy_act, q_act;
+    const std::string pi = NetArch(rl.policy_layers, policy_act, notes);
+    const std::string qf = NetArch(rl.q_layers, q_act, notes);
+    if (!q_act.empty() && !policy_act.empty() && q_act != policy_act)
+        notes.push_back("the Q layers' " + q_act + " becomes " + policy_act + " (MlpPolicy has one activation)");
+    const std::string activation = policy_act.empty() ? (q_act.empty() ? "nn.Identity" : q_act) : policy_act;
+
+    std::string code;
+    code += "# TD3 on " + rl.environment.id + " x " + std::to_string(rl.copies) + ", from the CyxWiz graph.\n";
+    code += "# Stable-Baselines3 on the Engine's own environments (pycyxwiz.rl): the same physics,\n";
+    code += "# layers and settings as the graph's TD3 node.\n";
+    code += "# Needs numpy, gymnasium, torch and stable_baselines3 (the Engine's python-embed has them).\n\n";
+    if (c.action_noise) code += "import numpy as np\n";
+    code += "import torch.nn as nn\n";
+    code += "from stable_baselines3 import TD3\n";
+    if (!std::isnan(c.target_return)) code += "from stable_baselines3.common.callbacks import BaseCallback\n";
+    code += "from stable_baselines3.common.env_util import make_vec_env\n";
+    if (c.action_noise) code += "from stable_baselines3.common.noise import NormalActionNoise\n";
+    if (c.normalize_observations) code += "from stable_baselines3.common.vec_env import VecNormalize\n";
+    code += "from pycyxwiz import rl\n\n";
+    code += RLEnvironmentCode(rl, c.seed, c.normalize_observations, false, c.gamma);
+    for (const auto& n : notes) code += "# " + n + "\n";
+    if (c.action_noise) {
+        // SB3 adds it to the actions scaled to [-1, 1], one draw per copy
+        code += "n_actions = env.action_space.shape[-1]\n";
+        code += "action_noise = NormalActionNoise(mean=np.zeros(n_actions), sigma=" + PyNumber(c.action_noise_std) +
+                " * np.ones(n_actions))\n\n";
+    }
+    code += "model = TD3(\n";
+    code += "    \"MlpPolicy\",\n    env,\n";
+    code += "    buffer_size=" + std::to_string(c.buffer_size) + ",\n";
+    code += "    learning_starts=" + std::to_string(c.learning_starts) + ",\n";
+    code += "    batch_size=" + std::to_string(c.batch_size) + ",\n";
+    code += "    learning_rate=" + PyNumber(c.learning_rate) + ",\n";
+    code += "    gamma=" + PyNumber(c.gamma) + ",\n";
+    code += "    tau=" + PyNumber(c.tau) + ",\n";
+    code += "    train_freq=" + std::to_string(c.train_freq) + ",\n";
+    code += "    gradient_steps=" + std::to_string(c.gradient_steps) + ",\n";
+    code += "    policy_delay=" + std::to_string(c.policy_delay) + ",\n";
+    code += "    target_policy_noise=" + PyNumber(c.target_policy_noise) + ",\n";
+    code += "    target_noise_clip=" + PyNumber(c.target_noise_clip) + ",\n";
+    code += std::string("    action_noise=") + (c.action_noise ? "action_noise" : "None") + ",\n";
+    code += "    policy_kwargs=dict(net_arch=dict(pi=" + pi + ", qf=" + qf + "), activation_fn=" + activation + "),\n";
+    code += "    seed=" + std::to_string(c.seed) + ",\n";
+    code += "    device=\"cpu\",\n    verbose=1,\n)\n\n";
+    return code + RLLearnCode("td3", rl.environment.id, c.total_timesteps, c.target_return, c.normalize_observations);
+}
+
 }  // namespace
 
-// Stable-Baselines3's PPO (or SAC) on the graph's environment (through pycyxwiz.rl,
+// Stable-Baselines3's PPO (or SAC, or TD3) on the graph's environment (through pycyxwiz.rl,
 // the Engine's own physics), layers and settings: the code of the run Train
 // starts in the Engine.
 std::string NodeEditor::GenerateRLCode(const std::vector<int>& /*sorted_ids*/) const {
@@ -410,6 +461,7 @@ std::string NodeEditor::GenerateRLCode(const std::vector<int>& /*sorted_ids*/) c
     }
     const auto& rl = *config.rl;
     if (rl.algorithm == cyxwiz::RLAlgorithm::SAC) return SacCode(rl);
+    if (rl.algorithm == cyxwiz::RLAlgorithm::TD3) return Td3Code(rl);
     const auto& c = rl.ppo;
     std::vector<std::string> notes;
     std::string policy_act, value_act;
@@ -936,6 +988,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
             case NodeType::PPO:
             case NodeType::QHead:
             case NodeType::SAC:
+            case NodeType::TD3:
                 break;
 
             default:

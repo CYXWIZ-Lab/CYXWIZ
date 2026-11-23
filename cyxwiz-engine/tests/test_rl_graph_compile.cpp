@@ -570,7 +570,7 @@ void CheckSac() {
         g.At(id.env).parameters["environment"] = pendulum_key;
         g.Add(NodeType::PPO, "PPO");
         const auto config = Compile(g);
-        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "keep one PPO or SAC node"),
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "keep one PPO, SAC or TD3 node"),
               "two learners are refused:" + Issues(config));
     }
 
@@ -578,7 +578,7 @@ void CheckSac() {
     const auto q = QHeadFacts(256, 6);
     Check(q.size() == 3 && q[0].value == "256 -> 1 (added)" && q[1].value.find("6 values") != std::string::npos,
           "the Q Head adds 256 -> 1 and takes the 6 actions at the first Q layer");
-    const auto squashed = PolicyHeadFacts(Pendulum(), 256, true);
+    const auto squashed = PolicyHeadFacts(Pendulum(), 256, NodeType::SAC);
     Check(squashed.size() == 3 && squashed[0].value == "Gaussian squashed by tanh, 1 action" &&
               squashed[1].value == "256 -> 1 mean and 256 -> 1 log std (added)",
           "a SAC Policy Head adds a mean and a log std per action");
@@ -619,6 +619,129 @@ void CheckSac() {
     }
 }
 
+// TD3 (TOFIX216 TD3 U1): the node compiles to a Td3Config with SB3's names
+// and defaults (RL Zoo's noise), the Q branch as SAC's, and its refusals
+void CheckTd3() {
+    using namespace cyxwiz::rl_graph;
+    const std::string pendulum_key = "test.continuous:InvertedPendulum-v5";
+    Ids id{};
+    {
+        Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::TD3);
+        g.At(id.env).parameters["environment"] = pendulum_key;
+        Check(cyxwiz::HasTrainingGraphStructure(g.nodes), "the toolbar sees a TD3 graph as a training graph");
+        const auto config = Compile(g);
+        Check(config.is_valid && config.rl, "the TD3 graph compiles:" + Issues(config));
+        if (!config.rl) return;
+        const auto& rl = *config.rl;
+        Check(rl.algorithm == cyxwiz::RLAlgorithm::TD3 && rl.q_layers.size() == 4 && rl.value_layers.empty() &&
+                  rl.policy_layers.size() == 4 && rl.policy_outputs == 1 && rl.learner_node_id == id.ppo &&
+                  rl.q_head_node_id == id.vhead,
+              "TD3: a policy chain, a Q chain, no value chain, 1 action");
+        Check(std::string(cyxwiz::RLAlgorithmName(rl.algorithm)) == "TD3" && cyxwiz::UsesQNetworks(rl.algorithm) &&
+                  !cyxwiz::UsesQNetworks(cyxwiz::RLAlgorithm::PPO),
+              "TD3 is named and trains Q networks");
+        const auto& c = rl.td3;
+        Check(c.total_timesteps == 1000000 && c.buffer_size == 1000000 && c.learning_starts == 100 &&
+                  c.batch_size == 256 && c.learning_rate == 1e-3f && c.gamma == 0.99f && c.tau == 0.005f &&
+                  c.train_freq == 1 && c.gradient_steps == 1 && c.policy_delay == 2 && c.action_noise &&
+                  c.action_noise_std == 0.1f && c.target_policy_noise == 0.2f && c.target_noise_clip == 0.5f &&
+                  !c.normalize_observations && std::isnan(c.target_return),
+              "TD3's defaults are Stable-Baselines3's, with RL Zoo's Gaussian noise 0.1");
+        Check(!cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CPU, 0), "TD3: no fused kernels on the CPU");
+        const bool cuda_provider =
+            !cyxwiz::NeuralProviderRegistry::Instance().ListServing({cyxwiz::DeviceType::CUDA, 0}).empty();
+        Check(cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CUDA, 0) == cuda_provider,
+              "TD3's 256-unit actor and Q networks are expected fused on CUDA exactly when a provider serves CUDA");
+
+        g.At(id.ppo).parameters["action_noise"] = "none";
+        g.At(id.ppo).parameters["action_noise_std"] = "0";  // moot without noise
+        g.At(id.ppo).parameters["policy_delay"] = "3";
+        g.At(id.ppo).parameters["target_policy_noise"] = "0.1";
+        g.At(id.ppo).parameters["target_noise_clip"] = "0.3";
+        g.At(id.ppo).parameters["stop_at_return"] = "true";
+        g.At(id.ppo).parameters["target_return"] = "950";
+        const auto typed = Compile(g);
+        Check(typed.rl && !typed.rl->td3.action_noise && typed.rl->td3.policy_delay == 3 &&
+                  typed.rl->td3.target_policy_noise == 0.1f && typed.rl->td3.target_noise_clip == 0.3f &&
+                  typed.rl->td3.target_return == 950.0f,
+              "no noise, a policy delay, the target smoothing and a target return are read:" + Issues(typed));
+    }
+    {
+        Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::TD3);  // CartPole: a choice of actions
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "TD3 learns continuous actions"),
+              "TD3 on a choice of actions is refused:" + Issues(config));
+    }
+    {
+        Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::TD3);
+        g.At(id.env).parameters["environment"] = pendulum_key;
+        g.Unlink(id.vhead, id.ppo);
+        g.Unlink(id.va2, id.vhead);
+        const int value = g.Add(NodeType::ValueHead, "Value Head");
+        g.Link(id.va2, value);
+        g.Link(value, id.ppo, 0, 2);
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "Connect a Q Head to TD3's Q"),
+              "a Value Head into TD3's Q is refused:" + Issues(config));
+    }
+    {
+        Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::TD3);
+        g.At(id.env).parameters["environment"] = pendulum_key;
+        g.At(id.ppo).parameters["policy_delay"] = "0";
+        g.At(id.ppo).parameters["action_noise_std"] = "0";
+        g.At(id.ppo).parameters["buffer_size"] = "100";
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "policy every must each be at least 1") &&
+                  HasIssue(config, cyxwiz::IssueLevel::Error, "The noise std must be above 0") &&
+                  HasIssue(config, cyxwiz::IssueLevel::Error,
+                           "Batch size 256 is larger than the replay buffer (100 steps)"),
+              "a policy delay of 0, Gaussian noise of std 0 and a batch past the buffer are refused:" + Issues(config));
+    }
+    {
+        Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::TD3);
+        g.At(id.env).parameters["environment"] = pendulum_key;
+        g.Add(NodeType::SAC, "SAC");
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "keep one PPO, SAC or TD3 node"),
+              "TD3 beside SAC is refused:" + Issues(config));
+    }
+
+    // Presentation
+    {
+        Graph g = Pattern(id, 300, NodeType::ReLU, NodeType::TD3);
+        Check(LearnerFed(g.nodes, g.links, id.phead) == NodeType::TD3 &&
+                  LearnerFed(g.nodes, g.links, id.vhead) == NodeType::TD3 &&
+                  LearnerFed(g.nodes, g.links, id.p1) == NodeType::Unknown,
+              "the heads know they feed TD3");
+    }
+    const auto action = PolicyHeadFacts(Pendulum(), 300, NodeType::TD3);
+    Check(action.size() == 4 &&
+              action[0].value == "deterministic: tanh of the layer, 1 action, scaled to the action bounds" &&
+              action[1].value == "300 -> 1 action (added)",
+          "a TD3 Policy Head adds one tanh action per action");
+    const auto q = QHeadFacts(300, 6, NodeType::TD3);
+    Check(q.size() == 4 && q[2].value == "2 Q networks and a target copy of each (built by TD3)" &&
+              q[3].label == "Policy",
+          "the Q Head under TD3 says the policy learns from Q network 1");
+    Check(ExplorationNoiseText(true, "0.1") == "Gaussian noise, std 0.1 of the action range, after the random steps" &&
+              ExplorationNoiseText(false, "0.1") == "None: the policy's own actions after the random steps",
+          "TD3's exploration reads as its noise");
+    const auto preset = TunedTd3Settings("HalfCheetah-v5");
+    Check(preset && preset->learner.at("learning_starts") == "10000" && preset->learner.at("action_noise_std") == "0.1" &&
+              preset->learner.at("learning_rate") == "0.001" && preset->environment.at("copies") == "1" &&
+              !TunedTd3Settings("InvertedPendulum-v5") && !TunedTd3Settings("CartPole-v1"),
+          "TD3 is tuned for HalfCheetah only (RL Zoo's mujoco defaults)");
+    if (preset) {
+        Graph g = Pattern(id, 400, NodeType::ReLU, NodeType::TD3);
+        g.At(id.env).parameters["environment"] = pendulum_key;
+        for (const auto& [k, v] : preset->learner) g.At(id.ppo).parameters[k] = v;
+        const auto config = Compile(g);
+        Check(config.rl && config.rl->td3.learning_starts == 10000 && config.rl->td3.action_noise,
+              "the HalfCheetah preset's values compile:" + Issues(config));
+    }
+    Check(gui::ResolveNodeTypeImportName("TD3") == NodeType::TD3, "a saved graph names the node TD3");
+}
+
 }  // namespace
 
 int main() {
@@ -642,6 +765,7 @@ int main() {
     CheckReference();
     CheckSacReference();
     CheckSac();
+    CheckTd3();
     CheckExamples();
     if (failures == 0) std::printf("test_rl_graph_compile: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
