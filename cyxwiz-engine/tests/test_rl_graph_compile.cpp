@@ -61,6 +61,13 @@ std::string Issues(const cyxwiz::TrainingConfiguration& config) {
     return all;
 }
 
+std::string ReadText(const char* path) {
+    std::ifstream in(path, std::ios::binary);
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
 cyxwiz::plugin::PluginEnvironmentInfo CartPole() {
     cyxwiz::plugin::PluginEnvironmentInfo info;
     info.id = "CartPole-v1";
@@ -265,10 +272,8 @@ void CheckPresentation() {
 
 // The recorded Stable-Baselines3 curves the dashboard draws under a run of the same settings
 void CheckReference() {
-    std::ifstream in(CYXWIZ_PPO_REFERENCE_FILE, std::ios::binary);
-    std::ostringstream text;
-    text << in.rdbuf();
-    Check(!text.str().empty(), "the recorded SB3 curves are readable");
+    const std::string text = ReadText(CYXWIZ_PPO_REFERENCE_FILE);
+    Check(!text.empty(), "the recorded SB3 curves are readable");
     cyxwiz::rl::PpoConfig cartpole;  // test_ppo_trainer's RL Zoo settings
     cartpole.n_steps = 32;
     cartpole.batch_size = 256;
@@ -276,7 +281,7 @@ void CheckReference() {
     cartpole.learning_rate = 1e-3f;
     cartpole.gamma = 0.98f;
     cartpole.gae_lambda = 0.8f;
-    const auto ref = cyxwiz::rl::FindPpoReference(text.str(), "CartPole-v1", 8, cartpole);
+    const auto ref = cyxwiz::rl::FindPpoReference(text, "CartPole-v1", 8, cartpole);
     Check(ref.has_value() && ref->seeds.size() == 3 && ref->label.find("3 seeds") != std::string::npos,
           "CartPole's reference: 3 seeds");
     if (ref) {
@@ -286,11 +291,11 @@ void CheckReference() {
     }
     auto other = cartpole;
     other.n_steps = 64;
-    Check(!cyxwiz::rl::FindPpoReference(text.str(), "CartPole-v1", 8, other).has_value() &&
-              !cyxwiz::rl::FindPpoReference(text.str(), "CartPole-v1", 4, cartpole).has_value(),
+    Check(!cyxwiz::rl::FindPpoReference(text, "CartPole-v1", 8, other).has_value() &&
+              !cyxwiz::rl::FindPpoReference(text, "CartPole-v1", 4, cartpole).has_value(),
           "other settings or copies have no reference");
     cartpole.normalize_observations = true;
-    Check(!cyxwiz::rl::FindPpoReference(text.str(), "CartPole-v1", 8, cartpole).has_value(),
+    Check(!cyxwiz::rl::FindPpoReference(text, "CartPole-v1", 8, cartpole).has_value(),
           "normalised observations have no reference");
 
     // HalfCheetah's reference normalises (VecNormalize), as its tuned settings do
@@ -306,10 +311,10 @@ void CheckReference() {
     cheetah.loss.vf_coef = 0.58096f;
     cheetah.max_grad_norm = 0.8f;
     cheetah.normalize_observations = cheetah.normalize_rewards = true;
-    Check(cyxwiz::rl::FindPpoReference(text.str(), "HalfCheetah-v5", 1, cheetah).has_value(),
+    Check(cyxwiz::rl::FindPpoReference(text, "HalfCheetah-v5", 1, cheetah).has_value(),
           "HalfCheetah's normalised run has its normalised reference");
     cheetah.normalize_rewards = false;
-    Check(!cyxwiz::rl::FindPpoReference(text.str(), "HalfCheetah-v5", 1, cheetah).has_value(),
+    Check(!cyxwiz::rl::FindPpoReference(text, "HalfCheetah-v5", 1, cheetah).has_value(),
           "a run normalising only the observations has none");
 }
 
@@ -368,17 +373,15 @@ void CheckSacReference() {
           "throws, a ground or an undeclared key are not (the dashboard draws no reference)");
 
     // The recorded file: the pendulum at the SAC node's defaults, HalfCheetah at RL Zoo's settings
-    std::ifstream in(CYXWIZ_SAC_REFERENCE_FILE, std::ios::binary);
-    std::ostringstream recorded;
-    recorded << in.rdbuf();
-    Check(!recorded.str().empty(), "SAC: the recorded SB3 curves are readable");
-    const auto pendulum_file = cyxwiz::rl::FindSacReference(recorded.str(), "InvertedPendulum-v5", 1, defaults);
+    const std::string recorded = ReadText(CYXWIZ_SAC_REFERENCE_FILE);
+    Check(!recorded.empty(), "SAC: the recorded SB3 curves are readable");
+    const auto pendulum_file = cyxwiz::rl::FindSacReference(recorded, "InvertedPendulum-v5", 1, defaults);
     Check(pendulum_file && pendulum_file->seeds.size() == 3, "SAC: the pendulum's recorded reference, 3 seeds");
     if (pendulum_file) {
         const auto at = pendulum_file->At(120000.0);
         Check(at && *at > 900.0 && *at <= 1000.0, "SAC: the pendulum's seeds' mean near 120,000 steps is above 900");
     }
-    const auto cheetah_file = cyxwiz::rl::FindSacReference(recorded.str(), "HalfCheetah-v5", 1, cheetah);
+    const auto cheetah_file = cyxwiz::rl::FindSacReference(recorded, "HalfCheetah-v5", 1, cheetah);
     Check(cheetah_file && cheetah_file->seeds.size() == 3, "SAC: HalfCheetah's recorded reference, 3 seeds");
     if (cheetah_file) {
         const auto at = cheetah_file->At(1000000.0);
@@ -416,6 +419,52 @@ void CheckTd3Reference() {
               !cyxwiz::rl::FindTd3Reference(text, "InvertedPendulum-v5", 1, louder).has_value() &&
               !cyxwiz::rl::FindTd3Reference(text, "InvertedPendulum-v5", 1, delayed).has_value(),
           "TD3: no noise, other noise or another policy delay has no reference");
+}
+
+// DQN's reference (TOFIX216 DQN V5): the recorded runs' settings must be the
+// node's as Tuned for CartPole-v1 sets them
+void CheckDqnReference() {
+    const std::string text = R"({"versions": {"stable_baselines3": "2.7.1"},
+        "columns": ["time/total_timesteps", "rollout/ep_rew_mean", "train/loss", "rollout/exploration_rate"],
+        "tasks": [
+          {"id": "CartPole-v1", "copies": 1,
+           "dqn": {"learning_rate": 0.0023, "batch_size": 64, "buffer_size": 100000, "learning_starts": 1000,
+                   "gamma": 0.99, "target_update_interval": 10, "train_freq": 256, "gradient_steps": 128,
+                   "exploration_fraction": 0.16, "exploration_final_eps": 0.04, "net_arch": [256, 256]},
+           "runs": [{"seed": 1, "updates": [[1000, 20.0, 0.1, 0.9], [2000, 30.0, 0.2, 0.8]]},
+                    {"seed": 2, "updates": [[1000, 22.0, 0.1, 0.9], [2000, 34.0, 0.2, 0.8]]}]}]})";
+    Ids id{};
+    Graph g = DqnPattern(id, 256);
+    const auto preset = cyxwiz::rl_graph::TunedDqnSettings("CartPole-v1");
+    if (preset)
+        for (const auto& [k, v] : preset->learner) g.At(id.ppo).parameters[k] = v;
+    const auto config = Compile(g);
+    Check(config.rl != nullptr, "the tuned DQN graph compiles:" + Issues(config));
+    if (!config.rl) return;
+    const auto tuned = config.rl->dqn;
+    const auto found = cyxwiz::rl::FindDqnReference(text, "CartPole-v1", 1, tuned);
+    Check(found && found->seeds.size() == 2 && found->At(2000.0) == 32.0,
+          "DQN: CartPole's reference at the Tuned for settings, the seeds' mean");
+    Check(!cyxwiz::rl::FindDqnReference(text, "CartPole-v1", 1, cyxwiz::rl::DqnConfig{}).has_value() &&
+              !cyxwiz::rl::FindDqnReference(text, "CartPole-v1", 2, tuned).has_value(),
+          "DQN: SB3's defaults or two copies have no reference");
+    auto other_end = tuned;
+    other_end.exploration_final_eps = 0.05f;
+    auto other_target = tuned;
+    other_target.target_update_interval = 100;
+    Check(!cyxwiz::rl::FindDqnReference(text, "CartPole-v1", 1, other_end).has_value() &&
+              !cyxwiz::rl::FindDqnReference(text, "CartPole-v1", 1, other_target).has_value(),
+          "DQN: another epsilon end or target interval has no reference");
+
+    // The recorded file: CartPole at the Tuned for settings, SB3's three seeds
+    const std::string recorded = ReadText(CYXWIZ_DQN_REFERENCE_FILE);
+    Check(!recorded.empty(), "DQN: the recorded SB3 curves are readable");
+    const auto cartpole = cyxwiz::rl::FindDqnReference(recorded, "CartPole-v1", 1, tuned);
+    Check(cartpole && cartpole->seeds.size() == 3, "DQN: CartPole's recorded reference, 3 seeds");
+    if (cartpole) {
+        const auto at = cartpole->At(40000.0);
+        Check(at && *at > 100.0 && *at < 500.0, "DQN: the seeds' mean at 40,000 steps is between 100 and 500");
+    }
 }
 
 // A pattern-format graph file (a "template" of nodes by string id and links
@@ -945,6 +994,7 @@ int main() {
     CheckReference();
     CheckSacReference();
     CheckTd3Reference();
+    CheckDqnReference();
     CheckSac();
     CheckTd3();
     CheckDqn();

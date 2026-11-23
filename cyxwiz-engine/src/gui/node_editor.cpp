@@ -4312,7 +4312,9 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
                 info.reference = rl::FindSacReference(rl::ReadReferenceFile("sac_sb3_curves.json"), c.environment.id,
                                                       c.copies, c.sac);
                 break;
-            case cyxwiz::RLAlgorithm::DQN:  // no recorded DQN curves yet
+            case cyxwiz::RLAlgorithm::DQN:
+                info.reference = rl::FindDqnReference(rl::ReadReferenceFile("dqn_sb3_curves.json"), c.environment.id,
+                                                      c.copies, c.dqn);
                 break;
             case cyxwiz::RLAlgorithm::PPO:
                 info.reference = rl::FindPpoReference(rl::ReadReferenceFile("ppo_sb3_curves.json"), c.environment.id,

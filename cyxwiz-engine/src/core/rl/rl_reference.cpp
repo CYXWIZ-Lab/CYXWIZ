@@ -145,6 +145,26 @@ std::optional<RLReference> FindTd3Reference(const std::string& json_text, const 
     });
 }
 
+std::optional<RLReference> FindDqnReference(const std::string& json_text, const std::string& environment_id,
+                                            int copies, const DqnConfig& c) {
+    return Find(json_text, environment_id, copies, [&c](const nlohmann::json& task) {
+        const auto& s = task.at("dqn");
+        // The recorded runs normalise nothing
+        if (task.value("normalize", false) || c.normalize_observations) return false;
+        return Same(Setting(s, "learning_rate", 1e-4), c.learning_rate) &&
+               Same(Setting(s, "buffer_size", 1e6), static_cast<double>(c.buffer_size)) &&
+               Same(Setting(s, "learning_starts", 100), static_cast<double>(c.learning_starts)) &&
+               Same(Setting(s, "batch_size", 32), c.batch_size) && Same(Setting(s, "tau", 1.0), c.tau) &&
+               Same(Setting(s, "gamma", 0.99), c.gamma) && Same(Setting(s, "train_freq", 4), c.train_freq) &&
+               Same(Setting(s, "gradient_steps", 1), c.gradient_steps) &&
+               Same(Setting(s, "target_update_interval", 10000), static_cast<double>(c.target_update_interval)) &&
+               Same(Setting(s, "exploration_fraction", 0.1), c.exploration_fraction) &&
+               Same(Setting(s, "exploration_initial_eps", 1.0), c.exploration_initial_eps) &&
+               Same(Setting(s, "exploration_final_eps", 0.05), c.exploration_final_eps) &&
+               Same(Setting(s, "max_grad_norm", 10), c.max_grad_norm);
+    });
+}
+
 bool DefaultEnvironmentSettings(const plugin::PluginEnvironmentInfo& environment,
                                 const std::map<std::string, std::string>& settings) {
     const auto number = [](const std::string& text, double& out) {

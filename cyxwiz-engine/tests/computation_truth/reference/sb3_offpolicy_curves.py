@@ -1,11 +1,12 @@
-"""Reference learning curves of a Stable-Baselines3 off-policy learner (SAC, TD3).
+"""Reference learning curves of a Stable-Baselines3 off-policy learner (SAC, TD3, DQN).
 
 Trains it on the Engine's own environments through pycyxwiz.rl (so the
 physics is the same MuJoCo build), with the settings the stability gate gives
 the learner's node, for a few seeds, and writes a row every 1,000 environment
 steps (the node's report interval): the mean return of the last 100 episodes
-and the last gradient step's logged values. generate_sac_sb3_curves.py and
-generate_td3_sb3_curves.py give the learner, its tasks and its columns.
+and the last gradient step's logged values. generate_sac_sb3_curves.py,
+generate_td3_sb3_curves.py and generate_dqn_sb3_curves.py give the learner,
+its tasks and its columns.
 
 The output keeps the tasks and seeds it already holds that a run did not
 train, so one task or one seed can be run on its own (seeds as parallel

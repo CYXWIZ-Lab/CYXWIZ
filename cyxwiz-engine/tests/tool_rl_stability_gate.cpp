@@ -1,11 +1,12 @@
-// The stability gate's runs (TOFIX195 PPO, TOFIX216 SAC and TD3): one task and seed
+// The stability gate's runs (TOFIX195 PPO, TOFIX216 SAC, TD3 and DQN): one task and seed
 // per process, trained the way Studio's Train does it (the learner's pattern
 // with its node's "Tuned for" settings, the RL compile, RLTrainingRun). Writes
 // the run's reports and outcome as JSON; the gate compares them with
 // Stable-Baselines3 on the same environments
-// (resources/rl_reference/ppo_sb3_curves.json, sac_sb3_curves.json, td3_sb3_curves.json).
+// (resources/rl_reference/ppo_sb3_curves.json, sac_sb3_curves.json, td3_sb3_curves.json,
+// dqn_sb3_curves.json).
 //
-//   cyxwiz-rl-stability-gate [--sac | --td3] <task> <seed> <output.json> [<MuJoCo plugin folder>]
+//   cyxwiz-rl-stability-gate [--sac | --td3 | --dqn] <task> <seed> <output.json> [<MuJoCo plugin folder>]
 //
 // PPO: task CartPole-v1 (built in), InvertedPendulum-v5 or HalfCheetah-v5 (the
 // MuJoCo plugin). CartPole and InvertedPendulum stop at their target return;
@@ -16,6 +17,10 @@
 // --td3: the same tasks and budgets with the TD3 node's defaults (SB3's, RL
 // Zoo's noise 0.1) on InvertedPendulum and RL Zoo's settings on HalfCheetah;
 // both with TD3's layers of 400 and 300 and ReLU.
+// --dqn: CartPole-v1 (built in) with the DQN node's Tuned for (RL Zoo's
+// settings, 50,000 steps) and RL Zoo's Q layers of 256 and 256 and ReLU; it
+// runs all its steps, recording when the mean return of the last 100
+// episodes first reaches 475.
 // CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu picks the device (default
 // CPU). The run takes it the Engine's way (TOFIX206): the pending device
 // selection and a Strict next-run policy, as Preferences > Devices sets them,
@@ -84,13 +89,14 @@ bool SelectRequestedRoute() {
 int main(int argc, char** argv) {
     const bool sac = argc > 1 && std::string(argv[1]) == "--sac";
     const bool td3 = argc > 1 && std::string(argv[1]) == "--td3";
-    const bool off_policy = sac || td3;
+    const bool dqn = argc > 1 && std::string(argv[1]) == "--dqn";
+    const bool off_policy = sac || td3 || dqn;
     if (off_policy) {
         --argc;
         ++argv;
     }
     if (argc < 4)
-        return Fail("usage: cyxwiz-rl-stability-gate [--sac | --td3] <task> <seed> <output.json> "
+        return Fail("usage: cyxwiz-rl-stability-gate [--sac | --td3 | --dqn] <task> <seed> <output.json> "
                     "[<MuJoCo plugin folder>]");
     const std::string task = argv[1];
     const std::string seed = argv[2];
@@ -116,16 +122,19 @@ int main(int argc, char** argv) {
     }
 
     const bool cheetah = task == "HalfCheetah-v5";
-    if (off_policy && task != "InvertedPendulum-v5" && !cheetah)
+    if (dqn && task != "CartPole-v1") return Fail("no DQN gate task " + task);
+    if ((sac || td3) && task != "InvertedPendulum-v5" && !cheetah)
         return Fail(std::string("no ") + (sac ? "SAC" : "TD3") + " gate task " + task);
     // SAC's and TD3's InvertedPendulum have no RL Zoo entry: the node's defaults
     const auto preset = sac   ? cyxwiz::rl_graph::TunedSacSettings(task)
                         : td3 ? cyxwiz::rl_graph::TunedTd3Settings(task)
+                        : dqn ? cyxwiz::rl_graph::TunedDqnSettings(task)
                               : cyxwiz::rl_graph::TunedPpoSettings(task);
-    if (!preset && !(off_policy && !cheetah)) return Fail("no tuned settings for " + task);
+    if (!preset && !((sac || td3) && !cheetah)) return Fail("no tuned settings for " + task);
     rl_graph_test::Ids id{};
     auto g = sac       ? rl_graph_test::Pattern(id, 256, gui::NodeType::ReLU, gui::NodeType::SAC)
              : td3     ? rl_graph_test::Pattern(id, 400, gui::NodeType::ReLU, gui::NodeType::TD3)
+             : dqn     ? rl_graph_test::DqnPattern(id, 256, gui::NodeType::ReLU)
              : cheetah ? rl_graph_test::Pattern(id, 256, gui::NodeType::ReLU)
                        : rl_graph_test::Pattern(id);
     if (td3)  // TD3's second layer is 300 (SB3's and RL Zoo's [400, 300])
@@ -139,7 +148,9 @@ int main(int argc, char** argv) {
     }
     g.At(id.ppo).parameters["seed"] = seed;
     const float target = cheetah ? 4800.0f : (task == "CartPole-v1" ? 475.0f : 950.0f);
-    if (!cheetah) {  // the budgets of the SB3 reference
+    if (dqn) {  // RL Zoo's 50,000 steps, all of them (the reach of 475 is recorded, not a stop)
+        g.At(id.ppo).parameters["stop_at_return"] = "false";
+    } else if (!cheetah) {  // the budgets of the SB3 reference
         g.At(id.ppo).parameters["total_timesteps"] = off_policy ? "150000" : task == "CartPole-v1" ? "200000" : "300000";
         g.At(id.ppo).parameters["stop_at_return"] = "true";
         if (off_policy) {  // one copy, as the SB3 reference (the Environment node's default is more)
@@ -180,8 +191,10 @@ int main(int argc, char** argv) {
             {"seed", std::stoll(seed)},
             {"copies", config.copies},
             {"learner", cyxwiz::RLAlgorithmName(config.algorithm)},
-            {"total_timesteps", sac ? config.sac.total_timesteps : td3 ? config.td3.total_timesteps
-                                                                       : config.ppo.total_timesteps},
+            {"total_timesteps", sac   ? config.sac.total_timesteps
+                                : td3 ? config.td3.total_timesteps
+                                : dqn ? config.dqn.total_timesteps
+                                      : config.ppo.total_timesteps},
             {"target", target},
             {"layers", layers},
             {"device", device},
@@ -191,8 +204,10 @@ int main(int argc, char** argv) {
             {"final_mean_return", Number(last_return)},
             {"steps", rows.empty() ? 0 : rows.back()[0].get<long long>()},
             {"seconds", std::round(seconds * 10.0) / 10.0},
-            {"columns", off_policy ? nlohmann::json{"timesteps", "mean_return", "critic_loss", "actor_loss",
-                                                    "ent_coef", "mean_q", "steps_per_second"}
+            {"columns", dqn ? nlohmann::json{"timesteps", "mean_return", "loss", "exploration_rate", "mean_q",
+                                             "steps_per_second"}
+                        : off_policy ? nlohmann::json{"timesteps", "mean_return", "critic_loss", "actor_loss",
+                                                      "ent_coef", "mean_q", "steps_per_second"}
                             : nlohmann::json{"timesteps", "mean_return", "policy_loss", "value_loss", "approx_kl",
                                              "clip_fraction", "explained_variance", "action_std", "steps_per_second"}},
             {"updates", rows},
@@ -229,8 +244,12 @@ int main(int argc, char** argv) {
         }
         for (const auto& m : run.TakeOffPolicyReports()) {
             compute_path = m.compute_path;
-            rows.push_back({m.timesteps, Number(m.mean_episode_return), Number(m.critic_loss), Number(m.actor_loss),
-                            Number(m.ent_coef), Number(m.mean_q), Number(m.steps_per_second)});
+            if (dqn)
+                rows.push_back({m.timesteps, Number(m.mean_episode_return), Number(m.critic_loss),
+                                Number(m.exploration_rate), Number(m.mean_q), Number(m.steps_per_second)});
+            else
+                rows.push_back({m.timesteps, Number(m.mean_episode_return), Number(m.critic_loss),
+                                Number(m.actor_loss), Number(m.ent_coef), Number(m.mean_q), Number(m.steps_per_second)});
             if (std::isfinite(m.mean_episode_return)) last_return = m.mean_episode_return;
             if (reached < 0 && m.episodes >= 100 && m.mean_episode_return >= target) reached = m.timesteps;
             if (m.report % 50 == 0) {
