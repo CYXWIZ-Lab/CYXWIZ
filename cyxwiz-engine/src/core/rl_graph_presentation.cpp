@@ -18,6 +18,16 @@ std::string Plural(int n, const char* one, const char* many) {
     return std::to_string(n) + " " + (n == 1 ? one : many);
 }
 
+// 8000 as "8,000"
+std::string Grouped(int64_t n) {
+    std::string digits = std::to_string(n < 0 ? -n : n);
+    for (int i = static_cast<int>(digits.size()) - 3; i > 0; i -= 3) digits.insert(static_cast<size_t>(i), ",");
+    return (n < 0 ? "-" : "") + digits;
+}
+
+// A share as a percentage, "4 %" or "2.5 %"
+std::string Percent(double share) { return Number(std::round(share * 1000.0) / 10.0) + " %"; }
+
 }  // namespace
 
 std::vector<EnvironmentChoice> EnvironmentChoices(const std::vector<ListedEnvironment>& environments,
@@ -83,6 +93,14 @@ std::vector<Fact> ValueHeadFacts(size_t features) {
 
 std::vector<Fact> QHeadFacts(size_t features, size_t actions, gui::NodeType learner) {
     std::vector<Fact> facts;
+    const std::string from = features > 0 ? std::to_string(features) + " -> " : std::string();
+    if (learner == gui::NodeType::DQN) {  // SB3 DQN's QNetwork: one value per choice, from the observation
+        facts.push_back({"Output layer", from + (actions > 0 ? std::to_string(actions) + " (added)" : "one per choice (added)") +
+                                             ": one Q value per choice of action, from the observation alone"});
+        facts.push_back({"Networks", "1 Q network and a target copy (built by DQN, moved every Target every steps)"});
+        facts.push_back({"Policy", "the choice with the highest Q value; at random a share of the time while training"});
+        return facts;
+    }
     facts.push_back({"Output layer", (features > 0 ? std::to_string(features) + " -> " : std::string()) + "1 (added)"});
     facts.push_back({"Action", actions > 0 ? "joins the first Q layer's input (" + std::to_string(actions) +
                                                  (actions == 1 ? " value)" : " values)")
@@ -97,6 +115,16 @@ std::vector<Fact> QHeadFacts(size_t features, size_t actions, gui::NodeType lear
 std::string ExplorationNoiseText(bool gaussian, const std::string& std_text) {
     if (!gaussian) return "None: the policy's own actions after the random steps";
     return "Gaussian noise, std " + std_text + " of the action range, after the random steps";
+}
+
+std::string ExplorationScheduleText(float initial_eps, float final_eps, float fraction, int64_t total_timesteps) {
+    if (!(fraction > 0.0f) || initial_eps == final_eps) return "random " + Percent(final_eps) + " of the time";
+    const std::string over =
+        total_timesteps > 0
+            ? Grouped(static_cast<int64_t>(std::llround(static_cast<double>(fraction) * static_cast<double>(total_timesteps)))) +
+                  " steps (" + Percent(fraction) + ")"
+            : Percent(fraction) + " of the run";
+    return "random " + Percent(initial_eps) + " of the time at first, down to " + Percent(final_eps) + " after " + over;
 }
 
 std::string ReplayMemoryText(uint64_t bytes) {
@@ -198,7 +226,8 @@ gui::NodeType LearnerFed(const std::vector<gui::MLNode>& nodes, const std::vecto
     for (const auto& l : links) {
         if (l.from_node != node_id) continue;
         const gui::MLNode* to = FindNode(nodes, l.to_node);
-        if (to && (to->type == gui::NodeType::PPO || to->type == gui::NodeType::SAC || to->type == gui::NodeType::TD3))
+        if (to && (to->type == gui::NodeType::PPO || to->type == gui::NodeType::SAC || to->type == gui::NodeType::TD3 ||
+                   to->type == gui::NodeType::DQN))
             return to->type;
     }
     return gui::NodeType::Unknown;
@@ -281,6 +310,30 @@ std::optional<TunedPreset> TunedTd3Settings(const std::string& environment_id) {
                      {"normalize_observations", "false"}};
         p.layers_note = "RL Zoo trains it with TD3's default layers of 400 and 300 and ReLU in the policy and the Q "
                         "networks; the preset does not change your layers.";
+        return p;
+    }
+    return std::nullopt;
+}
+
+std::optional<TunedPreset> TunedDqnSettings(const std::string& environment_id) {
+    TunedPreset p;
+    if (environment_id == "CartPole-v1") {
+        // RL Zoo dqn.yml CartPole-v1: n_timesteps 5e4, learning_rate 2.3e-3, batch_size 64, buffer_size 100000,
+        // learning_starts 1000, gamma 0.99, target_update_interval 10, train_freq 256, gradient_steps 128,
+        // exploration_fraction 0.16, exploration_final_eps 0.04, net_arch [256, 256]; SB3 defaults otherwise
+        p.source = "RL Zoo (rl-baselines3-zoo) DQN settings for CartPole-v1";
+        p.environment = {{"copies", "1"}};
+        p.learner = {{"total_timesteps", "50000"},         {"buffer_size", "100000"},
+                     {"learning_starts", "1000"},          {"batch_size", "64"},
+                     {"learning_rate", "0.0023"},          {"gamma", "0.99"},
+                     {"train_freq", "256"},                {"gradient_steps", "128"},
+                     {"target_update_interval", "10"},     {"tau", "1.0"},
+                     {"max_grad_norm", "10"},              {"exploration_initial_eps", "1.0"},
+                     {"exploration_final_eps", "0.04"},    {"exploration_fraction", "0.16"},
+                     {"stop_at_return", "true"},           {"target_return", "475"},
+                     {"normalize_observations", "false"}};
+        p.layers_note = "RL Zoo trains it with Q layers of 256 and 256 and ReLU; the preset does not change your "
+                        "layers.";
         return p;
     }
     return std::nullopt;

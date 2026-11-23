@@ -30,6 +30,10 @@ bool RLTrainingRun::Start(std::shared_ptr<const RLTrainingConfiguration> config,
         error = "The graph is not a compiled RL graph.";
         return false;
     }
+    if (config->algorithm == RLAlgorithm::DQN) {
+        error = "DQN compiles, but the Engine cannot train it yet.";
+        return false;
+    }
     if (worker_.joinable()) worker_.join();
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -377,7 +381,7 @@ void RLTrainingRun::Run() {
         ~Counted() { --active_runs; }
     } counted;
     const auto& c = *config_;
-    const bool off_policy = UsesQNetworks(c.algorithm);
+    const bool off_policy = IsOffPolicy(c.algorithm);
     const char* learner = Learner();
     bool traced = false;
     const auto fail = [this, &traced, learner](const std::string& why) {

@@ -305,6 +305,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::PPO:
             case NodeType::SAC:
             case NodeType::TD3:
+            case NodeType::DQN:
                 return ICON_TI_SCAN;
 
             // Smart I/O Nodes
@@ -746,6 +747,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::PPO:
             case NodeType::SAC:
             case NodeType::TD3:
+            case NodeType::DQN:
                 return ICON_RI_SEARCH;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -1107,6 +1109,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::PPO:
             case NodeType::SAC:
             case NodeType::TD3:
+            case NodeType::DQN:
                 return ICON_LU_SEARCH;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -1436,6 +1439,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::PPO:
             case NodeType::SAC:
             case NodeType::TD3:
+            case NodeType::DQN:
                 return ICON_IO_SEARCH;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -1765,6 +1769,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::PPO:
             case NodeType::SAC:
             case NodeType::TD3:
+            case NodeType::DQN:
                 return ICON_PH_MAGNIFYING_GLASS;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -2103,6 +2108,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
         case NodeType::PPO:
         case NodeType::SAC:
         case NodeType::TD3:
+        case NodeType::DQN:
             return ICON_FA_CROSSHAIRS;
 
         // Smart I/O Nodes

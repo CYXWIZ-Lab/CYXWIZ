@@ -53,7 +53,7 @@ struct TrainedPolicy {
     int device_id = 0;
     bool IsSac() const { return config.algorithm == RLAlgorithm::SAC; }
     bool IsTd3() const { return config.algorithm == RLAlgorithm::TD3; }
-    bool IsOffPolicy() const { return UsesQNetworks(config.algorithm); }
+    bool IsOffPolicy() const { return cyxwiz::IsOffPolicy(config.algorithm); }
     // Steps trained and the last mean return of 100 episodes
     int64_t steps = 0;
     float mean_return = std::numeric_limits<float>::quiet_NaN();

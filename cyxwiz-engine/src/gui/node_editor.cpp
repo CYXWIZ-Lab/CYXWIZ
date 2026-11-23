@@ -2267,7 +2267,8 @@ void NodeEditor::RenderNodes() {
             }
             case NodeType::PPO:
             case NodeType::SAC:  // TOFIX216
-            case NodeType::TD3: {
+            case NodeType::TD3:
+            case NodeType::DQN: {
                 const auto steps = node.parameters.find("total_timesteps");
                 if (steps != node.parameters.end()) ImGui::TextColored(t.accent_text, "%s steps", steps->second.c_str());
                 break;
@@ -4298,6 +4299,8 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
                 info.reference = rl::FindSacReference(rl::ReadReferenceFile("sac_sb3_curves.json"), c.environment.id,
                                                       c.copies, c.sac);
                 break;
+            case cyxwiz::RLAlgorithm::DQN:  // no recorded DQN curves yet
+                break;
             case cyxwiz::RLAlgorithm::PPO:
                 info.reference = rl::FindPpoReference(rl::ReadReferenceFile("ppo_sb3_curves.json"), c.environment.id,
                                                       c.copies, c.ppo);
@@ -4329,7 +4332,7 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
         rl_watch_every_ = every_updates;
     };
     controls.watch_now = [this]() { rl_watch_->TakeNow(); };
-    const bool by_steps = cyxwiz::UsesQNetworks(c.algorithm);  // SAC and TD3 report by steps
+    const bool by_steps = cyxwiz::IsOffPolicy(c.algorithm);  // SAC, TD3 and DQN report by steps
     controls.watch_view = [this, view_title, by_steps]() {
         cyxwiz::TrainingDashboardPanel::RunControls::WatchView view;
         if (view_title.empty()) {
@@ -4366,11 +4369,10 @@ void NodeEditor::PollRLTraining() {
     if (!rl_run_ || !rl_dashboard_) return;
     const auto* config = rl_run_->Config();
     const std::string learner = config ? cyxwiz::RLAlgorithmName(config->algorithm) : "PPO";
-    // The dashboard's note on small networks: the policy's and the second network's (PPO value, SAC/TD3 Q)
+    // The dashboard's note on small networks: the learner's two networks' widths
     const auto note = [&]() {
-        const auto& second = cyxwiz::UsesQNetworks(config->algorithm) ? config->q_layers : config->value_layers;
-        return cyxwiz::rl_device::DashboardNote(rl_run_device_, cyxwiz::HiddenUnits(config->policy_layers),
-                                                cyxwiz::HiddenUnits(second), rl_compute_path_);
+        const auto [first, second] = cyxwiz::RLNetworkUnits(*config);
+        return cyxwiz::rl_device::DashboardNote(rl_run_device_, first, second, rl_compute_path_);
     };
     // Another training run holds the GPU: the run waits and says so (TOFIX206 3.2 E)
     if (!rl_device_shown_) {

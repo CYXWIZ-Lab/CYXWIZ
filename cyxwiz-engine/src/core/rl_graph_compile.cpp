@@ -49,6 +49,19 @@ std::vector<int> HiddenUnits(const std::vector<CompiledLayer>& layers) {
     return units;
 }
 
+std::pair<std::vector<int>, std::vector<int>> RLNetworkUnits(const RLTrainingConfiguration& c) {
+    switch (c.algorithm) {
+        case RLAlgorithm::SAC:
+        case RLAlgorithm::TD3:
+            return {HiddenUnits(c.policy_layers), HiddenUnits(c.q_layers)};
+        case RLAlgorithm::DQN:
+            return {HiddenUnits(c.q_layers), HiddenUnits(c.q_layers)};
+        case RLAlgorithm::PPO:
+            break;
+    }
+    return {HiddenUnits(c.policy_layers), HiddenUnits(c.value_layers)};
+}
+
 namespace {
 
 // A network's chain as an MLP request (the hidden layers, then its output
@@ -103,39 +116,74 @@ const char* RLAlgorithmName(RLAlgorithm algorithm) {
             return "SAC";
         case RLAlgorithm::TD3:
             return "TD3";
+        case RLAlgorithm::DQN:
+            return "DQN";
         case RLAlgorithm::PPO:
             break;
     }
     return "PPO";
 }
 
-bool UsesQNetworks(RLAlgorithm algorithm) { return algorithm == RLAlgorithm::SAC || algorithm == RLAlgorithm::TD3; }
+bool UsesTwinQ(RLAlgorithm algorithm) { return algorithm == RLAlgorithm::SAC || algorithm == RLAlgorithm::TD3; }
+
+bool IsOffPolicy(RLAlgorithm algorithm) { return algorithm != RLAlgorithm::PPO; }
 
 uint64_t RLSeed(const RLTrainingConfiguration& c) {
-    return c.algorithm == RLAlgorithm::SAC ? c.sac.seed : c.algorithm == RLAlgorithm::TD3 ? c.td3.seed : c.ppo.seed;
+    switch (c.algorithm) {
+        case RLAlgorithm::SAC:
+            return c.sac.seed;
+        case RLAlgorithm::TD3:
+            return c.td3.seed;
+        case RLAlgorithm::DQN:
+            return c.dqn.seed;
+        case RLAlgorithm::PPO:
+            break;
+    }
+    return c.ppo.seed;
 }
+
+namespace {
+
+// The minibatch of a gradient step (PPO's minibatch, the off-policy learners' batch)
+int RLBatchSize(const RLTrainingConfiguration& c) {
+    switch (c.algorithm) {
+        case RLAlgorithm::SAC:
+            return c.sac.batch_size;
+        case RLAlgorithm::TD3:
+            return c.td3.batch_size;
+        case RLAlgorithm::DQN:
+            return c.dqn.batch_size;
+        case RLAlgorithm::PPO:
+            break;
+    }
+    return c.ppo.batch_size;
+}
+
+}  // namespace
 
 bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType platform, int device_id) {
     if (platform == DeviceType::CPU) return false;
     const bool sac = config.algorithm == RLAlgorithm::SAC;
-    const bool q = UsesQNetworks(config.algorithm);
     const size_t observations = std::max<size_t>(config.observation_size, 1);
     const size_t actions = std::max<size_t>(config.policy_outputs, 1);
     // PPO: the policy (logits or means) and the value network. SAC: the actor
     // (mean and log std per action); TD3: the actor (one action each); both
     // with the Q network on [observation | action] (its twin and the targets
-    // are the same chain).
+    // are the same chain). DQN: the Q network, one value per choice (its
+    // target the same chain).
     struct Network {
         const std::vector<CompiledLayer>* layers;
         size_t inputs, outputs;
     };
-    const Network networks[] = {
-        {&config.policy_layers, observations, sac ? 2 * actions : actions},
-        q ? Network{&config.q_layers, observations + actions, 1} : Network{&config.value_layers, observations, 1},
-    };
-    const int batch = config.algorithm == RLAlgorithm::SAC   ? config.sac.batch_size
-                      : config.algorithm == RLAlgorithm::TD3 ? config.td3.batch_size
-                                                             : config.ppo.batch_size;
+    std::vector<Network> networks;
+    if (config.algorithm == RLAlgorithm::DQN) {
+        networks.push_back({&config.q_layers, observations, actions});
+    } else {
+        networks.push_back({&config.policy_layers, observations, sac ? 2 * actions : actions});
+        networks.push_back(UsesTwinQ(config.algorithm) ? Network{&config.q_layers, observations + actions, 1}
+                                                       : Network{&config.value_layers, observations, 1});
+    }
+    const int batch = RLBatchSize(config);
     for (const auto& n : networks) {
         NeuralOpRequest r;
         r.op = NeuralOp::MlpForward;
@@ -158,7 +206,7 @@ bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType pla
 bool IsRLGraphNode(gui::NodeType type) {
     return type == gui::NodeType::RLEnvironment || type == gui::NodeType::PolicyHead ||
            type == gui::NodeType::ValueHead || type == gui::NodeType::PPO || type == gui::NodeType::QHead ||
-           type == gui::NodeType::SAC || type == gui::NodeType::TD3;
+           type == gui::NodeType::SAC || type == gui::NodeType::TD3 || type == gui::NodeType::DQN;
 }
 
 TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vector<gui::MLNode>& nodes,
@@ -180,10 +228,11 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
         issue(IssueLevel::Error, message, node, code);
     };
 
-    // ---- One learner (PPO, SAC or TD3), and nothing of a supervised graph
+    // ---- One learner (PPO, SAC, TD3 or DQN), and nothing of a supervised graph
     std::vector<const gui::MLNode*> learners;
     for (const auto& n : nodes) {
-        if (n.type == gui::NodeType::PPO || n.type == gui::NodeType::SAC || n.type == gui::NodeType::TD3)
+        if (n.type == gui::NodeType::PPO || n.type == gui::NodeType::SAC || n.type == gui::NodeType::TD3 ||
+            n.type == gui::NodeType::DQN)
             learners.push_back(&n);
         else if (n.type == gui::NodeType::DataInput || n.type == gui::NodeType::DatasetInput ||
                  std::any_of(n.outputs.begin(), n.outputs.end(), [](const gui::NodePin& pin) {
@@ -195,21 +244,25 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
     }
     if (learners.size() != 1) {
         error(learners.empty() ? "A reinforcement learning graph needs a learner: a PPO node (connect its Policy, "
-                                 "Environment and Value), or a SAC or TD3 node (Policy, Environment and Q)"
-                               : "A graph trains one policy: keep one PPO, SAC or TD3 node",
+                                 "Environment and Value), a SAC or TD3 node (Policy, Environment and Q) or a DQN "
+                                 "node (Q and Environment)"
+                               : "A graph trains one policy: keep one PPO, SAC, TD3 or DQN node",
               learners.empty() ? nullptr : learners[1], errors::Compiler::MissingTrainingPathNode);
     }
     const gui::MLNode* learner = learners.empty() ? nullptr : learners[0];
     rl->algorithm = !learner                                ? RLAlgorithm::PPO
                     : learner->type == gui::NodeType::SAC ? RLAlgorithm::SAC
                     : learner->type == gui::NodeType::TD3 ? RLAlgorithm::TD3
+                    : learner->type == gui::NodeType::DQN ? RLAlgorithm::DQN
                                                           : RLAlgorithm::PPO;
     const bool sac = rl->algorithm == RLAlgorithm::SAC;
     const bool td3 = rl->algorithm == RLAlgorithm::TD3;
-    const bool q_networks = UsesQNetworks(rl->algorithm);
+    const bool dqn = rl->algorithm == RLAlgorithm::DQN;
+    const bool twin_q = UsesTwinQ(rl->algorithm);
     const std::string learner_name = RLAlgorithmName(rl->algorithm);
 
-    // ---- The learner's three inputs: Policy, Environment, then Value (PPO) or Q (SAC, TD3)
+    // ---- The learner's inputs: Policy, Environment, then Value (PPO) or Q (SAC,
+    // TD3); DQN's Q, then Environment
     const gui::MLNode* env = nullptr;
     const gui::MLNode* policy_head = nullptr;
     const gui::MLNode* value_head = nullptr;
@@ -226,10 +279,15 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
             }
             return n;
         };
-        policy_head = from(0, gui::NodeType::PolicyHead, "a Policy Head");
-        env = from(1, gui::NodeType::RLEnvironment, "an Environment's Environment pin");
-        if (q_networks) q_head = from(2, gui::NodeType::QHead, "a Q Head");
-        else value_head = from(2, gui::NodeType::ValueHead, "a Value Head");
+        if (dqn) {
+            q_head = from(0, gui::NodeType::QHead, "a Q Head");
+            env = from(1, gui::NodeType::RLEnvironment, "an Environment's Environment pin");
+        } else {
+            policy_head = from(0, gui::NodeType::PolicyHead, "a Policy Head");
+            env = from(1, gui::NodeType::RLEnvironment, "an Environment's Environment pin");
+            if (twin_q) q_head = from(2, gui::NodeType::QHead, "a Q Head");
+            else value_head = from(2, gui::NodeType::ValueHead, "a Value Head");
+        }
         const gui::NodeLink* env_link = LinkInto(links, *learner, 1);
         if (env && env_link && env->outputs.size() > 1 && env_link->from_pin != env->outputs[1].id) {
             error(learner_name + "'s Environment takes the Environment's Environment pin, not its Observation",
@@ -265,9 +323,14 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
                       : id + " comes from the plugin " + provider + ", which is not loaded: load it in Plugin Manager",
                   env, errors::Compiler::MissingTrainingPathNode);
             env = nullptr;
-        } else if (q_networks && rl->environment.discrete_actions) {
+        } else if (twin_q && rl->environment.discrete_actions) {
             error(learner_name + " learns continuous actions, and " + rl->environment.id +
-                      " has a choice of actions: train it with PPO",
+                      " has a choice of actions: train it with PPO or DQN",
+                  learner, errors::Compiler::UnsupportedTrainingNode);
+            env = nullptr;
+        } else if (dqn && !rl->environment.discrete_actions) {
+            error("DQN chooses among actions, and " + rl->environment.id +
+                      " has continuous actions: train it with SAC, TD3 or PPO",
                   learner, errors::Compiler::UnsupportedTrainingNode);
             env = nullptr;
         } else {
@@ -330,7 +393,7 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
     chain(policy_head, rl->policy_layers);
     chain(value_head, rl->value_layers);
     chain(q_head, rl->q_layers);
-    if (q_head && !rl->q_layers.empty() && rl->q_layers.front().type != gui::NodeType::Dense)
+    if (q_head && twin_q && !rl->q_layers.empty() && rl->q_layers.front().type != gui::NodeType::Dense)
         error("Start the Q layers with a Dense: the action joins the observation at its input", q_head);
 
     // ---- The learner's settings
@@ -421,6 +484,47 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
         if ((c.action_noise && !(c.action_noise_std > 0.0f)) || !(c.target_policy_noise >= 0.0f) ||
             !(c.target_noise_clip >= 0.0f))
             error("The noise std must be above 0, the target smoothing noise and its clip at least 0", learner,
+                  errors::Compiler::InvalidParameter);
+        if (c.batch_size >= 1 && c.buffer_size >= 1 && c.batch_size > c.buffer_size)
+            error("Batch size " + std::to_string(c.batch_size) + " is larger than the replay buffer (" +
+                      std::to_string(c.buffer_size) + " steps). Lower it, or raise Buffer size",
+                  learner, errors::Compiler::InvalidParameter);
+    }
+    if (learner && dqn) {
+        auto& c = rl->dqn;
+        if (number("total_timesteps", "1000000", v)) c.total_timesteps = static_cast<int64_t>(count(v, 1e15));
+        if (number("buffer_size", "1000000", v)) c.buffer_size = static_cast<int64_t>(count(v, 1e15));
+        if (number("learning_starts", "100", v)) c.learning_starts = static_cast<int64_t>(count(v, 1e15));
+        if (number("batch_size", "32", v)) c.batch_size = static_cast<int>(count(v, 1e9));
+        if (number("learning_rate", "0.0001", v)) c.learning_rate = static_cast<float>(v);
+        if (number("gamma", "0.99", v)) c.gamma = static_cast<float>(v);
+        if (number("tau", "1.0", v)) c.tau = static_cast<float>(v);
+        if (number("train_freq", "4", v)) c.train_freq = static_cast<int>(count(v, 1e9));
+        if (number("gradient_steps", "1", v)) c.gradient_steps = static_cast<int>(count(v, 1e9));
+        if (number("target_update_interval", "10000", v))
+            c.target_update_interval = static_cast<int64_t>(count(v, 1e15));
+        if (number("exploration_fraction", "0.1", v)) c.exploration_fraction = static_cast<float>(v);
+        if (number("exploration_initial_eps", "1.0", v)) c.exploration_initial_eps = static_cast<float>(v);
+        if (number("exploration_final_eps", "0.05", v)) c.exploration_final_eps = static_cast<float>(v);
+        if (number("max_grad_norm", "10", v)) c.max_grad_norm = static_cast<float>(v);
+        if (number("seed", "1", v)) c.seed = static_cast<uint64_t>(std::max(v, 0.0));
+        c.normalize_observations = Param(*learner, "normalize_observations", "false") == "true";
+        if (Param(*learner, "stop_at_return", "false") == "true" && number("target_return", "475", v))
+            c.target_return = static_cast<float>(v);
+        if (c.total_timesteps < 1 || c.buffer_size < 1 || c.learning_starts < 0 || c.batch_size < 1 ||
+            c.train_freq < 1 || c.gradient_steps < 1 || c.target_update_interval < 1)
+            error("Total steps, buffer size, batch size, train every, gradient steps and target every must each be "
+                  "at least 1, and the random steps first at least 0",
+                  learner, errors::Compiler::InvalidParameter);
+        if (!(c.learning_rate > 0.0f) || !(c.max_grad_norm > 0.0f))
+            error("The learning rate and the largest gradient norm must each be above 0", learner,
+                  errors::Compiler::InvalidParameter);
+        if (!(c.gamma > 0.0f && c.gamma <= 1.0f) || !(c.tau > 0.0f && c.tau <= 1.0f))
+            error("The discount and the target update must each be in (0, 1]", learner,
+                  errors::Compiler::InvalidParameter);
+        const auto share = [](float x) { return x >= 0.0f && x <= 1.0f; };
+        if (!share(c.exploration_fraction) || !share(c.exploration_initial_eps) || !share(c.exploration_final_eps))
+            error("The exploration's start, end and share of the run must each be from 0 to 1", learner,
                   errors::Compiler::InvalidParameter);
         if (c.batch_size >= 1 && c.buffer_size >= 1 && c.batch_size > c.buffer_size)
             error("Batch size " + std::to_string(c.batch_size) + " is larger than the replay buffer (" +

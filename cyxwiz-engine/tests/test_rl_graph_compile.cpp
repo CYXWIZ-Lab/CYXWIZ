@@ -602,7 +602,7 @@ void CheckSac() {
         g.At(id.env).parameters["environment"] = pendulum_key;
         g.Add(NodeType::PPO, "PPO");
         const auto config = Compile(g);
-        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "keep one PPO, SAC or TD3 node"),
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "keep one PPO, SAC, TD3 or DQN node"),
               "two learners are refused:" + Issues(config));
     }
 
@@ -669,8 +669,8 @@ void CheckTd3() {
                   rl.policy_layers.size() == 4 && rl.policy_outputs == 1 && rl.learner_node_id == id.ppo &&
                   rl.q_head_node_id == id.vhead,
               "TD3: a policy chain, a Q chain, no value chain, 1 action");
-        Check(std::string(cyxwiz::RLAlgorithmName(rl.algorithm)) == "TD3" && cyxwiz::UsesQNetworks(rl.algorithm) &&
-                  !cyxwiz::UsesQNetworks(cyxwiz::RLAlgorithm::PPO),
+        Check(std::string(cyxwiz::RLAlgorithmName(rl.algorithm)) == "TD3" && cyxwiz::UsesTwinQ(rl.algorithm) &&
+                  !cyxwiz::UsesTwinQ(cyxwiz::RLAlgorithm::PPO),
               "TD3 is named and trains Q networks");
         const auto& c = rl.td3;
         Check(c.total_timesteps == 1000000 && c.buffer_size == 1000000 && c.learning_starts == 100 &&
@@ -734,7 +734,7 @@ void CheckTd3() {
         g.At(id.env).parameters["environment"] = pendulum_key;
         g.Add(NodeType::SAC, "SAC");
         const auto config = Compile(g);
-        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "keep one PPO, SAC or TD3 node"),
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "keep one PPO, SAC, TD3 or DQN node"),
               "TD3 beside SAC is refused:" + Issues(config));
     }
 
@@ -780,6 +780,148 @@ void CheckTd3() {
     Check(gui::ResolveNodeTypeImportName("TD3") == NodeType::TD3, "a saved graph names the node TD3");
 }
 
+// DQN (TOFIX216 DQN V1): a Q Head and the Environment into DQN, one Q value
+// per choice, SB3's settings and defaults
+void CheckDqn() {
+    using namespace cyxwiz::rl_graph;
+    const std::string pendulum_key = "test.continuous:InvertedPendulum-v5";
+    Ids id{};
+    {
+        Graph g = DqnPattern(id);  // CartPole: 2 choices
+        Check(cyxwiz::HasTrainingGraphStructure(g.nodes), "the toolbar sees a DQN graph as a training graph");
+        const auto config = Compile(g);
+        Check(config.is_valid && config.rl, "the DQN pattern compiles:" + Issues(config));
+        if (!config.rl) return;
+        const auto& rl = *config.rl;
+        Check(rl.algorithm == cyxwiz::RLAlgorithm::DQN && rl.q_layers.size() == 4 && rl.policy_layers.empty() &&
+                  rl.value_layers.empty() && rl.policy_outputs == 2 && rl.learner_node_id == id.ppo &&
+                  rl.q_head_node_id == id.vhead && rl.policy_head_node_id == -1,
+              "DQN: a Q chain only, one value for each of the 2 choices");
+        Check(std::string(cyxwiz::RLAlgorithmName(rl.algorithm)) == "DQN" && !cyxwiz::UsesTwinQ(rl.algorithm) &&
+                  cyxwiz::IsOffPolicy(rl.algorithm) && cyxwiz::IsOffPolicy(cyxwiz::RLAlgorithm::TD3) &&
+                  !cyxwiz::IsOffPolicy(cyxwiz::RLAlgorithm::PPO) && cyxwiz::RLSeed(rl) == 1,
+              "DQN is named, off-policy, without twin Q networks");
+        const auto& c = rl.dqn;
+        Check(c.total_timesteps == 1000000 && c.buffer_size == 1000000 && c.learning_starts == 100 &&
+                  c.batch_size == 32 && c.learning_rate == 1e-4f && c.gamma == 0.99f && c.tau == 1.0f &&
+                  c.train_freq == 4 && c.gradient_steps == 1 && c.target_update_interval == 10000 &&
+                  c.exploration_fraction == 0.1f && c.exploration_initial_eps == 1.0f &&
+                  c.exploration_final_eps == 0.05f && c.max_grad_norm == 10.0f && !c.normalize_observations &&
+                  std::isnan(c.target_return),
+              "DQN's defaults are Stable-Baselines3's");
+        const auto [first, second] = cyxwiz::RLNetworkUnits(rl);
+        Check(first == std::vector<int>{64, 64} && second == first, "DQN's networks for the device notes: Q and target");
+        Check(!cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CPU, 0), "DQN: no fused kernels on the CPU");
+        const bool cuda_provider =
+            !cyxwiz::NeuralProviderRegistry::Instance().ListServing({cyxwiz::DeviceType::CUDA, 0}).empty();
+        Check(cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CUDA, 0) == cuda_provider,
+              "DQN's Q network is expected fused on CUDA exactly when a provider serves CUDA");
+
+        g.At(id.ppo).parameters["exploration_fraction"] = "0.16";
+        g.At(id.ppo).parameters["exploration_final_eps"] = "0.04";
+        g.At(id.ppo).parameters["target_update_interval"] = "10";
+        g.At(id.ppo).parameters["max_grad_norm"] = "5";
+        g.At(id.ppo).parameters["tau"] = "0.5";
+        g.At(id.ppo).parameters["stop_at_return"] = "true";
+        const auto typed = Compile(g);
+        Check(typed.rl && typed.rl->dqn.exploration_fraction == 0.16f && typed.rl->dqn.exploration_final_eps == 0.04f &&
+                  typed.rl->dqn.target_update_interval == 10 && typed.rl->dqn.max_grad_norm == 5.0f &&
+                  typed.rl->dqn.tau == 0.5f && typed.rl->dqn.target_return == 475.0f,
+              "the exploration, the target, the clip and the target return 475 are read:" + Issues(typed));
+    }
+    {
+        Graph g = DqnPattern(id);
+        g.At(id.env).parameters["environment"] = pendulum_key;
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error,
+                                           "DQN chooses among actions, and InvertedPendulum-v5 has continuous actions"),
+              "DQN on continuous actions is refused:" + Issues(config));
+    }
+    {
+        Graph g = Pattern(id, 64, NodeType::ReLU, NodeType::SAC);  // CartPole
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "train it with PPO or DQN"),
+              "SAC on a choice of actions points to PPO or DQN:" + Issues(config));
+    }
+    {
+        Graph g = DqnPattern(id);
+        g.Unlink(id.vhead, id.ppo);
+        g.Unlink(id.va2, id.vhead);
+        const int policy = g.Add(NodeType::PolicyHead, "Policy Head");
+        g.Link(id.va2, policy);
+        g.Link(policy, id.ppo, 0, 0);
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "Connect a Q Head to DQN's Q"),
+              "a Policy Head into DQN's Q is refused:" + Issues(config));
+    }
+    {
+        Graph g = DqnPattern(id);  // a Q network may start with any allowed layer: no action joins it
+        g.Unlink(id.env, id.v1);
+        const int norm = g.Add(NodeType::LayerNorm, "Layer Norm");
+        g.Link(id.env, norm);
+        g.Link(norm, id.v1);
+        const auto config = Compile(g);
+        Check(config.is_valid, "DQN's Q layers may start with a Layer Norm:" + Issues(config));
+    }
+    {
+        Graph g = DqnPattern(id);
+        g.At(id.ppo).parameters["target_update_interval"] = "0";
+        g.At(id.ppo).parameters["exploration_final_eps"] = "1.5";
+        g.At(id.ppo).parameters["max_grad_norm"] = "0";
+        g.At(id.ppo).parameters["buffer_size"] = "10";
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "target every must each be at least 1") &&
+                  HasIssue(config, cyxwiz::IssueLevel::Error, "must each be from 0 to 1") &&
+                  HasIssue(config, cyxwiz::IssueLevel::Error, "largest gradient norm must each be above 0") &&
+                  HasIssue(config, cyxwiz::IssueLevel::Error,
+                           "Batch size 32 is larger than the replay buffer (10 steps)"),
+              "a target interval of 0, an end above 1, a clip of 0 and a batch past the buffer are refused:" +
+                  Issues(config));
+    }
+    {
+        Graph g = DqnPattern(id);
+        g.Add(NodeType::PPO, "PPO");
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "keep one PPO, SAC, TD3 or DQN node"),
+              "DQN beside PPO is refused:" + Issues(config));
+    }
+
+    // Presentation
+    {
+        Graph g = DqnPattern(id, 256);
+        Check(LearnerFed(g.nodes, g.links, id.vhead) == NodeType::DQN, "the Q Head knows it feeds DQN");
+    }
+    const auto q = QHeadFacts(256, 2, NodeType::DQN);
+    Check(q.size() == 3 &&
+              q[0].value == "256 -> 2 (added): one Q value per choice of action, from the observation alone" &&
+              q[1].value == "1 Q network and a target copy (built by DQN, moved every Target every steps)",
+          "the Q Head under DQN gives one value per choice");
+    Check(ExplorationScheduleText(1.0f, 0.04f, 0.16f, 50000) ==
+                  "random 100 % of the time at first, down to 4 % after 8,000 steps (16 %)" &&
+              ExplorationScheduleText(1.0f, 0.05f, 0.1f, 1000000) ==
+                  "random 100 % of the time at first, down to 5 % after 100,000 steps (10 %)" &&
+              ExplorationScheduleText(1.0f, 0.025f, 0.1f, 0) ==
+                  "random 100 % of the time at first, down to 2.5 % after 10 % of the run" &&
+              ExplorationScheduleText(0.1f, 0.1f, 0.5f, 1000) == "random 10 % of the time" &&
+              ExplorationScheduleText(1.0f, 0.05f, 0.0f, 1000) == "random 5 % of the time",
+          "DQN's exploration reads as its epsilon schedule");
+    const auto preset = TunedDqnSettings("CartPole-v1");
+    Check(preset && preset->learner.at("total_timesteps") == "50000" && preset->learner.at("learning_rate") == "0.0023" &&
+              preset->learner.at("train_freq") == "256" && preset->learner.at("gradient_steps") == "128" &&
+              preset->learner.at("exploration_final_eps") == "0.04" && preset->environment.at("copies") == "1" &&
+              !TunedDqnSettings("HalfCheetah-v5"),
+          "DQN is tuned for CartPole (RL Zoo's)");
+    if (preset) {
+        Graph g = DqnPattern(id, 256);
+        for (const auto& [k, v] : preset->learner) g.At(id.ppo).parameters[k] = v;
+        const auto config = Compile(g);
+        Check(config.rl && config.rl->dqn.total_timesteps == 50000 && config.rl->dqn.batch_size == 64 &&
+                  config.rl->dqn.target_update_interval == 10 && config.rl->dqn.target_return == 475.0f,
+              "the CartPole preset's values compile:" + Issues(config));
+    }
+    Check(gui::ResolveNodeTypeImportName("DQN") == NodeType::DQN, "a saved graph names the node DQN");
+}
+
 }  // namespace
 
 int main() {
@@ -805,6 +947,7 @@ int main() {
     CheckTd3Reference();
     CheckSac();
     CheckTd3();
+    CheckDqn();
     CheckExamples();
     if (failures == 0) std::printf("test_rl_graph_compile: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -2,7 +2,7 @@
 
 // The PPO (MLP 64-64) pattern built node by node, for the RL graph tests
 // (TOFIX195 S4.3); with SAC or TD3 as the learner, the second branch ends in a
-// Q Head (TOFIX216).
+// Q Head (TOFIX216). DqnPattern: the DQN (MLP 64-64) pattern, a Q branch only.
 
 #include "../src/core/graph_node_factory.h"
 
@@ -75,6 +75,32 @@ inline Graph Pattern(Ids& id, int units = 64, gui::NodeType activation = gui::No
     g.Link(id.phead, id.ppo, 0, 0);
     g.Link(id.env, id.ppo, 1, 1);
     g.Link(id.vhead, id.ppo, 0, 2);
+    return g;
+}
+
+// The DQN pattern: Environment -> two hidden layers -> Q Head -> DQN's Q, and
+// the Environment pin -> DQN's Environment. Ids: the v* the Q branch, vhead the
+// Q Head, ppo the DQN node; the policy ids are -1.
+inline Graph DqnPattern(Ids& id, int units = 64, gui::NodeType activation = gui::NodeType::ReLU) {
+    using gui::NodeType;
+    Graph g;
+    id = Ids{};
+    id.p1 = id.pa1 = id.p2 = id.pa2 = id.phead = -1;
+    id.env = g.Add(NodeType::RLEnvironment, "Environment");
+    id.v1 = g.Add(NodeType::Dense, "Q Dense 1");
+    id.va1 = g.Add(activation, "Q Activation 1");
+    id.v2 = g.Add(NodeType::Dense, "Q Dense 2");
+    id.va2 = g.Add(activation, "Q Activation 2");
+    id.vhead = g.Add(NodeType::QHead, "Q Head");
+    id.ppo = g.Add(NodeType::DQN, "DQN");
+    for (int d : {id.v1, id.v2}) g.At(d).parameters["units"] = std::to_string(units);
+    g.Link(id.env, id.v1);
+    g.Link(id.v1, id.va1);
+    g.Link(id.va1, id.v2);
+    g.Link(id.v2, id.va2);
+    g.Link(id.va2, id.vhead);
+    g.Link(id.vhead, id.ppo, 0, 0);
+    g.Link(id.env, id.ppo, 1, 1);
     return g;
 }
 

@@ -460,9 +460,13 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
         return;
     }
     if (node.type == NodeType::QHead) {
-        const size_t actions = known && !env.info.discrete_actions ? static_cast<size_t>(env.info.action_size) : 0;
-        FactRows(cyxwiz::rl_graph::QHeadFacts(cyxwiz::rl_graph::UpstreamUnits(nodes, links, node.id), actions,
-                                              cyxwiz::rl_graph::LearnerFed(nodes, links, node.id)));
+        // The actions SAC's and TD3's Q networks take; the choices DQN's gives a value each
+        const NodeType learner = cyxwiz::rl_graph::LearnerFed(nodes, links, node.id);
+        const bool dqn = learner == NodeType::DQN;
+        const size_t actions = !known || env.info.discrete_actions != dqn
+                                   ? 0
+                                   : static_cast<size_t>(std::max(dqn ? env.info.action_count : env.info.action_size, 0));
+        FactRows(cyxwiz::rl_graph::QHeadFacts(cyxwiz::rl_graph::UpstreamUnits(nodes, links, node.id), actions, learner));
         return;
     }
     if (!known) {
@@ -479,18 +483,21 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
     }
     const bool sac = node.type == NodeType::SAC;
     const bool td3 = node.type == NodeType::TD3;
-    if (sac || td3) {
-        // SAC, TD3: what the replay buffer takes on the training device (TOFIX216)
+    const bool dqn = node.type == NodeType::DQN;
+    if (sac || td3 || dqn) {
+        // SAC, TD3, DQN: what the replay buffer takes on the training device
+        // (TOFIX216); DQN keeps each step's choice as one value
+        const bool fits_learner = env.info.discrete_actions == dqn;
         long long buffer = 0;
         try {
             buffer = std::stoll(ParamOr(node, "buffer_size", "1000000"));
         } catch (...) {
             buffer = 0;
         }
-        if (buffer > 0 && !env.info.discrete_actions) {
+        if (buffer > 0 && fits_learner) {
             const uint64_t bytes =
                 cyxwiz::rl::ReplayBytes(buffer, static_cast<size_t>(std::max(env.info.observation_size, 0)),
-                                        static_cast<size_t>(std::max(env.info.action_size, 0)));
+                                        dqn ? 1 : static_cast<size_t>(std::max(env.info.action_size, 0)));
             const TrainingDeviceMemory device = SelectedTrainingDeviceMemory();
             const auto fit = cyxwiz::rl_graph::ReplayFitText(bytes, device.name, device.bytes);
             FactRows({{"Replay buffer", fit.text}});
@@ -503,11 +510,27 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
             FactRows({{"Exploration", cyxwiz::rl_graph::ExplorationNoiseText(
                                           ParamOr(node, "action_noise", "normal") != "none",
                                           ParamOr(node, "action_noise_std", "0.1"))}});
-        if (env.info.discrete_actions)
-            properties_rows::Note(sac ? "SAC learns continuous actions; this environment has a choice of actions: "
-                                        "train it with PPO."
-                                      : "TD3 learns continuous actions; this environment has a choice of actions: "
-                                        "train it with PPO.");
+        if (dqn && fits_learner) {
+            const auto number = [&node](const char* key, const char* fallback) {
+                try {
+                    return std::stod(ParamOr(node, key, fallback));
+                } catch (...) {
+                    return std::nan("");
+                }
+            };
+            FactRows({{"Exploration", cyxwiz::rl_graph::ExplorationScheduleText(
+                                          static_cast<float>(number("exploration_initial_eps", "1.0")),
+                                          static_cast<float>(number("exploration_final_eps", "0.05")),
+                                          static_cast<float>(number("exploration_fraction", "0.1")),
+                                          static_cast<int64_t>(std::max(number("total_timesteps", "1000000"), 0.0)))}});
+        }
+        if (!fits_learner)
+            properties_rows::Note(sac   ? "SAC learns continuous actions; this environment has a choice of actions: "
+                                          "train it with PPO or DQN."
+                                  : td3 ? "TD3 learns continuous actions; this environment has a choice of actions: "
+                                          "train it with PPO or DQN."
+                                        : "DQN chooses among actions; this environment has continuous actions: train "
+                                          "it with SAC, TD3 or PPO.");
     }
     // Its trained policy (TOFIX195 S5; SAC's since TOFIX216 S4, TD3's since U4): play, save, load
     const cyxwiz::ui::Tokens& tokens = cyxwiz::ui::CurrentTokens();
@@ -538,6 +561,7 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
     // The tuned settings for its environment
     const auto preset = sac   ? cyxwiz::rl_graph::TunedSacSettings(env.info.id)
                         : td3 ? cyxwiz::rl_graph::TunedTd3Settings(env.info.id)
+                        : dqn ? cyxwiz::rl_graph::TunedDqnSettings(env.info.id)
                               : cyxwiz::rl_graph::TunedPpoSettings(env.info.id);
     if (!preset) return;
     properties_rows::Label("Tuned for", false, "Load tuned settings for this environment");

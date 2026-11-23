@@ -1055,7 +1055,8 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::PPO:
         case NodeType::QHead:  // TOFIX216
         case NodeType::SAC:
-        case NodeType::TD3: {
+        case NodeType::TD3:
+        case NodeType::DQN: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }

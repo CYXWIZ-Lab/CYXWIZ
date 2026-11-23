@@ -5,7 +5,7 @@
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 254> kNodeTypeImportNames = {{
+constexpr std::array<NodeTypeImportName, 255> kNodeTypeImportNames = {{
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
@@ -262,6 +262,7 @@ constexpr std::array<NodeTypeImportName, 254> kNodeTypeImportNames = {{
         {"QHead", NodeType::QHead},
         {"SAC", NodeType::SAC},
         {"TD3", NodeType::TD3},
+        {"DQN", NodeType::DQN},
 }};
 
 } // namespace

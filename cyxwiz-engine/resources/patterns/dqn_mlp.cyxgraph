@@ -1,0 +1,45 @@
+{
+  "id": "dqn_mlp",
+  "name": "DQN (MLP 64-64)",
+  "description": "Deep Q-Network as in Stable-Baselines3's DQN MlpPolicy: an Environment, Q layers of two Dense layers with ReLU ending in a Q Head (one Q value per choice of action; DQN keeps a target copy), and DQN with its replay buffer and epsilon-greedy exploration. No Policy Head: the policy picks the choice with the highest Q value. DQN chooses among actions: pick an environment with a choice of actions (CartPole-v1) and press Tuned for on DQN to load tuned settings (RL Zoo trains CartPole with layers of 256), then Train.",
+  "category": "Reinforcement Learning",
+  "tags": ["dqn", "deep q-network", "q-learning", "epsilon", "off-policy", "replay", "reinforcement", "rl", "cartpole"],
+  "parameters": [
+    {
+      "name": "hidden_size",
+      "type": "int",
+      "default_value": "64",
+      "description": "Units in each hidden layer of the Q network",
+      "min_value": "4",
+      "max_value": "4096"
+    },
+    {
+      "name": "activation",
+      "type": "nodetype",
+      "default_value": "ReLU",
+      "description": "Activation between the layers",
+      "options": ["ReLU", "Tanh", "LeakyReLU", "GELU", "Swish"]
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "env", "type": "RLEnvironment", "name": "Environment", "pos": [0, 300],
+       "params": {"environment": "cyxwiz.builtin:CartPole-v1", "copies": "1"}},
+      {"id": "q1", "type": "Dense", "name": "Q Dense 1", "pos": [220, 300], "params": {"units": "$hidden_size"}},
+      {"id": "qa1", "type": "$activation", "name": "Q Activation 1", "pos": [400, 300]},
+      {"id": "q2", "type": "Dense", "name": "Q Dense 2", "pos": [580, 300], "params": {"units": "$hidden_size"}},
+      {"id": "qa2", "type": "$activation", "name": "Q Activation 2", "pos": [760, 300]},
+      {"id": "qhead", "type": "QHead", "name": "Q Head", "pos": [940, 300]},
+      {"id": "dqn", "type": "DQN", "name": "DQN", "pos": [1160, 300]}
+    ],
+    "links": [
+      {"from": "env", "to": "q1"},
+      {"from": "q1", "to": "qa1"},
+      {"from": "qa1", "to": "q2"},
+      {"from": "q2", "to": "qa2"},
+      {"from": "qa2", "to": "qhead"},
+      {"from": "qhead", "to": "dqn", "to_pin": 0},
+      {"from": "env", "from_pin": 1, "to": "dqn", "to_pin": 1}
+    ]
+  }
+}

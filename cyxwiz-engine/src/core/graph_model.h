@@ -677,9 +677,10 @@ enum class NodeType {
     ReLU6,              // min(max(x, 0), 6) (torch.nn.ReLU6)
 
     // ===== Appended off-policy reinforcement learning (TOFIX216) =====
-    QHead,              // Ends the Q layers: one output, the value of an action in a state
+    QHead,              // Ends the Q layers: the value of an action in a state (DQN: one per choice)
     SAC,                // Soft Actor-Critic over an environment, a policy and twin Q networks
     TD3,                // Twin Delayed DDPG over an environment, a deterministic policy and twin Q networks
+    DQN,                // Deep Q-Network over an environment with a choice of actions and one Q network
 
     // Special sentinel value
     Unknown

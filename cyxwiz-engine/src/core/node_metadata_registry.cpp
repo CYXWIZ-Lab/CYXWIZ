@@ -4768,14 +4768,16 @@ void NodeMetadataRegistry::InitializeRLNodes() {
     // TOFIX216: a SAC graph is Environment -> ordinary layers -> Policy Head /
     // Q Head -> SAC, trained by the Engine's SAC (core/rl/sac_trainer).
     RegisterNode({NodeType::QHead, NodeCategory::RL, "Q Head", ICON_FA_SCALE_BALANCED,
-        {"q", "critic", "head", "rl", "sac", "td3", "twin"}, 0, false,
-        "Ends the Q layers: one output, the value of an action in a state",
-        "Adds a one-output layer that estimates the return of taking an action in a state. The action joins the "
-        "first Q layer's input (observation and action side by side), and SAC or TD3 builds two Q networks of "
-        "this shape plus a slowly following target copy of each, as Stable-Baselines3 does.",
+        {"q", "critic", "head", "rl", "sac", "td3", "dqn", "twin"}, 0, false,
+        "Ends the Q layers: the value of an action in a state",
+        "Adds the output layer that estimates the return of taking an action in a state. Under SAC or TD3 it has "
+        "one output: the action joins the first Q layer's input (observation and action side by side), and the "
+        "learner builds two Q networks of this shape plus a slowly following target copy of each, as "
+        "Stable-Baselines3 does. Under DQN it has one output per choice of action, from the observation alone, "
+        "and DQN keeps a target copy of it.",
         "Environment -> Dense -> ReLU -> Dense -> ReLU -> Q Head -> SAC",
         {{"Features", PinType::Tensor, true, "The last Q layer's output (reached from the Environment's Observation)."}},
-        {{"Q", PinType::Tensor, true, "The Q estimate: connect it to SAC's or TD3's Q."}},
+        {{"Q", PinType::Tensor, true, "The Q estimate: connect it to the Q of SAC, TD3 or DQN."}},
         {},
         NodeImplementationStatus::Implemented, 0});
 
@@ -4897,6 +4899,67 @@ void NodeMetadataRegistry::InitializeRLNodes() {
           "Running mean and variance of the observations, as VecNormalize (norm_obs)", {}, "", "Observations",
           "Normalise"}},
         NodeImplementationStatus::Implemented, 0});
+
+    // TOFIX216 DQN: a Q Head and the Environment, no Policy Head (the policy is
+    // the greedy choice). Planned (Template) until the Engine's DQN trainer runs it.
+    RegisterNode({NodeType::DQN, NodeCategory::RL, "DQN", ICON_FA_ARROWS_ROTATE,
+        {"dqn", "deep q-network", "q-learning", "epsilon", "greedy", "off-policy", "replay", "reinforcement", "rl",
+         "training"}, 0, false,
+        "Deep Q-Network: trains a Q network over a choice of actions from a replay buffer",
+        "Stable-Baselines3's DQN for environments with a choice of actions: keeps the last steps in a replay buffer "
+        "on the training device and, after the random steps, updates the Q network every Train every steps from "
+        "minibatches drawn from it toward the best target Q of the next state (Huber loss, the gradients' norm "
+        "clipped), moving a target network to it every Target every steps. The policy picks the choice with the "
+        "highest Q value; while training it picks at random a share of the time (epsilon), falling from Start to "
+        "End over the first part of the run. The defaults are SB3's; Tuned for loads RL Zoo's values for the "
+        "environment.",
+        "Environment -> ... -> Q Head -> DQN",
+        {{"Q", PinType::Tensor, true, "From the Q Head."},
+         {"Environment", PinType::Environment, true, "From the Environment's Environment pin."}},
+        {{"Trained policy", PinType::Parameters, true, "The trained Q network."}},
+        {{"total_timesteps", "int", "1000000", "Environment steps to train for, over all copies (total_timesteps)", {},
+          "1-1000000000", "Total steps", "Run", true},
+         {"stop_at_return", "bool", "false", "Stop early once the last 100 episodes average the target", {}, "",
+          "Stop at a mean return", "Run"},
+         {"target_return", "float", "475", "Mean return of the last 100 episodes that stops the run", {}, "",
+          "Target return", "Run"},
+         {"seed", "int", "1", "Seeds the copies, the network weights, the exploration and the minibatches (seed)", {},
+          "0-2147483647", "Seed", "Run"},
+         {"buffer_size", "int", "1000000", "Steps the replay buffer keeps on the training device (buffer_size)", {},
+          "1-100000000", "Buffer size", "Replay buffer", true},
+         {"learning_starts", "int", "100", "Steps of random choices before learning starts (learning_starts)", {},
+          "0-1000000000", "Random steps first", "Replay buffer", true},
+         {"batch_size", "int", "32", "Steps in one minibatch drawn from the buffer (batch_size)", {}, "1-1000000",
+          "Batch size", "Updates", true},
+         {"learning_rate", "float", "0.0001", "Adam's learning rate for the Q network (learning_rate)", {}, "",
+          "Learning rate", "Updates", true},
+         {"gamma", "float", "0.99", "Discount of future rewards (gamma)", {}, "0-1", "Discount", "Updates"},
+         {"train_freq", "int", "4", "Environment steps between updates (train_freq)", {}, "1-1000000", "Train every",
+          "Updates"},
+         {"gradient_steps", "int", "1", "Gradient steps each time it trains (gradient_steps)", {}, "1-1000000",
+          "Gradient steps", "Updates"},
+         {"target_update_interval", "int", "10000",
+          "Environment steps between updates of the target network (target_update_interval)", {}, "1-1000000000",
+          "Target every", "Updates"},
+         {"tau", "float", "1.0",
+          "How far the target network moves toward the Q network at each target update: 1 copies it (tau)", {},
+          "0-1", "Target update", "Updates"},
+         {"max_grad_norm", "float", "10",
+          "The gradients' overall norm is clipped to this before each step (max_grad_norm)", {}, "",
+          "Max gradient norm", "Updates"},
+         {"exploration_initial_eps", "float", "1.0",
+          "Share of random choices at the start (exploration_initial_eps)", {}, "0-1", "Start",
+          "Exploration (epsilon)"},
+         {"exploration_final_eps", "float", "0.05",
+          "Share of random choices once it has fallen (exploration_final_eps)", {}, "0-1", "End",
+          "Exploration (epsilon)"},
+         {"exploration_fraction", "float", "0.1",
+          "Share of the run over which the random choices fall from Start to End (exploration_fraction)", {},
+          "0-1", "Over", "Exploration (epsilon)"},
+         {"normalize_observations", "bool", "false",
+          "Running mean and variance of the observations, as VecNormalize (norm_obs)", {}, "", "Observations",
+          "Normalise"}},
+        NodeImplementationStatus::Template, 0});
 }
 
 // =============================================================================

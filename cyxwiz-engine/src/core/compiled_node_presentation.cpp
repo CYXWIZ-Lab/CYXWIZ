@@ -193,7 +193,8 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
         const int q_index = in_chain(rl.q_layers);
         const bool sac = rl.algorithm == RLAlgorithm::SAC;
         const bool td3 = rl.algorithm == RLAlgorithm::TD3;
-        const bool q_networks = UsesQNetworks(rl.algorithm);
+        const bool dqn = rl.algorithm == RLAlgorithm::DQN;
+        const bool twin_q = UsesTwinQ(rl.algorithm);
         const std::string learner = RLAlgorithmName(rl.algorithm);
         const std::string inputs_text = std::to_string(rl.observation_size) + " observation values";
         if (node_id == rl.environment_node_id) {
@@ -208,10 +209,13 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
         } else if (node_id == rl.value_head_node_id) {
             card.role = "Ends the value network: 1 value";
         } else if (node_id == rl.q_head_node_id) {
-            card.role = "Ends the Q network: 1 value of an action (twin networks and their targets built from it)";
+            card.role = dqn ? "Ends the Q network: " + std::to_string(rl.policy_outputs) +
+                                  " values, one per choice (its target copy built from it)"
+                            : "Ends the Q network: 1 value of an action (twin networks and their targets built from it)";
         } else if (node_id == rl.learner_node_id) {
             card.role = sac   ? "Trains the policy and the twin Q networks from a replay buffer"
                         : td3 ? "Trains the deterministic policy and the twin Q networks from a replay buffer"
+                        : dqn ? "Trains the Q network from a replay buffer; the policy picks the highest Q value"
                               : "Trains both networks";
         } else if (policy_index >= 0) {
             card.role = "Layer " + std::to_string(policy_index + 1) + " of " + std::to_string(rl.policy_layers.size()) +
@@ -228,7 +232,9 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
         card.status_note = "Compiled for " + learner + " on " + rl.environment.id + " x " + std::to_string(rl.copies) +
                            "; the networks are built when Train starts.";
         card.no_shapes_text =
-            q_networks ? "The policy takes the " + inputs_text + " of a copy and gives " + std::to_string(rl.policy_outputs) +
+            dqn ? "The Q network takes the " + inputs_text + " of a copy and gives " +
+                      std::to_string(rl.policy_outputs) + " values, one per choice of action."
+            : twin_q ? "The policy takes the " + inputs_text + " of a copy and gives " + std::to_string(rl.policy_outputs) +
                       " actions; each Q network takes them with the " + std::to_string(rl.policy_outputs) +
                       " action values and gives 1 value."
                 : "Each network takes the " + inputs_text + " of a copy; the policy gives " +

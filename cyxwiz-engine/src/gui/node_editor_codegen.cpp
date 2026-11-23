@@ -444,9 +444,51 @@ std::string Td3Code(const cyxwiz::RLTrainingConfiguration& rl) {
     return code + RLLearnCode("td3", rl.environment.id, c.total_timesteps, c.target_return, c.normalize_observations);
 }
 
+// Stable-Baselines3's DQN on the graph's environment, Q layers and settings
+std::string DqnCode(const cyxwiz::RLTrainingConfiguration& rl) {
+    const auto& c = rl.dqn;
+    std::vector<std::string> notes;
+    std::string q_act;
+    const std::string qf = NetArch(rl.q_layers, q_act, notes);
+    const std::string activation = q_act.empty() ? "nn.Identity" : q_act;
+
+    std::string code;
+    code += "# DQN on " + rl.environment.id + " x " + std::to_string(rl.copies) + ", from the CyxWiz graph.\n";
+    code += "# Stable-Baselines3 on the Engine's own environments (pycyxwiz.rl): the same physics,\n";
+    code += "# layers and settings as the graph's DQN node.\n";
+    code += "# Needs numpy, gymnasium, torch and stable_baselines3 (the Engine's python-embed has them).\n\n";
+    code += "import torch.nn as nn\n";
+    code += "from stable_baselines3 import DQN\n";
+    if (!std::isnan(c.target_return)) code += "from stable_baselines3.common.callbacks import BaseCallback\n";
+    code += "from stable_baselines3.common.env_util import make_vec_env\n";
+    if (c.normalize_observations) code += "from stable_baselines3.common.vec_env import VecNormalize\n";
+    code += "from pycyxwiz import rl\n\n";
+    code += RLEnvironmentCode(rl, c.seed, c.normalize_observations, false, c.gamma);
+    for (const auto& n : notes) code += "# " + n + "\n";
+    code += "model = DQN(\n";
+    code += "    \"MlpPolicy\",\n    env,\n";
+    code += "    buffer_size=" + std::to_string(c.buffer_size) + ",\n";
+    code += "    learning_starts=" + std::to_string(c.learning_starts) + ",\n";
+    code += "    batch_size=" + std::to_string(c.batch_size) + ",\n";
+    code += "    learning_rate=" + PyNumber(c.learning_rate) + ",\n";
+    code += "    gamma=" + PyNumber(c.gamma) + ",\n";
+    code += "    tau=" + PyNumber(c.tau) + ",\n";
+    code += "    train_freq=" + std::to_string(c.train_freq) + ",\n";
+    code += "    gradient_steps=" + std::to_string(c.gradient_steps) + ",\n";
+    code += "    target_update_interval=" + std::to_string(c.target_update_interval) + ",\n";
+    code += "    exploration_fraction=" + PyNumber(c.exploration_fraction) + ",\n";
+    code += "    exploration_initial_eps=" + PyNumber(c.exploration_initial_eps) + ",\n";
+    code += "    exploration_final_eps=" + PyNumber(c.exploration_final_eps) + ",\n";
+    code += "    max_grad_norm=" + PyNumber(c.max_grad_norm) + ",\n";
+    code += "    policy_kwargs=dict(net_arch=" + qf + ", activation_fn=" + activation + "),\n";
+    code += "    seed=" + std::to_string(c.seed) + ",\n";
+    code += "    device=\"cpu\",\n    verbose=1,\n)\n\n";
+    return code + RLLearnCode("dqn", rl.environment.id, c.total_timesteps, c.target_return, c.normalize_observations);
+}
+
 }  // namespace
 
-// Stable-Baselines3's PPO (or SAC, or TD3) on the graph's environment (through pycyxwiz.rl,
+// Stable-Baselines3's PPO (or SAC, TD3 or DQN) on the graph's environment (through pycyxwiz.rl,
 // the Engine's own physics), layers and settings: the code of the run Train
 // starts in the Engine.
 std::string NodeEditor::GenerateRLCode(const std::vector<int>& /*sorted_ids*/) const {
@@ -462,6 +504,7 @@ std::string NodeEditor::GenerateRLCode(const std::vector<int>& /*sorted_ids*/) c
     const auto& rl = *config.rl;
     if (rl.algorithm == cyxwiz::RLAlgorithm::SAC) return SacCode(rl);
     if (rl.algorithm == cyxwiz::RLAlgorithm::TD3) return Td3Code(rl);
+    if (rl.algorithm == cyxwiz::RLAlgorithm::DQN) return DqnCode(rl);
     const auto& c = rl.ppo;
     std::vector<std::string> notes;
     std::string policy_act, value_act;
@@ -989,6 +1032,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
             case NodeType::QHead:
             case NodeType::SAC:
             case NodeType::TD3:
+            case NodeType::DQN:
                 break;
 
             default:

@@ -5699,13 +5699,12 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         // reported by Compile, and therefore also before Train starts.
         // An RL graph on a GPU route with small networks: advice, never a switch (TOFIX206)
         if (config.is_valid && config.rl) {
-            const bool q_networks = cyxwiz::UsesQNetworks(config.rl->algorithm);
+            const auto [first_units, second_units] = cyxwiz::RLNetworkUnits(*config.rl);
             const auto route = cyxwiz::PreviewRequestedRouteTrainingReadiness();
             const std::string advice = route.route_available
                 ? cyxwiz::rl_device::CompileAdvice(
                       cyxwiz::rl_device::BackendWord(cyxwiz::ExecutionDeviceSelectionBackendName(route.type)),
-                      cyxwiz::HiddenUnits(config.rl->policy_layers),
-                      cyxwiz::HiddenUnits(q_networks ? config.rl->q_layers : config.rl->value_layers),
+                      first_units, second_units,
                       cyxwiz::FusedNetworksExpected(*config.rl, route.type, route.device_id))
                 : std::string();
             if (!advice.empty()) {
