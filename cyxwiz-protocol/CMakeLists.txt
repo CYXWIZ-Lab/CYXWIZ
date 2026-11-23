@@ -19,6 +19,7 @@ set(PROTO_FILES
     proto/reservation.proto
     proto/datastream.proto
     proto/cyxcloud_data.proto
+    proto/training_group.proto
 )
 
 # Generate C++ code from proto files

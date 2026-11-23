@@ -1,0 +1,312 @@
+syntax = "proto3";
+
+package cyxwiz.protocol;
+
+import "job.proto";
+
+// ============================================================================
+// Group training: a worker (Server Node) and its group's coordinator
+// ============================================================================
+// Several nodes train one model in rounds (docs/architecture/distributed-training.md).
+// Each round the coordinator sends the group's state, every worker trains on
+// the rows it is leased until the round's budget ends and sends back the
+// change it made; the coordinator combines the changes.
+//
+// Every call is opened by the worker, so a node behind a home router needs no
+// open port. Calls are unary or one-way streams, so each can be retried alone.
+// Large values travel as a header message followed by data pieces.
+
+service TrainingGroupService {
+  // The worker shows its ticket and gets the job and the group's settings.
+  rpc Join(JoinRequest) returns (JoinResponse);
+  // The worker has built the model: its layout, memory and measured speed.
+  // The coordinator checks them against the group's contract.
+  rpc DescribeModel(ModelDescription) returns (ModelAccepted);
+  // The first worker only: the model as built, the group's starting state.
+  rpc UploadInitialState(stream StatePiece) returns (StateReceipt);
+  // Any other worker: the starting state, frozen values included.
+  rpc DownloadInitialState(InitialStateRequest) returns (stream StatePiece);
+  // Waits until the next round opens; a header, then the group's state.
+  rpc NextRound(NextRoundRequest) returns (stream RoundPiece);
+  // While training; the answer may tell the worker to stop.
+  rpc ReportProgress(RoundProgress) returns (RoundDirective);
+  // A header, then the int8 decode tables (if any), then the update.
+  rpc SubmitUpdate(stream UpdatePiece) returns (UpdateReceipt);
+  rpc Leave(LeaveRequest) returns (LeaveResponse);
+}
+
+enum UpdateEncoding {
+  UPDATE_ENCODING_UNSPECIFIED = 0;
+  // Every exchanged value as a little-endian float32.
+  UPDATE_ENCODING_FLOAT32 = 1;
+  // A trainable tensor of at least 1,024 values as one code per value with a
+  // 256-entry decode table; smaller tensors and statistics as float32.
+  UPDATE_ENCODING_INT8 = 2;
+}
+
+// What a stored value of the model is to training.
+enum StateKind {
+  STATE_KIND_UNSPECIFIED = 0;
+  STATE_KIND_TRAINABLE = 1;  // has a gradient
+  STATE_KIND_STATISTIC = 2;  // changes in training without one (BatchNorm's running mean and variance)
+  STATE_KIND_FROZEN = 3;     // never changes; sent once, in the starting state
+}
+
+// Why the coordinator refuses something. The text beside it is for people.
+enum GroupRefusal {
+  GROUP_REFUSAL_NONE = 0;
+  GROUP_REFUSAL_TICKET = 1;          // not a ticket of this group, or expired
+  GROUP_REFUSAL_VERSION = 2;         // the two sides do not speak the same protocol
+  GROUP_REFUSAL_GROUP_FULL = 3;
+  GROUP_REFUSAL_LAYOUT = 4;          // the worker built another model than the group's
+  GROUP_REFUSAL_MEMORY = 5;          // not enough free device memory for the job
+  GROUP_REFUSAL_SPEED = 6;           // slower than the group's contract allows
+  GROUP_REFUSAL_LINK = 7;            // the connection is slower than the contract allows
+  GROUP_REFUSAL_JOB = 8;             // the job itself does not meet the contract (data, size)
+  GROUP_REFUSAL_NOT_A_MEMBER = 9;
+  GROUP_REFUSAL_STALE = 10;          // for a round or a state that is no longer current
+  GROUP_REFUSAL_NOT_FINITE = 11;     // a value that is not a finite number
+  GROUP_REFUSAL_SIZE = 12;           // not the number of bytes the layout needs
+  GROUP_REFUSAL_HASH = 13;           // the bytes do not have the hash the header gave
+  GROUP_REFUSAL_JOB_ENDED = 14;
+}
+
+// ---------------------------------------------------------------- joining
+
+message JoinRequest {
+  bytes ticket = 1;
+  string node_version = 2;
+  uint32 protocol_version = 3;  // 1
+}
+
+// The terms a group runs under. A member measured outside them leaves the
+// group; that alone does not count against it.
+message GroupContract {
+  double speed_factor = 1;                 // a member's speed is at least the fastest member's / this
+  double link_factor = 2;                  // likewise for its connection
+  uint32 min_members = 3;                  // fewer updates kept than this abandons the round
+  uint32 missed_rounds_before_removal = 4; // in a row
+  uint32 non_finite_before_removal = 5;    // in a row; this one counts against the node
+}
+
+message GroupSettings {
+  UpdateEncoding update_encoding = 1;
+  uint32 piece_bytes = 2;        // size of a data piece
+  uint32 progress_seconds = 3;   // how often to report progress
+  GroupContract contract = 4;
+  uint32 warm_up_steps = 5;      // steps the worker times before DescribeModel
+}
+
+message GroupJobSpec {
+  string group_id = 1;
+  string model_definition = 2;   // the graph, as JobConfig.model_definition
+  uint32 batch_size = 3;         // 0: the graph's Data Loader
+  // One part of the training data: the worker builds the model against its columns.
+  ChunkGrant sample = 4;
+  // The job's length in optimizer updates of one node training alone; 0 when
+  // the graph has no schedule by step.
+  uint64 schedule_total_steps = 5;
+}
+
+message JoinResponse {
+  GroupRefusal refusal = 1;
+  string refusal_text = 2;
+  string worker_id = 3;
+  uint32 worker_number = 4;      // 0, 1, 2...: mixed into the worker's random seed
+  string session_token = 5;      // sent with every later call of this worker
+  GroupJobSpec job = 6;
+  GroupSettings settings = 7;
+  bool uploads_initial_state = 8;  // this worker's built model starts the group
+}
+
+message StateSegment {
+  string name = 1;               // "layer<i>.<parameter>"
+  repeated uint64 shape = 2;
+  StateKind kind = 3;
+}
+
+message ModelDescription {
+  string worker_id = 1;
+  string session_token = 2;
+  string layout_hash = 3;        // SHA-256 of every tensor's name, kind and shape
+  repeated StateSegment layout = 4;
+  string device_name = 5;
+  uint64 device_free_bytes = 6;
+  uint64 job_memory_bytes = 7;   // what the job needed on this device while it was timed
+  uint64 warm_up_steps = 8;      // the coordinator divides: a worker does not state its own speed
+  double warm_up_seconds = 9;
+  uint64 warm_up_samples = 10;
+}
+
+message ModelAccepted {
+  GroupRefusal refusal = 1;
+  string refusal_text = 2;
+}
+
+message InitialStateRequest {
+  string worker_id = 1;
+  string session_token = 2;
+}
+
+message StateHeader {
+  string worker_id = 1;          // on upload
+  string session_token = 2;      // on upload
+  string layout_hash = 3;
+  uint64 bytes = 4;              // float32 values, every tensor in layout order
+  string sha256 = 5;
+}
+
+message StatePiece {
+  oneof piece {
+    StateHeader header = 1;      // first
+    bytes data = 2;
+  }
+}
+
+message StateReceipt {
+  GroupRefusal refusal = 1;
+  string refusal_text = 2;
+}
+
+// ----------------------------------------------------------------- a round
+
+// One part of the training data.
+message ChunkGrant {
+  uint32 chunk_id = 1;
+  oneof where {
+    CloudDatasetSource source = 2;
+    string local_path = 3;       // a path the worker can read (lab runs without CyxCloud)
+  }
+  uint64 rows = 4;
+  string sha256 = 5;
+}
+
+// The rows of a part one worker trains on in one round, in order.
+message RowLease {
+  ChunkGrant chunk = 1;
+  uint64 row_offset = 2;
+  uint64 rows = 3;
+}
+
+message NextRoundRequest {
+  string worker_id = 1;
+  string session_token = 2;
+  uint64 last_round_seen = 3;    // 0 before the first
+}
+
+message RoundHeader {
+  uint64 round = 1;              // 1, 2, ...
+  string attempt = 2;            // a new id every time the round is opened
+  uint64 global_epoch = 3;       // epochs the group has completed
+  uint64 global_step = 4;        // samples the group has trained / batch size
+  double train_seconds = 5;
+  uint64 max_steps = 6;          // the most steps the leases cover; 0: no limit
+  double report_within_seconds = 7;  // from this header to the end of the update
+  string layout_hash = 8;
+  uint64 state_bytes = 9;        // float32, the exchanged values in layout order
+  string state_sha256 = 10;
+  repeated RowLease leases = 11;
+  repeated ChunkGrant next_chunks = 12;  // to fetch ahead
+  bool job_ending = 13;          // no round follows; the worker leaves
+  bool removed = 14;             // this worker is out of the group (see removal_text)
+  GroupRefusal removal = 15;
+  string removal_text = 16;
+}
+
+message RoundPiece {
+  oneof piece {
+    RoundHeader header = 1;      // first
+    bytes data = 2;
+  }
+}
+
+enum RoundStage {
+  ROUND_STAGE_UNSPECIFIED = 0;
+  ROUND_STAGE_RECEIVING = 1;
+  ROUND_STAGE_FETCHING = 2;
+  ROUND_STAGE_TRAINING = 3;
+  ROUND_STAGE_ENCODING = 4;
+  ROUND_STAGE_SENDING = 5;
+}
+
+message RoundProgress {
+  string worker_id = 1;
+  string session_token = 2;
+  uint64 round = 3;
+  string attempt = 4;
+  RoundStage stage = 5;
+  uint64 steps = 6;
+  uint64 samples = 7;
+  double last_loss = 8;
+}
+
+message RoundDirective {
+  enum Action {
+    ACTION_CONTINUE = 0;
+    ACTION_STOP_AND_REPORT = 1;  // end the round now and send what was trained
+    ACTION_ABANDON_ROUND = 2;    // the round is over; do not send
+    ACTION_LEAVE = 3;
+  }
+  Action action = 1;
+  string text = 2;
+}
+
+message RoundTiming {
+  double receive_seconds = 1;
+  double fetch_seconds = 2;
+  double train_seconds = 3;
+  double encode_seconds = 4;
+}
+
+message UpdateHeader {
+  string worker_id = 1;
+  string session_token = 2;
+  uint64 round = 3;
+  string attempt = 4;
+  string layout_hash = 5;
+  string base_state_sha256 = 6;  // the state the round started from
+  UpdateEncoding encoding = 7;
+  uint32 tables = 8;             // int8 decode tables that come first, 1,024 bytes each
+  uint64 bytes = 9;              // tables and update together
+  string sha256 = 10;            // of those bytes
+  uint64 samples = 11;
+  uint64 steps = 12;
+  double last_loss = 13;
+  double learning_rate = 14;
+  repeated uint64 rows_done = 15;  // per lease of the round: rows trained, from its start
+  RoundTiming timing = 16;
+}
+
+message UpdatePiece {
+  oneof piece {
+    UpdateHeader header = 1;     // first
+    bytes data = 2;
+  }
+}
+
+message UpdateReceipt {
+  bool accepted = 1;
+  bool duplicate = 2;            // this update was already received
+  GroupRefusal refusal = 3;
+  string refusal_text = 4;
+}
+
+// ------------------------------------------------------------------ leaving
+
+message LeaveRequest {
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    REASON_OWNER_STOP = 1;
+    REASON_SHUTDOWN = 2;
+    REASON_OUT_OF_MEMORY = 3;
+    REASON_DEVICE_ERROR = 4;
+    REASON_DATA_ERROR = 5;
+    REASON_TRAINING_ERROR = 6;   // the update was not a finite number, or training failed
+  }
+  string worker_id = 1;
+  string session_token = 2;
+  Reason reason = 3;
+  string text = 4;
+}
+
+message LeaveResponse {}
