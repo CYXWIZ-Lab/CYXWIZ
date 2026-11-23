@@ -171,6 +171,56 @@ int main() {
     act_with_setting.settings.push_back(nm::Starter(nm::Kind::Layer).settings[0]);
     Check(HasIssue(act_with_setting, "Layer shown as Activation"), "an activation with a setting is refused");
 
+    // A file changed outside the form is refused, not read in part: the
+    // next Check would drop what the form does not write.
+    {
+        const nm::NodeForm swish = nm::Starter(nm::Kind::Layer);
+        const std::string source = nm::Generate(swish, "project.catdog.swish");
+        nm::NodeForm back;
+        std::string why;
+        std::string with_import = source;
+        with_import.replace(with_import.find("from pycyxwiz import nodes\n"), 27,
+                            "from pycyxwiz import nodes\nimport math\n");
+        Check(!nm::Read(with_import, back, &why) && Contains(why, "Create node from script"),
+              "an added import refuses the read: " + why);
+        Check(!nm::Read(source + "\nHELPER = 2\n", back, &why), "a module-level line after the class refuses the read");
+        std::string crlf;
+        for (char c : source) crlf += c == '\n' ? std::string("\r\n") : std::string(1, c);
+        Check(nm::Read(crlf, back, &why), "a CRLF copy of the file reads (" + why + ")");
+        nm::NodeForm tabs = swish;
+        tabs.bodies["forward"] = "self.x = x\nif True:\n\tself.s = x\nreturn x\n\n\n";
+        const std::string tab_source = nm::Generate(tabs, "project.catdog.swish");
+        Check(!Contains(tab_source, "\t") && Contains(tab_source, "            self.s = x\n"),
+              "a tab in a body becomes four spaces");
+        Check(nm::Read(tab_source, back, &why) && back.bodies["forward"] == "self.x = x\nif True:\n    self.s = x\nreturn x",
+              "a body with trailing blank lines reads back without them (" + why + ")");
+    }
+
+    // Numbers Python reads as written, and names the class already has.
+    {
+        nm::NodeForm numbers = nm::Starter(nm::Kind::Layer);
+        numbers.settings[0].default_value = "inf";
+        Check(HasIssue(numbers, "the default must be a number"), "inf is not a number here");
+        numbers.settings[0].default_value = "0x10";
+        Check(HasIssue(numbers, "the default must be a number"), "hex is not a number here");
+        numbers.settings[0].default_value = "1e-5";
+        Check(!HasIssue(numbers, "the default must be a number"), "1e-5 is a number");
+        nm::Setting whole;
+        whole.name = "units";
+        whole.type = nm::SettingType::WholeNumber;
+        whole.default_value = "16";
+        whole.lowest = "007";
+        numbers.settings.push_back(whole);
+        Check(HasIssue(numbers, "lowest must be a whole number"), "a leading zero is refused");
+        nm::NodeForm hides = nm::Starter(nm::Kind::Layer);
+        hides.settings[0].name = "state";
+        Check(HasIssue(hides, "name of a method"), "a setting may not hide Module.state");
+        nm::NodeForm kept = nm::Starter(nm::Kind::Layer);
+        kept.bodies["forward"] = "return x";
+        Check(nm::WithKind(kept, nm::Kind::Loss).display_name == "Swish (beta)",
+              "a starter whose code was edited keeps its names when the kind changes");
+    }
+
     // Kinds: pins, methods and switching.
     Check(nm::InputPins(nm::Kind::Loss).size() == 2 && nm::InputPins(nm::Kind::Loss)[1].type == "Labels",
           "a loss takes predictions and labels");

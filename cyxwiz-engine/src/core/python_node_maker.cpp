@@ -27,8 +27,32 @@ bool IsPythonWord(const std::string& text) {
     return words.count(text) > 0;
 }
 
+// A decimal literal Python reads the same way: digits, an optional point and
+// exponent; no inf, nan or hex (strtod takes those).
+bool IsDecimal(const std::string& text) {
+    size_t i = 0;
+    const auto digits_at = [&]() {
+        size_t n = 0;
+        while (i < text.size() && std::isdigit(static_cast<unsigned char>(text[i]))) ++i, ++n;
+        return n;
+    };
+    if (i < text.size() && (text[i] == '-' || text[i] == '+')) ++i;
+    size_t digits = digits_at();
+    if (i < text.size() && text[i] == '.') {
+        ++i;
+        digits += digits_at();
+    }
+    if (digits == 0) return false;
+    if (i < text.size() && (text[i] == 'e' || text[i] == 'E')) {
+        ++i;
+        if (i < text.size() && (text[i] == '-' || text[i] == '+')) ++i;
+        if (digits_at() == 0) return false;
+    }
+    return i == text.size();
+}
+
 bool ParseNumber(const std::string& text, double& out) {
-    if (text.empty()) return false;
+    if (!IsDecimal(text)) return false;
     char* end = nullptr;
     out = std::strtod(text.c_str(), &end);
     return end && *end == '\0';
@@ -36,6 +60,9 @@ bool ParseNumber(const std::string& text, double& out) {
 
 bool ParseWhole(const std::string& text, long long& out) {
     if (text.empty()) return false;
+    // Python refuses a whole number with a leading zero ("007").
+    const size_t first = (text[0] == '-' || text[0] == '+') ? 1 : 0;
+    if (text.size() > first + 1 && text[first] == '0') return false;
     char* end = nullptr;
     out = std::strtoll(text.c_str(), &end, 10);
     return end && *end == '\0';
@@ -113,14 +140,45 @@ std::vector<std::string> SplitTopLevel(const std::string& text) {
     return parts;
 }
 
+// A body as the file holds it: tabs as four spaces (a tab after the
+// method's spaces is a TabError), no trailing blank lines (Read drops them).
+std::string CleanBody(const std::string& body) {
+    std::string out;
+    for (char c : body) {
+        if (c == '\t') {
+            out += "    ";
+        } else if (c != '\r') {
+            out += c;
+        }
+    }
+    while (!out.empty() && (out.back() == '\n' || out.back() == ' ')) out.pop_back();
+    return out;
+}
+
 std::string Indent(const std::string& body, const std::string& pad) {
     std::string out;
-    std::istringstream in(body.empty() ? std::string("pass") : body);
+    const std::string clean = CleanBody(body);
+    std::istringstream in(clean.empty() ? std::string("pass") : clean);
+    std::string line;
+    while (std::getline(in, line)) {
+        while (!line.empty() && line.back() == ' ') line.pop_back();
+        out += line.empty() ? "\n" : pad + line + "\n";
+    }
+    return out;
+}
+
+// Text compared line for line: no carriage returns, no trailing spaces, no
+// blank lines at the end.
+std::string Normalised(const std::string& text) {
+    std::string out;
+    std::istringstream in(text);
     std::string line;
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
-        out += line.empty() ? "\n" : pad + line + "\n";
+        while (!line.empty() && line.back() == ' ') line.pop_back();
+        out += line + "\n";
     }
+    while (out.size() > 1 && out[out.size() - 1] == '\n' && out[out.size() - 2] == '\n') out.pop_back();
     return out;
 }
 
@@ -168,6 +226,18 @@ std::vector<std::string> ParseList(const std::string& text) {
         if (!part.empty()) items.push_back(Unquote(part));
     }
     return items;
+}
+
+// Names a node's class already has (its methods, and what pycyxwiz.Module
+// and Loss define): a setting with one of them would hide it.
+bool IsModuleName(const std::string& name) {
+    static const std::set<std::string> names = {
+        "forward", "backward", "build", "output_shape", "f", "df", "add_parameter", "add_state",
+        "backward_working_elements_per_sample", "cached_elements_per_sample", "freeze", "unfreeze",
+        "get_gradients", "get_name", "get_parameters", "get_state_names", "gradient", "has_parameters",
+        "is_trainable", "is_training", "parameter", "parameter_names", "set_gradient", "set_parameters",
+        "set_state", "set_training", "state", "state_names", "gradcheck", "gradcheck_loss"};
+    return names.count(name) > 0;
 }
 
 bool StartsWith(const std::string& text, const std::string& prefix) {
@@ -288,7 +358,7 @@ NodeForm WithKind(const NodeForm& form, Kind kind) {
     NodeForm next = Starter(kind);
     // A form still showing the starter becomes the other starter; one the
     // user named keeps its names, group, description and version.
-    const bool own = form.display_name != old_starter.display_name || form.class_name != old_starter.class_name;
+    const bool own = Generate(form, "x") != Generate(old_starter, "x");
     if (own) {
         next.display_name = form.display_name;
         next.class_name = form.class_name;
@@ -387,8 +457,7 @@ std::vector<std::string> Validate(const NodeForm& form) {
             issues.push_back(label + ": a name starts with a letter and holds only letters, digits and _");
         } else if (IsPythonWord(s.name)) {
             issues.push_back(label + ": " + s.name + " is a Python word; pick another name");
-        } else if (s.name == "forward" || s.name == "backward" || s.name == "build" || s.name == "output_shape" ||
-                   s.name == "f" || s.name == "df") {
+        } else if (IsModuleName(s.name)) {
             issues.push_back(label + " has the name of a method; pick another name");
         }
         if (!names.insert(s.name).second) issues.push_back("Two settings are called " + s.name);
@@ -485,6 +554,7 @@ bool Read(const std::string& source, NodeForm& form, std::string* error) {
 
     NodeForm read;
     read.version.clear();
+    std::string bundle_id;
     size_t i = 0;
     while (i < lines.size() && !StartsWith(lines[i], "@nodes.")) ++i;
     if (i == lines.size()) return fail("it has no node");
@@ -507,7 +577,8 @@ bool Read(const std::string& source, NodeForm& form, std::string* error) {
         std::string value = line.substr(eq + 1);
         if (!value.empty() && value.back() == ',') value.pop_back();
         value = Unquote(value);
-        if (key == "name") read.class_name = value;
+        if (key == "id") bundle_id = value;
+        else if (key == "name") read.class_name = value;
         else if (key == "version") read.version = value;
         else if (key == "category") read.category = value;
         else if (key == "display_name") read.display_name = value;
@@ -577,6 +648,11 @@ bool Read(const std::string& source, NodeForm& form, std::string* error) {
     }
     close_method();
     if (read.class_name.empty()) return fail("its decorator has no name");
+    // Only a file this form writes back unchanged: anything else (an import,
+    // a helper, a comment) would be lost on the next Check or Create.
+    if (Normalised(Generate(read, bundle_id)) != Normalised(source))
+        return fail("it has lines Make a Python node does not write (changed in the Script Editor?); open it in the "
+                    "Script Editor and make the node with Run > Create node from script");
     form = read;
     return true;
 }
