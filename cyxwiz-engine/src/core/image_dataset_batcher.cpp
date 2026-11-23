@@ -1,4 +1,5 @@
 #include "image_dataset_batcher.h"
+#include "batch_uploads.h"
 #include "device_data_budget.h"
 #include "class_label_range.h"
 #include "cyxwiz/portable_random.h"
@@ -17,6 +18,9 @@
 namespace cyxwiz {
 
 namespace {
+
+// The copy budget's name for this batcher's uploads (batch_uploads.h).
+constexpr const char* kUploader = "ImageDatasetBatcher";
 
 // The images the split is made over: every one except `excluded` (a
 // Quality node's rejects and the images the index found unreadable, as the
@@ -123,6 +127,8 @@ Tensor ImageDatasetBatcher::GatherRows(const size_t* indices, size_t n) {
                 resident->images = af::array(static_cast<dim_t>(row_bytes),
                                              static_cast<dim_t>(images_->Count()), images_->Row(0));
                 resident->images.eval();
+                RecordBatchUpload(kUploader, "images", BatchUploadReason::Resident, {images_->Count(), row_bytes},
+                                  DataType::UInt8);
                 resident_ = std::move(resident);
                 resident_on_ = true;
                 spdlog::info("ImageDatasetBatcher: {} images ({:.1f} MB) on the device for the run",
@@ -142,11 +148,13 @@ Tensor ImageDatasetBatcher::GatherRows(const size_t* indices, size_t n) {
     if (resident_on_) {
         std::vector<int32_t> ids(n);
         for (size_t i = 0; i < n; ++i) ids[i] = static_cast<int32_t>(indices[i]);
+        RecordBatchUpload(kUploader, "row positions", BatchUploadReason::Index, {n}, DataType::Int32);
         rows = af::lookup(resident_->images, af::array(static_cast<dim_t>(n), ids.data()), 1);
     } else {
         std::vector<uint8_t> host(n * row_bytes);
         for (size_t i = 0; i < n; ++i) std::memcpy(host.data() + i * row_bytes, images_->Row(indices[i]), row_bytes);
         rows = af::array(static_cast<dim_t>(row_bytes), static_cast<dim_t>(n), host.data());
+        RecordBatchUpload(kUploader, "images", BatchUploadReason::Batch, {n, row_bytes}, DataType::UInt8);
     }
     // One column per image is the row-major [n, H * W * 3] order.
     return Tensor::FromRowMajorFlatArray(af::flat(rows.as(f32) / 255.0f), {n, row_bytes});
@@ -214,11 +222,11 @@ Batch ImageDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_si
         }
     }
     if (onehot) {
-        batch.labels = Tensor({actual_size, num_classes_}, batch_labels.data(), DataType::Float32);
+        batch.labels = HostBatchTensor(kUploader, "labels", {actual_size, num_classes_}, batch_labels.data());
     } else if (scalar_label_mode_) {
-        batch.labels = Tensor({actual_size, 1}, batch_labels.data(), DataType::Float32);
+        batch.labels = HostBatchTensor(kUploader, "labels", {actual_size, 1}, batch_labels.data());
     } else {
-        batch.labels = Tensor({actual_size}, batch_labels.data(), DataType::Float32);
+        batch.labels = HostBatchTensor(kUploader, "labels", {actual_size}, batch_labels.data());
     }
 
     // The transforms, the batch mix (one-hot labels mixed alongside) and

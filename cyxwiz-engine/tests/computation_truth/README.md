@@ -182,8 +182,12 @@ row's values and label are compared with Python reading the same files:
 The copy budget (tabular): the same training run with nothing reading the
 model, and the trace's device-to-host reads per training batch: at most three
 scalars (the running loss and accuracy, the report window's weight). Reads
-with no recorded reason are printed (ORA-30). Host-to-device uploads have no
-counter yet.
+with no recorded reason are printed (ORA-30). Host-to-device uploads are the
+batchers' (`core/batch_uploads.h`, the trace's `host_upload_groups`): at most
+two per batch (its features, or its row positions when the set stays on the
+device, and its labels), and a set kept on the device goes up once per
+batcher. On CPU every batch uploads features and labels; on CUDA the features
+go up once and a batch sends its row positions and labels.
 
 After changing the model or the export: `test_oracle_data --write-exports
 <repo>/cyxwiz-engine/tests/computation_truth/fixtures/data_parity`, then the

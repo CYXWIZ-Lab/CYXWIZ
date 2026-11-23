@@ -1,4 +1,5 @@
 #include "dataset_batcher.h"
+#include "batch_uploads.h"
 #include "label_vocabulary.h"
 #include "label_column_resolver.h"
 #include "feature_column_gather.h"
@@ -30,6 +31,8 @@ namespace cyxwiz {
 namespace {
 
 constexpr size_t kBatchInspectionColumnPreviewLimit = 32;
+// The copy budget's name for this batcher's uploads (batch_uploads.h).
+constexpr const char* kUploader = "ArrowDatasetBatcher";
 
 bool IsTokenSlotColumnName(const std::string& name) {
     if (name.rfind("tok_", 0) != 0 || name.size() == 4) {
@@ -600,8 +603,11 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
                     std::copy_n(resident_host_.data() + static_cast<size_t>(positions[b]) * num_features_,
                                 num_features_, rows_data.data() + b * num_features_);
                 }
-                batch.data = Tensor({actual_batch_size, num_features_}, rows_data.data());
+                batch.data = HostBatchTensor(kUploader, "features", {actual_batch_size, num_features_},
+                                             rows_data.data());
             } else if (resident) {
+                RecordBatchUpload(kUploader, "row positions", BatchUploadReason::Index, {actual_batch_size},
+                                  DataType::Int32);
                 const af::array on_device(static_cast<dim_t>(actual_batch_size), positions.data());
                 batch.data = Tensor::FromSemanticArray(
                     af::lookup(resident_features_.GetSemanticArray(), on_device, 0),
@@ -655,7 +661,8 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
         }
 
         // Create data tensor [batch_size, num_features]
-        if (!resident) batch.data = Tensor({actual_batch_size, num_features_}, batch_data.data());
+        if (!resident)
+            batch.data = HostBatchTensor(kUploader, "features", {actual_batch_size, num_features_}, batch_data.data());
 
         // Create labels tensor
         // Float labels [batch, target_width] are used for regression and
@@ -663,11 +670,10 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
         if (scalar_label_mode_ && !batch_labels_float.empty()) {
             std::vector<size_t> label_shape = {
                 actual_batch_size, regression_target_width};
-            batch.labels = Tensor(label_shape, batch_labels_float.data());
+            batch.labels = HostBatchTensor(kUploader, "labels", label_shape, batch_labels_float.data());
         } else if (class_index_label_mode_ && !batch_labels.empty()) {
             std::vector<size_t> label_shape = {actual_batch_size};
-            batch.labels = Tensor(
-                label_shape, batch_labels.data(), DataType::Int32);
+            batch.labels = HostBatchTensor(kUploader, "labels", label_shape, batch_labels.data(), DataType::Int32);
         } else if (one_hot_ && !batch_labels.empty()) {
             // One-hot encoding
             std::vector<float> onehot_data(actual_batch_size * num_classes_, 0.0f);
@@ -677,7 +683,7 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
                 onehot_data[i * num_classes_ + static_cast<size_t>(label)] = 1.0f;
             }
             std::vector<size_t> label_shape = {actual_batch_size, num_classes_};
-            batch.labels = Tensor(label_shape, onehot_data.data());
+            batch.labels = HostBatchTensor(kUploader, "labels", label_shape, onehot_data.data());
         } else if (!batch_labels.empty()) {
             // Integer labels
             std::vector<float> label_data;
@@ -686,7 +692,7 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
                 label_data.push_back(static_cast<float>(label));
             }
             std::vector<size_t> label_shape = {actual_batch_size};
-            batch.labels = Tensor(label_shape, label_data.data());
+            batch.labels = HostBatchTensor(kUploader, "labels", label_shape, label_data.data());
         }
 
         return batch;
@@ -826,6 +832,8 @@ bool ArrowDatasetBatcher::PrepareResidentFeatures(const std::shared_ptr<arrow::T
         } else {
             Tensor features({rows, num_features_}, values.data());
             (void)features.GetSemanticArray();  // uploaded now, once
+            RecordBatchUpload(kUploader, "features", BatchUploadReason::Resident, {rows, num_features_},
+                              DataType::Float32);
             resident_features_ = std::move(features);
         }
         resident_position_ = std::move(position);

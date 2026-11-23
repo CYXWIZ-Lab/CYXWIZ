@@ -25,6 +25,7 @@
 #include "train_oracle_support.h"
 #include "../../src/core/arrow_dataset.h"
 #include "../../src/core/audio_dataset_batcher.h"
+#include "../../src/core/batch_uploads.h"
 #include "../../src/core/image_dataset_batcher.h"
 #include "../../src/core/prepared_image_set.h"
 #include "../../src/core/sample_split.h"
@@ -40,6 +41,8 @@
 #include "../../src/core/training_trace_collector.h"
 
 #include <arrow/api.h>
+
+#include <algorithm>
 
 #include <iostream>
 #include <memory>
@@ -285,13 +288,22 @@ RunCheck TrainAgainst(const cyxwiz::TrainingConfiguration& config, cyxwiz::Resol
 }
 
 // The copy budget (design step 5): the same training run with nothing
-// reading the model in between, and the device-to-host reads it made per
-// training batch, by kind (the trace's host-synchronization groups).
-// Host-to-device uploads have no counter yet (follow-up in the ticket).
+// reading the model in between, and the copies it made per training batch,
+// by kind: device-to-host reads (the trace's host-synchronization groups)
+// and host-to-device uploads (the batchers' upload groups, batch_uploads.h).
 struct CopyCount {
     uint64_t total = 0, unknown = 0;
-    std::map<std::string, uint64_t> by_group;  // "category / operation" -> reads
+    std::map<std::string, uint64_t> by_group;  // "category / operation (...)" -> reads
+    uint64_t uploads = 0;
+    std::map<std::string, uint64_t> uploads_by_reason;  // "batch", "resident", "index" -> uploads
+    std::map<std::string, uint64_t> uploads_by_group;   // "batcher / part (...)" -> uploads
 };
+
+std::string GroupName(const cyxwiz::TrainingTraceHostSyncGroup& group) {
+    std::string shape;
+    for (size_t d : group.shape) shape += (shape.empty() ? "" : "x") + std::to_string(d);
+    return group.category + " / " + group.operation + " (" + group.reason + "; " + group.dtype + " " + shape + ")";
+}
 
 CopyCount CountCopies(const cyxwiz::TrainingConfiguration& config, const std::shared_ptr<cyxwiz::ArrowDataset>& rows,
                       size_t& batches) {
@@ -305,10 +317,12 @@ CopyCount CountCopies(const cyxwiz::TrainingConfiguration& config, const std::sh
     for (const auto& group : trace.arrayfire_host_sync_groups) {
         out.total += group.event_count;
         if (group.category == "unknown") out.unknown += group.event_count;
-        std::string shape;
-        for (size_t d : group.shape) shape += (shape.empty() ? "" : "x") + std::to_string(d);
-        out.by_group[group.category + " / " + group.operation + " (" + group.reason + "; " + group.dtype + " " + shape +
-                     ")"] += group.event_count;
+        out.by_group[GroupName(group)] += group.event_count;
+    }
+    for (const auto& group : trace.host_upload_groups) {
+        out.uploads += group.event_count;
+        out.uploads_by_reason[group.reason] += group.event_count;
+        out.uploads_by_group[GroupName(group)] += group.event_count;
     }
     return out;
 }
@@ -497,6 +511,30 @@ void Run(const json& fixture) {
     Check(batches > 0 && per_batch <= 3 * batches,
           "copy budget: at most 3 scalar reads per training batch (" + std::to_string(per_batch) + " over " +
               std::to_string(batches) + " batches)");
+    // Uploads: a batch sends at most its features (or, from a set kept on the
+    // device, its row positions) and its labels; a whole set goes up at most
+    // once per batcher (train, validation, test).
+    std::cout << "    copies: " << copies.uploads << " host-to-device uploads\n";
+    for (const auto& [group, uploads] : copies.uploads_by_group) std::cout << "      " << uploads << "  " << group << "\n";
+    const auto uploads_for = [&](const char* reason) {
+        const auto it = copies.uploads_by_reason.find(reason);
+        return it == copies.uploads_by_reason.end() ? uint64_t{0} : it->second;
+    };
+    const auto rows_in = [&](int part) {
+        return static_cast<size_t>(std::count(expected_partition.begin(), expected_partition.end(), part));
+    };
+    const size_t evaluation_batches =
+        kEpochs * ((rows_in(1) + kBatch - 1) / kBatch) + (rows_in(2) + kBatch - 1) / kBatch;
+    const uint64_t per_batch_uploads =
+        uploads_for(cyxwiz::BatchUploadReason::Batch) + uploads_for(cyxwiz::BatchUploadReason::Index);
+    Check(copies.uploads > 0, "copy budget: the batchers' uploads are counted");
+    Check(per_batch_uploads <= 2 * (batches + evaluation_batches),
+          "copy budget: at most 2 uploads per batch (" + std::to_string(per_batch_uploads) + " for " +
+              std::to_string(batches) + " training and at most " + std::to_string(evaluation_batches) +
+              " validation / test batches)");
+    Check(uploads_for(cyxwiz::BatchUploadReason::Resident) <= 3,
+          "copy budget: a set kept on the device goes up once per batcher (" +
+              std::to_string(uploads_for(cyxwiz::BatchUploadReason::Resident)) + ")");
     // Reads with no recorded reason (ORA-30, open): printed, not failed.
     if (copies.unknown > 0)
         std::cout << "    copies: " << copies.unknown << " device-to-host reads have no recorded reason (ORA-30)\n";

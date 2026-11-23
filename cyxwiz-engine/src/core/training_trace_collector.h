@@ -166,6 +166,12 @@ struct TrainingTraceSummary {
     std::vector<TrainingTraceHostSyncGroup> arrayfire_host_sync_groups;
     std::vector<TrainingTraceStageTiming> stage_timings;
     std::string arrayfire_host_sync_summary;
+    // Host-to-device uploads the batchers made (batch_uploads.h), grouped
+    // like the reads: category = batcher, operation = part, reason = why.
+    uint64_t host_upload_count = 0;
+    uint64_t host_upload_bytes = 0;
+    std::vector<TrainingTraceHostSyncGroup> host_upload_groups;
+    std::string host_upload_summary;
     std::string placement_fingerprint;
     uint64_t placement_entry_count = 0;
     std::string placement_summary;
@@ -265,6 +271,9 @@ public:
         const std::string& message,
         const std::string& severity);
     void RecordArrayFireHostSync(const ArrayFireHostSyncEvent& sync);
+    // One host-to-device upload (event_count and bytes of `upload` added to
+    // its group); nothing when no run is recording.
+    void RecordHostUpload(const TrainingTraceHostSyncGroup& upload);
     void RecordTrainingRandomness(const TrainingRandomness& randomness);
     void RecordExecutionDeviceContext(
         const ExecutionDeviceContext& context);
@@ -359,6 +368,9 @@ private:
     uint64_t arrayfire_host_sync_bytes_ = 0;
     std::map<std::string, TrainingTraceHostSyncGroup>
         arrayfire_host_sync_groups_;
+    uint64_t host_upload_count_ = 0;
+    uint64_t host_upload_bytes_ = 0;
+    std::map<std::string, TrainingTraceHostSyncGroup> host_upload_groups_;
     std::map<std::string, TrainingTraceStageTiming> stage_timings_;
     uint64_t declared_output_boundary_count_ = 0;
     TrainingTraceSettings settings_;

@@ -1,4 +1,5 @@
 #include "parquet_arrow_batcher.h"
+#include "batch_uploads.h"
 
 #include "label_column_resolver.h"
 #include "class_label_range.h"
@@ -219,6 +220,9 @@ void ParquetArrowBatcher::SetRegressionTargetWidth(
 // -----------------------------------------------------------------------------
 
 namespace {
+
+// The copy budget's name for this batcher's uploads (batch_uploads.h).
+constexpr const char* kUploader = "ParquetArrowBatcher";
 
 // The class of each row of one chunk as a small id (ids assigned in order of
 // first appearance); nulls are a class of their own.
@@ -1011,17 +1015,16 @@ void ParquetArrowBatcher::FinishBatch(Batch& batch, size_t rows_filled, std::vec
 
     // Materialize the feature tensor
     std::vector<size_t> data_shape = {rows_filled, num_features_};
-    batch.data = Tensor(data_shape, batch_data.data());
+    batch.data = HostBatchTensor(kUploader, "features", data_shape, batch_data.data());
 
     // Materialize scalar float, one-hot, or index labels.
     if (scalar_label_mode_ && label_col_idx_ >= 0) {
         std::vector<size_t> label_shape = {
             rows_filled, regression_target_width};
-        batch.labels = Tensor(label_shape, batch_labels_float.data());
+        batch.labels = HostBatchTensor(kUploader, "labels", label_shape, batch_labels_float.data());
     } else if (class_index_label_mode_ && label_col_idx_ >= 0) {
         std::vector<size_t> label_shape = {rows_filled};
-        batch.labels = Tensor(
-            label_shape, batch_labels.data(), DataType::Int32);
+        batch.labels = HostBatchTensor(kUploader, "labels", label_shape, batch_labels.data(), DataType::Int32);
     } else if (one_hot_ && label_col_idx_ >= 0) {
         std::vector<float> onehot(rows_filled * num_classes_, 0.0f);
         for (size_t i = 0; i < rows_filled; ++i) {
@@ -1030,14 +1033,14 @@ void ParquetArrowBatcher::FinishBatch(Batch& batch, size_t rows_filled, std::vec
             onehot[i * num_classes_ + static_cast<size_t>(lbl)] = 1.0f;
         }
         std::vector<size_t> label_shape = {rows_filled, num_classes_};
-        batch.labels = Tensor(label_shape, onehot.data());
+        batch.labels = HostBatchTensor(kUploader, "labels", label_shape, onehot.data());
     } else if (label_col_idx_ >= 0) {
         std::vector<float> label_floats(rows_filled, 0.0f);
         for (size_t i = 0; i < rows_filled; ++i) {
             label_floats[i] = static_cast<float>(batch_labels[i]);
         }
         std::vector<size_t> label_shape = {rows_filled};
-        batch.labels = Tensor(label_shape, label_floats.data());
+        batch.labels = HostBatchTensor(kUploader, "labels", label_shape, label_floats.data());
     }
 
     batch.size = rows_filled;
