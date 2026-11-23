@@ -8,6 +8,8 @@
 #include "classification_decision.h"
 #include "model_builder.h"
 #include "training_batcher_setup.h"
+#include "training_trace_collector.h"
+#include <cyxwiz/neural_provider_dispatch.h>
 
 #include <arrayfire.h>
 
@@ -234,6 +236,12 @@ void TestExecutor::Test(
             }
         }
         ScopedExecutionDeviceContext binding(context);
+        // As in training: under Strict a provider failure stops the test
+        // instead of changing its route (TOFIX232).
+        const ScopedNeuralDispatchObserver provider_observer(&RecordNeuralDispatchForActiveTrace);
+        const ScopedNeuralProviderFailurePolicy provider_policy(
+            policy == ExecutionPolicy::Strict ? NeuralProviderFailurePolicy::Fail
+                                              : NeuralProviderFailurePolicy::FallBack);
         spdlog::info(
             "TestExecutor: model device activated; owner={}:{} effective={}:{} "
             "device='{}' execution_policy={} selection_fallback=false",

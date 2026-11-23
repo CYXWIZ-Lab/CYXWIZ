@@ -145,6 +145,7 @@ set(BACKEND_SOURCES
     src/algorithms/arrayfire_host_materialization.cpp
     src/algorithms/providers/neural_provider_registry.cpp
     src/algorithms/providers/neural_device_interop.cpp
+    src/algorithms/providers/neural_provider_dispatch.cpp
     src/algorithms/optimizers/optimizer_utils.cpp
     src/algorithms/optimizers/sgd.cpp
     src/algorithms/optimizers/adam_family.cpp

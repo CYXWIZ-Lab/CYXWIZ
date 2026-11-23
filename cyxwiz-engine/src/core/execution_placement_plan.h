@@ -3,9 +3,11 @@
 #include "backend_placement_capabilities.h"
 #include "execution_device_context.h"
 #include "graph_compiler.h"
+#include "provider_placement.h"
 
 #include <cstdint>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -16,6 +18,9 @@ namespace cyxwiz {
 namespace ExecutionPlacementStatus {
 inline constexpr const char* ArrayFire = "arrayfire";
 inline constexpr const char* DeclaredHostBoundary = "declared_host_boundary";
+// A native neural provider on the bound device (TOFIX232): the registry was
+// asked for that device, so the provider serves it by construction.
+inline constexpr const char* Provider = "provider";
 } // namespace ExecutionPlacementStatus
 
 struct ExecutionPlacementPlan {
@@ -141,15 +146,16 @@ inline BackendPlacementEntry MakeExecutionPlacementEntry(
     return placement;
 }
 
-inline bool IsCompiledModelLayerPlacement(
+// The index in config.layers of the layer a placement entry is for.
+inline std::optional<size_t> CompiledLayerIndexOfPlacement(
     const TrainingConfiguration& config,
     const BackendPlacementEntry& placement) {
-    for (const auto& layer : config.layers) {
-        if (layer.node_id == placement.node_id) {
-            return true;
+    for (size_t i = 0; i < config.layers.size(); ++i) {
+        if (config.layers[i].node_id == placement.node_id) {
+            return i;
         }
     }
-    return false;
+    return std::nullopt;
 }
 
 inline bool HasCompiledPlacementForLayer(
@@ -163,10 +169,13 @@ inline bool HasCompiledPlacementForLayer(
     return false;
 }
 
+// Strict runs every operation on the bound device by a declared route; the
+// kernel's origin (ArrayFire or a CyxWiz provider) does not matter.
 inline void AddStrictPlacementBlocker(ExecutionPlacementPlan& plan,
                                       const BackendPlacementEntry& placement) {
     if (placement.status == ExecutionPlacementStatus::ArrayFire ||
-        placement.status == ExecutionPlacementStatus::DeclaredHostBoundary) {
+        placement.status == ExecutionPlacementStatus::DeclaredHostBoundary ||
+        placement.status == ExecutionPlacementStatus::Provider) {
         return;
     }
     plan.strict_blockers.push_back(
@@ -299,11 +308,37 @@ inline ExecutionPlacementPlan BuildExecutionPlacementPlan(
     plan.entries.reserve(
         config.backend_placements.size() + config.layers.size() + 9);
 
+    const NeuralDeviceTarget bound_target = NeuralTargetOfExecutionContext(context);
     for (const auto& compiler_placement : config.backend_placements) {
         auto placement = compiler_placement;
-        if (IsCompiledModelLayerPlacement(config, placement) &&
-            placement.node_type.rfind("ModelForward.", 0) != 0) {
+        const auto layer_index = CompiledLayerIndexOfPlacement(config, placement);
+        if (layer_index && placement.node_type.rfind("ModelForward.", 0) != 0) {
             placement.node_type = "ModelForward." + placement.node_type;
+        }
+        // The Compile report asked the providers about the device active at
+        // compile time; the bound device decides here.
+        const LayerProviderSelection provider = layer_index
+            ? SelectLayerProvider(ProviderRequestsForLayer(config, *layer_index, bound_target))
+            : LayerProviderSelection{};
+        if (placement.reason_code == BackendPlacementReason::NativeProviderSelected) {
+            placement.reason_code = BackendPlacementReason::ArrayFireTensorOpCapable;
+            placement.status = BackendPlacementStatus::Gpu;
+        }
+        if (provider.provider) {
+            placement.requested_backend = context.requested_backend.empty()
+                ? backend
+                : context.requested_backend;
+            placement.expected_backend = provider.provider->ProviderId();
+            placement.status = ExecutionPlacementStatus::Provider;
+            placement.reason_code = BackendPlacementReason::NativeProviderSelected;
+            placement.fallback_backend.clear();
+            placement.explanation += " Executable placement on the bound device (" +
+                std::string(NeuralDevicePlatformName(bound_target.platform)) + "):" + provider.note;
+            AppendExecutionPlacement(plan, std::move(placement));
+            continue;
+        }
+        if (!provider.note.empty()) {
+            placement.explanation += " On the bound device:" + provider.note;
         }
         // Layers that ArrayFire runs, and the graph-runtime tensor ops of a
         // branched graph (Add, Concat, Split, ...; they too run on the active

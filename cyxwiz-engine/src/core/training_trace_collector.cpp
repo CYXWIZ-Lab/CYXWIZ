@@ -1,4 +1,5 @@
 #include "training_trace_collector.h"
+#include <cyxwiz/neural_provider_dispatch.h>
 #include "atomic_json_file.h"
 #include "debug_run_paths.h"
 #include "algorithms/arrayfire_backend_utils.h"
@@ -673,6 +674,8 @@ void TrainingTraceCollector::StartRun(const std::string& run_id) {
     host_upload_count_ = 0;
     host_upload_bytes_ = 0;
     host_upload_groups_.clear();
+    provider_dispatch_count_ = 0;
+    provider_groups_.clear();
     stage_timings_.clear();
     declared_output_boundary_count_ = 0;
     events_since_write_ = 0;
@@ -982,6 +985,27 @@ void TrainingTraceCollector::RecordHostUpload(
     host_upload_count_ += upload.event_count;
     host_upload_bytes_ += upload.bytes;
     AddHostSyncGroup(host_upload_groups_, upload);
+}
+
+void TrainingTraceCollector::RecordProviderDispatch(
+    const TrainingTraceHostSyncGroup& dispatch, const std::string& detail) {
+    bool first_problem = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (run_id_.empty()) {
+            return;
+        }
+        // Counted, not logged as events: a provider layer dispatches every batch.
+        provider_dispatch_count_ += dispatch.event_count;
+        first_problem = dispatch.reason != "ran" &&
+                        provider_groups_.find(HostSyncGroupKey(dispatch)) == provider_groups_.end();
+        AddHostSyncGroup(provider_groups_, dispatch);
+    }
+    if (first_problem) {
+        RecordRuntimeWarning("NeuralProvider." + dispatch.category,
+                             dispatch.operation + " " + dispatch.reason + " on " + dispatch.layout +
+                                 ": " + detail);
+    }
 }
 
 void TrainingTraceCollector::RecordTrainingRandomness(const TrainingRandomness& randomness) {
@@ -1411,6 +1435,9 @@ TrainingTraceSummary TrainingTraceCollector::Snapshot() const {
     summary.host_upload_bytes = host_upload_bytes_;
     summary.host_upload_groups = HostSyncGroupValues(host_upload_groups_);
     summary.host_upload_summary = FormatHostSyncGroups(summary.host_upload_groups);
+    summary.provider_dispatch_count = provider_dispatch_count_;
+    summary.provider_groups = HostSyncGroupValues(provider_groups_);
+    summary.provider_summary = FormatHostSyncGroups(summary.provider_groups);
     for (const auto& [name, timing] : stage_timings_) summary.stage_timings.push_back(timing);
     if (has_placement_plan_event_) {
         summary.placement_fingerprint =
@@ -1618,6 +1645,13 @@ std::optional<TrainingTraceSummary> TrainingTraceCollector::LoadLastTrace() {
                 summary.host_upload_groups.push_back(HostSyncGroupFromJson(item));
             }
         }
+        summary.provider_dispatch_count = j.value("provider_dispatch_count", uint64_t{0});
+        summary.provider_summary = j.value("provider_summary", "");
+        if (j.contains("provider_groups") && j["provider_groups"].is_array()) {
+            for (const auto& item : j["provider_groups"]) {
+                summary.provider_groups.push_back(HostSyncGroupFromJson(item));
+            }
+        }
         summary.placement_fingerprint =
             j.value("placement_fingerprint", "");
         summary.placement_entry_count =
@@ -1733,6 +1767,10 @@ void TrainingTraceCollector::WriteLocked() const {
         for (const auto& group : HostSyncGroupValues(host_upload_groups_)) {
             upload_groups.push_back(HostSyncGroupToJson(group));
         }
+        nlohmann::json provider_groups = nlohmann::json::array();
+        for (const auto& group : HostSyncGroupValues(provider_groups_)) {
+            provider_groups.push_back(HostSyncGroupToJson(group));
+        }
         nlohmann::json j = {
             {"run_id", run_id_},
             {"randomness", randomness_},
@@ -1758,7 +1796,11 @@ void TrainingTraceCollector::WriteLocked() const {
             {"host_upload_bytes", host_upload_bytes_},
             {"host_upload_groups", upload_groups},
             {"host_upload_summary",
-             FormatHostSyncGroups(HostSyncGroupValues(host_upload_groups_))}
+             FormatHostSyncGroups(HostSyncGroupValues(host_upload_groups_))},
+            {"provider_dispatch_count", provider_dispatch_count_},
+            {"provider_groups", provider_groups},
+            {"provider_summary",
+             FormatHostSyncGroups(HostSyncGroupValues(provider_groups_))}
         };
         TrainingTraceSummary summary;
         summary.available = !run_id_.empty();
@@ -1787,6 +1829,9 @@ void TrainingTraceCollector::WriteLocked() const {
         summary.host_upload_groups = HostSyncGroupValues(host_upload_groups_);
         summary.host_upload_summary =
             FormatHostSyncGroups(summary.host_upload_groups);
+        summary.provider_dispatch_count = provider_dispatch_count_;
+        summary.provider_groups = HostSyncGroupValues(provider_groups_);
+        summary.provider_summary = FormatHostSyncGroups(summary.provider_groups);
         if (has_placement_plan_event_) {
             summary.placement_fingerprint =
                 placement_plan_event_.placement_fingerprint;
@@ -1927,6 +1972,18 @@ std::string TrainingTraceCollector::ThreadIdString() {
     std::ostringstream out;
     out << std::this_thread::get_id();
     return out.str();
+}
+
+void RecordNeuralDispatchForActiveTrace(const NeuralDispatchEvent& event) {
+    TrainingTraceHostSyncGroup dispatch;
+    dispatch.category = event.provider_id;
+    dispatch.reason = NeuralDispatchOutcomeName(event.outcome);
+    dispatch.operation = event.layer + " " + event.op;
+    dispatch.dtype = "float32";
+    dispatch.layout = event.device;
+    dispatch.event_count = 1;
+    TrainingTraceCollector::Instance().RecordProviderDispatch(
+        dispatch, event.reason.empty() ? event.detail : event.reason + ": " + event.detail);
 }
 
 } // namespace cyxwiz

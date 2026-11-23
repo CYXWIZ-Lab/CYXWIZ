@@ -12,6 +12,7 @@
 #include "error_codes.h"
 #include "backend_placement_capabilities.h"
 #include "execution_placement_plan.h"
+#include "provider_placement.h"
 #include "extension_node_registry.h"
 #include "guarded_extension_module.h"
 #include "data_registry.h"
@@ -2123,15 +2124,12 @@ size_t ParseSizeParam(const std::map<std::string, std::string>& params,
     }
 }
 
-size_t EstimateSequenceLength(const CompiledLayer& layer) {
-    if (!layer.input_shape.empty()) {
-        return layer.input_shape[0];
-    }
-    return 0;
-}
-
 void AddBackendPlacementReports(TrainingConfiguration& config) {
-    for (const auto& layer : config.layers) {
+    // The Compile report asks the providers about the device active now; the
+    // executable plan asks again for the device the run binds.
+    const NeuralDeviceTarget compile_target = CaptureCurrentNeuralDeviceTarget();
+    for (size_t layer_index = 0; layer_index < config.layers.size(); ++layer_index) {
+        const auto& layer = config.layers[layer_index];
         if (layer.type == gui::NodeType::PluginCustom) {
             config.backend_placements.push_back(
                 backend_placement::BuildExtensionPlacement(layer));
@@ -2143,6 +2141,8 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
             {
                 auto placement =
                     backend_placement::BuildArrayFireTensorPlacement(layer);
+                // Conv2D and attention ask a provider at run time too.
+                ApplyProviderPlacement(placement, ProviderRequestsForLayer(config, layer_index, compile_target));
                 config.backend_placements.push_back(placement);
                 if (placement.status == BackendPlacementStatus::Cpu) {
                     AddIssue(config, IssueLevel::Warning,
@@ -2189,8 +2189,6 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
         // LSTM / GRU / RNN run on the device: the native provider op where it
         // serves the run's device and the exact tuple, else the ArrayFire
         // per-timestep plan (every backend, CUDA included; no CPU path).
-        const size_t hidden_size =
-            ParseSizeParam(layer.parameters, "hidden_size", 128);
         const bool bidirectional =
             ParseBoolParam(layer.parameters, "bidirectional", false);
         BackendPlacementEntry placement =
@@ -2200,40 +2198,12 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
         backend_placement::StampDeclaredExecutionMode(
             placement,
             DeclaredGpuExecutionMode(GpuOperationFamily::Recurrent));
-        NeuralOpRequest provider_request;
-        provider_request.target = CaptureCurrentNeuralDeviceTarget();
-        provider_request.op = layer.type == gui::NodeType::GRU   ? NeuralOp::GruForward
-                            : layer.type == gui::NodeType::RNN ? NeuralOp::RnnForward
-                                                               : NeuralOp::LstmForward;
-        if (layer.type == gui::NodeType::RNN) {
-            const auto nonlinearity = layer.parameters.find("nonlinearity");
-            provider_request.activation =
-                nonlinearity != layer.parameters.end() && nonlinearity->second == "relu"
-                    ? NeuralActivation::Relu
-                    : NeuralActivation::Tanh;
-        }
-        provider_request.training = true;  // this is the training path
-        provider_request.dtype = DataType::Float32;
-        provider_request.batch = static_cast<size_t>(std::max(1, config.batch_size));
-        provider_request.seq = EstimateSequenceLength(layer);
-        provider_request.input =
-            layer.input_shape.size() >= 2 ? layer.input_shape[1] : 0;
-        provider_request.hidden = hidden_size;
-        // Bidirectional layers run each direction and level as a
-        // single-direction, single-layer child, so that is what the provider
-        // is asked about (first level shown; deeper levels have input
-        // 2*hidden).
-        provider_request.layers = bidirectional
-            ? 1
-            : ParseSizeParam(layer.parameters, "num_layers", 1);
-        provider_request.directions = 1;
         if (bidirectional) {
             placement.explanation +=
                 " Bidirectional runs as split forward/reverse branches; "
-                "the native provider verdict below applies per branch "
-                "(first level).";
+                "the native provider verdict below applies per branch.";
         }
-        backend_placement::ApplyNativeProviderPlacement(placement, provider_request);
+        ApplyProviderPlacement(placement, ProviderRequestsForLayer(config, layer_index, compile_target));
         config.backend_placements.push_back(placement);
     }
 

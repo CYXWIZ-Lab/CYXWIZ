@@ -3977,6 +3977,32 @@ set_target_properties(test_recurrent_backend_placement PROPERTIES
 )
 add_test(NAME recurrent_backend_placement COMMAND test_recurrent_backend_placement)
 
+# ===== Test: Provider routes under Strict (TOFIX232) =====
+# Stub providers serve the CPU platform, so it runs on ArrayFire CPU only and
+# is registered below with the oracle tests (one cpu entry).
+add_executable(test_provider_route
+    tests/test_provider_route.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+)
+target_link_libraries(test_provider_route PRIVATE
+    cyxwiz-training-core
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+target_include_directories(test_provider_route PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_compile_definitions(test_provider_route PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_provider_route PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: Recurrent ArrayFire Profile Smoke =====
 add_executable(test_recurrent_af_profile_smoke
     tests/test_recurrent_af_profile_smoke.cpp
@@ -9430,6 +9456,15 @@ if(Python3_EXECUTABLE)
 else()
     message(WARNING "No Python interpreter: the oracle coverage and fixture checks are not registered")
 endif()
+# Provider routes (TOFIX232): its stub providers serve the CPU platform, so
+# one cpu entry whatever CYXWIZ_ORACLE_DEVICES lists.
+target_link_libraries(test_provider_route PRIVATE cyxwiz-build-info)
+target_compile_definitions(test_provider_route PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+add_test(NAME oracle_provider_route_cpu COMMAND test_provider_route)
+set_tests_properties(oracle_provider_route_cpu PROPERTIES
+    LABELS "oracle;cpu"
+    ENVIRONMENT "CYXWIZ_TEST_ARRAYFIRE_BACKEND=cpu")
+add_dependencies(cyxwiz-oracle-tests test_provider_route)
 foreach(_oracle_test IN LISTS CYXWIZ_ORACLE_HOST_TESTS)
     if(NOT _oracle_test IN_LIST CYXWIZ_ORACLE_TESTS)
         message(FATAL_ERROR "CYXWIZ_ORACLE_HOST_TESTS names ${_oracle_test}, which is not in CYXWIZ_ORACLE_TESTS")

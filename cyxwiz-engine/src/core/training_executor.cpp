@@ -20,6 +20,7 @@
 #include "training_profile_fence.h"
 #include <cyxwiz/debug_hooks.h>
 #include <cyxwiz/neural_provider.h>
+#include <cyxwiz/neural_provider_dispatch.h>
 #include <cyxwiz/utilities.h>
 #include "execution_device_context.h"
 #include "execution_device_preferences.h"
@@ -898,6 +899,11 @@ void TrainingExecutor::Train(
                     execution_placement_plan.summary));
     const ScopedArrayFireHostSyncObserver host_sync_observer(
         &RecordArrayFireHostSyncForActiveTrace);
+    // Every provider dispatch goes into the trace; under Strict a provider
+    // failure stops the run instead of changing its route (TOFIX232).
+    const ScopedNeuralDispatchObserver provider_observer(&RecordNeuralDispatchForActiveTrace);
+    const ScopedNeuralProviderFailurePolicy provider_policy(
+        config_.strict_execution ? NeuralProviderFailurePolicy::Fail : NeuralProviderFailurePolicy::FallBack);
     training_trace.RecordRuntimeEvent(
         "TrainingDevicePolicy",
         std::string("Execution policy: ") +

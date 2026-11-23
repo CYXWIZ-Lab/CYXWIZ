@@ -11,6 +11,9 @@ changes for you.
 | RNN / LSTM / GRU on an NVIDIA GPU (CUDA) | `cyxwiz.nvidia-cublas-cell` |
 | Conv2D on an NVIDIA GPU (CUDA) | `cyxwiz.nvidia-cublas-cell` |
 | RNN / LSTM / GRU on an OpenCL GPU | `cyxwiz.opencl-cell` |
+| Attention (MultiHeadAttention with a causal or no mask, a decoder block's self-attention) on CUDA | `cyxwiz.nvidia-cublas-cell` |
+| Attention on an OpenCL GPU | `cyxwiz.opencl-cell` |
+| Attention on oneAPI | `cyxwiz.oneapi-sycl-attention` |
 | PPO's networks (Dense + activations, up to 256 units), its sampling, loss, GAE and Adam on an NVIDIA GPU (CUDA) | `cyxwiz.nvidia-cublas-cell` |
 
 ## The NVIDIA provider
@@ -83,6 +86,35 @@ What is left is the environment's round trip: the actions go back to the CPU
 every step, as in any framework with CPU environments. On OpenCL and oneAPI,
 and on CUDA without the CUDA GPU pack, PPO runs layer by layer and the
 advice above holds: small networks may train as fast on the CPU.
+
+## Strict and the providers
+
+The execution policy **Strict (stays on the selected device)** means: every
+layer runs on the device the run is on, by the route the run declared before
+its first batch. Whether ArrayFire or a CyxWiz provider computes a layer does
+not matter; both run on that device. So an LSTM, a GRU or a CNN trains under
+Strict on CUDA with the NVIDIA provider.
+
+Before the first batch the run asks the providers about each layer, for the
+device the run is on, with the shapes it will train: a layer whose forward
+and backward a provider serves is placed on that provider (the Compile
+report's Placement, and the run's trace, name it); every other layer on
+ArrayFire.
+
+During the run:
+
+- **The provider runs the layer**: counted in the run's trace (Studio
+  Debugger, Runtime: provider groups).
+- **The provider declines a batch** (a shape it does not take, for example a
+  shorter last batch): ArrayFire runs that batch on the same device. The
+  trace counts it and warns once per layer.
+- **The provider fails** (it tried and broke): a Strict run stops at that
+  batch and names the provider, the operation and the layer:
+
+  > provider_route_changed: cyxwiz.nvidia-cublas-cell lstm_forward failed in LSTM (...): ...
+
+  A Compatibility run (the default) runs the layer on ArrayFire instead and
+  the trace records the failure.
 
 ## One training run per GPU
 
