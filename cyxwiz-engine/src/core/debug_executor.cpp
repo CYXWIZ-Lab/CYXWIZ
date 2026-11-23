@@ -2,6 +2,8 @@
 #include "debug_numerics.h"
 #include "error_codes.h"
 #include "model_builder.h"
+#include "spatial_batch_layout.h"
+#include "spatial_sequential_head.h"
 #include "synthetic_batch.h"
 
 #include <spdlog/spdlog.h>
@@ -84,11 +86,12 @@ bool ShapesMatchForTrace(const std::vector<size_t>& predicted,
     }
 
     // CompiledLayer::output_shape is per-sample, while DebugExecutor runs a
-    // synthetic batch. Runtime tensors therefore often carry a leading batch
-    // dimension: predicted [512,96] vs actual [1,512,96].
+    // batch. Runtime tensors carry the batch axis first (tabular, sequence:
+    // predicted [512,96] vs actual [1,512,96]) or last (spatial [H,W,C,N]:
+    // predicted [64,64,3] vs actual [64,64,3,1]).
     if (actual.size() == predicted.size() + 1) {
-        return std::equal(predicted.begin(), predicted.end(),
-                          actual.begin() + 1);
+        return std::equal(predicted.begin(), predicted.end(), actual.begin() + 1) ||
+               std::equal(predicted.begin(), predicted.end(), actual.begin());
     }
 
     return false;
@@ -105,9 +108,13 @@ const BuiltModuleProvenance* FindModuleProvenance(
     return nullptr;
 }
 
+// The trained tensors; state the module keeps beside them (BatchNorm's
+// running statistics) is counted apart.
 struct ModuleParameterSummary {
     size_t tensor_count = 0;
     size_t element_count = 0;
+    size_t state_tensor_count = 0;
+    size_t state_element_count = 0;
     bool available = false;
     bool overflow = false;
 };
@@ -120,11 +127,16 @@ ModuleParameterSummary SummarizeModuleParameters(Module* module) {
 
     try {
         const auto parameters = module->GetParameters();
+        const auto state = module->GetStateNames();
         summary.available = true;
-        summary.tensor_count = parameters.size();
         for (const auto& [name, tensor] : parameters) {
-            (void)name;
             const size_t count = tensor.NumElements();
+            if (std::find(state.begin(), state.end(), name) != state.end()) {
+                ++summary.state_tensor_count;
+                summary.state_element_count += count;
+                continue;
+            }
+            ++summary.tensor_count;
             if (count > std::numeric_limits<size_t>::max() -
                             summary.element_count) {
                 summary.element_count = std::numeric_limits<size_t>::max();
@@ -141,9 +153,24 @@ ModuleParameterSummary SummarizeModuleParameters(Module* module) {
     return summary;
 }
 
+// The node feeding a layer's first input in the compiled graph: in a branched
+// graph that can be an Add or a Split, not the layer run before it.
+const CompiledGraphNode* FeedingNode(const CompiledGraphPlan& plan, int node_id) {
+    if (!plan.available) return nullptr;
+    const auto node = std::find_if(plan.nodes.begin(), plan.nodes.end(),
+                                   [&](const CompiledGraphNode& n) { return n.node_id == node_id; });
+    if (node == plan.nodes.end() || node->input_pin_ids.empty()) return nullptr;
+    for (const auto& edge : plan.edges) {
+        if (edge.to_node_id != node_id || edge.to_pin_id != node->input_pin_ids.front()) continue;
+        for (const auto& from : plan.nodes)
+            if (from.node_id == edge.from_node_id) return &from;
+    }
+    return nullptr;
+}
+
 DebugGraphTraceStep BuildModelConstructionTraceStep(
     const BuiltModuleProvenance& provenance,
-    SequentialModel* model) {
+    IExecutableModel* model) {
     DebugGraphTraceStep step;
     step.node_id = provenance.node_id;
     step.node_name = !provenance.node_name.empty()
@@ -168,7 +195,7 @@ DebugGraphTraceStep BuildModelConstructionTraceStep(
     step.payload["source_file"] =
         "cyxwiz-engine/src/core/model_builder.cpp";
     step.payload["source_symbol"] =
-        "cyxwiz::BuildSequentialFromConfig";
+        "cyxwiz::BuildExecutableFromConfig";
     step.payload["compiled_layer_index"] =
         provenance.compiled_layer_index;
     step.payload["module_created"] = provenance.created();
@@ -180,11 +207,13 @@ DebugGraphTraceStep BuildModelConstructionTraceStep(
         const size_t module_index = *provenance.module_index;
         step.payload["module_index"] = module_index;
         const ModuleParameterSummary parameters = SummarizeModuleParameters(
-            model ? model->GetModule(module_index) : nullptr);
+            model ? model->LayerModule(module_index) : nullptr);
         step.payload["parameter_summary_available"] = parameters.available;
         step.payload["parameter_tensor_count"] = parameters.tensor_count;
         step.payload["parameter_numel"] = parameters.element_count;
         step.payload["parameter_numel_overflow"] = parameters.overflow;
+        step.payload["state_tensor_count"] = parameters.state_tensor_count;
+        step.payload["state_numel"] = parameters.state_element_count;
     } else {
         step.payload["module_index"] = nullptr;
         step.payload["parameter_summary_available"] = false;
@@ -201,6 +230,16 @@ DebugExecutor::DebugExecutor(TrainingConfiguration config)
 
 DebugExecutor::~DebugExecutor() = default;
 
+void DebugExecutor::SetInputSample(Tensor features, Tensor labels, std::string description) {
+    input_features_ = std::move(features);
+    input_labels_ = std::move(labels);
+    input_description_ = std::move(description);
+}
+
+void DebugExecutor::SetLayerCapture(LayerCaptureOptions options) {
+    capture_options_ = options;
+}
+
 DebugResult DebugExecutor::Run() {
     DebugResult result;
     result.timestamp = std::chrono::steady_clock::now();
@@ -211,7 +250,9 @@ DebugResult DebugExecutor::Run() {
         result.reached = DebugStage::BuildModel;
         spdlog::info("DebugExecutor: building model from config ({} layers)",
                      config_.layers.size());
-        auto built = BuildSequentialFromConfig(config_);
+        // The model training runs: a graph with branches (skips into Add,
+        // Concatenate, Split, multi-input layers) runs by its graph plan.
+        auto built = BuildExecutableFromConfig(config_);
         result.model_build_traces.reserve(built.module_provenance.size());
         for (const auto& provenance : built.module_provenance) {
             result.model_build_traces.push_back(
@@ -232,24 +273,45 @@ DebugResult DebugExecutor::Run() {
         optimizer_ = std::move(built.optimizer);
         model_->SetTraining(true);
         const auto module_provenance = std::move(built.module_provenance);
+        std::shared_ptr<LayerCapture> capture;
+        if (capture_options_) {
+            LayerCaptureOptions options = *capture_options_;
+            options.images_batch_first = !UsesSpatialSequentialInput(config_);  // TOFIX207
+            options.input_channels = config_.image_channels;
+            capture = std::make_shared<LayerCapture>(options, module_provenance);
+            result.layer_capture = capture;
+        }
 
         // ---- Synthetic batch ----------------------------------------------
-        auto batch = MakeSyntheticBatch(config_, /*seed=*/1337);
-        spdlog::info("DebugExecutor: synthetic batch features[{}] labels[{}]",
+        SyntheticBatch batch;
+        if (!input_description_.empty()) {
+            // Batchers hand out batch-first rows; a spatial model takes them
+            // through the same conversion training's Forward makes.
+            batch.features = UsesSpatialSequentialInput(config_)
+                                 ? SpatialBatchFromRows(input_features_, config_.input_shape)
+                                 : input_features_;
+            batch.labels = input_labels_;
+            result.input_description = input_description_;
+        } else {
+            batch = MakeSyntheticBatch(config_, /*seed=*/1337);
+            result.input_description = "a synthetic sample (seed 1337)";
+        }
+        spdlog::info("DebugExecutor: {} features[{}] labels[{}]", result.input_description,
                      batch.features.NumElements(), batch.labels.NumElements());
 
         // ---- Stage: Forward (per-layer shape capture) ---------------------
         result.reached = DebugStage::Forward;
-        Tensor current = batch.features.Clone();
         bool found_shape_mismatch = false;
         const BuiltModuleProvenance* previous_provenance = nullptr;
 
-        auto fstart = std::chrono::steady_clock::now();
-        for (size_t i = 0; i < model_->Size(); ++i) {
-            Module* m = model_->GetModule(i);
+        // Each layer is recorded as it finishes (a throw keeps the layers
+        // before it), in run order.
+        model_->SetLayerForwardObserver([&](size_t i, const Tensor& input, const Tensor& output,
+                                            float forward_ms) {
+            Module* m = model_->LayerModule(i);
             LayerTrace trace;
             trace.module_index = i;
-            trace.module_name = m->GetName();
+            trace.module_name = m ? m->GetName() : std::string();
             trace.name = trace.module_name;
             const auto* provenance = FindModuleProvenance(
                 module_provenance, i);
@@ -264,21 +326,22 @@ DebugResult DebugExecutor::Run() {
                 trace.predicted_input_shape = provenance->input_shape;
                 trace.predicted_shape = provenance->output_shape;
             }
-            if (previous_provenance) {
+            if (const CompiledGraphNode* feeder = provenance
+                    ? FeedingNode(config_.graph_plan, provenance->node_id)
+                    : nullptr) {
+                trace.upstream_node_id = feeder->node_id;
+                trace.upstream_node_name = feeder->name;
+            } else if (previous_provenance) {
                 trace.upstream_node_id = previous_provenance->node_id;
                 trace.upstream_node_name = previous_provenance->node_name;
             }
 
-            trace.actual_input_shape = current.Shape();
+            trace.actual_input_shape = input.Shape();
             trace.input_shape_matches = ShapesMatchForTrace(
                 trace.predicted_input_shape, trace.actual_input_shape);
-            auto lstart = std::chrono::steady_clock::now();
-            current = m->Forward(current);
-            auto lend = std::chrono::steady_clock::now();
-            trace.forward_ms =
-                std::chrono::duration<float, std::milli>(lend - lstart).count();
+            trace.forward_ms = forward_ms;
 
-            trace.actual_shape = current.Shape();
+            trace.actual_shape = output.Shape();
             trace.shape_matches =
                 ShapesMatchForTrace(trace.predicted_shape, trace.actual_shape);
 
@@ -299,7 +362,7 @@ DebugResult DebugExecutor::Run() {
                 found_shape_mismatch = true;
             }
 
-            trace.numerics = ScanDebugTensorNumerics(current, trace.type);
+            trace.numerics = ScanDebugTensorNumerics(output, trace.type);
             trace.has_nan = trace.numerics.nan_count > 0;
             trace.has_inf = trace.numerics.inf_count > 0;
             if (trace.has_nan) {
@@ -316,7 +379,14 @@ DebugResult DebugExecutor::Run() {
 
             result.layer_traces.push_back(std::move(trace));
             previous_provenance = provenance;
-        }
+            if (capture) capture->RecordForward(i, input, output);
+        });
+        struct ObserverReset {
+            IExecutableModel& model;
+            ~ObserverReset() { model.SetLayerForwardObserver(nullptr); }
+        } observer_reset{*model_};  // the observer refers to this frame
+        auto fstart = std::chrono::steady_clock::now();
+        Tensor current = model_->Forward(batch.features);
         auto fend = std::chrono::steady_clock::now();
         result.forward_total_ms =
             std::chrono::duration<float, std::milli>(fend - fstart).count();
@@ -350,15 +420,27 @@ DebugResult DebugExecutor::Run() {
         result.backward_total_ms =
             std::chrono::duration<float, std::milli>(bend - bstart).count();
 
+        if (capture) capture->RecordModuleTensors(*model_);
+
         // ---- Grad norms ---------------------------------------------------
         auto params = model_->GetParameters();
         auto grads  = model_->GetGradients();
+        const auto state_names = model_->GetStateParameterNames();
+        const auto frozen_names = model_->GetFrozenParameterNames();
 
         // Track which layers produced any grad so we can warn on
         // dead subgraphs (learnable layer with every grad == 0).
         std::map<int, bool> layer_any_nonzero;
 
         for (const auto& [param_name, param_tensor] : params) {
+            if (frozen_names.count(param_name)) {
+                ++result.frozen_tensors;
+                continue;
+            }
+            if (state_names.count(param_name)) {
+                ++result.state_tensors;
+                continue;
+            }
             GradNormEntry entry;
             entry.param_name = param_name;
             entry.parameter_shape = param_tensor.Shape();
@@ -490,11 +572,12 @@ DebugResult DebugExecutor::Run() {
         result.success = !has_error;
         spdlog::info("DebugExecutor: reached={} success={} forward={:.2f}ms "
                      "backward={:.2f}ms loss={:.4f} "
-                     "params_with_grad={} params_missing_grad={} issues={}",
+                     "params_with_grad={} params_missing_grad={} state={} frozen={} issues={}",
                      StageName(result.reached), result.success,
                      result.forward_total_ms, result.backward_total_ms,
                      result.loss_value,
-                     result.params_with_grad, result.params_missing_grad,
+                     result.params_with_grad, result.params_missing_grad, result.state_tensors,
+                     result.frozen_tensors,
                      result.issues.size());
     } catch (const std::exception& e) {
         result.failure_summary =

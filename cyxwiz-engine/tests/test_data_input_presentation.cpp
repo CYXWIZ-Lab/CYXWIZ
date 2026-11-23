@@ -125,11 +125,29 @@ void CheckLoaded() {
 
 }  // namespace
 
+void CheckCloudSource() {
+    StripInput in;
+    in.source = "simplewiki_20231101.parquet";
+    in.kind = "Parquet table";
+    in.file_size = 156885218;
+    in.cloud = true;
+    in.cloud_dataset = "berean-raw-v2";
+    const Strip s = BuildStrip(in);
+    Check(s.title == "simplewiki_20231101.parquet" && s.state == "Not loaded" && s.tone == LoadTone::NotLoaded,
+          "cloud: not loaded");
+    Check(s.detail == "CyxCloud \xC2\xB7 berean-raw-v2 \xC2\xB7 Parquet table", "cloud detail: " + s.detail);
+    Check(s.facts.size() == 2 && s.facts[0].value == "149.6 MB" && s.facts[0].label == "in CyxCloud" &&
+              s.facts[1].label == "local copy",
+          "cloud facts");
+    Check(s.note.find("without a copy here") != std::string::npos, "cloud note: " + s.note);
+}
+
 int main() {
     CheckFormatting();
     CheckNotLoaded();
     CheckLoadingAndFailed();
     CheckLoaded();
+    CheckCloudSource();
     std::cout << "data input presentation: strip states, facts and holding. OK\n";
     return 0;
 }

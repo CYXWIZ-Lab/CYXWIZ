@@ -98,6 +98,62 @@ def pack_manifest(kind: str = "backend_pack", backend: str = "opencl") -> dict:
     }
 
 
+def plugin_manifest() -> dict:
+    pack_id = "cyxwiz-plugin-mujoco-3.17.0-1-win64"
+    return {
+        "schema_version": 2,
+        "kind": "cyxwiz-backend-pack-manifest",
+        "signed": {
+            "pack_id": pack_id,
+            "pack_kind": "plugin_pack",
+            "plugin_id": "com.cyxwiz.simulation.mujoco",
+            "package_version": "1.0.0",
+            "platform": "win64",
+            "architecture": "x86_64",
+            "cyxwiz_release": {"minimum": "0.2.0", "maximum": "0.2.x"},
+            "companion_base_id": "cyxwiz-base-0.2.0-win64",
+            "conflicts": [],
+            "support_status": "supported",
+            "components": [
+                {
+                    "path": "plugin.json",
+                    "size": 512,
+                    "sha256": SHA,
+                    "source": "cyxwiz-plugin",
+                    "executable": False,
+                },
+                {
+                    "path": "bin/mujoco.dll",
+                    "size": 1234,
+                    "sha256": SHA,
+                    "source": "mujoco",
+                    "executable": True,
+                },
+                {
+                    "path": "THIRD_PARTY_LICENSES/MuJoCo/LICENSE.txt",
+                    "size": 42,
+                    "sha256": SHA,
+                    "source": "mujoco-license",
+                    "executable": False,
+                },
+            ],
+            "licenses": [
+                {
+                    "component": "mujoco",
+                    "path": "THIRD_PARTY_LICENSES/MuJoCo/LICENSE.txt",
+                }
+            ],
+            "archive": {
+                "file_name": f"{pack_id}.zip",
+                "size": 4096,
+                "sha256": SHA,
+            },
+            "generated_utc": "2026-11-06T12:00:00Z",
+        },
+        "signatures": [signature()],
+    }
+
+
 def catalog() -> dict:
     return {
         "schema_version": 1,
@@ -263,6 +319,96 @@ class BackendPackContractTests(unittest.TestCase):
         pack["signed"]["arrayfire"]["abi"] = "arrayfire-3.9"
         with self.assertRaisesRegex(contract.ContractError, "incompatible ArrayFire ABI"):
             contract.validate_runtime_composition(base, pack)
+
+    def test_plugin_pack_manifest_passes(self) -> None:
+        contract.validate_pack_manifest(plugin_manifest())
+        contract.validate_plugin_pack_manifest(plugin_manifest())
+
+    def test_plugin_pack_rejects_arrayfire_and_device_fields(self) -> None:
+        for name, value in (
+            ("arrayfire", {"version": "3.10.0", "abi": "arrayfire-3.10"}),
+            ("backend", "cpu"),
+            ("compatibility", {}),
+            ("runtime_set_id", "arrayfire-3.10.0-win64-v1"),
+        ):
+            document = plugin_manifest()
+            document["signed"][name] = value
+            with self.assertRaisesRegex(contract.ContractError, "unsupported fields"):
+                contract.validate_pack_manifest(document)
+
+    def test_schema_1_manifest_cannot_be_a_plugin_pack(self) -> None:
+        document = pack_manifest()
+        document["signed"]["pack_kind"] = "plugin_pack"
+        with self.assertRaisesRegex(contract.ContractError, "pack_kind"):
+            contract.validate_pack_manifest(document)
+
+    def test_schema_2_manifest_must_be_a_plugin_pack(self) -> None:
+        document = plugin_manifest()
+        document["signed"]["pack_kind"] = "backend_pack"
+        with self.assertRaisesRegex(contract.ContractError, "plugin_pack"):
+            contract.validate_pack_manifest(document)
+
+    def test_plugin_pack_requires_a_companion_base(self) -> None:
+        document = plugin_manifest()
+        document["signed"]["companion_base_id"] = None
+        with self.assertRaisesRegex(contract.ContractError, "companion_base_id"):
+            contract.validate_pack_manifest(document)
+
+    def test_unknown_schema_version_fails_closed(self) -> None:
+        document = plugin_manifest()
+        document["schema_version"] = 3
+        with self.assertRaisesRegex(contract.ContractError, "schema_version"):
+            contract.validate_pack_manifest(document)
+
+    def test_support_status_is_read_from_either_schema(self) -> None:
+        backend = pack_manifest()["signed"]
+        plugin = plugin_manifest()["signed"]
+        plugin["support_status"] = "diagnostic"
+        self.assertEqual(contract.manifest_support_status(backend), "supported")
+        self.assertEqual(contract.manifest_support_status(plugin), "diagnostic")
+
+    def test_active_plugins_passes_and_rejects_duplicates(self) -> None:
+        document = {
+            "schema_version": 1,
+            "base_pack_id": "cyxwiz-base-0.2.0-win64",
+            "plugins": [
+                {
+                    "plugin_id": "com.cyxwiz.simulation.mujoco",
+                    "pack_id": "cyxwiz-plugin-mujoco-3.17.0-1-win64",
+                }
+            ],
+        }
+        contract.validate_active_plugins(document)
+        document["plugins"].append(dict(document["plugins"][0], pack_id="other-v2"))
+        with self.assertRaisesRegex(contract.ContractError, "duplicate active plugin"):
+            contract.validate_active_plugins(document)
+
+    def test_active_plugins_rejects_runtime_identity_fields(self) -> None:
+        document = {
+            "schema_version": 1,
+            "base_pack_id": "cyxwiz-base-0.2.0-win64",
+            "plugins": [],
+            "generation": 3,
+        }
+        with self.assertRaisesRegex(contract.ContractError, "unsupported fields"):
+            contract.validate_active_plugins(document)
+
+    def test_plugin_composition_accepts_its_base(self) -> None:
+        contract.validate_plugin_composition(pack_manifest("base", "cpu"), plugin_manifest())
+
+    def test_plugin_composition_rejects_another_base_or_platform(self) -> None:
+        plugin = plugin_manifest()
+        plugin["signed"]["companion_base_id"] = "cyxwiz-base-0.3.0-win64"
+        with self.assertRaisesRegex(contract.ContractError, "different companion base"):
+            contract.validate_plugin_composition(pack_manifest("base", "cpu"), plugin)
+        plugin = plugin_manifest()
+        plugin["signed"]["platform"] = "linux64"
+        with self.assertRaisesRegex(contract.ContractError, "different platforms"):
+            contract.validate_plugin_composition(pack_manifest("base", "cpu"), plugin)
+
+    def test_backend_composition_rejects_a_plugin_pack(self) -> None:
+        with self.assertRaises(contract.ContractError):
+            contract.validate_runtime_composition(pack_manifest("base", "cpu"), plugin_manifest())
 
     def test_canonical_json_is_key_order_independent(self) -> None:
         left = {"b": [2, 1], "a": {"d": "x", "c": True}}

@@ -1,4 +1,5 @@
 #include "device_identity.h"
+#include "loaded_library.h"
 
 #include <algorithm>
 #include <array>
@@ -11,12 +12,8 @@
 
 #include <arrayfire.h>
 
-#ifdef _WIN32
-#define NOMINMAX
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
+#include "cyxwiz/device_memory.h"
+#include "dynamic_library.h"
 
 namespace cyxwiz::detail {
 namespace {
@@ -47,50 +44,6 @@ std::string PciFingerprint(const DeviceInfo& info) {
         << std::setw(2) << info.pci_device << '.'
         << info.pci_function;
     return LowerAscii(out.str());
-}
-
-class DynamicLibrary {
-public:
-#ifdef _WIN32
-    explicit DynamicLibrary(const wchar_t* name, bool already_loaded = false)
-        : handle_(already_loaded ? GetModuleHandleW(name) : LoadLibraryW(name)),
-          owns_(!already_loaded && handle_ != nullptr) {}
-
-    ~DynamicLibrary() {
-        if (owns_) FreeLibrary(handle_);
-    }
-
-    void* Find(const char* symbol) const {
-        return handle_ != nullptr
-            ? reinterpret_cast<void*>(GetProcAddress(handle_, symbol))
-            : nullptr;
-    }
-
-private:
-    HMODULE handle_ = nullptr;
-    bool owns_ = false;
-#else
-    explicit DynamicLibrary(const char* name, bool already_loaded = false)
-        : handle_(dlopen(name,
-                         RTLD_LAZY |
-                             (already_loaded ? RTLD_NOLOAD : RTLD_LOCAL))) {}
-
-    ~DynamicLibrary() {
-        if (handle_ != nullptr) dlclose(handle_);
-    }
-
-    void* Find(const char* symbol) const {
-        return handle_ != nullptr ? dlsym(handle_, symbol) : nullptr;
-    }
-
-private:
-    void* handle_ = nullptr;
-#endif
-};
-
-template <typename Function>
-Function FindFunction(const DynamicLibrary& library, const char* symbol) {
-    return reinterpret_cast<Function>(library.Find(symbol));
 }
 
 #ifdef CYXWIZ_ENABLE_OPENCL
@@ -197,19 +150,16 @@ bool HasOpenClExtension(const std::string& extensions,
 
 void EnrichOpenClIdentity(DeviceInfo& info) {
 #ifdef _WIN32
-    DynamicLibrary arrayfire_opencl(L"afopencl.dll", true);
     DynamicLibrary opencl(L"OpenCL.dll");
 #elif defined(__APPLE__)
-    DynamicLibrary arrayfire_opencl("libafopencl.dylib", true);
     DynamicLibrary opencl("/System/Library/Frameworks/OpenCL.framework/OpenCL");
 #else
-    DynamicLibrary arrayfire_opencl("libafopencl.so", true);
     DynamicLibrary opencl("libOpenCL.so.1");
 #endif
 
     using AfGetDeviceId = af_err (*)(ClDeviceId*);
-    const auto af_get_device_id =
-        FindFunction<AfGetDeviceId>(arrayfire_opencl, "afcl_get_device_id");
+    const auto af_get_device_id = reinterpret_cast<AfGetDeviceId>(
+        FindLoadedSymbol("afopencl", "afcl_get_device_id"));
     OpenClIdentityApi api;
     api.get_device_info = FindFunction<OpenClIdentityApi::GetDeviceInfo>(
         opencl, "clGetDeviceInfo");
@@ -310,10 +260,8 @@ struct CudaUuid {
 
 void EnrichCudaIdentity(DeviceInfo& info) {
 #ifdef _WIN32
-    DynamicLibrary arrayfire_cuda(L"afcuda.dll", true);
     DynamicLibrary cuda_driver(L"nvcuda.dll");
 #else
-    DynamicLibrary arrayfire_cuda("libafcuda.so", true);
     DynamicLibrary cuda_driver("libcuda.so.1");
 #endif
 
@@ -324,8 +272,8 @@ void EnrichCudaIdentity(DeviceInfo& info) {
     using CuDeviceGetAttribute = int (*)(int*, int, int);
     using CuDeviceTotalMem = int (*)(size_t*, int);
 
-    const auto af_get_native_id =
-        FindFunction<AfGetNativeId>(arrayfire_cuda, "afcu_get_native_id");
+    const auto af_get_native_id = reinterpret_cast<AfGetNativeId>(
+        FindLoadedSymbol("afcuda", "afcu_get_native_id"));
     const auto cu_init = FindFunction<CuInit>(cuda_driver, "cuInit");
     const auto cu_device_get =
         FindFunction<CuDeviceGet>(cuda_driver, "cuDeviceGet");
@@ -465,6 +413,20 @@ void EnrichSelectedDeviceIdentity(DeviceInfo& info) {
 #endif
     } catch (const std::exception&) {
         // Optional identity telemetry remains explicitly unknown.
+    }
+    // What the device has free right now, for every program (a reading at
+    // listing time; ReadDeviceMemoryFree gives a fresh one). The card is named
+    // by its hardware id, so its CUDA and its OpenCL listing both carry it. A
+    // CUDA device without an id may be the machine's only card; any other
+    // device without an id is not guessed.
+    const bool cuda_without_id = info.type == DeviceType::CUDA && !info.hardware_uuid_known;
+    const bool nvidia = info.type == DeviceType::CUDA || (info.hardware_vendor_id_known && info.hardware_vendor_id == 0x10de);
+    if (nvidia && (info.hardware_uuid_known || cuda_without_id)) {
+        const DeviceMemoryFree free_memory = ReadDeviceMemoryFree(cuda_without_id ? std::string() : info.hardware_uuid);
+        if (free_memory.known) {
+            info.memory_available = static_cast<size_t>(free_memory.free_bytes);
+            info.memory_available_known = true;
+        }
     }
     FinalizeDeviceIdentity(info);
 }

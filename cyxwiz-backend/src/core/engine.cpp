@@ -274,12 +274,6 @@ bool IsInitialized() {
     return g_initialized.load(std::memory_order_acquire);
 }
 
-void ReleaseUnusedDeviceMemory() {
-    if (g_initialized) {
-        af::deviceGC();
-    }
-}
-
 void Shutdown() {
     std::lock_guard<std::mutex> lock(LifecycleMutex());
 

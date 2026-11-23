@@ -6,6 +6,7 @@
 #endif
 
 #include "cyxwiz/feature_importance.h"
+#include "cyxwiz/portable_random.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <algorithm>
@@ -109,7 +110,7 @@ void FeatureImportanceAnalyzer::ShuffleColumn(
     }
 
     std::mt19937 rng(seed);
-    std::shuffle(column_values.begin(), column_values.end(), rng);
+    cyxwiz::portable::Shuffle(column_values.begin(), column_values.end(), rng);
 
     for (size_t i = 0; i < X.size() && i < column_values.size(); i++) {
         if (column_index < static_cast<int>(X[i].size())) {

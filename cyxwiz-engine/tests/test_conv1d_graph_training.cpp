@@ -6,6 +6,7 @@
 // (fixtures/conv1d_graph_pytorch.json, generate_conv1d_graph_fixtures.py).
 // Also: compiled shapes, the time-series row layout, the compiler's refusals,
 // and a Conv1D graph training with the TrainingExecutor.
+#include "oracle/training_oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/debug_run_paths.h"
 #include "../src/core/execution_device_context.h"
@@ -15,6 +16,8 @@
 #include "../src/core/model_builder.h"
 #include "../src/core/sequence_conv_section.h"
 #include "../src/core/training_executor.h"
+#include "../src/core/weight_match.h"
+#include "../src/core/weight_start.h"
 #include "route_qualification_test_fixture.h"
 
 #include <cyxwiz/device.h>
@@ -297,6 +300,26 @@ void CheckPyTorchCase(const json& c, const cyxwiz::TrainingConfiguration& config
     std::cout << "  ok " << name << "\n";
 }
 
+// The rows case started from a PyTorch state-dict (TOFIX223 0.15): the file
+// holds torch's own layouts - the Conv1d kernel [Cout, Cin, k] and the Linear
+// columns after flatten(1), channel first - which are also the Engine's for a
+// Conv1D section, so the loaded model must give torch's output. The loader
+// once permuted the kernel to [k, Cin, Cout] and reordered the head's columns
+// as channels last.
+void CheckWeightsFile(const json& c, const cyxwiz::TrainingConfiguration& config, const json& tolerance) {
+    auto fresh = cyxwiz::BuildExecutableFromConfig(config);
+    Check(fresh.ok(), "rows_flatten builds for the weights file: " + fresh.error_message);
+    cyxwiz::weight_match::Report report;
+    std::string error;
+    const auto path = std::filesystem::path(CYXWIZ_WEIGHT_FILE_FIXTURES) / "conv1d_rows.pth";
+    Check(cyxwiz::StartFromWeightsFile(path, *fresh.model, fresh.module_provenance, report, error),
+          "the Conv1D graph starts from the PyTorch state-dict: " + error);
+    Check(report.loaded == 2 && report.fresh == 0, "Conv and Dense take their weights: " + report.Summary());
+    CheckClose(fresh.model->Forward(ReadFloat(c.at("input"))), c.at("output"), tolerance,
+               "rows_flatten output after starting from the PyTorch state-dict");
+    std::cout << "  ok rows_flatten from a PyTorch state-dict\n";
+}
+
 void CheckPyTorch(const json& fixture) {
     const auto& tolerance = fixture.at("tolerance");
     for (const auto& c : fixture.at("cases")) {
@@ -311,6 +334,7 @@ void CheckPyTorch(const json& fixture) {
                                  Layer(6, gui::NodeType::Dense, "Dense", {{"units", std::to_string(g.at("units").get<int>())}})}),
                 name);
             CheckPyTorchCase(c, config, ReadFloat(c.at("input")), tolerance);
+            CheckWeightsFile(c, config, tolerance);
         } else {
             const size_t length = g.at("length").get<size_t>();
             const auto config = CompileValid(
@@ -345,19 +369,6 @@ std::shared_ptr<arrow::Array> Floats(const std::vector<float>& values) {
     std::shared_ptr<arrow::Array> array;
     Check(builder.Finish(&array).ok(), "finish");
     return array;
-}
-
-void SelectArrayFireCpu() {
-    const auto devices = cyxwiz::Device::GetAvailableDevices();
-    const auto cpu = std::find_if(devices.begin(), devices.end(), [](const cyxwiz::DeviceInfo& device) {
-        return device.type == cyxwiz::DeviceType::CPU;
-    });
-    Check(cpu != devices.end(), "an ArrayFire CPU route is required");
-    cyxwiz::test::InstallQualifiedRouteSnapshot(devices);
-    cyxwiz::ClearPendingExecutionDeviceSelection();
-    cyxwiz::SetPendingExecutionDeviceSelection(cyxwiz::DeviceType::CPU, cpu->device_id);
-    cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
 }
 
 // A Conv1D graph trains with the TrainingExecutor: 16 rows of 10 values, the
@@ -398,7 +409,7 @@ void CheckTraining(const std::filesystem::path& work_dir) {
     config.log_interval = 0;
     config.checkpoint_dir = (work_dir / "checkpoints").string();
 
-    SelectArrayFireCpu();
+    cyxwiz::test::PinTrainingDevice();
     cyxwiz::TrainingExecutor executor(config, dataset, "label");
     cyxwiz::TrainingMetrics metrics;
     bool completed = false;
@@ -417,6 +428,7 @@ void CheckTraining(const std::filesystem::path& work_dir) {
 }  // namespace
 
 int main(int, char** argv) {
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_conv1d_graph_training")) return 1;
     namespace fs = std::filesystem;
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
@@ -432,11 +444,13 @@ int main(int, char** argv) {
     const json fixture = json::parse(in);
 
     CheckShapesAndRefusals();
-    SelectArrayFireCpu();
+    cyxwiz::test::PinTrainingDevice();
     CheckPyTorch(fixture);
     CheckTraining(work_dir);
 
     fs::remove_all(work_dir);
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     std::cout << "Conv1D graphs match PyTorch and train\n";
     return 0;
 }

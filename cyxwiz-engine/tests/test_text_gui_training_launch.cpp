@@ -1,6 +1,7 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/async_task_manager.h"
 #include "../src/core/data_registry.h"
+#include "../src/core/gcc_diagnostics.h"
 #include "../src/core/dataset_batcher.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/node_executors/count_vectorizer_operator.h"
@@ -731,6 +732,7 @@ void TestTrainingRunComparisonRecord() {
     metrics.test_accuracy = 0.71f;
     metrics.has_test_metrics = true;
     metrics.checkpoint_used = "runs/sentiment/best_checkpoint.cyxckpt";
+    metrics.last_executed_epoch = 3;
 
     const auto record = cyxwiz::MakeTrainingRunComparisonRecord(
         "run-001", config, metrics, 12.5f,
@@ -905,6 +907,19 @@ void TestTrainingRunComparisonRecord() {
     Check(record.final_test_accuracy == 0.71f,
           "run comparison should keep final test accuracy");
 
+    Check(record.epochs_run == 3, "run comparison should keep the epochs that ran");
+    auto ended = record;
+    ended.finished_at = "11:06";
+    ended.device_backend = "arrayfire_cuda";
+    ended.device_name = "GeForce GTX 1050 Ti";
+    ended.device_fallback = true;
+    const std::string ended_csv = cyxwiz::TrainingRunComparisonTableSummary({ended});
+    const std::string ended_tail = ",11:06,3,arrayfire_cuda,GeForce GTX 1050 Ti,true";
+    Check(ended_csv.find("elapsed_seconds,finished_at,epochs_run,device_backend,device_name,device_fallback\n") !=
+                  std::string::npos &&
+              ended_csv.size() > ended_tail.size() &&
+              ended_csv.compare(ended_csv.size() - ended_tail.size(), ended_tail.size(), ended_tail) == 0,
+          "run comparison CSV ends with the finish time, epochs run and device");
     const std::string csv = cyxwiz::TrainingRunComparisonTableSummary({record});
     Check(csv.find("run_id,run_status,dataset_name,preprocessing_domain,"
                    "sequence_batch_enabled") == 0,
@@ -1211,8 +1226,11 @@ int main(int argc, char** argv) {
         {1, 1, 0, 2, 0, gui::LinkType::TensorFlow},
     };
     // The tokenizer feeds the Data Split: the step training reads.
+    // libstdc++'s vector growth: GCC -Warray-bounds false positive (TOFIX187).
+    CYXWIZ_GCC_IGNORE_BEGIN("-Warray-bounds")
     std::vector<gui::NodeLink> training_links = links;
     training_links.push_back({2, 2, 0, 6, 0, gui::LinkType::TensorFlow});
+    CYXWIZ_GCC_IGNORE_END
 
     CheckPreparedStepScope(work_dir, text_csv);
     CheckTokenizerStreamsOnDisk(work_dir);
@@ -1823,8 +1841,7 @@ int main(int argc, char** argv) {
               "saved NER launch should build attention masks");
         cyxwiz::ApplySequenceBatcherBuildResultToTrainingConfig(
             sequence_build, dispatch_config);
-        Check(dispatch_config.output_size ==
-                  static_cast<int>(sequence_build.tag_vocabulary_size),
+        Check(dispatch_config.output_size == sequence_build.tag_vocabulary_size,
               "saved NER launch should align classifier width with sequence tags");
 
         const auto batch_shape = batch.word_ids.Shape();

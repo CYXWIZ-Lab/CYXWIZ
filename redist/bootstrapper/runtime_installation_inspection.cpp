@@ -60,7 +60,8 @@ InspectRuntimeInstallation(const std::filesystem::path &root) {
   // installed product exists: interrupted downloads must remain retryable.
   // Inspect only fixed product markers, never recursively scan package files.
   for (const auto *name :
-       {"base", "packs", "installed-metadata", "rollback", "repair-backups"}) {
+       {"base", "packs", "plugins", "installed-metadata", "rollback",
+        "repair-backups"}) {
     const auto marker = root / name;
     const auto status = InspectPath(marker, error);
     if (error)

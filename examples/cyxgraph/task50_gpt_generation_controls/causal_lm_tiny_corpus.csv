@@ -1,11 +1,11 @@
-text
-"cyxwiz builds small models"
-"cyxwiz trains small models"
-"small models can explain graphs"
-"graphs can build models"
-"engine traces training steps"
-"training steps produce checkpoints"
-"checkpoints can reload models"
-"models can generate tokens"
-"tokens become useful text"
-"cyxwiz engine builds and trains"
+document_id,split,text
+doc01,train,cyxwiz builds small models
+doc02,train,cyxwiz trains small models
+doc03,train,small models can explain graphs
+doc04,train,graphs can build models
+doc05,train,engine traces training steps
+doc06,train,training steps produce checkpoints
+doc07,train,checkpoints can reload models
+doc08,train,models can generate tokens
+doc09,train,tokens become useful text
+doc10,train,cyxwiz engine builds and trains

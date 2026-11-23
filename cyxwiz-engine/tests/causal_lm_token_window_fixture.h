@@ -107,19 +107,25 @@ inline bool WriteTokenWindows(const fs::path& root, const fs::path& parquet_path
         .ok();
 }
 
-// The tracked causal-LM example with its Data Input on the token-window
-// contract (token_ids, loader-built next-token targets).
+// The tracked causal-LM example (text corpus -> Tokenizer causal windows ->
+// Split -> Loader -> decoder) with its Data Input reading the token-window
+// Parquet above directly: the Tokenizer step is left out, since that Parquet
+// is already what it writes.
 inline nlohmann::json LoadTokenWindowGraph(const fs::path& root) {
     nlohmann::json graph = nlohmann::json::parse(
         ReadText(root / "examples/cyxgraph/text/causal_lm_decoder_generation_experiment.cyxgraph"));
-    graph["data_boundary_version"] = 2;
+    int data_input = -1, tokenizer = -1;
     for (auto& node : graph["nodes"]) {
-        if (node.value("type", 0) != static_cast<int>(gui::NodeType::DataInput)) continue;
+        const int type = node.value("type", 0);
+        if (type == static_cast<int>(gui::NodeType::TextTokenizer)) tokenizer = node.value("id", 0);
+        if (type != static_cast<int>(gui::NodeType::DataInput)) continue;
+        data_input = node.value("id", 0);
         auto& params = node["parameters"];
-        for (const char* key : {"feature_columns", "label_column", "columns", "sequence_target_columns",
-                                "sequence_create_causal_lm_targets", "sequence_length", "sequence_vocab_size"}) {
+        for (const char* key : {"text_column", "text_label_column", "text_layout", "has_header", "delimiter"})
             params.erase(key);
-        }
+        // The tests hand their Parquet to the job under this name
+        params["dataset_name"] = "tiny_causal_lm_tokens";
+        params["file_category"] = "tabular";
         params["file_type"] = "parquet";
         params["token_column"] = "token_ids";
         params["sentence_id_column"] = "document_id";
@@ -128,38 +134,21 @@ inline nlohmann::json LoadTokenWindowGraph(const fs::path& root) {
         params["target_ignore_index"] = "-100";
         params["shape"] = "[8]";
     }
-    for (auto& node : graph["nodes"]) {
-        if (node.value("type", 0) != static_cast<int>(gui::NodeType::DataLoader)) continue;
-        node["parameters"]["create_causal_lm_targets"] = "true";
-        node["parameters"]["max_sequence_length"] = "8";
-        node["parameters"]["sentence_id_column"] = "document_id";
-    }
-    // The example leaves its training tail unwired (no loss labels, no loss ->
-    // optimizer) and its Sample Rows output unconsumed; wire it as the Engine
-    // saves a trainable causal-LM graph (Loader labels -> Loss, Loss -> Adam).
     auto& nodes = graph["nodes"];
-    for (auto& node : nodes) {
-        // Vocabulary logits per position: TimeDistributed, as in the Engine's
-        // causal-LM templates (a plain Dense takes one vector per sample).
-        if (node.value("id", 0) == 9) {
-            node["type"] = static_cast<int>(gui::NodeType::TimeDistributed);
-            node["parameters"] = {{"units", "64"}, {"use_bias", "true"}};
-        }
-    }
     nodes.erase(std::remove_if(nodes.begin(), nodes.end(),
-                               [](const nlohmann::json& node) { return node.value("id", 0) == 2; }),
+                               [tokenizer](const nlohmann::json& node) { return node.value("id", 0) == tokenizer; }),
                 nodes.end());
     auto& links = graph["links"];
+    int split = -1;
+    for (const auto& link : links)
+        if (link.value("from_node", 0) == tokenizer) split = link.value("to_node", 0);
     links.erase(std::remove_if(links.begin(), links.end(),
-                               [](const nlohmann::json& link) {
-                                   return link.value("to_node", 0) == 2 ||
-                                          (link.value("from_node", 0) == 4 && link.value("to_node", 0) == 10);
+                               [tokenizer](const nlohmann::json& link) {
+                                   return link.value("from_node", 0) == tokenizer || link.value("to_node", 0) == tokenizer;
                                }),
                 links.end());
-    links.push_back({{"id", 30}, {"from_node", 4}, {"from_pin", 0}, {"from_pin_index", 1},
-                     {"to_node", 11}, {"to_pin", 0}, {"to_pin_index", 1}, {"link_type", 0}});
-    links.push_back({{"id", 31}, {"from_node", 11}, {"from_pin", 0}, {"from_pin_index", 0},
-                     {"to_node", 12}, {"to_pin", 0}, {"to_pin_index", 0}, {"link_type", 0}});
+    links.push_back({{"id", 30}, {"from_node", data_input}, {"from_pin", 0}, {"from_pin_index", 0},
+                     {"to_node", split}, {"to_pin", 0}, {"to_pin_index", 0}, {"link_type", 0}});
     return graph;
 }
 

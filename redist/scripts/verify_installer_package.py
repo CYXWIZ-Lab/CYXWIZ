@@ -90,16 +90,25 @@ def require_bootstrap_metadata(stage: Path) -> list[Path]:
     manifest_directory = runtime / "catalogs" / "manifests"
     manifests = sorted(manifest_directory.glob("*.json"))
     manifest_backends: dict[str, str] = {}
+    plugin_pack_ids: set[str] = set()
     for path in manifests:
         document = load_json(path)
         body = document.get("signed")
-        if (
-            document.get("schema_version") != 1
-            or document.get("kind") != "cyxwiz-backend-pack-manifest"
-            or not isinstance(body, dict)
-            or not isinstance(body.get("pack_id"), str)
-            or not isinstance(body.get("backend"), str)
+        if document.get("kind") != "cyxwiz-backend-pack-manifest" or not isinstance(body, dict) or not isinstance(
+            body.get("pack_id"), str
         ):
+            raise PackageSmokeError(f"The packaged backend-pack manifest is not a pack manifest: {path.name}")
+        # Schema 2: a plugin pack (its plugin and companion base, no backend)
+        if document.get("schema_version") == 2:
+            if (
+                body.get("pack_kind") != "plugin_pack"
+                or not isinstance(body.get("plugin_id"), str)
+                or not isinstance(body.get("companion_base_id"), str)
+            ):
+                raise PackageSmokeError(f"The packaged plugin-pack manifest violates schema 2: {path.name}")
+            plugin_pack_ids.add(body["pack_id"])
+            continue
+        if document.get("schema_version") != 1 or not isinstance(body.get("backend"), str):
             raise PackageSmokeError(
                 f"The packaged backend-pack manifest violates schema 1: {path.name}"
             )
@@ -109,7 +118,7 @@ def require_bootstrap_metadata(stage: Path) -> list[Path]:
         pack.get("pack_id") for pack in packs
         if isinstance(pack, dict) and isinstance(pack.get("pack_id"), str)
     }
-    if catalog_ids != set(manifest_backends):
+    if catalog_ids != set(manifest_backends) | plugin_pack_ids:
         raise PackageSmokeError(
             "The packaged catalog and cached manifest identities differ"
         )

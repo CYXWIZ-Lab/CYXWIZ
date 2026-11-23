@@ -1,0 +1,331 @@
+{
+ "version": "2.1",
+ "data_boundary_version": 2,
+ "data_validator_contract_version": 2,
+ "evaluation_table_contract_version": 2,
+ "classical_tree_table_contract_version": 2,
+ "framework": 0,
+ "execution_mode": 0,
+ "workflow_description": "MNIST digits from a CSV of pixel columns: a small CNN for the Model window (Summary, Learning rate, Explain, Health, Projector) and Results > Test (Errors, Threshold, Calibration).",
+ "groups": [],
+ "annotations": [],
+ "nodes": [
+  {
+   "id": 1,
+   "type": 157,
+   "name": "MNIST rows",
+   "pos_x": 0,
+   "pos_y": 0,
+   "parameters": {
+    "source_type": "file",
+    "file_path": "mnist_test.csv",
+    "file_type": "csv",
+    "file_category": "tabular",
+    "has_header": "true",
+    "label_column": "label"
+   }
+  },
+  {
+   "id": 2,
+   "type": 106,
+   "name": "Split 80 / 10 / 10",
+   "pos_x": 260,
+   "pos_y": 0,
+   "parameters": {
+    "train_ratio": "0.8",
+    "val_ratio": "0.1",
+    "test_ratio": "0.1",
+    "stratified": "true",
+    "seed": "42"
+   }
+  },
+  {
+   "id": 3,
+   "type": 104,
+   "name": "Batches of 64",
+   "pos_x": 520,
+   "pos_y": 0,
+   "parameters": {
+    "batch_size": "64",
+    "epochs": "3",
+    "shuffle": "true"
+   }
+  },
+  {
+   "id": 4,
+   "type": 108,
+   "name": "Scale to 0..1",
+   "pos_x": 780,
+   "pos_y": -40,
+   "parameters": {
+    "mean": "0",
+    "std": "255",
+    "statistics": "same"
+   }
+  },
+  {
+   "id": 5,
+   "type": 40,
+   "name": "Image 28 x 28",
+   "pos_x": 1020,
+   "pos_y": -160,
+   "parameters": {
+    "shape": "28,28,1"
+   }
+  },
+  {
+   "id": 6,
+   "type": 2,
+   "name": "Conv2D 32",
+   "pos_x": 1260,
+   "pos_y": -40,
+   "parameters": {
+    "filters": "32",
+    "kernel_size": "3",
+    "padding": "valid"
+   }
+  },
+  {
+   "id": 7,
+   "type": 29,
+   "name": "ReLU 1",
+   "pos_x": 1500,
+   "pos_y": -160,
+   "parameters": {}
+  },
+  {
+   "id": 8,
+   "type": 5,
+   "name": "MaxPool 1",
+   "pos_x": 1740,
+   "pos_y": -40,
+   "parameters": {
+    "pool_size": "2",
+    "stride": "2"
+   }
+  },
+  {
+   "id": 9,
+   "type": 2,
+   "name": "Conv2D 64",
+   "pos_x": 1980,
+   "pos_y": -160,
+   "parameters": {
+    "filters": "64",
+    "kernel_size": "3",
+    "padding": "valid"
+   }
+  },
+  {
+   "id": 10,
+   "type": 29,
+   "name": "ReLU 2",
+   "pos_x": 2220,
+   "pos_y": -40,
+   "parameters": {}
+  },
+  {
+   "id": 11,
+   "type": 5,
+   "name": "MaxPool 2",
+   "pos_x": 2460,
+   "pos_y": -160,
+   "parameters": {
+    "pool_size": "2",
+    "stride": "2"
+   }
+  },
+  {
+   "id": 12,
+   "type": 15,
+   "name": "Flatten",
+   "pos_x": 2700,
+   "pos_y": -40,
+   "parameters": {}
+  },
+  {
+   "id": 13,
+   "type": 0,
+   "name": "Dense 128",
+   "pos_x": 2940,
+   "pos_y": -160,
+   "parameters": {
+    "units": "128"
+   }
+  },
+  {
+   "id": 14,
+   "type": 29,
+   "name": "ReLU 3",
+   "pos_x": 3180,
+   "pos_y": -40,
+   "parameters": {}
+  },
+  {
+   "id": 15,
+   "type": 14,
+   "name": "Dropout 0.5",
+   "pos_x": 3420,
+   "pos_y": -160,
+   "parameters": {
+    "rate": "0.5"
+   }
+  },
+  {
+   "id": 16,
+   "type": 0,
+   "name": "Dense 10",
+   "pos_x": 3660,
+   "pos_y": -40,
+   "parameters": {
+    "units": "10"
+   }
+  },
+  {
+   "id": 17,
+   "type": 73,
+   "name": "Cross entropy",
+   "pos_x": 3900,
+   "pos_y": 0,
+   "parameters": {}
+  },
+  {
+   "id": 18,
+   "type": 81,
+   "name": "Adam 0.001",
+   "pos_x": 4140,
+   "pos_y": 0,
+   "parameters": {
+    "learning_rate": "0.001"
+   }
+  }
+ ],
+ "links": [
+  {
+   "id": 1,
+   "from_node": 1,
+   "to_node": 2,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 2,
+   "from_node": 2,
+   "to_node": 3,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 3,
+   "from_node": 3,
+   "to_node": 4,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 4,
+   "from_node": 4,
+   "to_node": 5,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 5,
+   "from_node": 5,
+   "to_node": 6,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 6,
+   "from_node": 6,
+   "to_node": 7,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 7,
+   "from_node": 7,
+   "to_node": 8,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 8,
+   "from_node": 8,
+   "to_node": 9,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 9,
+   "from_node": 9,
+   "to_node": 10,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 10,
+   "from_node": 10,
+   "to_node": 11,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 11,
+   "from_node": 11,
+   "to_node": 12,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 12,
+   "from_node": 12,
+   "to_node": 13,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 13,
+   "from_node": 13,
+   "to_node": 14,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 14,
+   "from_node": 14,
+   "to_node": 15,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 15,
+   "from_node": 15,
+   "to_node": 16,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 16,
+   "from_node": 16,
+   "to_node": 17,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 17,
+   "from_node": 3,
+   "to_node": 17,
+   "from_pin_index": 1,
+   "to_pin_index": 1
+  },
+  {
+   "id": 18,
+   "from_node": 17,
+   "to_node": 18,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  }
+ ]
+}

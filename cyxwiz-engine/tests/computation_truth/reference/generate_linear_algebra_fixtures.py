@@ -80,6 +80,10 @@ def main():
     add("solve", {"A": square, "B": rhs}, matrix=mat(torch.linalg.solve(square, rhs)))
     add("solve_singular", {"A": singular, "B": random(3, 1, 11)})
     add("least_squares", {"A": tall, "B": tall_rhs}, matrix=mat(torch.linalg.lstsq(tall, tall_rhs).solution))
+    # Columns that depend on each other: gelsd's shortest x (numpy's lstsq gives the same).
+    rank_rhs = random(5, 2, 13)
+    add("least_squares", {"A": rank2, "B": rank_rhs}, matrix=mat(torch.linalg.lstsq(rank2, rank_rhs, driver="gelsd").solution),
+        label="rank_deficient")
     uu, ss, vv = torch.linalg.svd(rank2 + 0.01 * random(5, 4, 12), full_matrices=False)
     noisy = uu @ torch.diag(ss) @ vv
     add("low_rank", {"A": noisy}, k=2, matrix=mat(uu[:, :2] @ torch.diag(ss[:2]) @ vv[:2]))

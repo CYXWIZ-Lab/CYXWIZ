@@ -1,6 +1,7 @@
 #include "validate_view.h"
 
 #include "../../core/arrow_dataset.h"
+#include "../../core/column_list.h"
 #include "../../core/data_registry.h"
 #include "../icons.h"
 #include "../node_editor.h"
@@ -58,22 +59,6 @@ bool Choice(const char* id, int& value, const char* const* options, int count, f
         ImGui::EndCombo();
     }
     return changed;
-}
-
-std::vector<std::string> SplitList(const std::string& list) {
-    std::vector<std::string> out;
-    std::string item;
-    const auto flush = [&] {
-        const size_t a = item.find_first_not_of(' '), b = item.find_last_not_of(' ');
-        if (a != std::string::npos) out.push_back(item.substr(a, b - a + 1));
-        item.clear();
-    };
-    for (char ch : list) {
-        if (ch == ',') flush();
-        else item += ch;
-    }
-    flush();
-    return out;
 }
 
 std::string ValidatorReads(const std::vector<studio::GraphNode>& nodes, int target, int recipe) {
@@ -161,6 +146,12 @@ void ValidateView::Render() {
         if (r.result != "not run") ++ran;
         if (r.tone == studio::Tone::Ok) ++passed;
     }
+    // Says what a check is for training (TOFIX129 D7a): a gate, not a change.
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_faint, "A check passes the table through unchanged; one that fails stops the run, and training with it. "
+                                     "Nothing here changes the data.");
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
     ImGui::AlignTextToFramePadding();
     if (rows_.empty()) ImGui::TextColored(t.text_dim, "No checks in this graph yet.");
     else if (!ran) ImGui::TextColored(t.text_bright, "%zu check%s, not run in this session", checks, checks == 1 ? "" : "s");
@@ -348,7 +339,7 @@ void ValidateView::ColumnSetField(const char* id, std::string& list, const char*
     }
     // The columns as checkboxes (as the guided editor's column sets).
     ImGui::PushID(id);
-    auto chosen = SplitList(list);
+    auto chosen = ParseColumnList(list);
     for (size_t i = 0; i < columns_.size(); ++i) {
         const std::string& c = columns_[i];
         bool on = std::find(chosen.begin(), chosen.end(), c) != chosen.end();
@@ -357,8 +348,7 @@ void ValidateView::ColumnSetField(const char* id, std::string& list, const char*
         if (ImGui::Checkbox(c.c_str(), &on)) {
             if (on) chosen.push_back(c);
             else chosen.erase(std::remove(chosen.begin(), chosen.end(), c), chosen.end());
-            list.clear();
-            for (const auto& s : chosen) list += (list.empty() ? "" : ", ") + s;
+            list = FormatColumnList(chosen, ", ");
         }
         ImGui::PopID();
     }

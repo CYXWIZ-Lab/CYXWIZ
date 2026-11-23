@@ -4,7 +4,7 @@
 // fixtures/data_transform_pytorch.json (generate_data_transform_fixtures.py, which
 // also cross-checks scipy). Runs on the active ArrayFire backend
 // (CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu).
-#include "test_device_selection.h"
+#include "../oracle/oracle_test.h"
 
 #include <cyxwiz/data_transform.h>
 
@@ -126,7 +126,38 @@ void RunCase(const json& c, const std::string& name) {
             Check(result.is_outlier[i] == flags[i], name + ": flag " + std::to_string(i));
             count += static_cast<size_t>(flags[i]);
         }
-        return Check(result.count == count, name + ": outlier count");
+        Check(result.count == count, name + ": outlier count");
+        // The bounds the flags came from (TOFIX129 D7a G2): none without spread.
+        if (c.at("lo").is_null()) return Check(!result.bounds.spread, name + ": no spread, no bounds");
+        Check(result.bounds.spread, name + ": bounds learned");
+        CheckValue(result.bounds.lo, c.at("lo").get<double>(), name + " lo");
+        return CheckValue(result.bounds.hi, c.at("hi").get<double>(), name + " hi");
+    }
+    if (op == "outliers_from_train") {
+        // A step learns the bounds from the Train rows (inputs[0]) and applies
+        // them to every row (inputs[1]): flags, and the values clipped into them.
+        const std::vector<double>& rows = inputs.at(1);
+        const auto bounds = DataTransform::OutlierBoundsOf(x, c.at("method").get<std::string>(), c.at("threshold").get<double>());
+        Check(bounds.success && bounds.spread, name + ": bounds (" + bounds.error_message + ")");
+        CheckValue(bounds.lo, c.at("lo").get<double>(), name + " lo");
+        CheckValue(bounds.hi, c.at("hi").get<double>(), name + " hi");
+        const auto flagged = DataTransform::FlagOutside(rows, bounds);
+        Check(flagged.success, name + ": " + flagged.error_message);
+        const auto flags = c.at("flags").get<std::vector<int>>();
+        Check(flagged.is_outlier.size() == flags.size(), name + ": flag count");
+        size_t count = 0;
+        for (size_t i = 0; i < flags.size(); ++i) {
+            Check(flagged.is_outlier[i] == flags[i], name + ": flag " + std::to_string(i));
+            count += static_cast<size_t>(flags[i]);
+        }
+        Check(flagged.count == count, name + ": outlier count");
+        const auto clipped = DataTransform::ClipTo(rows, bounds);
+        Check(clipped.success, name + ": " + clipped.error_message);
+        const auto expected = c.at("clipped").get<std::vector<double>>();
+        Check(clipped.values.size() == expected.size() && clipped.clipped == count, name + ": clipped count");
+        for (size_t i = 0; i < expected.size(); ++i)
+            CheckValue(clipped.values[i], expected[i], name + " clipped " + std::to_string(i));
+        return;
     }
     if (op == "robust_scale") {
         cyxwiz::RobustScaleOptions options;
@@ -216,7 +247,7 @@ void RunCase(const json& c, const std::string& name) {
 }  // namespace
 
 int main(int, char** argv) {
-    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
+    Check(cyxwiz::test::BeginOracleTest("test_computation_truth_data_transform"), "requested test device");
     std::ifstream in(FixturePath(argv[0]));
     Check(static_cast<bool>(in), "cannot open the data transform fixture");
     const json fixture = json::parse(in);

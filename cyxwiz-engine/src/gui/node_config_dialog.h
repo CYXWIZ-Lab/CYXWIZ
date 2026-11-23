@@ -11,6 +11,8 @@
 #undef CreateDialogW
 #endif
 
+#include "../core/weight_report_presentation.h"
+#include "../core/cloud_source_presentation.h"
 #include <string>
 #include <map>
 #include <functional>
@@ -28,6 +30,7 @@
 #include "data_preview_table_renderer.h"
 #include "hdf5_source_inspector.h"
 #include "hdf5_loaded_source_verifier.h"
+#include "hdf5_apply_loader.h"
 #include "loaders/data_loader.h"
 #include "../core/data_convert_service.h"
 #include "../core/data_convert_task.h"
@@ -231,17 +234,27 @@ public:
     void Apply() override;
     void Reset() override;
     ImVec2 GetDefaultSize() const override { return ImVec2(1120, 760); }
-    bool IsBusy() const override { return is_loading_async_ || hdf5_loaded_source_.Busy(); }
-    bool CanApply() const override { return !IsHdf5Source(); }
+    bool IsBusy() const override {
+        return is_loading_async_ || hdf5_loaded_source_.Busy() || hdf5_apply_.Busy();
+    }
+    bool CanApply() const override {
+        if (CloudSourceChosen()) return cloud_can_apply_;
+        return !IsHdf5Source() || !hdf5_inspector_.Selection().data_path.empty();
+    }
     const char* ApplyBlockedReason() const override {
         if (IsBusy()) return "Wait for the load to finish";
-        if (IsHdf5Source()) return "An HDF5 file can be inspected here; loading it is not built yet";
+        if (CloudSourceChosen()) return cloud_can_apply_ ? nullptr : cloud_apply_blocked_reason_.c_str();
+        if (IsHdf5Source() && hdf5_inspector_.Selection().data_path.empty())
+            return "Choose the dataset to load in the HDF5 hierarchy";
         return nullptr;
     }
     // Train loads a Data Input a reopened project has not loaded through a
     // dialog it never shows (the same Apply as OK): the load's result is
     // taken here each frame, as RenderContent does for a shown dialog.
-    void PollLoad() { PollAsyncLoadResult(); }
+    void PollLoad() {
+        PollAsyncLoadResult();
+        PollHdf5Apply();
+    }
     const std::string& LoadMessage() const { return apply_status_message_; }
 
 protected:
@@ -283,6 +296,33 @@ private:
     void RenderDatasetRoleNote();
     char source_buf_[512] = {};
     bool format_options_open_ = false;
+    // CyxCloud source (TOFIX164 slice 4b, data_input_dialog_cloud_source.cpp):
+    // the source choice above the file field, the account's datasets and the
+    // chosen dataset's files (listed on threads, polled each frame), what the
+    // node's cloud_* parameters remember, and whether Apply may run.
+    enum class SourceKind { ThisComputer, CyxCloud };
+    SourceKind source_kind_ = SourceKind::ThisComputer;
+    bool CloudSourceChosen() const;
+    void RenderSourceChoice();
+    void RenderCloudSource();
+    void RefreshCloudDatasets();
+    void RefreshCloudFiles(const std::string& dataset_id);
+    void PollCloudLists();
+    cyxwiz::cloud_source_view::Input CloudInput() const;
+    void ApplyCloudSource();
+    struct CloudListTask;
+    std::shared_ptr<CloudListTask> cloud_datasets_task_;
+    std::shared_ptr<CloudListTask> cloud_files_task_;
+    bool cloud_listed_ = false;
+    std::vector<cyxwiz::cloud_source_view::DatasetIn> cloud_datasets_;
+    std::vector<cyxwiz::cloud_source_view::FileIn> cloud_files_;
+    std::string cloud_files_of_;
+    std::string cloud_datasets_error_;
+    std::string cloud_selected_dataset_;
+    std::string cloud_selected_file_;
+    cyxwiz::cloud_source_view::Remembered cloud_remembered_;
+    bool cloud_can_apply_ = false;
+    std::string cloud_apply_blocked_reason_;
     data_input::FolderScan folder_scan_;
     std::string folder_scan_path_;
     bool IsHdf5Source() const;
@@ -293,6 +333,12 @@ private:
     std::map<std::string, std::string> hdf5_restore_parameters_;
     void BeginHdf5LoadedSourceVerification();
     void PollHdf5LoadedSourceVerification();
+    // Apply of an HDF5 source (data_input_dialog_hdf5_apply.cpp, TOFIX189).
+    Hdf5ApplyLoader hdf5_apply_;
+    std::map<std::string, std::string> hdf5_apply_parameters_;  // the node's settings when it started
+    std::string hdf5_previous_dataset_name_;
+    void BeginHdf5Apply();
+    void PollHdf5Apply();
     bool BuildHdf5RestoreRequest(cyxwiz::Hdf5RegisteredSourceRequest& request,
                                std::string& error) const;
     std::string hdf5_source_path_;
@@ -366,7 +412,6 @@ private:
     char sheet_range_[64] = {};
     bool json_lines_ = false;
     char json_path_[128] = {};
-    char hdf5_dataset_[128] = "data";
 
     // STATE: Image options
     ImageLayout image_layout_ = ImageLayout::ClassSubdirs;
@@ -658,6 +703,24 @@ private:
     int early_stopping_patience_ = 5;
     char checkpoint_dir_[512] = "";
     char initialize_from_checkpoint_[512] = "";
+    // Start from: 0 random weights, 1 a checkpoint of an earlier run, 2 a weights file.
+    int start_from_ = 0;
+    char initialize_from_weights_file_[512] = "";
+    // The weights file read and matched to the compiled graph off the UI
+    // thread; the state is shared with the worker, so closing the dialog
+    // mid-read is safe.
+    struct WeightsProbe;
+    std::shared_ptr<WeightsProbe> weights_probe_;
+    std::string weights_probe_key_;      // the file and compile the shown result is of
+    bool weights_view_ready_ = false;
+    cyxwiz::WeightReportView weights_view_;
+    std::string weights_error_;
+    bool weights_report_open_ = false;
+    int weights_report_filter_ = 0;
+    void LoadStartFrom(const std::map<std::string, std::string>& parameters);
+    void RenderStartFrom();
+    void RenderWeightsCard(bool path_committed);
+    void RenderWeightsReport();
     DataLoaderGenerationTab generation_tab_;
     GenerationTabDataset generation_dataset_;
     bool generation_dataset_resolved_ = false;

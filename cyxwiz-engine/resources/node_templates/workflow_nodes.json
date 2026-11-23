@@ -24,8 +24,7 @@
       "implementation_notes": "Requires careful state management in execution engine",
       "target_phase": "Phase 3",
       "dependencies": [],
-      "effort_estimate": "High",
-      "user_votes": 0
+      "effort_estimate": "High"
     },
     {
       "type": "LoopEnd",
@@ -49,8 +48,7 @@
       "implementation_notes": "Must pair with LoopStart",
       "target_phase": "Phase 3",
       "dependencies": [],
-      "effort_estimate": "High",
-      "user_votes": 0
+      "effort_estimate": "High"
     },
     {
       "type": "CountingLoop",
@@ -74,8 +72,7 @@
       "implementation_notes": "Simpler than generic Loop Start/End pair",
       "target_phase": "Phase 2",
       "dependencies": [],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "IFSwitch",
@@ -98,8 +95,7 @@
       "implementation_notes": "Requires execution engine support for branching",
       "target_phase": "Phase 2",
       "dependencies": [],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "CASESwitch",
@@ -128,8 +124,7 @@
       "implementation_notes": "Extends IF Switch with multiple branches",
       "target_phase": "Phase 3",
       "dependencies": [],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "TryCatch",
@@ -153,8 +148,7 @@
       "implementation_notes": "Requires exception handling in execution engine",
       "target_phase": "Phase 3",
       "dependencies": [],
-      "effort_estimate": "High",
-      "user_votes": 0
+      "effort_estimate": "High"
     },
     {
       "type": "WaitNode",
@@ -177,8 +171,7 @@
       "implementation_notes": "Simple sleep in execution thread",
       "target_phase": "Phase 2",
       "dependencies": [],
-      "effort_estimate": "Low",
-      "user_votes": 0
+      "effort_estimate": "Low"
     },
     {
       "type": "BreakpointNode",
@@ -202,8 +195,7 @@
       "implementation_notes": "Integrate with debugger UI",
       "target_phase": "Phase 3",
       "dependencies": [],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     }
   ]
 }

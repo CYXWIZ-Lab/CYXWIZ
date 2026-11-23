@@ -2,6 +2,7 @@
 
 #include "extension_node_registry.h"
 #include "model_builder.h"
+#include "weight_start.h"
 
 #include <cyxwiz/device.h>
 #include <spdlog/spdlog.h>
@@ -85,6 +86,7 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
                               bool count_parameters,
                               Clock::time_point now) {
     Collect();
+    canvas_empty_ = nodes.empty();
     // An extension registered, removed or approved changes what the graph
     // compiles to, without a graph edit.
     const uint64_t revision =
@@ -123,11 +125,25 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
                 Device::ActivateProcessDeviceOnThisThread();
                 auto built = BuildExecutableFromConfig(buildable);
                 if (built.ok()) {
+                    // Learnable parameters: state such as BatchNorm's running
+                    // statistics is not trained.
+                    const auto state = built.model->GetStateParameterNames();
                     std::vector<std::pair<std::string, long long>> named;
                     for (const auto& [name, tensor] : built.model->GetParameters()) {
+                        if (state.count(name)) continue;
                         named.emplace_back(name, static_cast<long long>(tensor.NumElements()));
                     }
                     result->layer_parameters = CountParametersPerLayer(named);
+                    result->weight_slots = ::cyxwiz::WeightSlots(*built.model, built.module_provenance);
+                    result->memory = EstimateTrainingMemory(built, result->config.input_shape,
+                                                            result->config.batch_size);
+                    if (const auto selected = Device::GetProcessDevice()) {
+                        const DeviceInfo device = Device(selected->type, selected->device_id).GetInfo();
+                        if (device.memory_total_known) {
+                            result->memory.device_name = device.name;
+                            result->memory.device_memory_bytes = device.memory_total;
+                        }
+                    }
                     result->parameters_counted = true;
                 }
             } catch (const std::exception& error) {
@@ -146,6 +162,24 @@ LiveCompileState LiveGraphCompile::State() const {
 const std::map<size_t, long long>& LiveGraphCompile::LayerParameters() const {
     static const std::map<size_t, long long> empty;
     return result_ ? result_->layer_parameters : empty;
+}
+
+const std::vector<weight_match::LayerSlot>& LiveGraphCompile::WeightSlots() const {
+    static const std::vector<weight_match::LayerSlot> empty;
+    return result_ ? result_->weight_slots : empty;
+}
+
+const ModelMemoryEstimate& LiveGraphCompile::Memory() const {
+    static const ModelMemoryEstimate none;
+    return result_ ? result_->memory : none;
+}
+
+const TrainingConfiguration* LiveGraphCompile::CleanConfig() const {
+    if (!UpToDate()) return nullptr;
+    const auto& issues = result_->config.issues;
+    const bool error = std::any_of(issues.begin(), issues.end(),
+                                   [](const ValidationIssue& i) { return i.level == IssueLevel::Error; });
+    return error ? nullptr : &result_->config;
 }
 
 bool LiveGraphCompile::NodeHasError(int node_id) const {

@@ -301,6 +301,7 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
         int64_t new_sequence_tag_ignore_index = -100;
         int64_t new_sequence_target_ignore_index = -100;
         std::optional<PairScoreDefaults> new_pair_score_defaults;
+        std::optional<ModelDecision> new_decision;
         std::vector<std::string> new_sequence_token_vocabulary;
         std::vector<std::string> new_sequence_pos_vocabulary;
         std::vector<std::string> new_sequence_tag_vocabulary;
@@ -354,6 +355,12 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
         new_sequence_tag_ignore_index = probe.sequence_tag_ignore_index;
         new_sequence_target_ignore_index = probe.sequence_target_ignore_index;
         new_pair_score_defaults = PairScoreDefaultsFromMetadata(probe.custom_metadata);
+        new_decision.reset();
+        if (const auto found = probe.custom_metadata.find("decision"); found != probe.custom_metadata.end()) {
+            ModelDecision decision;
+            if (ModelDecisionFromJson(found->second, decision)) new_decision = decision;
+            else spdlog::warn("Model package: its kept decision could not be read; serving raw outputs");
+        }
 
         if (probe.has_sequence_token_vocabulary ||
             probe.has_sequence_pos_vocabulary ||
@@ -419,6 +426,7 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
         sequence_pos_vocabulary_ = std::move(new_sequence_pos_vocabulary);
         sequence_tag_vocabulary_ = std::move(new_sequence_tag_vocabulary);
         pair_score_defaults_ = new_pair_score_defaults;
+        decision_ = new_decision;
         model_path_ = model_path;
 
         spdlog::info("Loaded model: {} ({} layers)", GetModelName(), model_->Size());
@@ -454,6 +462,7 @@ void LocalInferenceServer::UnloadModel() {
     sequence_pos_vocabulary_.clear();
     sequence_tag_vocabulary_.clear();
     pair_score_defaults_.reset();
+    decision_.reset();
     model_path_.clear();
 }
 
@@ -660,6 +669,7 @@ void LocalInferenceServer::HandleModelInfo(const httplib::Request&, httplib::Res
         }},
         {"layers", json::array()}
     };
+    if (decision_) response["decision"] = json::parse(ModelDecisionToJson(*decision_));
     if (pair_score_defaults_) {
         response["pair_score_defaults"] = {
             {"score_mode", PairScoreModeName(pair_score_defaults_->mode)},
@@ -979,6 +989,20 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
         {"shape", output_shape},
         {"latency_ms", latency_ms}
     };
+    // A classifier package with a kept decision: each row's probabilities
+    // (calibrated) and its predicted class (by the kept threshold).
+    if (decision_ && output_shape.size() == 2 && output_tensor.GetDataType() == DataType::Float32) {
+        const float* raw = output_tensor.ReadData<float>();
+        const size_t rows = static_cast<size_t>(output_shape[0]), width = static_cast<size_t>(output_shape[1]);
+        json probabilities = json::array(), predicted = json::array();
+        for (size_t r = 0; r < rows; ++r) {
+            std::vector<float> p = DecisionProbabilities(*decision_, raw + r * width, width);
+            predicted.push_back(ApplyModelDecision(*decision_, p));
+            probabilities.push_back(p);
+        }
+        response["probabilities"] = probabilities;
+        response["predicted"] = predicted;
+    }
 
     if (!sequence_lengths.empty()) {
         response["sequence_lengths"] = sequence_lengths;

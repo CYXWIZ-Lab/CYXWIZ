@@ -24,6 +24,8 @@
 #include "projection_view.h"
 #include "plugins_view.h"
 #include "series_view.h"
+#include "signal_view.h"
+#include "text_view.h"
 #include "forecast_view.h"
 #include "prepare_view.h"
 #include "readiness_view.h"
@@ -48,7 +50,7 @@ class DataStudioPanel {
 public:
     // Explore's tabs, in the order they show.
     // Images shows only for an image dataset.
-    enum class ExploreTab { Query, Profile, Images, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Series, Forecast, Visualize, Plugins };
+    enum class ExploreTab { Query, Profile, Images, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Series, Forecast, Signal, Text, Visualize, Plugins };
 
     DataStudioPanel();
     ~DataStudioPanel() = default;
@@ -77,6 +79,13 @@ public:
     // Opens Explore > Profile on a dataset (a dashboard's "Edit roles").
     void ShowProfile(const std::string& dataset_name);
 
+    // Adds the node `type` (an import name) after the node whose result is
+    // `dataset` (`step`) or as a branch reading it, with `second_dataset`'s
+    // node into its second input when given (Tools > Linear Algebra's Add as
+    // a step / Keep as a node). Returns what happened, for the caller to show.
+    std::string AddNodeReading(const std::string& dataset, const std::string& type, const std::string& name,
+                               std::map<std::string, std::string> parameters, bool step, const std::string& second_dataset = {});
+
     // Opens an Explore tab on a dataset, at a column when given (Data >
     // Explore, Profile's missing counts).
     void ShowExplore(const std::string& dataset_name, ExploreTab tab, const std::string& column = {});
@@ -87,6 +96,10 @@ public:
     void ShowSeries(SeriesView::Look look);
     // Explore > Forecast, for the data in use (Tools > Time Series > Forecasting).
     void ShowForecast();
+    // Explore > Signal on a look, for the data in use (Tools > Signal Processing); `kernel`: Filter in Kernel mode.
+    void ShowSignal(SignalView::Look look, bool kernel = false);
+    // Explore > Text on a look, for the data in use (Tools > Text, Data > Tokenization).
+    void ShowText(TextView::Look look);
 
     // Data > Transform (TOFIX129 D2): opens Prepare and adds a step of `type`
     // after the data in use (a Data Input or a node's result; the graph's
@@ -134,6 +147,8 @@ private:
     std::unique_ptr<PluginsView> plugins_;
     std::unique_ptr<SeriesView> series_;
     std::unique_ptr<ForecastView> forecast_;
+    std::unique_ptr<SignalView> signal_;
+    std::unique_ptr<TextView> text_;
     std::unique_ptr<PrepareView> prepare_;
     std::unique_ptr<ValidateView> validate_;
     std::unique_ptr<PublishView> publish_;
@@ -179,6 +194,9 @@ private:
     std::string AddKeepRowsStep(const std::string& column, const std::vector<std::string>& texts);
     void RenderBringIn();
     void RenderStatusBar();
+    // Tells Profile which Data Input node the active table is, and the roles
+    // that node holds (D7a G1), so the roles set there reach the node.
+    void TellProfileItsNode();
 };
 
 }  // namespace cyxwiz

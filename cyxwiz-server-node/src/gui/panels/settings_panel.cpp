@@ -1,6 +1,11 @@
 // settings_panel.cpp
 #include "gui/panels/settings_panel.h"
 #include "gui/icons.h"
+#include "gui/ui_widgets.h"
+#include "auth/auth_manager.h"
+#include "core/config_manager.h"
+#include "common/server_address.h"
+#include <spdlog/spdlog.h>
 #include <imgui.h>
 #include <thread>
 #include <cstring>
@@ -43,21 +48,7 @@ void SettingsPanel::Render() {
         }
 
         if (ImGui::BeginTabItem("Network")) {
-            ImGui::Text("Central Server");
-            char server_buf[256];
-            strncpy(server_buf, config_.central_server.c_str(), sizeof(server_buf));
-            if (ImGui::InputText("##CentralServer", server_buf, sizeof(server_buf))) {
-                config_.central_server = server_buf;
-                config_changed_ = true;
-            }
-
-            if (ImGui::InputInt("HTTP API Port", &config_.http_api_port)) {
-                config_changed_ = true;
-            }
-
-            if (ImGui::Checkbox("Enable TLS", &config_.enable_tls)) {
-                config_changed_ = true;
-            }
+            RenderNetworkTab();
             ImGui::EndTabItem();
         }
 
@@ -100,17 +91,61 @@ void SettingsPanel::Render() {
     ImGui::Separator();
     ImGui::Spacing();
 
+    if (!save_note_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(ui::Muted(), "%s", save_note_.c_str());
+        ImGui::PopTextWrapPos();
+    }
     if (config_changed_) {
-        if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save Changes")) {
-            GetBackend().UpdateConfig(config_);
-            config_changed_ = false;
+        const std::string server = config_.cyxwiz_server;
+        const bool server_ok = server.find_first_not_of(" \t") == std::string::npos ||
+                               cyxwiz::protocol::ResolveServerAddress(server).error.empty();
+        if (ui::PrimaryButton(ICON_FA_FLOPPY_DISK " Save changes", 0.0f, server_ok,
+                              "Fix the server address first")) {
+            SaveChanges();
         }
         ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_ROTATE_LEFT " Discard")) {
+        if (ui::SecondaryButton(ICON_FA_ROTATE_LEFT " Discard")) {
             config_ = GetBackend().GetConfig();
             config_changed_ = false;
         }
     }
+}
+
+void SettingsPanel::SaveChanges() {
+    const auto first = config_.cyxwiz_server.find_first_not_of(" \t");
+    config_.cyxwiz_server = first == std::string::npos
+                                ? std::string()
+                                : config_.cyxwiz_server.substr(first, config_.cyxwiz_server.find_last_not_of(" \t") - first + 1);
+    const auto ca_first = config_.server_ca_file.find_first_not_of(" \t");
+    config_.server_ca_file = ca_first == std::string::npos
+                                 ? std::string()
+                                 : config_.server_ca_file.substr(
+                                       ca_first, config_.server_ca_file.find_last_not_of(" \t") - ca_first + 1);
+    const bool server_changed = ServerSettingsChanged();
+    // The CA only changes how the same server is checked: no sign-out.
+    const bool ca_changed = config_.server_ca_file != GetBackend().GetConfig().server_ca_file;
+    auto& auth = auth::AuthManager::Instance();
+    // A sign-in belongs to the server that issued it.
+    if (server_changed && auth.IsAuthenticated()) auth.Logout();
+    const std::string path = core::ConfigManager::FindConfigFile();
+    if (GetBackend().UpdateConfig(config_)) {
+        save_note_ = "Saved to " + path + ".";
+        if (ca_changed) {
+            cyxwiz::protocol::SetServerCaFile(config_.server_ca_file);
+            spdlog::info("Server CA set to {}", config_.server_ca_file.empty() ? "none (the system's trusted roots)"
+                                                                               : config_.server_ca_file);
+        }
+        if (server_changed) {
+            auth.SetApiBaseUrl(config_.AuthApiUrl());
+            spdlog::info("CyxWiz server set to {}", config_.cyxwiz_server.empty() ? "none (separate addresses)"
+                                                                                  : config_.cyxwiz_server);
+        }
+        if (server_changed || ca_changed) save_note_ += " The daemon uses the new server settings after it restarts.";
+    } else {
+        save_note_ = "Not saved: " + path + " could not be written.";
+    }
+    config_changed_ = false;
 }
 
 void SettingsPanel::RenderRemoteConnectionTab() {

@@ -11,6 +11,7 @@
 #include <stdexcept>
 
 void RunDataConvertPipelineReloadTests(const std::filesystem::path& work_dir);
+void RunDataInputHdf5PipelineTests(const std::filesystem::path& work_dir);
 
 namespace {
 
@@ -83,6 +84,7 @@ int main() try {
           "DataConvert output dataset should preserve column count");
 
     RunDataConvertPipelineReloadTests(work_dir);
+    RunDataInputHdf5PipelineTests(work_dir);
     return 0;
 } catch (const std::exception& error) {
     std::cerr << "FAIL: " << error.what() << '\n';

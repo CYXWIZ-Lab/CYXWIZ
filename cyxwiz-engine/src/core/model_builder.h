@@ -49,6 +49,7 @@ struct BuiltExecutableModel {
     std::unique_ptr<Loss>             loss;
     std::unique_ptr<Optimizer>        optimizer;
     std::string                       error_message;
+    std::vector<BuiltModuleProvenance> module_provenance;
 
     bool ok() const { return model != nullptr; }
 };
@@ -87,6 +88,7 @@ struct ResolvedOptimizerConfiguration {
     std::optional<float> epsilon;
     std::optional<float> rmsprop_alpha;
     std::optional<float> weight_decay;
+    std::optional<bool> nesterov;  // SGD
 };
 
 // Build SequentialModel + Loss + Optimizer from a TrainingConfiguration.
@@ -118,6 +120,10 @@ ResolvedOptimizerConfiguration ResolveOptimizerConfiguration(
 // existing SequentialModel; configs with graph_op_node_ids use the graph-plan
 // executable path.
 BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& config);
+
+// The layers alone, from a flat input of input_size values: no loss and no
+// optimizer (the PPO run's policy and value networks, TOFIX195 S4.3).
+BuiltExecutableModel BuildNetworkFromLayers(const std::vector<CompiledLayer>& layers, size_t input_size);
 
 // While alive, graph compiles and model builds on this thread do not log
 // their info lines (the background compile runs after every edit and counts

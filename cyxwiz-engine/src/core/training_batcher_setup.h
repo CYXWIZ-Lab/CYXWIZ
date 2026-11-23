@@ -118,12 +118,17 @@ TrainingInputSizeResolution ResolveTabularTrainingInputSize(
     const std::shared_ptr<arrow::Schema>& schema,
     const std::string& label_column);
 
-bool TryApplyBalancedClassWeightsFromArrowTable(
-    TrainingConfiguration& config,
-    const std::shared_ptr<arrow::Table>& table,
-    const std::string& label_column,
-    const std::string& partition_column,
-    const std::string& context);
+// class_weight=balanced on a Cross Entropy loss.
+bool IsBalancedClassWeightRequest(const TrainingConfiguration& config);
+
+// Resolves class_weight=balanced from the Train part's class counts
+// (`train` is the run's Train batcher): weight_c = n / (K * n_c), as
+// scikit-learn's "balanced", written to the config as manual class_weights.
+// The one place for every kind of data (TOFIX223 0.16: only the in-memory
+// table path did it; every other path trained unweighted). Throws
+// std::runtime_error with the reason when it cannot be computed; does
+// nothing when balanced is not requested.
+void ResolveBalancedClassWeights(TrainingConfiguration& config, const IBatcher* train);
 
 // A text label column is encoded to class indices first, over `vocabulary`
 // when given (shared by separately supplied partitions), else over the

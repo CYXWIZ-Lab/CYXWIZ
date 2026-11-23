@@ -8,6 +8,8 @@
 #include "../core/pipeline_runtime_capabilities.h"
 #include "../core/extension_node_metadata.h"
 #include "../core/extension_node_registry.h"
+#include "../core/rl_graph_compile.h"
+#include <algorithm>
 #include <spdlog/spdlog.h>
 #include <set>
 #include <queue>
@@ -28,6 +30,14 @@ bool NodeEditor::ValidateGraph(std::string& error_message) {
     if (nodes_.empty()) {
         error_message = "Graph is empty. Add nodes first.";
         return false;
+    }
+
+    // An RL graph has no data input or output: its own compile checks it (TOFIX195 S4.3)
+    if (std::any_of(nodes_.begin(), nodes_.end(), [](const MLNode& n) { return cyxwiz::IsRLGraphNode(n.type); })) {
+        cyxwiz::GraphCompiler compiler;
+        const auto config = compiler.Compile(nodes_, links_);
+        if (!config.is_valid) error_message = config.error_message;
+        return config.is_valid;
     }
 
     // Check for Input node
@@ -173,7 +183,7 @@ bool NodeEditor::IsGraphValid() const {
     return cyxwiz::HasTrainingGraphStructure(nodes_, cyxwiz::ExtensionTrainingRole);
 }
 
-void NodeEditor::ResolveDynamicPins(int node_id) {
+void NodeEditor::ResolveDynamicPins(int node_id, bool record_undo) {
     // Find the node
     MLNode* node = nullptr;
     for (auto& n : nodes_) {
@@ -193,16 +203,29 @@ void NodeEditor::ResolveDynamicPins(int node_id) {
     bool already_resolved = !node->resolved_config.empty();
     if (trigger_value == node->resolved_config && already_resolved) return;  // No change
 
-    SaveUndoState();
-
     // Call plugin to resolve new pins
     auto result = cyxwiz::ExtensionNodeRegistry::Instance().ResolveDynamicPins(
         node->extension_type_id, node->parameters);
 
+    // The plugin's own value for the trigger (a path becomes a portable name)
+    const auto adopt_canonical = [&]() {
+        const auto it = result.metadata.find("canonical_trigger");
+        if (trigger.empty() || it == result.metadata.end() || it->second.empty() || it->second == trigger_value) return;
+        node->parameters[trigger] = trigger_value = it->second;
+    };
+
     if (result.pins.empty()) {
-        spdlog::warn("ResolveDynamicPins: plugin returned empty pins for {}", node->extension_type_id);
+        // No pins (a model not on this PC): the node keeps its pins and links, and
+        // the plugin's words say why; it is asked again next time
+        for (const auto& [k, v] : result.metadata) node->parameters["_meta_" + k] = v;
+        adopt_canonical();
+        if (result.metadata.empty())
+            spdlog::warn("ResolveDynamicPins: plugin returned empty pins for {}", node->extension_type_id);
         return;
     }
+
+    if (record_undo) SaveUndoState();
+    adopt_canonical();
 
     // Save existing connections by pin name so we can restore matching ones
     struct SavedLink {

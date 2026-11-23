@@ -42,6 +42,7 @@ struct Tokens {
     ImVec4 accent_hover;
     ImVec4 accent_active;
     ImVec4 accent_text;   // links, badges, accent text on this background
+    ImVec4 on_accent;     // text on an accent fill (a primary button, the avatar)
 
     // Status
     ImVec4 success;
@@ -63,6 +64,11 @@ struct Tokens {
     ImVec4 plot_grid;
     ImVec4 scale_sequential[4];  // low to high
     ImVec4 scale_diverging[3];   // negative, middle, positive
+    // Feature maps (Studio Debugger layer views): Heat (perceptual, black
+    // through red to yellow) and Grayscale (brightness only). Picture data,
+    // so the same on light and dark windows.
+    ImVec4 scale_heat[6];
+    ImVec4 scale_gray[2];
 
     // Node canvas: one fill per node family (NodeHue); text on a node uses
     // ReadableOn. The same set on light and dark windows - they are fills.
@@ -93,6 +99,38 @@ const Tokens& CurrentTokens();
 // The same derivation for any style (tests, previews).
 Tokens BuildTokens(const ImGuiStyle& style);
 
+// The theme's colours that ImGui's style has no slot for (TOFIX129 A4): the
+// accent, the node families, the data types (pins, links, plot series) and the
+// status words. The Engine's theme registers its set (preset, then a custom
+// theme or Theme Editor edits); without one (the installer) the defaults
+// for the window's lightness apply.
+struct EngineColours {
+    ImVec4 accent;
+    ImVec4 node[Tokens::kNodeHueCount];
+    ImVec4 data[Tokens::kSeriesCount];
+    ImVec4 success, warning, caution, error, critical, info, pending, running;
+};
+// The shipped set: the CyxWiz purple accent, the node families, and the data
+// and status colours made for a light or a dark window.
+EngineColours DefaultEngineColours(bool light);
+void SetEngineColours(const EngineColours& colours);
+void ClearEngineColours();
+// The registered set, or the defaults for this lightness.
+EngineColours EffectiveEngineColours(bool light);
+// Button, hovered and pressed fills for a window colour: a step off the
+// window toward black on a light window, white on a dark one (owner rule
+// 2026-10-01, no outlines: a button is a fill). The Engine's theme and the
+// installer's set ImGui's Button colours from it; styled buttons read those.
+void ButtonFills(const ImVec4& window, ImVec4* fill, ImVec4* hover, ImVec4* active);
+// Text field, hovered and focused fills for a window colour: the one field
+// colour of the whole Engine (owner 2026-11-14: fields differed from screen to
+// screen). A step off the window in the theme's own family (owner
+// 2026-11-18: the near-black field "doesn't follow the theme"): toward the
+// text on a dark window, quieter than a button; near white on a light one.
+// The theme sets ImGui's FrameBg colours from it; screens read
+// Tokens::bg_input (= FrameBg).
+void FieldFills(const ImVec4& window, ImVec4* fill, ImVec4* hover, ImVec4* active);
+
 // Colour helpers shared by every screen.
 ImVec4 Mix(const ImVec4& a, const ImVec4& b, float t);
 ImVec4 WithAlpha(ImVec4 colour, float alpha);
@@ -109,6 +147,9 @@ ImVec4 NodeColour(const Tokens& tokens, NodeHue hue);
 ImVec4 SequentialAt(const Tokens& tokens, float v);
 // The diverging scale at v in [-1, 1] (negative, middle, positive).
 ImVec4 DivergingAt(const Tokens& tokens, float v);
+// The feature-map scales at v in [0, 1].
+ImVec4 HeatAt(const Tokens& tokens, float v);
+ImVec4 GrayAt(const Tokens& tokens, float v);
 // Text that reads on a filled background such as a heatmap cell (the
 // higher-contrast of bright text and the window colour).
 ImVec4 ReadableOn(const Tokens& tokens, const ImVec4& background);

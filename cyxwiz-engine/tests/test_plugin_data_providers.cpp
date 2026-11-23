@@ -252,7 +252,7 @@ int main() {
     {
         std::ifstream in(dir / "plugin.json");
         std::string manifest((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        manifest.replace(manifest.find("\"1.3.0\""), 7, "\"1.2.0\"");
+        manifest.replace(manifest.find("\"1.4.0\""), 7, "\"1.2.0\"");
         Write(old_dir / "plugin.json", manifest);
     }
     Check(manager.LoadPlugin(old_dir), "the API 1.2 copy loads");

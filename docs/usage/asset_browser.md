@@ -1,7 +1,17 @@
 # Asset Browser
 
 The Asset Browser shows the open project's folders and files. Click a file to
-preview it; double-click a text file to open it in the Script Editor.
+preview it. Double-click:
+
+- a table file (CSV, TSV, Parquet, JSON Lines, Feather, Arrow IPC, ARFF,
+  NumPy, and HDF5 or Excel when the build has them) to look at it in the
+  **Table Viewer**: the loaded dataset when a Data Input loaded the file,
+  otherwise the file's first 200,000 rows, read in a task (nothing is
+  loaded into the graph). A file over 1 GB is refused with a note: create a
+  Data Input, which reads it from disk;
+- another data file (images, audio, ...) to create a Data Input node for it;
+- a graph (`.cyxgraph`) to open it in CyxWiz Studio;
+- a text file to open it in the Script Editor.
 
 ## Creating files
 
@@ -37,9 +47,11 @@ The Script Editor opens `.py .cyx .txt .md .json .csv .tsv .yaml .yml .toml
 
 Right-click a folder or file for **Open**, **Copy**, **Cut**, **Paste**,
 **Rename**, **Delete**, **Show in Explorer** and **Open in Terminal**. Data
-files also offer **Create Data Input** (a configured Data Input node), other
-previewable files **Quick Preview**, and graphs **Open in CyxWiz Studio**. The
-Project menu adds **Refresh**.
+files offer **Open in Table Viewer** (table files), **Open as text** (in
+place of Open) and **Create Data Input** (a configured Data Input node);
+other previewable files **Quick Preview**, and graphs **Open in CyxWiz
+Studio**. The preview pane of a table file has **Create Data Input** and
+**Open in Table Viewer** under its rows. The Project menu adds **Refresh**.
 
 ## Shortcuts
 

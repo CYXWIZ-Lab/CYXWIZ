@@ -48,8 +48,10 @@ Hover the mark for the source key, the owner (Compiler, Runtime, Loader,
 Materializer, ...) and the rule's message. **▸ Details** under the rows shows
 them under every row. Settings are grouped as their node type declares
 (Training, Generation previews, Advanced settings, ...); a group's words are
-dropped from its labels ("Max new tokens" under Generation previews). *Reset*
-appears on a row whose value differs from its default. A value is written to
+dropped from its labels ("Max new tokens" under Generation previews). A reset
+arrow appears after the label of a row whose value differs from its default
+(beside the value when the label fills its column); hover it for the default,
+click it to go back. The value keeps its - / + steps. A value is written to
 the node only when you change it: looking at a node changes nothing.
 
 Numbers are typed fields with - / + steps, never sliders: type the exact
@@ -60,7 +62,12 @@ its step is 0.01 for a range up to 1 (the Data Split's ratios), 0.1 up to
 Settings the rules know but no editor shows (for example a Data Input's
 label column, owned by the loader) are listed read-only below the rows. A
 Data Input also gets a **Data** row: the file, whether it is loaded, and the
-rows × columns (or images and classes) once it is.
+rows × columns (or images and classes) once it is. Its **Dataset classes**
+row counts the classes of the label column: text labels count their
+distinct values, true / false labels are 2, and whole numbers from 0 are
+class numbers, so the count is the largest one plus 1 (labels 0 to 3: 4
+classes). Fractional or negative labels are a regression target: the row
+says *unknown* and why. An Output node's class count is checked against it.
 
 Plot and Dashboard nodes show the settings saved by their window, in words;
 they are changed in the window.

@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <filesystem>
 #include <string>
 
 using namespace cyxwiz::studio;
@@ -40,7 +41,12 @@ int main() {
          "D:/Project Berean/datasets/staging/tier1_paragraphs.parquet", "project-relative");
     Same(OutputPath(NodeType::ExportParquet, {{"file_path", "out/tier1"}, {"path_base", "exports"}}, project, exports),
          "D:/Project Berean/exports/out/tier1.parquet", "exports-relative, extension added");
-    Same(OutputPath(NodeType::ExportCSV, {{"file_path", "C:/data/x.csv"}}, project, exports), "C:/data/x.csv", "absolute kept");
+#ifdef _WIN32
+    const std::string absolute = "C:/data/x.csv";
+#else
+    const std::string absolute = "/data/x.csv";  // a drive letter is not absolute on Linux / macOS
+#endif
+    Same(OutputPath(NodeType::ExportCSV, {{"file_path", absolute}}, project, exports), absolute, "absolute kept");
     Same(OutputPath(NodeType::DataOutput, {{"path", "a/b"}, {"format", "parquet"}, {"path_base", "project"}}, project, exports),
          "D:/Project Berean/a/b.parquet", "Data Output reads `path` and its format");
     Same(OutputPath(NodeType::ExportJSON, {}, project, exports), "", "no path: named at run time");
@@ -65,7 +71,9 @@ int main() {
     nodes[3].ran = true;
     nodes[3].rows = 15349;
     nodes[3].finished_at = "14:28:41";
-    nodes[3].written_path = R"(D:\Project Berean\datasets\staging\tier1_paragraphs.parquet)";
+    // In the OS's own separators, as the executor records it (backslashes on Windows).
+    nodes[3].written_path =
+        std::filesystem::path("D:/Project Berean/datasets/staging/tier1_paragraphs.parquet").make_preferred().string();
     rows = OutputRows(nodes, project, exports);
     Same(rows[0].last, "15,349 rows \xC2\xB7 14:28:41", "written");
     Same(rows[0].writes, "D:/Project Berean/datasets/staging/tier1_paragraphs.parquet", "the written path, forward slashes");

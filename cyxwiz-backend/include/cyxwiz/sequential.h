@@ -5,6 +5,7 @@
 #include "api_export.h"
 #include "tensor.h"
 #include "layer.h"
+#include "model_cost.h"
 #include "activation.h"
 #include "optimizer.h"
 #include "layers/linear.h"
@@ -17,6 +18,7 @@
 #include "activations/relu.h"
 #include "activations/sigmoid.h"
 #include "activations/tanh.h"
+#include <set>
 #include <vector>
 #include <memory>
 #include <string>
@@ -47,7 +49,10 @@ enum class ModuleType {
     TransformerEncoder,
     TransformerDecoder,
     LayerNorm,
-    MultiHeadAttention
+    MultiHeadAttention,
+    Hardswish,
+    Hardsigmoid,
+    ReLU6
 };
 
 enum class TensorUnaryOp {
@@ -190,6 +195,30 @@ public:
     virtual Tensor ForwardInputs(const std::vector<Tensor>& inputs) { return Forward(inputs.at(0)); }
     virtual std::vector<Tensor> BackwardInputs(const Tensor& grad_output) { return {Backward(grad_output)}; }
 
+    // The names among GetParameters() that are state the module keeps, not
+    // trained (torch buffers, such as BatchNorm's running statistics): they
+    // have no gradient and the optimizer leaves them; checkpoints save them
+    // with the weights.
+    virtual std::vector<std::string> GetStateNames() const { return {}; }
+
+    // For memory estimates: the elements one training forward keeps for the
+    // backward pass beyond the module's output, per sample of
+    // sample_input_shape (no batch axis), such as attention weights or a
+    // recurrent layer's per-step gates. 0 when the output, and the input the
+    // previous module already holds, are all it keeps.
+    virtual size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+        (void)sample_input_shape;
+        return 0;
+    }
+    // For memory estimates: the elements the module's backward pass holds at
+    // once while it runs (a convolution's unfolded input columns and their
+    // gradient), per sample; freed when it returns, so only the largest over
+    // the model counts. 0 when it needs no more than its gradients.
+    virtual size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+        (void)sample_input_shape;
+        return 0;
+    }
+
 protected:
     bool is_training_ = true;
     bool trainable_ = true;  // For transfer learning - frozen layers won't update
@@ -216,6 +245,10 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     std::unique_ptr<Conv1DLayer> layer_;
@@ -247,6 +280,10 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     std::unique_ptr<Conv2DLayer> layer_;
@@ -274,6 +311,10 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     std::unique_ptr<DepthwiseConv2DLayer> layer_;
@@ -304,6 +345,10 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     std::unique_ptr<ConvTranspose2DLayer> layer_;
@@ -340,6 +385,10 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
     // The [D', H', W', F] sample each output row holds.
     std::vector<size_t> OutputSample() const { return {out_depth_, out_height_, out_width_, filters_}; }
@@ -513,11 +562,66 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     std::unique_ptr<LinearLayer> layer_;
     size_t in_features_;
     size_t out_features_;
+};
+
+/**
+ * @brief The choices inside a Squeeze-and-Excitation block. The defaults are
+ * the paper's block; MobileNetV3 uses ReLU with a Hardsigmoid gate.
+ */
+struct SqueezeExcitationOptions {
+    ActivationType activation = ActivationType::ReLU;  // between the two Linear layers: ReLU, Hardswish or Swish
+    ActivationType gate = ActivationType::Sigmoid;     // the value per channel: Sigmoid or Hardsigmoid
+    bool use_bias = true;                              // both Linear layers
+};
+
+/**
+ * @brief Squeeze-and-Excitation on `[H,W,C,N]` (torchvision.ops.SqueezeExcitation):
+ * each channel's mean over the map goes through Linear(C -> squeeze) -
+ * activation - Linear(squeeze -> C) - gate, and the map is multiplied by that
+ * one value per sample and channel. The output has the input's shape.
+ * Parameters: reduce_weight [squeeze, C], expand_weight [C, squeeze] and, with
+ * bias, reduce_bias [squeeze], expand_bias [C].
+ */
+class CYXWIZ_API SqueezeExcitationModule : public Module {
+public:
+    SqueezeExcitationModule(size_t channels, size_t squeeze_channels, SqueezeExcitationOptions options = {});
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
+    // Backward holds the gate laid over the map and two products of the map's size.
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+
+private:
+    // The gate [N,C] laid over the map's shape [H,W,C,N].
+    Tensor Over(const std::vector<size_t>& shape) const;
+
+    std::unique_ptr<GlobalAvgPool2DLayer> pool_;
+    std::unique_ptr<LinearModule> reduce_;
+    std::unique_ptr<LinearModule> expand_;
+    std::unique_ptr<Activation> activation_;
+    std::unique_ptr<Activation> gate_activation_;
+    size_t channels_;
+    size_t squeeze_channels_;
+    SqueezeExcitationOptions options_;
+    Tensor reduce_out_;  // before the activation
+    Tensor expand_out_;  // before the gate
+    Tensor gate_;        // [N,C]
 };
 
 /**
@@ -547,6 +651,9 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     LinearModule linear_;
@@ -727,6 +834,10 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     // Batch-first LSTMLayer; a bidirectional one builds its forward and
@@ -771,6 +882,10 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     // Same layout and key translation as LSTMModule.
@@ -804,6 +919,10 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     // Same layout and key translation as LSTMModule.
@@ -843,6 +962,10 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     std::unique_ptr<TransformerEncoderLayer> layer_;
@@ -882,6 +1005,10 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
     IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::Stateful; }
     Tensor ForwardIncremental(const Tensor& input, size_t position_offset) override;
     void ResetIncrementalState() override;
@@ -933,6 +1060,10 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
     // Only causal attention can decode incrementally.
     IncrementalDecoding GetIncrementalDecoding() const override {
         return options_.causal ? IncrementalDecoding::Stateful : IncrementalDecoding::Unsupported;
@@ -972,6 +1103,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     std::unique_ptr<MultiHeadAttentionLayer> layer_;
@@ -1004,6 +1136,10 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     Tensor Project(const Tensor& rows, const std::string& name) const;
@@ -1121,6 +1257,7 @@ public:
     Tensor Backward(const Tensor& grad_output) override;
     void SetTraining(bool training) override;
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     float p_;  // Dropout probability
@@ -1287,6 +1424,7 @@ public:
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
     std::string GetName() const override;
+    float NegativeSlope() const { return negative_slope_; }
 
 private:
     std::unique_ptr<LeakyReLUActivation> activation_;
@@ -1304,6 +1442,7 @@ public:
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
     std::string GetName() const override;
+    float Alpha() const { return alpha_; }
 
 private:
     std::unique_ptr<ELUActivation> activation_;
@@ -1375,6 +1514,54 @@ private:
 };
 
 /**
+ * @brief Wrapper for Hardswish activation: x * relu6(x + 3) / 6 (torch.nn.Hardswish)
+ */
+class CYXWIZ_API HardswishModule : public Module {
+public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
+    HardswishModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "Hardswish"; }
+
+private:
+    std::unique_ptr<HardswishActivation> activation_;
+};
+
+/**
+ * @brief Wrapper for Hardsigmoid activation: relu6(x + 3) / 6 (torch.nn.Hardsigmoid)
+ */
+class CYXWIZ_API HardsigmoidModule : public Module {
+public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
+    HardsigmoidModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "Hardsigmoid"; }
+
+private:
+    std::unique_ptr<HardsigmoidActivation> activation_;
+};
+
+/**
+ * @brief Wrapper for ReLU6 activation: min(max(x, 0), 6) (torch.nn.ReLU6)
+ */
+class CYXWIZ_API ReLU6Module : public Module {
+public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
+    ReLU6Module();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "ReLU6"; }
+
+private:
+    std::unique_ptr<ReLU6Activation> activation_;
+};
+
+/**
  * @brief BatchNorm1D module for normalizing activations in MLPs
  * Normalizes across the batch dimension for [batch, features] input
  */
@@ -1389,8 +1576,30 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    std::vector<std::string> GetStateNames() const override { return {"running_mean", "running_var"}; }
+
+    // A frozen BatchNorm can also keep its running statistics: with this on,
+    // a frozen module runs as in evaluation while the model trains (what
+    // fine-tuning on small data wants). Off, the default, is PyTorch's
+    // behaviour when only requires_grad is off: the weights stay and the
+    // statistics keep following the data.
+    // Applied at once (the builder freezes the module first), so the module
+    // does not wait for the next SetTraining to take its frozen mode. After a
+    // later Unfreeze the next SetTraining restores the mode it last asked for.
+    void SetKeepStatisticsWhenFrozen(bool keep) {
+        keep_statistics_when_frozen_ = keep;
+        SetTraining(requested_training_);
+    }
+    bool KeepsStatisticsWhenFrozen() const { return keep_statistics_when_frozen_; }
+    void SetTraining(bool training) override {
+        requested_training_ = training;
+        Module::SetTraining(training && !(keep_statistics_when_frozen_ && !IsTrainable()));
+    }
 
 private:
+    bool keep_statistics_when_frozen_ = false;
+    bool requested_training_ = true;
     size_t num_features_;
     float eps_;
     float momentum_;
@@ -1406,6 +1615,7 @@ private:
     // Cached for backward pass
     Tensor normalized_;
     Tensor std_inv_;
+    bool forward_training_ = true;  // the mode of the forward they came from
 
     // Gradients
     Tensor grad_gamma_;
@@ -1429,6 +1639,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return elementwise_affine_; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
     // Position-wise only when it normalizes over the feature axis alone.
     IncrementalDecoding GetIncrementalDecoding() const override {
         return normalized_shape_.size() == 1 ? IncrementalDecoding::PositionWise : IncrementalDecoding::Unsupported;
@@ -1460,6 +1671,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return affine_; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     std::unique_ptr<GroupNormLayer> layer_;
@@ -1512,8 +1724,30 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    std::vector<std::string> GetStateNames() const override { return {"running_mean", "running_var"}; }
+
+    // A frozen BatchNorm can also keep its running statistics: with this on,
+    // a frozen module runs as in evaluation while the model trains (what
+    // fine-tuning on small data wants). Off, the default, is PyTorch's
+    // behaviour when only requires_grad is off: the weights stay and the
+    // statistics keep following the data.
+    // Applied at once (the builder freezes the module first), so the module
+    // does not wait for the next SetTraining to take its frozen mode. After a
+    // later Unfreeze the next SetTraining restores the mode it last asked for.
+    void SetKeepStatisticsWhenFrozen(bool keep) {
+        keep_statistics_when_frozen_ = keep;
+        SetTraining(requested_training_);
+    }
+    bool KeepsStatisticsWhenFrozen() const { return keep_statistics_when_frozen_; }
+    void SetTraining(bool training) override {
+        requested_training_ = training;
+        Module::SetTraining(training && !(keep_statistics_when_frozen_ && !IsTrainable()));
+    }
 
 private:
+    bool keep_statistics_when_frozen_ = false;
+    bool requested_training_ = true;
     std::unique_ptr<BatchNorm2DLayer> layer_;
     int num_features_;
     float eps_;
@@ -1594,13 +1828,21 @@ public:
     bool SupportsSparseCsrInput() const;
 
     /**
-     * @brief Get all trainable parameters
+     * @brief Get every parameter the model holds, frozen layers included
+     *        (what a checkpoint or an export must keep)
      * @return Map of "layer_idx.param_name" -> tensor
      */
     std::map<std::string, Tensor> GetParameters();
 
     /**
-     * @brief Set all trainable parameters
+     * @brief Get the parameters of the layers that are not frozen (what the
+     *        optimizer steps; state such as running statistics is included)
+     * @return Map of "layer_idx.param_name" -> tensor
+     */
+    std::map<std::string, Tensor> GetTrainableParameters();
+
+    /**
+     * @brief Set parameters by name
      * @param params Map of "layer_idx.param_name" -> tensor
      */
     void SetParameters(const std::map<std::string, Tensor>& params);
@@ -1610,6 +1852,14 @@ public:
      * @return Map of "layer_idx.param_name" -> gradient tensor
      */
     std::map<std::string, Tensor> GetGradients();
+
+    // The "layerN.name" keys of GetParameters() that are state, not trained
+    // (Module::GetStateNames).
+    std::set<std::string> GetStateParameterNames() const;
+
+    // The "layerN.name" keys of GetParameters() that belong to frozen layers:
+    // kept and saved, never stepped, and no gradient is reported for them.
+    std::set<std::string> GetFrozenParameterNames() const;
 
     /**
      * @brief Apply optimizer to all parameters
@@ -1621,6 +1871,14 @@ public:
      * @brief Set training mode for all modules
      */
     void SetTraining(bool training);
+
+    /**
+     * @brief Called after each module's forward pass with its index, the
+     * module and its output (training-health statistics, interpretability).
+     * Pass an empty function to stop.
+     */
+    using ForwardObserver = std::function<void(size_t, const Module&, const Tensor&)>;
+    void SetForwardObserver(ForwardObserver observer) { forward_observer_ = std::move(observer); }
 
     /**
      * @brief Get number of modules
@@ -1718,6 +1976,7 @@ public:
 private:
     std::vector<std::unique_ptr<Module>> modules_;
     std::vector<Tensor> intermediate_outputs_;  // Cached for backward pass
+    ForwardObserver forward_observer_;
     std::string model_name_;
     std::string model_description_;
 };

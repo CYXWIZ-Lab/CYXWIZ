@@ -1,6 +1,7 @@
 #include "subgraph_document.h"
 #include "../core/extension_node_document.h"
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <set>
 #include <stdexcept>
@@ -17,6 +18,11 @@ const MLNode& Node(const std::vector<MLNode>& nodes, int id) {
     if (it == nodes.end()) Invalid("missing node " + std::to_string(id));
     return *it;
 }
+// A canvas position to a hundredth of a grid unit: a node set back where it
+// was (undo) reads back as -159.99998 for -160, and the saved graph (and the
+// unsaved check, which compares it) should not see that as a change.
+double CanvasUnits(float value) { return std::round(static_cast<double>(value) * 100.0) / 100.0; }
+
 json Nodes(const std::vector<MLNode>& nodes, const std::map<int, ImVec2>& positions) {
     json result = json::array();
     for (const auto& node : nodes) {
@@ -26,7 +32,7 @@ json Nodes(const std::vector<MLNode>& nodes, const std::map<int, ImVec2>& positi
         json entry = {{"id", node.id}, {"type", static_cast<int>(node.type)},
             {"category", static_cast<int>(node.category)}, {"name", node.name},
             {"description", node.description}, {"parameters", node.parameters},
-            {"pos_x", pos.x}, {"pos_y", pos.y}};
+            {"pos_x", CanvasUnits(pos.x)}, {"pos_y", CanvasUnits(pos.y)}};
         // An extension node is identified by its type id and keeps its pins.
         if (node.type == NodeType::PluginCustom) entry["extension"] = cyxwiz::WriteExtensionBlock(node);
         result.push_back(std::move(entry));

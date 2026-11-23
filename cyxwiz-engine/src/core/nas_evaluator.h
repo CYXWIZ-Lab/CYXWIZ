@@ -9,6 +9,8 @@
 
 namespace cyxwiz {
 
+inline constexpr int kNASRanked = 10;
+
 /**
  * ArchitectureScore - Metrics for evaluating a neural network architecture
  */
@@ -27,6 +29,7 @@ struct ArchitectureScore {
     int64_t total_flops = 0;
     int layer_count = 0;
     int trainable_layer_count = 0;
+    int skip_connections = 0;  // skip links and merges of two or more paths
 
     // Layer type distribution
     std::map<gui::NodeType, int> layer_type_counts;
@@ -78,19 +81,24 @@ struct NASSearchConfig {
     double weight_connectivity = 0.15;
 };
 
+// An architecture the search scored.
+struct NASCandidate {
+    std::vector<gui::MLNode> nodes;
+    std::vector<gui::NodeLink> links;
+    ArchitectureScore score;
+};
+
 /**
  * NASSearchResult - Result of architecture search
  */
 struct NASSearchResult {
-    std::vector<gui::MLNode> best_architecture;
-    std::vector<gui::NodeLink> best_links;
-    ArchitectureScore best_score;
+    // The best different architectures seen in every round, best first (up
+    // to kNASRanked): what "Train the best N" trains.
+    std::vector<NASCandidate> ranked;
 
-    std::vector<ArchitectureScore> generation_best;  // Best score per generation
-    std::vector<ArchitectureScore> all_scores;       // All evaluated architectures
-
-    int total_generations = 0;
+    int total_generations = 0;  // rounds run (fewer when stopped)
     int total_evaluations = 0;
+    bool stopped = false;
 
     bool success = false;
     std::string error_message;
@@ -102,7 +110,6 @@ struct NASSearchResult {
  * Provides tools for:
  * - Evaluating architecture complexity and efficiency
  * - Mutating architectures for search
- * - Generating architecture suggestions
  * - Simple evolutionary architecture search
  */
 class NASEvaluator {
@@ -111,17 +118,18 @@ public:
      * Score an architecture without training
      *
      * Evaluates based on parameter count, FLOPs, depth, and other heuristics.
+     * Parameters and multiply-adds come from the graph compiled as the canvas
+     * compiles it (the Model window's one counter, model_summary_presentation):
+     * a graph that does not compile is not scored (success false, why).
      *
-     * @param nodes The node graph
+     * @param nodes The node graph (with its data source)
      * @param links The connections
-     * @param input_shape Input shape [batch, channels, height, width] or [batch, features]
      * @param config Scoring configuration (optional)
      * @return ArchitectureScore with all metrics
      */
     static ArchitectureScore ScoreArchitecture(
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
-        const std::vector<size_t>& input_shape,
         const NASSearchConfig& config = NASSearchConfig()
     );
 
@@ -142,41 +150,23 @@ public:
     );
 
     /**
-     * Generate architecture suggestions based on task type
-     *
-     * @param task_type "classification", "regression", "image_classification", etc.
-     * @param input_shape Input shape
-     * @param output_size Number of output classes/values
-     * @param num_suggestions Number of architectures to generate
-     * @return Vector of (nodes, links) pairs
-     */
-    static std::vector<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>>
-    SuggestArchitectures(
-        const std::string& task_type,
-        const std::vector<size_t>& input_shape,
-        int output_size,
-        int num_suggestions = 5
-    );
-
-    /**
      * Run evolutionary architecture search
      *
-     * Note: This does NOT train models - it uses heuristic scoring only.
-     * For actual NAS, you'd need to train candidate architectures.
+     * Scores without training (ScoreArchitecture); the panel then trains
+     * the best ones through Train (core/trial_runner).
      *
      * @param initial_nodes Starting architecture
      * @param initial_links Starting links
-     * @param input_shape Input shape
      * @param config Search configuration
-     * @param progress_callback Optional callback (generation, best_score)
-     * @return NASSearchResult with best architecture found
+     * @param progress_callback Optional callback (round just scored, its
+     *        best); returning false stops the search after that round
+     * @return NASSearchResult with the best architectures found
      */
     static NASSearchResult EvolveArchitecture(
         const std::vector<gui::MLNode>& initial_nodes,
         const std::vector<gui::NodeLink>& initial_links,
-        const std::vector<size_t>& input_shape,
         const NASSearchConfig& config = NASSearchConfig(),
-        std::function<void(int, const ArchitectureScore&)> progress_callback = nullptr
+        std::function<bool(int, const ArchitectureScore&)> progress_callback = nullptr
     );
 
     /**
@@ -196,6 +186,27 @@ public:
         const std::vector<gui::NodeLink>& links
     );
 
+    // Find trainable layers (indices into `nodes`)
+    static std::vector<int> FindTrainableLayers(const std::vector<gui::MLNode>& nodes);
+    // Indices of the trainable layers a mutation may remove, resize or swap:
+    // all but the heads (a trainable layer with no trainable layer after it
+    // sets the model's output size the loss expects). Hyperparameter Search
+    // leaves the heads out the same way.
+    // Whether anything downstream of the node is a trainable layer.
+    static bool FeedsTrainableLayer(const std::vector<gui::MLNode>& nodes,
+                                    const std::vector<gui::NodeLink>& links, int node_id);
+    static std::vector<int> FindBodyLayers(const std::vector<gui::MLNode>& nodes,
+                                           const std::vector<gui::NodeLink>& links);
+    // The model's nodes (layers, activations, merges, ...; not the data
+    // pipeline or the loss) in the order data flows through them (indices
+    // into `nodes`).
+    static std::vector<int> ModelChain(const std::vector<gui::MLNode>& nodes,
+                                       const std::vector<gui::NodeLink>& links);
+    // A model node as a list shows it: "Dense 192", "Conv2D 32", "BatchNorm";
+    // its kind alone: "Dense".
+    static std::string LayerText(const gui::MLNode& node);
+    static std::string LayerKind(const gui::MLNode& node);
+
 private:
     // Helper methods
 
@@ -203,28 +214,16 @@ private:
     static int GetNextPinId(const std::vector<gui::MLNode>& nodes);
     static int GetNextLinkId(const std::vector<gui::NodeLink>& links);
 
-    // Estimate parameters for a layer
-    static int64_t EstimateLayerParams(
-        gui::NodeType type,
-        const std::map<std::string, std::string>& params,
-        const std::vector<size_t>& input_shape
-    );
-
-    // Estimate FLOPs for a layer
-    static int64_t EstimateLayerFLOPs(
-        gui::NodeType type,
-        const std::map<std::string, std::string>& params,
-        const std::vector<size_t>& input_shape
-    );
-
     // Check if a node type is a trainable layer
     static bool IsTrainableLayer(gui::NodeType type);
 
     // Check if a node type is an activation
     static bool IsActivation(gui::NodeType type);
 
-    // Get random layer type for mutation
-    static gui::NodeType GetRandomLayerType(std::mt19937& rng);
+    // A random layer type that fits where `neighbour` is (feature layers
+    // beside a Dense, the same convolution beside a Conv), other than `except`.
+    static gui::NodeType GetRandomLayerType(std::mt19937& rng, gui::NodeType neighbour,
+                                            gui::NodeType except = gui::NodeType::Output);
 
     // Get random activation type
     static gui::NodeType GetRandomActivation(std::mt19937& rng);
@@ -240,8 +239,6 @@ private:
     // Find the output layer in a graph
     static int FindOutputNode(const std::vector<gui::MLNode>& nodes);
 
-    // Find trainable layers
-    static std::vector<int> FindTrainableLayers(const std::vector<gui::MLNode>& nodes);
 
     // Crossover two architectures (for evolutionary search)
     static std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> Crossover(

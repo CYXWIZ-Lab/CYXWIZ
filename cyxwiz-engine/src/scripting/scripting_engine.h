@@ -226,7 +226,7 @@ public:
     // Verbose logging (includes internal Variable Explorer commands)
     void SetVerboseLogging(bool enable) { verbose_logging_ = enable; }
     bool IsVerboseLogging() const { return verbose_logging_; }
-    bool* GetVerboseLoggingPtr() { return &verbose_logging_; }
+    std::atomic<bool>* GetVerboseLoggingPtr() { return &verbose_logging_; }
 
     // Console timeout configuration (for interactive commands)
     void SetConsoleTimeout(double seconds) { console_timeout_seconds_ = seconds; }
@@ -285,7 +285,9 @@ private:
     std::string language_error_;
     std::unique_ptr<PythonSandbox> sandbox_;
     bool sandbox_enabled_;
-    bool verbose_logging_{false};  // Log all commands including internal ones
+    // Tools > Diagnostics > Log Every Python Command: each command with its
+    // duration. Atomic: the menu sets it, worker threads running Python read it.
+    std::atomic<bool> verbose_logging_{false};
     double console_timeout_seconds_{30.0};  // Console command timeout (default 30s)
 
     // ========== Async execution state ==========
@@ -332,8 +334,11 @@ private:
     std::atomic<unsigned long> python_thread_id_{0};
 
     // MATLAB-style aliases initialization
-    bool matlab_aliases_initialized_{false};
-    void InitializeMatlabAliases();
+    std::atomic<bool> session_prepared_{false};
+    std::mutex prepare_session_mutex_;  // one PrepareSession at a time (callers do not hold the GIL)
+    // Each session's start (Preferences > Python): numpy as np, pycyxwiz and
+    // its short names, DuckDB and Polars helpers, then the startup scripts
+    void PrepareSession();
 
     // Ensure Python is initialized before use
     bool EnsurePythonInitialized(std::string* error_out = nullptr);

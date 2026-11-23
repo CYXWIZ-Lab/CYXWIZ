@@ -11,6 +11,8 @@
 #include "cyxwiz/linear_algebra.h"
 #include "arrayfire_backend_utils.h"
 #include "arrayfire_host_values.h"
+#include "svd_device.h"
+#include "device_random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -99,7 +101,7 @@ MatrixResult MatrixFromDevice(const af::array& source, const char* operation) {
 // Singular values (descending) of a.
 std::vector<double> SingularValues(const af::array& a, const char* operation) {
     af::array u, s, vt;
-    af::svd(u, s, vt, a);
+    detail::ThinSvd(a, u, s, vt, false);
     return DeviceToHostValues(s, operation);
 }
 
@@ -286,6 +288,27 @@ ScalarResult LinearAlgebra::Trace(const std::vector<std::vector<double>>& A) {
     }
 }
 
+namespace {
+
+// Singular values carry the compute precision's rounding: a float32 device
+// leaves ~1e-7 relative where float64 has zeros, so the relative tolerance is
+// at least that precision's epsilon times max(m, n) (torch.linalg.matrix_rank's
+// rtol). On the Gram route a tall matrix takes, a small singular value carries
+// sqrt(eps) of the largest, times the columns (not the rows: the m x m U is
+// never formed).
+ScalarResult RankOf(const af::array& a, double tolerance) {
+    ScalarResult result;
+    const std::vector<double> singular = SingularValues(a, "LinearAlgebra::Rank");
+    const double largest = singular.empty() ? 0.0 : singular.front();
+    const double size = detail::UsesGram(a) ? static_cast<double>(a.dims(1)) : static_cast<double>(std::max(a.dims(0), a.dims(1)));
+    const double threshold = std::max(tolerance, detail::SingularNoise(a)) * size * largest;
+    result.value = static_cast<double>(std::count_if(singular.begin(), singular.end(), [&](double s) { return s > threshold; }));
+    result.success = true;
+    return result;
+}
+
+}  // namespace
+
 ScalarResult LinearAlgebra::Rank(const std::vector<std::vector<double>>& A, double tolerance) {
     ScalarResult result;
     if (A.empty()) {
@@ -295,19 +318,7 @@ ScalarResult LinearAlgebra::Rank(const std::vector<std::vector<double>>& A, doub
     }
     if (!RequireMatrix(A, result)) return result;
     try {
-        const std::vector<double> singular = SingularValues(ToDevice(A), "LinearAlgebra::Rank");
-        const double largest = singular.empty() ? 0.0 : singular.front();
-        // Singular values carry the compute precision's rounding: a float32 device
-        // leaves ~1e-7 relative where float64 has zeros, so the relative tolerance is
-        // at least that precision's epsilon (torch.linalg.matrix_rank's rtol).
-        const double epsilon =
-            DeviceHasDouble() ? std::numeric_limits<double>::epsilon() : std::numeric_limits<float>::epsilon();
-        const double threshold =
-            std::max(tolerance, epsilon) * static_cast<double>(std::max(A.size(), A[0].size())) * largest;
-        result.value = static_cast<double>(
-            std::count_if(singular.begin(), singular.end(), [&](double s) { return s > threshold; }));
-        result.success = true;
-        return result;
+        return RankOf(ToDevice(A), tolerance);
     } catch (const af::exception& e) {
         return Failure<ScalarResult>(DeviceError("LinearAlgebra::Rank", e));
     }
@@ -417,10 +428,15 @@ SVDResult LinearAlgebra::SVD(const std::vector<std::vector<double>>& A, bool ful
     result.k = std::min(result.m, result.n);
     try {
         af::array u, s, vt;
-        af::svd(u, s, vt, ToDevice(A));  // full: U m x m, Vt n x n
-        if (!full_matrices) {
-            u = u(af::span, af::seq(0, result.k - 1));
-            vt = vt(af::seq(0, result.k - 1), af::span);
+        const af::array a = ToDevice(A);
+        if (full_matrices) {
+            if (detail::UsesGram(a)) {
+                return Failure<SVDResult>("A has " + std::to_string(result.m) + " rows: its full U (" + std::to_string(result.m) + " x " +
+                                          std::to_string(result.m) + ") does not fit; use the reduced SVD");
+            }
+            af::svd(u, s, vt, a);  // full: U m x m, Vt n x n
+        } else {
+            detail::ThinSvd(a, u, s, vt, true);
         }
         result.U = ToHostMatrix(u, "LinearAlgebra::SVD");
         result.S = DeviceToHostValues(s, "LinearAlgebra::SVD");
@@ -446,13 +462,250 @@ MatrixResult LinearAlgebra::LowRankApproximation(const std::vector<std::vector<d
     }
     try {
         af::array u, s, vt;
-        af::svd(u, s, vt, ToDevice(A));
+        detail::ThinSvd(ToDevice(A), u, s, vt, true);
         const af::seq top(0, k - 1);
         const af::array scaled =  // column j times s_j
             u(af::span, top) * af::tile(af::transpose(s(top)), static_cast<unsigned>(A.size()));
         return MatrixFromDevice(af::matmul(scaled, vt(top, af::span)), "LinearAlgebra::LowRankApproximation");
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::LowRankApproximation", e));
+    }
+}
+
+// ============================================================================
+// Tables of rows
+// ============================================================================
+
+namespace {
+
+// `values` (one per column) as a 1 x n row on the device, or `fallback` everywhere when empty.
+af::array RowOf(const std::vector<double>& values, dim_t n, double fallback) {
+    if (values.empty()) return af::constant(fallback, 1, n, DeviceHasDouble() ? f64 : f32);
+    return ToDevice(Matrix{values});
+}
+
+}  // namespace
+
+namespace {
+
+// A DenseView on the device in the compute type (float64 as it is; float32 converted).
+af::array ViewToDevice(const DenseView& A) {
+    if (DeviceHasDouble()) return af::array(A.rows, A.cols, A.data);
+    const size_t count = static_cast<size_t>(A.rows) * static_cast<size_t>(A.cols);
+    std::vector<float> values(count);
+    for (size_t i = 0; i < count; ++i) values[i] = static_cast<float>(A.data[i]);
+    return af::array(A.rows, A.cols, values.data());
+}
+
+std::string ViewRefusal(const DenseView& A) {
+    if (A.rows <= 0 || A.cols <= 0 || !A.data) return "The matrix is empty";
+    return "";
+}
+
+ColumnSummaryResult SummaryOf(const af::array& a) {
+    ColumnSummaryResult result;
+    const af::array mean = af::mean(a, 0);
+    const af::array centred = a - af::tile(mean, static_cast<unsigned>(a.dims(0)));
+    const af::array sd = af::sqrt(af::mean(centred * centred, 0));
+    result.mean = DeviceToHostValues(mean, "LinearAlgebra::ColumnSummary");
+    result.sd = DeviceToHostValues(sd, "LinearAlgebra::ColumnSummary");
+    result.cross = ToHostMatrix(af::matmul(centred, centred, AF_MAT_TRANS, AF_MAT_NONE), "LinearAlgebra::ColumnSummary");
+    result.rows = static_cast<int>(a.dims(0));
+    result.precision = a.type() == f64 ? std::numeric_limits<double>::epsilon() : std::numeric_limits<float>::epsilon();
+    result.success = true;
+    return result;
+}
+
+af::array AffineOf(af::array a, const std::vector<double>& shift, const std::vector<double>& divisor, const Matrix& W) {
+    const unsigned n = static_cast<unsigned>(a.dims(0));
+    if (!shift.empty()) a -= af::tile(RowOf(shift, a.dims(1), 0.0), n);
+    if (!divisor.empty()) a /= af::tile(RowOf(divisor, a.dims(1), 1.0), n);
+    return af::matmul(a, ToDevice(W));
+}
+
+std::string AffineRefusal(size_t d, const std::vector<double>& shift, const std::vector<double>& divisor, const Matrix& W) {
+    if ((!shift.empty() && shift.size() != d) || (!divisor.empty() && divisor.size() != d) || W.size() != d)
+        return "shift, divisor and the rows of W must have one entry per column of A";
+    return "";
+}
+
+}  // namespace
+
+ColumnSummaryResult LinearAlgebra::ColumnSummary(const std::vector<std::vector<double>>& A) {
+    ColumnSummaryResult result;
+    if (!RequireMatrix(A, result)) return result;
+    try {
+        return SummaryOf(ToDevice(A));
+    } catch (const af::exception& e) {
+        return Failure<ColumnSummaryResult>(DeviceError("LinearAlgebra::ColumnSummary", e));
+    }
+}
+
+ColumnSummaryResult LinearAlgebra::ColumnSummary(const DenseView& A) {
+    if (const std::string refusal = ViewRefusal(A); !refusal.empty()) return Failure<ColumnSummaryResult>(refusal);
+    try {
+        return SummaryOf(ViewToDevice(A));
+    } catch (const af::exception& e) {
+        return Failure<ColumnSummaryResult>(DeviceError("LinearAlgebra::ColumnSummary", e));
+    }
+}
+
+SVDResult LinearAlgebra::LeadingEigenvectors(const std::vector<std::vector<double>>& S, int k, int iterations) {
+    SVDResult result;
+    if (!RequireMatrix(S, result)) return result;
+    const int d = static_cast<int>(S.size());
+    if (S[0].size() != S.size()) return Failure<SVDResult>("S must be square");
+    if (k < 1 || k > d) return Failure<SVDResult>("k must be between 1 and the size of S");
+    try {
+        const af::array s = ToDevice(S);
+        const int l = std::min(d, k + 10);  // oversampled, as scikit-learn's randomized_svd
+        af::randomEngine engine = cyxwiz::DeviceRandomEngine(0);
+        af::array q = cyxwiz::DeviceNormal(af::dim4(d, l), s.type(), engine);
+        // Orthonormal columns by Cholesky QR (l x l only; a ridge keeps a rank-deficient block solvable).
+        const auto orthonormal = [&](const af::array& z) {
+            af::array g = af::matmul(z, z, AF_MAT_TRANS, AF_MAT_NONE);
+            g += af::identity(l, l, g.type()) * (1e-12 * af::sum<double>(af::diag(g)) + 1e-300);
+            af::array r;
+            if (af::cholesky(r, g, /*is_upper=*/true) != 0) throw af::exception("Cholesky QR failed");
+            return af::matmul(z, af::inverse(r));
+        };
+        q = orthonormal(q);
+        for (int it = 0; it < iterations; ++it) q = orthonormal(af::matmul(s, q));
+        // Rayleigh-Ritz: the small l x l problem gives the vectors within the subspace.
+        const af::array within = af::matmul(q, af::matmul(s, q), AF_MAT_TRANS, AF_MAT_NONE);
+        af::array u, sv, vt;
+        af::svd(u, sv, vt, within);
+        const af::seq top(0, k - 1);
+        const af::array vectors = af::matmul(q, u(af::span, top));  // d x k
+        result.S = DeviceToHostValues(sv(top), "LinearAlgebra::LeadingEigenvectors");
+        result.Vt = ToHostMatrix(af::transpose(vectors), "LinearAlgebra::LeadingEigenvectors");
+        result.m = result.n = d;
+        result.k = k;
+        result.success = true;
+        return result;
+    } catch (const af::exception& e) {
+        return Failure<SVDResult>(DeviceError("LinearAlgebra::LeadingEigenvectors", e));
+    }
+}
+
+MatrixResult LinearAlgebra::AffineProjection(const std::vector<std::vector<double>>& A, const std::vector<double>& shift,
+                                             const std::vector<double>& divisor, const std::vector<std::vector<double>>& W) {
+    MatrixResult result;
+    if (!RequireMatrix(A, result) || !RequireMatrix(W, result)) return result;
+    if (const std::string refusal = AffineRefusal(A[0].size(), shift, divisor, W); !refusal.empty()) return Failure<MatrixResult>(refusal);
+    try {
+        return MatrixFromDevice(AffineOf(ToDevice(A), shift, divisor, W), "LinearAlgebra::AffineProjection");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::AffineProjection", e));
+    }
+}
+
+ScalarResult LinearAlgebra::Rank(const DenseView& A, double tolerance) {
+    if (const std::string refusal = ViewRefusal(A); !refusal.empty()) return Failure<ScalarResult>(refusal);
+    try {
+        return RankOf(ViewToDevice(A), tolerance);
+    } catch (const af::exception& e) {
+        return Failure<ScalarResult>(DeviceError("LinearAlgebra::Rank", e));
+    }
+}
+
+MatrixResult LinearAlgebra::LeastSquares(const DenseView& A, const DenseView& b) {
+    if (const std::string refusal = ViewRefusal(A); !refusal.empty()) return Failure<MatrixResult>(refusal);
+    if (const std::string refusal = ViewRefusal(b); !refusal.empty()) return Failure<MatrixResult>("b: " + refusal);
+    if (A.rows != b.rows) return Failure<MatrixResult>("A and b must have same number of rows");
+    try {
+        return MatrixFromDevice(detail::LeastSquaresSvd(ViewToDevice(A), ViewToDevice(b)), "LinearAlgebra::LeastSquares");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::LeastSquares", e));
+    }
+}
+
+bool LinearAlgebra::AffineProjection(const DenseView& A, const std::vector<double>& shift, const std::vector<double>& divisor,
+                                     const std::vector<std::vector<double>>& W, std::vector<double>& out, std::string& error) {
+    if (const std::string refusal = ViewRefusal(A); !refusal.empty()) return error = refusal, false;
+    MatrixResult check;
+    if (!RequireMatrix(W, check)) return error = check.error_message, false;
+    if (const std::string refusal = AffineRefusal(static_cast<size_t>(A.cols), shift, divisor, W); !refusal.empty()) return error = refusal, false;
+    try {
+        out = DeviceToHostValues(AffineOf(ViewToDevice(A), shift, divisor, W), "LinearAlgebra::AffineProjection");
+        return true;
+    } catch (const af::exception& e) {
+        error = DeviceError("LinearAlgebra::AffineProjection", e);
+        return false;
+    }
+}
+
+// ============================================================================
+// Sparse (CSR)
+// ============================================================================
+
+namespace {
+
+std::string CsrRefusal(const CsrView& X) {
+    if (X.rows <= 0 || X.cols <= 0 || !X.row_offsets) return "The sparse matrix is empty";
+    if (X.row_offsets[0] != 0) return "The sparse matrix's first row offset is not 0";
+    for (int r = 0; r < X.rows; ++r)
+        if (X.row_offsets[r + 1] < X.row_offsets[r]) return "The sparse matrix's row offsets go down";
+    if (X.row_offsets[X.rows] > 0 && (!X.column_indices || !X.values)) return "The sparse matrix has entries but no values";
+    return "";
+}
+
+}  // namespace
+
+MatrixResult LinearAlgebra::SparseGram(const CsrView& X) {
+    if (const std::string refusal = CsrRefusal(X); !refusal.empty()) return Failure<MatrixResult>(refusal);
+    try {
+        // X^T X = X^T [X's columns, a block at a time]: the device's sparse
+        // product of the transposed CSR with each dense block of columns, in
+        // float32 as the features are kept (a dense float64 product of the
+        // rows costs a hundred times more on a gaming GPU).
+        const dim_t nnz = X.row_offsets[X.rows];
+        af::array gram = af::constant(0.0, X.cols, X.cols, f32);
+        if (nnz == 0) return MatrixFromDevice(gram, "LinearAlgebra::SparseGram");
+        const af::array x = af::sparse(X.rows, X.cols, af::array(nnz, X.values), af::array(static_cast<dim_t>(X.rows + 1), X.row_offsets),
+                                       af::array(nnz, X.column_indices), AF_STORAGE_CSR);
+        const int width = std::max(1, std::min(X.cols, 32000000 / std::max(1, X.rows)));  // ~128 MB a block
+        std::vector<int> place;
+        std::vector<float> values;
+        for (int first = 0; first < X.cols; first += width) {
+            const int last = std::min(X.cols, first + width);
+            place.clear();
+            values.clear();
+            for (int r = 0; r < X.rows; ++r)
+                for (int k = X.row_offsets[r]; k < X.row_offsets[r + 1]; ++k) {
+                    const int c = X.column_indices[k];
+                    if (c < first || c >= last) continue;
+                    place.push_back(r + (c - first) * X.rows);
+                    values.push_back(X.values[k]);
+                }
+            af::array block = af::constant(0.0f, static_cast<dim_t>(X.rows) * (last - first), f32);
+            if (!place.empty())
+                block(af::array(static_cast<dim_t>(place.size()), place.data())) = af::array(static_cast<dim_t>(values.size()), values.data());
+            block = af::moddims(block, X.rows, last - first);
+            gram(af::span, af::seq(first, last - 1)) = af::matmul(x, block, AF_MAT_TRANS, AF_MAT_NONE);
+        }
+        return MatrixFromDevice(gram, "LinearAlgebra::SparseGram");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::SparseGram", e));
+    }
+}
+
+MatrixResult LinearAlgebra::SparseMultiply(const CsrView& X, const std::vector<std::vector<double>>& B) {
+    if (const std::string refusal = CsrRefusal(X); !refusal.empty()) return Failure<MatrixResult>(refusal);
+    MatrixResult check;
+    if (!RequireMatrix(B, check)) return check;
+    if (static_cast<int>(B.size()) != X.cols)
+        return Failure<MatrixResult>("B must have as many rows as X has columns");
+    try {
+        // The CSR in float32 (the features' own type), as the device's sparse product takes it.
+        const dim_t nnz = X.row_offsets[X.rows];
+        const af::array b = ToDevice(B).as(f32);
+        if (nnz == 0) return MatrixFromDevice(af::constant(0.0, X.rows, b.dims(1), f32), "LinearAlgebra::SparseMultiply");
+        const af::array x = af::sparse(X.rows, X.cols, af::array(nnz, X.values), af::array(static_cast<dim_t>(X.rows + 1), X.row_offsets),
+                                       af::array(nnz, X.column_indices), AF_STORAGE_CSR);
+        return MatrixFromDevice(af::matmul(x, b), "LinearAlgebra::SparseMultiply");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::SparseMultiply", e));
     }
 }
 
@@ -563,8 +816,8 @@ MatrixResult LinearAlgebra::LeastSquares(const std::vector<std::vector<double>>&
         return result;
     }
     try {
-        // af::solve takes the QR least-squares route for a non-square A.
-        return MatrixFromDevice(af::solve(ToDevice(A), ToDevice(b)), "LinearAlgebra::LeastSquares");
+        // The shortest of the best x when A's columns depend on each other (detail::LeastSquaresSvd).
+        return MatrixFromDevice(detail::LeastSquaresSvd(ToDevice(A), ToDevice(b)), "LinearAlgebra::LeastSquares");
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::LeastSquares", e));
     }

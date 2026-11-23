@@ -364,7 +364,10 @@ or press **Plot** under the column's statistics. The Plot window opens:
 - **The plot**: hover for values (the nearest x of every series, the
   scatter point, the histogram bin and its share, the category, the pie
   slice, the box statistics, the heatmap cell). Drag to pan, wheel to zoom,
-  double-click or **Fit** to fit. **Log Y**, **Legend**.
+  double-click or **Fit** to fit. **Log Y**, **Legend** (on a line or
+  scatter chart the legend sits in the corner the data leaves free, so a
+  rising curve is not hidden under it). In a narrow place the toolbar's
+  buttons move under the data label, and wrap when even that is too narrow.
 - The label next to the toolbar says what is drawn: *exact* (all values),
   *reduced* (long lines drawn with the lowest and highest value of each
   step; hover and exports use all points), *sampled* (an even sample of a
@@ -462,6 +465,14 @@ in its own window; **Auto scale**, **Follow current epoch**, the epoch
 window, **Log loss axis** and **Smooth** are in the chart window's toolbar
 and the dashboard's controls.
 
+A training point during an epoch is the mean loss (and accuracy) of the
+batches since the previous point (every log interval, "metrics every 10
+batches"), not the epoch's running mean, so the curve does not jump at each
+epoch start; batch 1 is a point in the first epoch only. At each epoch's end
+the whole-epoch values are kept as well: the **best** line on the training
+cards names the best whole epoch, never one batch. Validation is one point
+per epoch.
+
 Canvas training reports to this window, and so does word-vector training
 (word2vec, GloVe) of a Word Embeddings node: it gets its own run behind the
 **Run** switcher and leaves the model run's view alone (see
@@ -470,8 +481,11 @@ Canvas training reports to this window, and so does word-vector training
 ## RL Training Dashboard
 
 A separate window for reinforcement learning (episode reward and length,
-policy loss, value loss, explained variance). It opens with **Train RL** on
-the canvas (graphs with RL nodes), or when a script reports RL metrics:
+policy loss, value loss, explained variance, entropy, approximate KL, clip
+fraction, action spread). It opens with **Train** on an RL graph (the
+Engine's PPO: progress, speed, Pause / Stop and the SB3 reference; see
+[Training a policy](rl_training.md#the-rl-training-dashboard)), from **Train >
+RL Training Dashboard**, or when a script reports RL metrics:
 
 ```python
 import pycyxwiz
@@ -483,7 +497,8 @@ for episode in range(100):
 ```
 
 Metric names the window shows: `episode_reward`, `episode_length`,
-`policy_loss`, `value_loss`, `explained_variance`.
+`policy_loss`, `value_loss`, `explained_variance`, `entropy`, `approx_kl`,
+`clip_fraction`, `action_std`.
 
 ## Not available yet
 

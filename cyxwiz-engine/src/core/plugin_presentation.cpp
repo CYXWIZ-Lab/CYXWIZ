@@ -81,10 +81,24 @@ bool PluginLoadsAtStartup(const PluginStartupList& list, const std::string& id) 
     return false;
 }
 
-std::vector<PluginStartupEntry> PluginsToLoadAtStartup(const PluginStartupList& list) {
+std::vector<PluginStartupEntry> PluginsToLoadAtStartup(
+    const PluginStartupList& list, const std::vector<PluginStartupEntry>& pack_plugins) {
+    const auto pack_folder = [&](const std::string& id) -> const std::string* {
+        for (const auto& pack : pack_plugins)
+            if (pack.id == id) return &pack.folder;
+        return nullptr;
+    };
     std::vector<PluginStartupEntry> result;
     for (const auto& entry : list.entries) {
-        if (entry.load_at_startup && !entry.folder.empty()) result.push_back(entry);
+        if (!entry.load_at_startup) continue;
+        auto chosen = entry;
+        if (const auto* folder = pack_folder(entry.id)) chosen.folder = *folder;
+        if (!chosen.folder.empty()) result.push_back(std::move(chosen));
+    }
+    for (const auto& pack : pack_plugins) {
+        const bool listed = std::any_of(list.entries.begin(), list.entries.end(),
+                                        [&](const PluginStartupEntry& e) { return e.id == pack.id; });
+        if (!listed && !pack.folder.empty()) result.push_back({pack.id, pack.folder, true});
     }
     return result;
 }

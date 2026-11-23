@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
@@ -59,9 +60,22 @@ public:
 
     Batch GetNextBatch() override;
     void Reset() override;
+    // The next Reset orders the epoch from `seed` alone (the epoch's seed
+    // from the executor), so a resumed run replays its order, as the Arrow
+    // batcher does (TOFIX228 1.6, ORA-28).
+    bool SetEpochShuffleSeed(uint64_t seed) override {
+        pending_epoch_seed_ = seed;
+        return true;
+    }
     bool IsEpochComplete() const override;
     size_t GetNumBatches() const override;
     size_t GetNumSamples() const override { return indices_.size(); }
+    // Rows of the dataset by number, as validation sees them (TOFIX178 6.0b).
+    std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
+    size_t SourceSampleCount() const override;
+    // This batcher's part when the row is in it (it holds one part).
+    std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
+    std::optional<std::vector<size_t>> TrainClassCounts() const override;
 
     void SetNormalization(float mean, float std_dev) override;
     void SetOneHotEncoding(size_t num_classes) override;
@@ -91,8 +105,9 @@ private:
     void ValidateDenseBatchMemory(size_t rows) const;
     void ShuffleIndices();
     void RebuildBalancedIndices();
+    Batch AssembleBatch(const int64_t* rows, size_t actual_batch_size);
     void PopulateInspection(Batch& batch,
-                            size_t batch_start,
+                            const int64_t* rows,
                             size_t actual_batch_size) const;
 
     std::shared_ptr<const SparseFeatureDataset> dataset_;
@@ -107,6 +122,7 @@ private:
     size_t current_index_ = 0;
     std::mt19937 rng_;
     std::mt19937 balance_rng_;
+    std::optional<uint64_t> pending_epoch_seed_;  // see SetEpochShuffleSeed
     uint32_t balance_seed_ = 42;
     uint32_t balance_epoch_ = 0;
     bool balance_classes_ = false;

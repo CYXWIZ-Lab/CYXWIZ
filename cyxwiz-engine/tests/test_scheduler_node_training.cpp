@@ -6,6 +6,7 @@
 // Reduce LR steps on the run's own validation losses, so the test replays them
 // through the backend ReduceLROnPlateau (held to torch by test_scheduler).
 // Also: the compiler's refusals, and resume continuing the schedule.
+#include "oracle/training_oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/debug_run_paths.h"
 #include "../src/core/execution_device_context.h"
@@ -30,11 +31,20 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <random>
 #include <string>
 #include <variant>
 #include <vector>
 
 namespace {
+
+// A folder of this run's own: two runs at once (two sweeps, two worktrees)
+// must not share one, or each finds the other's resume checkpoints.
+const std::filesystem::path& RunTempDir() {
+    static const std::filesystem::path dir = std::filesystem::temp_directory_path() /
+                                             ("cyxwiz_scheduler_node_training_" + std::to_string(std::random_device{}()));
+    return dir;
+}
 
 using json = nlohmann::json;
 
@@ -186,7 +196,7 @@ cyxwiz::TrainingConfiguration CompileValid(const Graph& graph, const std::string
     config.save_best_checkpoint = false;
     config.early_stopping_patience = 0;
     config.log_interval = 0;
-    config.checkpoint_dir = (std::filesystem::temp_directory_path() / "cyxwiz_scheduler_node_checkpoints").string();
+    config.checkpoint_dir = (RunTempDir() / "checkpoints").string();
     return config;
 }
 
@@ -202,21 +212,8 @@ void CheckRefused(const Graph& graph, const std::string& text, const std::string
     Check(!config.is_valid && reported, what + ": refused with '" + text + "'");
 }
 
-void SelectArrayFireCpu() {
-    const auto devices = cyxwiz::Device::GetAvailableDevices();
-    const auto cpu = std::find_if(devices.begin(), devices.end(), [](const cyxwiz::DeviceInfo& device) {
-        return device.type == cyxwiz::DeviceType::CPU;
-    });
-    Check(cpu != devices.end(), "an ArrayFire CPU route is required");
-    cyxwiz::test::InstallQualifiedRouteSnapshot(devices);
-    cyxwiz::ClearPendingExecutionDeviceSelection();
-    cyxwiz::SetPendingExecutionDeviceSelection(cyxwiz::DeviceType::CPU, cpu->device_id);
-    cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
-}
-
 cyxwiz::TrainingMetrics Train(cyxwiz::TrainingExecutor& executor, int epochs) {
-    SelectArrayFireCpu();
+    cyxwiz::test::PinTrainingDevice();
     cyxwiz::TrainingMetrics final_metrics;
     bool completed = false;
     executor.Train(epochs, 2, nullptr, nullptr, [&](const cyxwiz::TrainingMetrics& metrics) {
@@ -386,12 +383,13 @@ void CheckResume(const json& step_case, const std::shared_ptr<cyxwiz::ArrowDatas
 }  // namespace
 
 int main(int, char** argv) {
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_scheduler_node_training")) return 1;
     namespace fs = std::filesystem;
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
     cyxwiz::SetGraphCompilerDatasetHooks(hooks);
 
-    const fs::path work_dir = fs::temp_directory_path() / "cyxwiz_scheduler_node_training";
+    const fs::path work_dir = RunTempDir();
     fs::remove_all(work_dir);
     fs::create_directories(work_dir);
     const cyxwiz::ScopedDebugRunRootOverrideForTesting debug_root(work_dir / "debug_runs");
@@ -409,6 +407,8 @@ int main(int, char** argv) {
     CheckResume(fixture.at("cases").at(0), dataset, work_dir, tolerance);
 
     fs::remove_all(work_dir);
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     std::cout << "Scheduler nodes match PyTorch: " << fixture.at("cases").size() << " cases, plateau, resume\n";
     return 0;
 }

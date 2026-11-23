@@ -104,9 +104,10 @@ Json Envelope(
     const char* kind,
     Json body,
     const char* key_id,
-    const KeyPair& key) {
+    const KeyPair& key,
+    std::uint64_t schema_version = 1) {
     return {
-        {"schema_version", std::uint64_t{1}},
+        {"schema_version", schema_version},
         {"kind", kind},
         {"signed", body},
         {"signatures", Json::array({{{"key_id", key_id},
@@ -332,6 +333,56 @@ public:
         WriteJson(catalog_path, Envelope(
             "cyxwiz-backend-pack-catalog", std::move(catalog),
             "catalog-2026", catalog_key_));
+    }
+
+    // A signed schema-2 plugin pack for base-v1, delivered beside its manifest.
+    void PreparePlugin(const std::string& support = "supported") {
+        archive = root / "mujoco-v1.zip";
+        manifest_path = root / "plugin-manifest.json";
+        catalog_path = root / "plugin-catalog.json";
+        if (!WriteZip(archive, {"plugin.json", "bin/mujoco.dll",
+                                "THIRD_PARTY_LICENSES/MuJoCo/LICENSE.txt"})) {
+            throw std::runtime_error("Cannot create plugin archive");
+        }
+        std::string archive_hash;
+        std::string error;
+        if (!Sha256File(archive, archive_hash, error)) throw std::runtime_error(error);
+        const auto component = [](const char* path, const char* source) {
+            return Json{{"path", path}, {"size", std::uint64_t{1}},
+                        {"sha256", kZeroByteSha256}, {"source", source},
+                        {"executable", false}};
+        };
+        Json body = {
+            {"pack_id", "mujoco-v1"}, {"pack_kind", "plugin_pack"},
+            {"plugin_id", "com.cyxwiz.simulation.mujoco"}, {"package_version", "1.0.0"},
+            {"platform", "win64"}, {"architecture", "x86_64"},
+            {"cyxwiz_release", {{"minimum", "0.2.0"}, {"maximum", "0.2.x"}}},
+            {"companion_base_id", "base-v1"}, {"conflicts", Json::array()},
+            {"support_status", support},
+            {"components", Json::array({component("plugin.json", "cyxwiz-plugin"),
+                                        component("bin/mujoco.dll", "mujoco"),
+                                        component("THIRD_PARTY_LICENSES/MuJoCo/LICENSE.txt",
+                                                  "mujoco-license")})},
+            {"licenses", Json::array({{{"component", "mujoco"},
+                {"path", "THIRD_PARTY_LICENSES/MuJoCo/LICENSE.txt"}}})},
+            {"archive", {{"file_name", "mujoco-v1.zip"},
+                {"size", std::filesystem::file_size(archive)}, {"sha256", archive_hash}}},
+            {"generated_utc", "2026-08-13T20:00:00Z"}};
+        const auto manifest_bytes = WriteJson(
+            manifest_path, Envelope("cyxwiz-backend-pack-manifest", std::move(body),
+                                    "pack-2026", pack_key_, 2));
+        Json catalog = {
+            {"catalog_id", "production-2026-08"},
+            {"generated_utc", "2026-08-13T20:00:00Z"},
+            {"expires_utc", "2026-09-13T20:00:00Z"},
+            {"minimum_client_version", "0.2.0"},
+            {"packs", Json::array({{{"pack_id", "mujoco-v1"},
+                {"manifest_url", "https://downloads.cyxwiz.com/mujoco-v1.json"},
+                {"manifest_sha256", Hash(manifest_bytes)},
+                {"signing_key_id", "pack-2026"},
+                {"support_status", support}}})}};
+        WriteJson(catalog_path, Envelope("cyxwiz-backend-pack-catalog", std::move(catalog),
+                                         "catalog-2026", catalog_key_));
     }
 
     BackendPackMetadataVerifier Verifier() const {
@@ -1209,6 +1260,101 @@ int main() {
             "explicit installer cancellation must discard partial, cached, staged, and unpublished pack data");
     }
 
+    {
+        // Plugin pack: signed offline delivery, activation without route
+        // qualification, active-runtime.json byte-identical, then removal.
+        Fixture fixture;
+        fixture.PreparePlugin();
+        const auto read_text = [](const std::filesystem::path& path) {
+            std::ifstream stream(path, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(stream),
+                               std::istreambuf_iterator<char>());
+        };
+        const auto runtime_before = read_text(fixture.runtime / "active-runtime.json");
+        bool qualified = false;
+        BackendPackLifecycleService service(
+            fixture.runtime, fixture.Verifier(), [] { return false; },
+            [&](const auto&, const auto&, const ActiveRuntimeState&) {
+                qualified = true;
+                return BackendPackQualificationDecision{
+                    BackendPackQualificationDisposition::Qualified, "unexpected"};
+            });
+        auto request = fixture.Request();
+        request.pack_id = "mujoco-v1";
+        request.source = BackendPackDeliverySource::OfflineSibling;
+        const auto delivered = service.DeliverPlugin(request);
+        ActivePluginsState plugins;
+        std::string error;
+        failures += !Expect(
+            delivered.status == BackendPackLifecycleStatus::InstalledAndActivated && !qualified &&
+                LoadActivePluginsState(fixture.runtime / kActivePluginsFileName, plugins,
+                                       error) &&
+                plugins.plugins.size() == 1 &&
+                plugins.plugins.front().plugin_id == "com.cyxwiz.simulation.mujoco" &&
+                std::filesystem::is_regular_file(
+                    PluginPackDirectory(fixture.runtime, "com.cyxwiz.simulation.mujoco",
+                                        "mujoco-v1") / "bin" / "mujoco.dll") &&
+                read_text(fixture.runtime / "active-runtime.json") == runtime_before,
+            "a plugin pack must deliver and activate without touching the compute runtime (" +
+                std::string(BackendPackLifecycleStatusName(delivered.status)) + ": " +
+                delivered.message + ")");
+
+        VerifiedBackendPackManifest evidence;
+        failures += !Expect(
+            ReadInstalledBackendPackMetadata(fixture.runtime, "mujoco-v1",
+                                             BackendPackManifestKind::PluginPack,
+                                             fixture.Verifier(), evidence, error) &&
+                evidence.plugin_id == "com.cyxwiz.simulation.mujoco",
+            "plugin delivery must retain signed installed-version evidence");
+
+        // A plugin manifest is never delivered as a backend pack.
+        const auto as_backend = service.Deliver(request);
+        failures += !Expect(as_backend.status == BackendPackLifecycleStatus::MetadataFailure,
+                            "backend delivery must reject a plugin manifest");
+
+        const auto removed = service.RemovePlugin("com.cyxwiz.simulation.mujoco", "mujoco-v1");
+        failures += !Expect(
+            removed.status == BackendPackLifecycleStatus::Removed &&
+                !std::filesystem::exists(PluginPackDirectory(
+                    fixture.runtime, "com.cyxwiz.simulation.mujoco", "mujoco-v1")) &&
+                LoadActivePluginsState(fixture.runtime / kActivePluginsFileName, plugins,
+                                       error) &&
+                plugins.plugins.empty() &&
+                read_text(fixture.runtime / "active-runtime.json") == runtime_before,
+            "plugin removal must deactivate and delete the plugin pack only");
+    }
+    {
+        // Only a supported plugin pack is delivered; the catalog snapshot lists it.
+        Fixture fixture;
+        fixture.PreparePlugin("diagnostic");
+        BackendPackLifecycleService service(fixture.runtime, fixture.Verifier(),
+                                            [] { return false; });
+        auto request = fixture.Request();
+        request.pack_id = "mujoco-v1";
+        request.source = BackendPackDeliverySource::OfflineSibling;
+        const auto rejected = service.DeliverPlugin(request);
+        failures += !Expect(
+            rejected.status == BackendPackLifecycleStatus::PolicyRejected &&
+                !std::filesystem::exists(fixture.runtime / "plugins"),
+            "a diagnostic plugin pack must not be delivered");
+
+        fixture.PreparePlugin();
+        const auto cached_catalog = BackendPackCurrentCatalogPath(fixture.runtime);
+        const auto cached_manifest = BackendPackCachedManifestPath(fixture.runtime, "mujoco-v1");
+        std::filesystem::create_directories(cached_manifest.parent_path());
+        std::filesystem::copy_file(fixture.catalog_path, cached_catalog,
+                                   std::filesystem::copy_options::overwrite_existing);
+        std::filesystem::copy_file(fixture.manifest_path, cached_manifest,
+                                   std::filesystem::copy_options::overwrite_existing);
+        VerifiedBackendPackCatalogSnapshot snapshot;
+        std::string error;
+        failures += !Expect(
+            service.ReadCatalogSnapshot("2026-08-14T12:00:00Z", snapshot, error) &&
+                snapshot.records.size() == 1 && snapshot.records.front().manifest &&
+                snapshot.records.front().manifest->kind == BackendPackManifestKind::PluginPack,
+            "the catalog snapshot must verify a cached plugin manifest: " +
+                (snapshot.records.empty() ? error : snapshot.records.front().manifest_error));
+    }
     if (failures == 0) {
         std::cout << "backend pack lifecycle service contract tests passed\n";
     }

@@ -96,6 +96,38 @@ private:
     cyxwiz::Tensor grad_a_;
 };
 
+// Scale that also keeps, untrained, how many batches it has seen (a
+// running statistic): state without a gradient, declared by GetStateNames.
+class ScaleWithStateModule : public ScaleModule {
+public:
+    explicit ScaleWithStateModule(float initial) : ScaleModule(initial) {
+        const float zero = 0.0f;
+        seen_ = cyxwiz::Tensor(std::vector<size_t>{1}, &zero);
+    }
+    cyxwiz::Tensor Forward(const cyxwiz::Tensor& x) override {
+        if (IsTraining()) {
+            const float seen = HostValues(seen_)[0] + 1.0f;
+            seen_ = cyxwiz::Tensor(std::vector<size_t>{1}, &seen);
+        }
+        return ScaleModule::Forward(x);
+    }
+    std::map<std::string, cyxwiz::Tensor> GetParameters() override {
+        auto params = ScaleModule::GetParameters();
+        params["seen"] = seen_;
+        return params;
+    }
+    void SetParameters(const std::map<std::string, cyxwiz::Tensor>& params) override {
+        ScaleModule::SetParameters(params);
+        const auto it = params.find("seen");
+        if (it != params.end()) seen_ = it->second;
+    }
+    std::vector<std::string> GetStateNames() const override { return {"seen"}; }
+    std::string GetName() const override { return "ScaleWithState"; }
+
+private:
+    cyxwiz::Tensor seen_;
+};
+
 // Drops the last feature: the output does not match what its shape function said.
 class WrongShapeModule : public cyxwiz::Module {
 public:
@@ -108,7 +140,7 @@ public:
     std::string GetName() const override { return "WrongShape"; }
 };
 
-enum class Kind { Softsign, Scale, WrongShape, RefusesShape };
+enum class Kind { Softsign, Scale, ScaleWithState, WrongShape, RefusesShape };
 
 class TestFactory : public cyxwiz::ITensorNodeFactory {
 public:
@@ -128,6 +160,7 @@ public:
                 const auto it = parameters.find("initial_a");
                 return std::make_unique<ScaleModule>(it == parameters.end() ? 1.0f : std::stof(it->second));
             }
+            case Kind::ScaleWithState: return std::make_unique<ScaleWithStateModule>(0.5f);
             case Kind::WrongShape: return std::make_unique<WrongShapeModule>();
             case Kind::RefusesShape: return nullptr;
         }
@@ -230,6 +263,7 @@ int main() {
 
     Register("Softsign", Kind::Softsign);
     Register("Scale", Kind::Scale);
+    Register("ScaleWithState", Kind::ScaleWithState);
     Register("WrongShape", Kind::WrongShape);
     Register("RefusesShape", Kind::RefusesShape);
 
@@ -296,6 +330,27 @@ int main() {
             }
             Check(named, "the model names it layer<i>.a, as the compiled card counts parameters");
         }
+    }
+
+    std::cout << "trains an extension module that keeps state it does not train\n";
+    {
+        auto result = Train(GraphWith(root, "ScaleWithState"), parquet, work / "ck_state");
+        Check(result.ok, "the job succeeded" + (result.error.empty() ? "" : " (" + result.error + ")"));
+        cyxwiz::Module* module = result.model ? FindModule(*result.model, "ScaleWithState") : nullptr;
+        Check(module != nullptr, "the model contains the module");
+        if (module) {
+            const auto params = module->GetParameters();
+            Check(params.count("seen") && HostValues(params.at("seen"))[0] > 0.0f,
+                  "its state was kept and updated while training");
+            Check(!module->GetGradients().count("seen"), "the state has no gradient");
+        }
+        bool saved = false;
+        if (result.model) {
+            for (const auto& [key, value] : result.model->GetParameters()) {
+                saved = saved || (key.rfind("layer", 0) == 0 && key.find(".seen") != std::string::npos);
+            }
+        }
+        Check(saved, "the model keeps the state among what it saves");
     }
 
     std::cout << "a module that returns the wrong shape stops training at the node\n";

@@ -4,6 +4,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/arrow_dataset.h"
 #include "../../core/data_registry.h"
+#include "../../core/training_recipe.h"
 #include "../../core/dataset_audit.h"
 #include "../../core/formats/text_dataset.h"
 #include "../../core/graph_compiler.h"  // PreprocessingDomain
@@ -307,18 +308,13 @@ cyxwiz::PreprocessingDomain TextLoader::Domain(
     return cyxwiz::PreprocessingDomain::Text;
 }
 
-bool TextLoader::LaunchTraining(
-    cyxwiz::TrainingConfiguration /*config*/,
+cyxwiz::TrainingRecipe TextLoader::TrainingRecipeFor(
+    const cyxwiz::TrainingConfiguration& /*config*/,
     const std::string& dataset_name,
-    const std::string& /*label_column*/,
-    int /*epochs*/,
-    int /*batch_size*/,
-    std::weak_ptr<cyxwiz::TrainingPlotPanel> /*plot_panel*/,
-    std::function<void(bool)> /*node_editor_callback*/) {
-    spdlog::error("TextLoader: text dataset '{}' cannot train as raw text. Add a Text Tokenizer "
-                  "(or TF-IDF / Count Vectorizer) node; text trains through its tokenized table.",
-                  dataset_name);
-    return false;
+    const std::string& /*label_column*/) const {
+    return cyxwiz::FailedTrainingRecipe("text dataset '" + dataset_name +
+                                        "' cannot train as raw text. Add a Text Tokenizer (or TF-IDF / Count "
+                                        "Vectorizer) node; text trains through its tokenized table.");
 }
 
 std::vector<ParamSchema> TextLoader::NodeParams() const {

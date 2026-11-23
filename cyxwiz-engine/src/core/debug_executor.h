@@ -2,8 +2,10 @@
 
 #include "debug_graph_trace_executor.h"
 #include "debug_numerics.h"
+#include "executable_model.h"
 #include "graph_compiler.h"
 #include "graph_model.h"
+#include "layer_capture.h"
 #include <cyxwiz/loss.h>
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>
@@ -11,6 +13,7 @@
 #include <cmath>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -106,6 +109,9 @@ struct DebugResult {
     float forward_total_ms = 0.0f;
     float backward_total_ms = 0.0f;
     float optimizer_step_ms = 0.0f;
+    // What ran: the picked item ("image 120 of cat_dog, validation") or
+    // "a synthetic sample (seed 1337)".
+    std::string input_description;
 
     float loss_value = std::numeric_limits<float>::quiet_NaN();
     bool loss_finite = false;
@@ -116,14 +122,23 @@ struct DebugResult {
     std::vector<GradNormEntry> grad_norms;
     size_t params_with_grad = 0;
     size_t params_missing_grad = 0;
+    // State the layers keep beside their weights (BatchNorm's running
+    // statistics): no gradient is expected, so these are not in grad_norms.
+    size_t state_tensors = 0;
+    // Weights of frozen layers: kept as they are, so no gradient is expected
+    // and they are not in grad_norms either.
+    size_t frozen_tensors = 0;
+
+    // What every layer held (SetLayerCapture); null when capture is off.
+    std::shared_ptr<const LayerCapture> layer_capture;
 
     std::vector<ValidationIssue> issues;
 
     std::chrono::steady_clock::time_point timestamp{};
 };
 
-// Runs one forward + one backward + one optimizer step on a synthetic
-// batch, producing a DebugResult. Does NOT touch DataRegistry — tensors
+// Runs one forward + one backward + one optimizer step on the picked sample
+// (SetInputSample) or a synthetic batch, producing a DebugResult. Does NOT touch DataRegistry — tensors
 // live on the stack of Run(). Does NOT trigger a reservation / Central
 // Server call. Synchronous (UI thread, ~200ms target).
 //
@@ -137,6 +152,14 @@ public:
     DebugExecutor(const DebugExecutor&) = delete;
     DebugExecutor& operator=(const DebugExecutor&) = delete;
 
+    // Run this sample instead of a synthetic one (TOFIX178 6.0b: the picked
+    // item, see debug_sample_source.h). `description` names it in the result.
+    void SetInputSample(Tensor features, Tensor labels, std::string description);
+
+    // Keep what every layer held during the run in DebugResult::layer_capture
+    // (TOFIX178 6.1a). Off unless set.
+    void SetLayerCapture(LayerCaptureOptions options);
+
     // Execute the debug pass. Catches exceptions at every stage — a
     // throw leaves `result.reached` at the stage where it failed and
     // `result.failure_summary` set to the exception message.
@@ -144,9 +167,13 @@ public:
 
 private:
     TrainingConfiguration config_;
-    std::unique_ptr<SequentialModel> model_;
+    std::unique_ptr<IExecutableModel> model_;
     std::unique_ptr<Loss> loss_;
     std::unique_ptr<Optimizer> optimizer_;
+    Tensor input_features_;
+    Tensor input_labels_;
+    std::string input_description_;
+    std::optional<LayerCaptureOptions> capture_options_;
 };
 
 } // namespace cyxwiz

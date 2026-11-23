@@ -8,6 +8,7 @@
 #include "../core/file_dialogs.h"
 #include "../core/extension_node_registry.h"
 #include "../core/extension_node_presentation.h"
+#include "../plugin/registries/plugin_panel_registry.h"
 #include "file_browser_launch.h"
 #include "python_bundle_ui.h"
 #include "icons.h"
@@ -19,6 +20,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <set>
 #include <string>
 
@@ -122,7 +124,13 @@ void PinTable(const char* id, const std::vector<NodePin>& pins, const char* type
 void ModelInfo(const MLNode& node) {
     std::vector<std::pair<std::string, std::string>> rows;
     for (const auto& [key, value] : node.parameters) {
-        if (key.starts_with("_meta_")) rows.emplace_back(key.substr(6), value);
+        if (!key.starts_with("_meta_")) continue;
+        // The model's reference, name and where it is show above (the Model row)
+        const std::string name = key.substr(6);
+        if (name == "canonical_trigger" || name == "model_title" || name == "model_status" || name == "model_note" ||
+            name == "loaded_path")
+            continue;
+        rows.emplace_back(name, value);
     }
     if (rows.empty()) return;
     ImGui::Spacing();
@@ -136,23 +144,43 @@ void RenderMuJoCoPlant(MLNode& node, RenderNodePropertiesContext& context) {
         if (node.has_dynamic_pins && context.node_editor) context.node_editor->ResolveDynamicPins(node.id);
         context.invalidate_shapes();
     };
+    // The plugin names the model the same way on every machine (TOFIX219): a
+    // picked file is saved by that name. A node is checked on this machine the
+    // first time it is shown after its graph opens (its status in the file is
+    // another machine's: resolved_config is not saved), and every 2 s while its
+    // model is missing (a download may bring it). Checks are not undo steps.
+    std::string status = ParamOr(node, "_meta_model_status");
+    const bool has_model = !ParamOr(node, "mjcf_path").empty() || !ParamOr(node, "_meta_loaded_path").empty();
+    if (has_model && node.has_dynamic_pins && context.node_editor &&
+        (node.resolved_config.empty() || status == "missing")) {
+        static std::map<int, double> last_check;
+        double& last = last_check[node.id];
+        // a node never checked starts at 0: it is checked now, then at most every 2 s
+        if (ImGui::GetTime() - last > 2.0) {
+            last = ImGui::GetTime();
+            node.resolved_config.clear();
+            context.node_editor->ResolveDynamicPins(node.id, false);
+            context.invalidate_shapes();
+            status = ParamOr(node, "_meta_model_status");
+        }
+    }
     std::string mjcf_path = ParamOr(node, "mjcf_path");
     {
         properties_rows::Rows rows("##mujoco");
         if (!rows.ok) return;
-        // MJCF file with Browse
-        properties_rows::Label("MJCF model");
-        char path_buf[512];
-        std::strncpy(path_buf, mjcf_path.c_str(), sizeof(path_buf) - 1);
-        path_buf[sizeof(path_buf) - 1] = '\0';
-        const float browse = cyxwiz::ui::ButtonWidth("Browse", cyxwiz::ui::ButtonSize::Small);
-        ImGui::SetNextItemWidth(std::max(40.0f, ImGui::GetContentRegionAvail().x - browse - t.space_sm));
-        if (ImGui::InputText("##mjcf_path", path_buf, sizeof(path_buf), ImGuiInputTextFlags_EnterReturnsTrue)) {
-            node.parameters["mjcf_path"] = mjcf_path = path_buf;
-            resolve_pins();
-        }
+        // The model by name, Change... to pick another file
+        properties_rows::Label("Model");
+        const std::string title = ParamOr(node, "_meta_model_title");
+        std::string shown = !title.empty() ? title : !mjcf_path.empty() ? mjcf_path : std::string("No model set.");
+        char shown_buf[512];
+        std::strncpy(shown_buf, shown.c_str(), sizeof(shown_buf) - 1);
+        shown_buf[sizeof(shown_buf) - 1] = '\0';
+        const float change = cyxwiz::ui::ButtonWidth("Change...", cyxwiz::ui::ButtonSize::Small);
+        ImGui::SetNextItemWidth(std::max(40.0f, ImGui::GetContentRegionAvail().x - change - t.space_sm));
+        ImGui::InputText("##mjcf_model", shown_buf, sizeof(shown_buf), ImGuiInputTextFlags_ReadOnly);
+        if (ImGui::IsItemHovered() && !mjcf_path.empty()) ImGui::SetTooltip("%s", mjcf_path.c_str());
         ImGui::SameLine(0.0f, t.space_sm);
-        if (cyxwiz::ui::SecondaryButton("Browse")) {
+        if (cyxwiz::ui::SecondaryButton("Change...")) {
             if (auto selected = cyxwiz::FileDialogs::OpenFile(
                     "Select MJCF Model", {{"MJCF Files", "xml"}, {"All Files", "*"}},
                     mjcf_path.empty() ? nullptr : mjcf_path.c_str())) {
@@ -161,9 +189,29 @@ void RenderMuJoCoPlant(MLNode& node, RenderNodePropertiesContext& context) {
             }
         }
         properties_rows::Status("mjcf_path");
-        const std::string loaded = ParamOr(node, "_meta_loaded_path");
-        if (!loaded.empty()) {
-            properties_rows::Note(("Loaded from the Environment Library: " + loaded).c_str());
+        const std::string note = ParamOr(node, "_meta_model_note");
+        if (status == "missing") {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.caution, "%s The graph cannot run until it is.", note.c_str());
+            ImGui::PopTextWrapPos();
+            if (mjcf_path.rfind("menagerie:", 0) == 0 && cyxwiz::ui::PrimaryButton("Download it")) {
+                // The Environment Library (the node's own plugin) offers the version this graph names
+                if (const auto descriptor = cyxwiz::ExtensionNodeRegistry::Instance().Find(node.extension_type_id))
+                    cyxwiz::plugin::PluginPanelRegistry::Instance().ShowPanel(descriptor->provider_id, "mujoco_env_browser");
+            }
+        } else if (status == "not portable") {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.text_dim, "%s", note.c_str());
+            ImGui::TextColored(t.text_dim,
+                               "To take it with the project: load it in the MuJoCo Viewport, then Inspect > Model > "
+                               "Copy into the project, and pick the copy here with Change....");
+            ImGui::PopTextWrapPos();
+            if (cyxwiz::ui::LinkButton("Open the MuJoCo Viewport")) {
+                if (const auto descriptor = cyxwiz::ExtensionNodeRegistry::Instance().Find(node.extension_type_id))
+                    cyxwiz::plugin::PluginPanelRegistry::Instance().ShowPanel(descriptor->provider_id, "mujoco_viewport");
+            }
+        } else if (!note.empty()) {
+            properties_rows::Note(note.c_str());
         } else if (mjcf_path.empty()) {
             properties_rows::Note("No model set.");
         }

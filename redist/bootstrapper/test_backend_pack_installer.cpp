@@ -109,6 +109,26 @@ bool Expect(bool condition, const std::string& message) {
     return condition;
 }
 
+std::string ReadText(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+}
+
+// A plugin-pack payload: plugin.json plus its runtime, no backend or runtime set.
+cyxwiz::runtime::VerifiedBackendPackPayload PluginPayload(
+    const std::filesystem::path& source) {
+    Fixture::Touch(source / "plugin.json");
+    Fixture::Touch(source / "bin" / "mujoco.dll");
+    cyxwiz::runtime::VerifiedBackendPackPayload payload;
+    payload.companion_base_id = "base-v1";
+    payload.plugin_id = "com.cyxwiz.simulation.mujoco";
+    payload.pack_id = "mujoco-v1";
+    payload.source_directory = source;
+    payload.components = {{"plugin.json", 1, kZeroByteSha256},
+                          {"bin/mujoco.dll", 1, kZeroByteSha256}};
+    return payload;
+}
+
 bool HasPack(
     const cyxwiz::runtime::ActiveRuntimeState& state,
     const std::string& backend,
@@ -387,6 +407,85 @@ int main() {
             "repair must not silently turn a missing pack into an install");
     }
 
+    {
+        // A plugin pack installs into plugins/<plugin-id>/<pack-id> and is
+        // activated in active-plugins.json; active-runtime.json is untouched.
+        Fixture fixture;
+        const auto runtime_before = ReadText(fixture.root / "active-runtime.json");
+        const auto source = fixture.source.parent_path() /
+            (fixture.source.filename().string() + "-plugin");
+        cyxwiz::runtime::BackendPackInstaller installer(fixture.root, [] { return false; });
+        const auto result = installer.InstallOrUpdatePlugin(PluginPayload(source), 1024);
+        cyxwiz::runtime::ActivePluginsState plugins;
+        std::string error;
+        const bool loaded = cyxwiz::runtime::LoadActivePluginsState(
+            fixture.root / cyxwiz::runtime::kActivePluginsFileName, plugins, error);
+        failures += !Expect(
+            result.status == cyxwiz::runtime::BackendPackInstallStatus::InstalledAndActivated &&
+                std::filesystem::is_regular_file(
+                    fixture.root / "plugins" / "com.cyxwiz.simulation.mujoco" / "mujoco-v1" /
+                    "bin" / "mujoco.dll") &&
+                loaded && plugins.base_pack_id == "base-v1" && plugins.plugins.size() == 1 &&
+                plugins.plugins.front().pack_id == "mujoco-v1",
+            "a plugin pack must publish into plugins/ and activate in active-plugins.json: " +
+                result.message);
+        failures += !Expect(
+            ReadText(fixture.root / "active-runtime.json") == runtime_before,
+            "plugin activation must not change active-runtime.json or its generation");
+
+        std::vector<cyxwiz::runtime::ActivePluginPack> resolved;
+        std::vector<std::string> skipped;
+        failures += !Expect(
+            cyxwiz::runtime::ResolveActivePluginPacks(fixture.root, "base-v1", resolved,
+                                                      skipped, error) &&
+                resolved.size() == 1 && skipped.empty() &&
+                std::filesystem::is_regular_file(resolved.front().directory / "plugin.json"),
+            "the active plugin pack must resolve to its installed folder");
+        failures += !Expect(
+            cyxwiz::runtime::ResolveActivePluginPacks(fixture.root, "base-v2", resolved,
+                                                      skipped, error) &&
+                resolved.empty(),
+            "plugins activated with another base must be inactive");
+
+        // Repair replaces a corrupt plugin folder after deactivating it.
+        Fixture::Touch(fixture.root / "plugins" / "com.cyxwiz.simulation.mujoco" / "mujoco-v1" /
+                           "bin" / "mujoco.dll",
+                       'x');
+        const auto repaired = installer.RepairPlugin(PluginPayload(source), 1024);
+        failures += !Expect(
+            repaired.status == cyxwiz::runtime::BackendPackInstallStatus::InstalledAndActivated &&
+                Fixture::ReadByte(fixture.root / "plugins" / "com.cyxwiz.simulation.mujoco" /
+                                  "mujoco-v1" / "bin" / "mujoco.dll") == '\0' &&
+                ReadText(fixture.root / "active-runtime.json") == runtime_before,
+            "plugin repair must republish the verified folder and reactivate it: " +
+                repaired.message);
+        std::filesystem::remove_all(source);
+    }
+    {
+        // A plugin pack for another base, or with a backend identity, is refused.
+        Fixture fixture;
+        const auto source = fixture.source.parent_path() /
+            (fixture.source.filename().string() + "-plugin");
+        cyxwiz::runtime::BackendPackInstaller installer(fixture.root, [] { return false; });
+        auto other_base = PluginPayload(source);
+        other_base.companion_base_id = "base-v2";
+        auto with_backend = PluginPayload(source);
+        with_backend.backend = "opencl";
+        auto as_backend = PluginPayload(source);
+        as_backend.backend = "opencl";
+        as_backend.runtime_set_id = "set-v1";
+        failures += !Expect(
+            installer.InstallOrUpdatePlugin(other_base, 1024).status ==
+                    cyxwiz::runtime::BackendPackInstallStatus::InvalidRequest &&
+                installer.InstallOrUpdatePlugin(with_backend, 1024).status ==
+                    cyxwiz::runtime::BackendPackInstallStatus::InvalidRequest &&
+                installer.InstallOrUpdate(as_backend, 1024).status ==
+                    cyxwiz::runtime::BackendPackInstallStatus::InvalidRequest &&
+                !std::filesystem::exists(fixture.root / "plugins") &&
+                !std::filesystem::exists(fixture.root / cyxwiz::runtime::kActivePluginsFileName),
+            "plugin identity must match the active base and never be a backend pack");
+        std::filesystem::remove_all(source);
+    }
     if (failures == 0) {
         std::cout << "backend pack installer contract tests passed\n";
     }

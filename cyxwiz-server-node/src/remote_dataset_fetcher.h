@@ -56,12 +56,16 @@ private:
     int32_t next_request_id_ = 1;
 };
 
+class CloudDatasetFetcher;
+
 // Plans the job from its graph (the shared core's PlanGraphJobDatasets),
 // fetches every training/validation input and rewrites the job so it trains
 // locally: model_definition bound to the fetched files (supplied Test inputs
-// removed - they stay on the Engine), dataset_uri cleared.
-bool FetchRemoteJobDatasets(RemoteDatasetFetcher& fetcher, cyxwiz::protocol::JobConfig& config,
-                            std::string& error);
+// removed - they stay on the Engine), dataset_uri cleared. A dataset named in
+// config.cloud_datasets comes from CyxCloud through `cloud` (TOFIX164); the
+// rest from the Engine through `engine`.
+bool FetchRemoteJobDatasets(RemoteDatasetFetcher& engine, CloudDatasetFetcher* cloud,
+                            cyxwiz::protocol::JobConfig& config, std::string& error);
 
 }  // namespace server_node
 }  // namespace cyxwiz

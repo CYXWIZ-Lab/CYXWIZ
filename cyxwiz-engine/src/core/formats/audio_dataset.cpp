@@ -1,4 +1,6 @@
 #include "audio_dataset.h"
+#include "../datasets/class_order.h"
+#include "cyxwiz/portable_random.h"
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -92,23 +94,6 @@ AudioDataset::AudioDataset(const std::string& directory, const AudioDatasetConfi
         return;
     }
 
-    // Seed feature_rows_/feature_cols_ with the closed-form prediction in
-    // case the probe below fails. The probe is the source of truth when
-    // it succeeds — these values exist only as a graceful fallback so
-    // GetInfo() returns *something* sensible.
-    {
-        int max_samples = static_cast<int>(config_.target_sr * config_.max_duration);
-        feature_cols_ = (max_samples + config_.n_fft) / config_.hop_length;
-        switch (config_.feature_type) {
-            case AudioDatasetConfig::FeatureType::Spectrogram:
-                feature_rows_ = config_.n_fft / 2 + 1; break;
-            case AudioDatasetConfig::FeatureType::MelSpectrogram:
-                feature_rows_ = config_.n_mels; break;
-            case AudioDatasetConfig::FeatureType::MFCC:
-                feature_rows_ = config_.n_mfcc; break;
-        }
-    }
-
     // Probe samples until we find a non-silent one, to discover the
     // *actual* feature shape produced by ComputeMelSpectrogram / ComputeMFCC.
     // The closed-form prediction below is wrong by 1-3 frames depending on
@@ -123,9 +108,10 @@ AudioDataset::AudioDataset(const std::string& directory, const AudioDatasetConfi
     int probed_rows = 0;
     int probed_cols = 0;
     size_t silent_probes = 0;
+    std::string last_probe_error;
     const size_t kMaxProbeAttempts = 32;
     for (size_t i = 0; i < file_paths_.size() && i < kMaxProbeAttempts; ++i) {
-        AudioFeatures probe = ExtractFeatures(file_paths_[i]);
+        AudioFeatures probe = ExtractFeatures(file_paths_[i], i, false);
         if (probe.valid && probe.rows > 0 && probe.cols > 0) {
             probed_rows = probe.rows;
             probed_cols = probe.cols;
@@ -154,6 +140,7 @@ AudioDataset::AudioDataset(const std::string& directory, const AudioDatasetConfi
         } else {
             // Invalid probe (silent file, decode error, etc.) — try the next one.
             ++silent_probes;
+            last_probe_error = probe.error_message;
         }
     }
 
@@ -164,9 +151,15 @@ AudioDataset::AudioDataset(const std::string& directory, const AudioDatasetConfi
                      feature_rows_, feature_cols_,
                      feature_rows_ * feature_cols_);
     } else {
-        spdlog::warn("AudioDataset: probe failed, using predicted shape [{} x {}] — "
-                     "training may fail with size mismatch",
-                     feature_rows_, feature_cols_);
+        // Not one clip of the first ones decodes: a build without an audio
+        // decoder, or a folder of unreadable files. Training on a guessed
+        // shape would feed silence with real labels (TOFIX223 0.12).
+        const std::string reason = !last_probe_error.empty() ? last_probe_error
+                                   : file_paths_.empty()   ? std::string("no audio files to read")
+                                                           : std::string("the clips give no features");
+        throw std::runtime_error("AudioDataset: none of the first " +
+                                 std::to_string(std::min(file_paths_.size(), kMaxProbeAttempts)) +
+                                 " clips could be read (" + reason + ")");
     }
 
 }
@@ -181,6 +174,25 @@ void AudioDataset::ScanDirectory(const std::string& directory) {
         return ext == ".wav" || ext == ".flac" || ext == ".ogg" || ext == ".aiff" || ext == ".aif";
     };
 
+    // The audio files under `folder`, by path.
+    const auto sorted_audio_files = [&](const fs::path& folder) {
+        // Ordered by the path inside the folder with "/" separators, so a
+        // class folder with subfolders orders the same on every platform.
+        std::vector<std::pair<std::string, std::string>> found;  // (relative generic path, path)
+        for (const auto& entry : fs::recursive_directory_iterator(folder)) {
+            if (!entry.is_regular_file()) continue;
+            std::string ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (is_audio(ext))
+                found.emplace_back(entry.path().lexically_relative(folder).generic_string(), entry.path().string());
+        }
+        std::sort(found.begin(), found.end());
+        std::vector<std::string> files;
+        files.reserve(found.size());
+        for (auto& [key, path] : found) files.push_back(std::move(path));
+        return files;
+    };
+
     if (config_.labeled_subdirs) {
         // Each subdirectory is a class
         std::vector<std::string> subdirs;
@@ -189,34 +201,26 @@ void AudioDataset::ScanDirectory(const std::string& directory) {
                 subdirs.push_back(entry.path().filename().string());
             }
         }
-        std::sort(subdirs.begin(), subdirs.end());
+        // Class ids and file order as the image folders give them (sorted
+        // names, "2" before "10"; files by path), so the same folder gives
+        // the same clips, ids and split on every platform: the listing order
+        // of a directory is the file system's (TOFIX228 1.6).
+        SortClassNames(subdirs);
         class_names_ = subdirs;
 
         for (int cls = 0; cls < static_cast<int>(subdirs.size()); cls++) {
-            fs::path cls_dir = fs::path(directory) / subdirs[cls];
-            for (const auto& entry : fs::recursive_directory_iterator(cls_dir)) {
-                if (entry.is_regular_file()) {
-                    std::string ext = entry.path().extension().string();
-                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                    if (is_audio(ext)) {
-                        file_paths_.push_back(entry.path().string());
-                        labels_.push_back(cls);
-                    }
-                }
+            const std::vector<std::string> files = sorted_audio_files(fs::path(directory) / subdirs[cls]);
+            for (const auto& file : files) {
+                file_paths_.push_back(file);
+                labels_.push_back(cls);
             }
         }
     } else {
         // Flat directory, no labels
         class_names_ = {"audio"};
-        for (const auto& entry : fs::recursive_directory_iterator(directory)) {
-            if (entry.is_regular_file()) {
-                std::string ext = entry.path().extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                if (is_audio(ext)) {
-                    file_paths_.push_back(entry.path().string());
-                    labels_.push_back(0);
-                }
-            }
+        for (const auto& file : sorted_audio_files(directory)) {
+            file_paths_.push_back(file);
+            labels_.push_back(0);
         }
     }
 
@@ -398,7 +402,7 @@ void AudioDataset::LoadFromCSV(const std::string& directory) {
     for (size_t i = 0; i < file_paths_.size(); ++i) all_indices_[i] = i;
 }
 
-AudioFeatures AudioDataset::ExtractFeatures(const std::string& filepath) const {
+AudioFeatures AudioDataset::ExtractFeatures(const std::string& filepath, size_t index, bool augment) const {
     // Load audio
     AudioData audio = AudioProcessing::LoadAudio(filepath, config_.target_sr);
     if (!audio.valid) {
@@ -445,18 +449,16 @@ AudioFeatures AudioDataset::ExtractFeatures(const std::string& filepath) const {
     // v1 uses hardcoded ranges for stretch (±10%) and pitch (±2
     // semitones). When the GUI node grows float range params,
     // replace the hardcoded values with the user-configured range.
-    if (config_.noise_level > 0.0f) {
-        audio = AudioProcessing::AddNoise(audio, config_.noise_level);
+    std::mt19937 rng(config_.augmentation_seed ^ (augmentation_round_.load() * 0x85EBCA6Bu) ^
+                     (static_cast<uint32_t>(index) * 0x9E3779B1u));
+    if (augment && config_.noise_level > 0.0f) {
+        audio = AudioProcessing::AddNoise(audio, config_.noise_level, static_cast<uint32_t>(rng()));
     }
-    if (config_.time_stretch) {
-        static thread_local std::mt19937 rng(std::random_device{}());
-        std::uniform_real_distribution<float> dist(0.9f, 1.1f);
-        audio = AudioProcessing::TimeStretch(audio, dist(rng));
+    if (augment && config_.time_stretch) {
+        audio = AudioProcessing::TimeStretch(audio, cyxwiz::portable::UniformFloat(rng, 0.9f, 1.1f));
     }
-    if (config_.pitch_shift) {
-        static thread_local std::mt19937 rng(std::random_device{}());
-        std::uniform_real_distribution<float> dist(-2.0f, 2.0f);
-        audio = AudioProcessing::PitchShift(audio, dist(rng));
+    if (augment && config_.pitch_shift) {
+        audio = AudioProcessing::PitchShift(audio, cyxwiz::portable::UniformFloat(rng, -2.0f, 2.0f));
     }
 
     // Pad or truncate to max_duration
@@ -508,12 +510,12 @@ size_t AudioDataset::Size() const {
     return file_paths_.size();
 }
 
-std::pair<std::vector<float>, int> AudioDataset::GetItem(size_t index) const {
+std::pair<std::vector<float>, int> AudioDataset::GetItem(size_t index, bool augment) const {
     if (index >= file_paths_.size()) {
         return {{}, -1};
     }
 
-    AudioFeatures features = ExtractFeatures(file_paths_[index]);
+    AudioFeatures features = ExtractFeatures(file_paths_[index], index, augment);
     if (!features.valid) {
         // Rate-limit the warning spam. Real-world datasets (e.g. the
         // Kaggle Binary Drone Audio set) can have hundreds of silent
@@ -530,10 +532,10 @@ std::pair<std::vector<float>, int> AudioDataset::GetItem(size_t index) const {
                          "(most recent: '{}' - {})",
                          n, file_paths_[index], features.error_message);
         }
-        // Return zeros as fallback so the batch still has uniform shape.
-        // Zero samples contribute nothing to gradient when normalized
-        // — effectively "ignored" but not removed from the batch count.
-        return {std::vector<float>(feature_rows_ * feature_cols_, 0.0f), labels_[index]};
+        // No features: the batcher leaves this clip out of its batch. A
+        // zero-filled sample with its real label would teach the model that
+        // silence is that class (TOFIX223 0.12).
+        return {{}, labels_[index]};
     }
 
     return {features.data, labels_[index]};

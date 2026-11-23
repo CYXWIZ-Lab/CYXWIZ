@@ -248,6 +248,15 @@ def main():
             explained_variance_ratio=vec(r["variance"] / r["total"]),
             singular_values=vec((r["variance"] * (wide.shape[0] - 1)).sqrt()))
 
+    # More features than samples (a layer's activations for a few items): the Gram-matrix path.
+    many, _ = blobs(3, [[0.0] * 40, [3.0] * 20 + [-1.0] * 20, [-2.0, 4.0] * 20], [5, 4, 3], 1.0)
+    for label, k, center, scale in [("wide_centered_k3", 3, True, False), ("wide_scaled_k2", 2, True, True)]:
+        r = pca(many, k, center, scale)
+        add("pca", label, many, n_components=k, center=center, scale=scale, components=mat(r["components"]),
+            transformed=mat(r["transformed"]), explained_variance=vec(r["variance"]),
+            explained_variance_ratio=vec(r["variance"] / r["total"]),
+            singular_values=vec((r["variance"] * (many.shape[0] - 1)).sqrt()))
+
     small, truth = blobs(2, [[0, 0, 0, 0], [5, 5, 0, 1], [0, 6, 5, -2]], [20, 22, 18], 0.8)
     # t-SNE is chaotic: relative differences grow ~10x every 10-20 iterations at useful learning
     # rates, so step-for-step cases use a small rate (both stages, 300 iterations) or a short run.

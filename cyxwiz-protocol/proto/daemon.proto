@@ -72,7 +72,6 @@ service DaemonService {
 
     // Resource Allocation & Central Server Connection
     rpc SetAllocations(SetAllocationsRequest) returns (SetAllocationsResponse);
-    rpc RetryConnection(RetryConnectionRequest) returns (RetryConnectionResponse);
     rpc DisconnectFromCentral(DisconnectFromCentralRequest) returns (DisconnectFromCentralResponse);
 }
 
@@ -659,17 +658,6 @@ message SetAllocationsResponse {
     string error_message = 2;
     bool connected_to_central = 3;    // Whether connection to Central succeeded
     string node_id = 4;               // Assigned node ID from Central Server
-}
-
-message RetryConnectionRequest {
-    string jwt_token = 1;             // User's JWT token for authentication
-}
-
-message RetryConnectionResponse {
-    bool success = 1;
-    string error_message = 2;
-    bool connected_to_central = 3;
-    string node_id = 4;
 }
 
 message DisconnectFromCentralRequest {}

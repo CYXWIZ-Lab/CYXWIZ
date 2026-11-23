@@ -203,4 +203,55 @@ Tensor MishModule::Backward(const Tensor& grad_output) {
     return activation_->Backward(grad_output, input_cache_);
 }
 
+// ============================================================================
+// HardswishModule Implementation
+// ============================================================================
+
+HardswishModule::HardswishModule() {
+    activation_ = std::make_unique<HardswishActivation>();
+}
+
+Tensor HardswishModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    return activation_->Forward(input);
+}
+
+Tensor HardswishModule::Backward(const Tensor& grad_output) {
+    return activation_->Backward(grad_output, input_cache_);
+}
+
+// ============================================================================
+// HardsigmoidModule Implementation
+// ============================================================================
+
+HardsigmoidModule::HardsigmoidModule() {
+    activation_ = std::make_unique<HardsigmoidActivation>();
+}
+
+Tensor HardsigmoidModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    return activation_->Forward(input);
+}
+
+Tensor HardsigmoidModule::Backward(const Tensor& grad_output) {
+    return activation_->Backward(grad_output, input_cache_);
+}
+
+// ============================================================================
+// ReLU6Module Implementation
+// ============================================================================
+
+ReLU6Module::ReLU6Module() {
+    activation_ = std::make_unique<ReLU6Activation>();
+}
+
+Tensor ReLU6Module::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    return activation_->Forward(input);
+}
+
+Tensor ReLU6Module::Backward(const Tensor& grad_output) {
+    return activation_->Backward(grad_output, input_cache_);
+}
+
 } // namespace cyxwiz

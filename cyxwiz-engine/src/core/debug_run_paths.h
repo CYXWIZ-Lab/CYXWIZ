@@ -27,6 +27,11 @@ inline std::filesystem::path EnvironmentPath(const char* name) {
 }
 
 inline std::filesystem::path DefaultRoot() {
+    // A test run (or anyone) can point run records elsewhere, so tests never
+    // write the user's last training trace or debug runs.
+    if (auto overridden = EnvironmentPath("CYXWIZ_DEBUG_RUN_ROOT"); !overridden.empty()) {
+        return overridden;
+    }
 #ifdef _WIN32
     auto base = EnvironmentPath("LOCALAPPDATA");
     if (base.empty()) {
@@ -71,6 +76,12 @@ inline std::filesystem::path GetDebugRunRoot() {
     static const std::filesystem::path root =
         debug_run_paths_detail::DefaultRoot().lexically_normal();
     return root;
+}
+
+// The Studio Debugger's run store: one folder per run (session.json, layer
+// captures).
+inline std::filesystem::path GetDebugRunStoreRoot() {
+    return GetDebugRunRoot() / "studio";
 }
 
 class ScopedDebugRunRootOverrideForTesting {

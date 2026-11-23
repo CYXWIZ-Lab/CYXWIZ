@@ -291,6 +291,109 @@ BackendPackStateResult BackendPackStateService::Mutate(
             progress.message, previous, candidate};
 }
 
+BackendPackStateResult BackendPackStateService::ActivatePluginPack(
+    std::string plugin_id,
+    std::string pack_id) {
+    if (plugin_id.empty() || pack_id.empty()) {
+        return {BackendPackStateStatus::InvalidRequest,
+                "Plugin and pack identity are required"};
+    }
+    return MutatePlugins("activate_plugin", std::move(plugin_id), std::move(pack_id));
+}
+
+BackendPackStateResult BackendPackStateService::DeactivatePluginPack(
+    std::string plugin_id) {
+    if (plugin_id.empty()) {
+        return {BackendPackStateStatus::InvalidRequest,
+                "A plugin identity is required"};
+    }
+    return MutatePlugins("deactivate_plugin", std::move(plugin_id), {});
+}
+
+BackendPackStateResult BackendPackStateService::MutatePlugins(
+    std::string operation,
+    std::string plugin_id,
+    std::string pack_id) {
+    std::unique_lock<std::mutex> mutation_lock(
+        mutation_mutex_, std::try_to_lock);
+    if (!mutation_lock.owns_lock()) {
+        return {BackendPackStateStatus::Busy,
+                "A backend-pack state mutation is already running"};
+    }
+    RuntimeMutationLease runtime_mutation;
+    if (!runtime_mutation.OwnsMutation() ||
+        (execution_active_ && execution_active_())) {
+        return {BackendPackStateStatus::ExecutionActive,
+                "Plugin-pack mutation is blocked while an execution context is active"};
+    }
+
+    BackendPackStateProgress progress;
+    progress.stage = BackendPackStateStage::Reading;
+    progress.operation = operation;
+    progress.pack_id = pack_id;
+    progress.message = "Reading active runtime and plugin state";
+    SetProgress(progress);
+    const auto fail = [&](BackendPackStateStatus status, std::string message) {
+        progress.stage = BackendPackStateStage::Failed;
+        progress.message = message;
+        SetProgress(progress);
+        return BackendPackStateResult{status, std::move(message)};
+    };
+
+    ActiveRuntimeState runtime;
+    ActivePluginsState plugins;
+    std::string error;
+    const auto plugins_path = runtime_root_ / kActivePluginsFileName;
+    if (!LoadActiveRuntimeState(runtime_root_ / "active-runtime.json", runtime, error) ||
+        !LoadActivePluginsState(plugins_path, plugins, error)) {
+        return fail(BackendPackStateStatus::InvalidRuntime, error);
+    }
+    progress.generation = runtime.generation;
+    if (plugins.base_pack_id != runtime.base_pack_id) {
+        // Recorded for another base: those plugins are already inactive.
+        plugins.base_pack_id = runtime.base_pack_id;
+        plugins.plugins.clear();
+    }
+    const auto existing = std::find_if(
+        plugins.plugins.begin(), plugins.plugins.end(),
+        [&](const ActivePluginPackState& value) { return value.plugin_id == plugin_id; });
+
+    if (operation == "activate_plugin") {
+        progress.stage = BackendPackStateStage::Validating;
+        progress.message = "Validating the installed plugin pack";
+        SetProgress(progress);
+        std::error_code filesystem_error;
+        const auto manifest =
+            PluginPackDirectory(runtime_root_, plugin_id, pack_id) / "plugin.json";
+        const auto status = std::filesystem::symlink_status(manifest, filesystem_error);
+        if (filesystem_error || !std::filesystem::is_regular_file(status)) {
+            return fail(BackendPackStateStatus::InvalidRuntime,
+                        "The plugin pack is not installed: " + pack_id);
+        }
+        if (existing == plugins.plugins.end()) {
+            plugins.plugins.push_back({plugin_id, pack_id});
+        } else {
+            existing->pack_id = pack_id;
+        }
+    } else {
+        if (existing == plugins.plugins.end()) {
+            return fail(BackendPackStateStatus::InvalidRequest, "The plugin is not active");
+        }
+        plugins.plugins.erase(existing);
+    }
+
+    progress.stage = BackendPackStateStage::Publishing;
+    progress.message = "Publishing the plugin state";
+    SetProgress(progress);
+    if (!SaveActivePluginsStateAtomic(plugins_path, plugins, error)) {
+        return fail(BackendPackStateStatus::PublishFailed, error);
+    }
+    progress.stage = BackendPackStateStage::Complete;
+    progress.message = "Plugin state published atomically";
+    SetProgress(progress);
+    return {BackendPackStateStatus::Completed, progress.message};
+}
+
 BackendPackStateProgress BackendPackStateService::GetProgress() const {
     std::lock_guard<std::mutex> lock(progress_mutex_);
     return progress_;

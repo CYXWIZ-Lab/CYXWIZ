@@ -5,6 +5,7 @@
 // TestingMetrics. Pure data in and out (no ImGui), so the panel and its tests
 // say the same words.
 
+#include "class_words.h"
 #include "test_executor.h"
 
 #include <string>
@@ -100,5 +101,16 @@ ThresholdFigures AtThreshold(const ROCCurveData& roc, int positives, int negativ
 // classification fixtures' threshold contract); NaN when the curve has no
 // point.
 double BestF1Threshold(const ROCCurveData& roc, int positives, int negatives);
+
+// Results > Test > Errors (TOFIX129 D11): the mistakes by (true, predicted)
+// pair, the commonest first, and the sentence over them ("51 of the 2,000
+// test rows are wrong (97.45 % right). The commonest mistake is a 7 read as
+// 2 (7 rows).").
+struct MistakePair {
+    int truth = -1, predicted = -1;
+    int count = 0;
+};
+std::vector<MistakePair> MistakePairs(const TestingMetrics& m);
+std::string ErrorsHeadline(const TestingMetrics& m, const View& v);
 
 }  // namespace cyxwiz::test_report

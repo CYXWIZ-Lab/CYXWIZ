@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstring>
 #include <ctime>
+#include "network/cloud_job_datasets.h"
 
 // Undefine Windows macros that conflict with protobuf STATUS_* enums
 #ifdef STATUS_PENDING
@@ -31,13 +32,16 @@
 
 namespace cyxwiz {
 
+namespace {
+// The clock the reservation's end_time (unix seconds) is compared with.
+int64_t UnixNow() {
+    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+}  // namespace
+
 ConnectionDialog::ConnectionDialog(network::GRPCClient* client, network::JobManager* job_manager)
     : client_(client), job_manager_(job_manager), show_(false), connecting_(false) {
-    // Load server address from config
-    std::string addr = core::EngineConfig::Instance().GetCentralServerAddress();
-    std::strncpy(server_address_, addr.c_str(), sizeof(server_address_) - 1);
-    server_address_[sizeof(server_address_) - 1] = '\0';
-
     // Initialize dataset URI for P2P training
     std::strncpy(dataset_uri_, "remote://engine", sizeof(dataset_uri_) - 1);
     dataset_uri_[sizeof(dataset_uri_) - 1] = '\0';
@@ -45,7 +49,15 @@ ConnectionDialog::ConnectionDialog(network::GRPCClient* client, network::JobMana
 
 ConnectionDialog::~ConnectionDialog() = default;
 
+void ConnectionDialog::RevokeJobTokens() {
+    revoke_job_tokens_ = false;
+    if (job_cloud_tokens_.empty()) return;
+    network::RevokeCloudJobTokens(datastream_client_, job_cloud_tokens_);
+    job_cloud_tokens_.clear();
+}
+
 void ConnectionDialog::Render() {
+    if (revoke_job_tokens_) RevokeJobTokens();
     if (!show_) {
         return;
     }
@@ -97,11 +109,19 @@ void ConnectionDialog::RenderConnectionPanel() {
 
     ImGui::Spacing();
 
-    // Server address input
-    ImGui::Text("Server Address:");
+    // The server in use (TOFIX168 step 3b): one address for the whole Engine,
+    // set in Preferences > Servers.
+    auto& config = core::EngineConfig::Instance();
+    const std::string server = config.GetServerAddress();
+    const std::string central = config.GetCentralServerAddress();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_dim, "Server");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputText("##server_address", server_address_, sizeof(server_address_));
+    ImGui::TextUnformatted(server.empty() ? central.c_str() : server.c_str());
+    ImGui::SameLine();
+    if (ui::LinkButton("Change in Preferences") && open_server_preferences_) {
+        open_server_preferences_();
+    }
 
     ImGui::Spacing();
 
@@ -121,15 +141,15 @@ void ConnectionDialog::RenderConnectionPanel() {
             connecting_ = true;
             connection_error_.clear();
 
-            spdlog::info("Attempting to connect to: {}", server_address_);
+            spdlog::info("Attempting to connect to: {}", central);
 
-            if (client_->Connect(server_address_)) {
+            if (client_->Connect(central)) {
                 spdlog::info("Successfully connected!");
                 connecting_ = false;
 
                 // Also connect reservation client
                 if (reservation_client_ && !reservation_client_->IsConnected()) {
-                    reservation_client_->Connect(server_address_);
+                    reservation_client_->Connect(central);
                 }
 
                 // Check for active reservations (reconnection support)
@@ -154,6 +174,18 @@ void ConnectionDialog::RenderConnectionPanel() {
     if (!connection_error_.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(t.error, "Error: %s", connection_error_.c_str());
+    }
+}
+
+void ConnectionDialog::OnServerChanged() {
+    if (client_ && client_->IsConnected()) {
+        client_->Disconnect();
+        if (connection_callback_) connection_callback_(false);
+    }
+    connection_error_.clear();
+    if (reservation_client_) {
+        reservation_client_->Disconnect();
+        reservation_client_->ConnectAsync(core::EngineConfig::Instance().GetCentralServerAddress());
     }
 }
 
@@ -619,6 +651,7 @@ void ConnectionDialog::FinishReservation(ReservationEndReason reason, const std:
         if (p2p_client_->IsConnected()) p2p_client_->Disconnect();
     }
     if (reservation_client_) reservation_client_->StopHeartbeat();
+    RevokeJobTokens();
 
     receipt_facts_ = facts;
     has_receipt_ = true;
@@ -634,6 +667,7 @@ void ConnectionDialog::FinishReservation(ReservationEndReason reason, const std:
 
 void ConnectionDialog::DisconnectFromNode() {
     spdlog::info("[DISCONNECT] Disconnecting from the node; the reservation stays");
+    RevokeJobTokens();
     // Cancel a pending download and stop monitoring before the client goes:
     // both read p2p_client_.
     if (p2p_training_panel_) {
@@ -728,12 +762,26 @@ void ConnectionDialog::StartP2PTraining() {
     // device (TOFIX118 P4b). 0 = not measured, the node skips the check.
     config.set_estimated_memory(static_cast<int64_t>(CurrentJobFitCard().estimated_memory));
 
+    // The previous job's tokens go first (one job runs at a time); this
+    // job's are revoked on any return before it is running.
+    RevokeJobTokens();
+    struct RevokeUnlessRunning {
+        ConnectionDialog* dialog;
+        bool running = false;
+        ~RevokeUnlessRunning() {
+            if (!running) dialog->RevokeJobTokens();
+        }
+    } job_tokens{this};
+
     // remote://: the node fetches the graph's dataset files from the Engine
     // (TOFIX118 P2). Registered before the job is sent so the node's first
     // request is answered; refused graphs never reach the node.
     if (std::string(dataset_uri_).find("remote://") == 0) {
         std::string dataset_error;
-        if (!p2p_client_->RegisterJobDatasets(active_reservation_.job_id, graph_json, dataset_error)) {
+        if (!p2p_client_->RegisterJobDatasets(active_reservation_.job_id, graph_json, datastream_client_,
+                                              core::EngineConfig::Instance().GetCloudGatewayAddress(),
+                                              network::CloudAccessTtlSeconds(active_reservation_.end_time, UnixNow()),
+                                              config, dataset_error, &job_cloud_tokens_)) {
             reservation_error_ = "Cannot train this graph remotely: " + dataset_error;
             spdlog::error("{}", reservation_error_);
             return;
@@ -799,6 +847,7 @@ void ConnectionDialog::StartP2PTraining() {
 
     p2p_client_->SetCompletionCallback([this](const network::TrainingComplete& complete) {
         spdlog::info("Training completed! Success: {}", complete.success);
+        revoke_job_tokens_ = true;  // the node has its dataset files
         if (p2p_training_panel_) {
             p2p_training_panel_->OnTrainingComplete(complete);
         }
@@ -811,6 +860,7 @@ void ConnectionDialog::StartP2PTraining() {
         }
         if (is_fatal) {
             reservation_error_ = "Training error: " + error;
+            revoke_job_tokens_ = true;
         }
     });
 
@@ -821,6 +871,7 @@ void ConnectionDialog::StartP2PTraining() {
         return;
     }
 
+    job_tokens.running = true;
     spdlog::info("P2P training started successfully!");
     spdlog::info("  Job ID: {}", active_reservation_.job_id);
     spdlog::info("  Training on Server Node: {}", active_reservation_.node_endpoint);
@@ -933,12 +984,26 @@ void ConnectionDialog::StartNewP2PTraining(const std::string& resume_job_id) {
     config.set_required_device(cyxwiz::protocol::DEVICE_CUDA);
     config.set_estimated_memory(static_cast<int64_t>(CurrentJobFitCard().estimated_memory));
 
+    // The previous job's tokens go first (one job runs at a time); this
+    // job's are revoked on any return before it is running.
+    RevokeJobTokens();
+    struct RevokeUnlessRunning {
+        ConnectionDialog* dialog;
+        bool running = false;
+        ~RevokeUnlessRunning() {
+            if (!running) dialog->RevokeJobTokens();
+        }
+    } job_tokens{this};
+
     // remote://: the node fetches the graph's dataset files from the Engine
     // (TOFIX118 P2). Registered before the job is sent so the node's first
     // request is answered; refused graphs never reach the node.
     if (std::string(dataset_uri_).find("remote://") == 0) {
         std::string dataset_error;
-        if (!p2p_client_->RegisterJobDatasets(new_job_id, graph_json, dataset_error)) {
+        if (!p2p_client_->RegisterJobDatasets(new_job_id, graph_json, datastream_client_,
+                                              core::EngineConfig::Instance().GetCloudGatewayAddress(),
+                                              network::CloudAccessTtlSeconds(active_reservation_.end_time, UnixNow()),
+                                              config, dataset_error, &job_cloud_tokens_)) {
             reservation_error_ = "Cannot train this graph remotely: " + dataset_error;
             spdlog::error("{}", reservation_error_);
             return;
@@ -1004,6 +1069,7 @@ void ConnectionDialog::StartNewP2PTraining(const std::string& resume_job_id) {
                 }
                 if (is_fatal) {
                     reservation_error_ = "Training error: " + error;
+                    revoke_job_tokens_ = true;
                 }
             });
 
@@ -1049,6 +1115,7 @@ void ConnectionDialog::StartNewP2PTraining(const std::string& resume_job_id) {
         spdlog::info("P2P Training Panel: Started monitoring for new job {}", new_job_id);
     }
 
+    job_tokens.running = true;
     ++jobs_started_;
     spdlog::info("New P2P training started successfully!");
     spdlog::info("  New Job ID: {}", new_job_id);

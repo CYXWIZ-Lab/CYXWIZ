@@ -33,7 +33,10 @@ public:
   AgentLlmSession(const AgentLlmSession &) = delete;
   AgentLlmSession &operator=(const AgentLlmSession &) = delete;
 
-  void SetCommandHandler(CommandHandler handler);
+  // refresh_context runs on the UI thread just before each command starts
+  // (the handler itself runs on a worker thread).
+  void SetCommandHandler(CommandHandler handler,
+                         std::function<void()> refresh_context);
   void ResetProjectState();
   void RequestInputFocus() { focus_input_ = true; }
   void RenderContent(std::string_view project_root);
@@ -103,6 +106,7 @@ private:
   void JoinRequestWorker();
 
   CommandHandler command_handler_;
+  std::function<void()> refresh_context_;
   std::array<char, 2048> input_buffer_{};
   std::vector<TranscriptEntry> transcript_;
   ContextMode context_mode_ = ContextMode::General;

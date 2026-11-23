@@ -1,4 +1,5 @@
 #include "row_count_check_operator.h"
+#include "../column_list.h"
 
 #include <arrow/api.h>
 #include <arrow/compute/api.h>
@@ -52,20 +53,6 @@ std::string Trim(std::string text) {
     return text.substr(start);
 }
 
-std::vector<std::string> CommaList(const std::string& text) {
-    std::vector<std::string> items;
-    std::string item;
-    for (const char c : text + ",") {
-        if (c != ',') {
-            item += c;
-            continue;
-        }
-        item = Trim(item);
-        if (!item.empty()) items.push_back(item);
-        item.clear();
-    }
-    return items;
-}
 
 std::string JoinList(const std::vector<std::string>& items) {
     std::string out;
@@ -151,8 +138,8 @@ bool RowCountCheckOperator::Configure(const std::map<std::string, std::string>& 
     }
     if (check_ != "row_count") {
         column_ = Trim(Param(params, "column"));
-        columns_ = CommaList(Param(params, "columns"));
-        allowed_ = CommaList(Param(params, "allowed"));
+        columns_ = ParseColumnList(Param(params, "columns"));
+        allowed_ = ParseColumnList(Param(params, "allowed"));
         if (!ParseNumber(params, "min_value", min_value_, error) || !ParseNumber(params, "max_value", max_value_, error)) return false;
         if (check_ == "unique") {
             if (columns_.empty() && !column_.empty()) columns_.push_back(column_);

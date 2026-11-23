@@ -28,9 +28,6 @@ void Check(bool condition, const std::string& message) {
         std::exit(1);
     }
 }
-void Same(const std::string& got, const std::string& want, const std::string& what) {
-    Check(got == want, what + ": got \"" + got + "\", want \"" + want + "\"");
-}
 }  // namespace
 
 int main() {

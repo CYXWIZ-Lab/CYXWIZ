@@ -54,7 +54,7 @@ const char* ParameterConsumptionName(ParameterConsumption consumption) {
     return "unknown";
 }
 
-const char* PinTypeName(gui::PinType type) {
+const char* PinTypeId(gui::PinType type) {  // the inventory's lower-case id, not the UI word
     switch (type) {
         case gui::PinType::Tensor: return "tensor";
         case gui::PinType::Labels: return "labels";
@@ -62,6 +62,7 @@ const char* PinTypeName(gui::PinType type) {
         case gui::PinType::Loss: return "loss";
         case gui::PinType::Optimizer: return "optimizer";
         case gui::PinType::Dataset: return "dataset";
+        case gui::PinType::Environment: return "environment";
     }
     return "unknown";
 }
@@ -190,7 +191,7 @@ std::string TargetDisposition(std::string_view triage_class,
 }
 
 Json PortJson(const PortDefinition& port) {
-    return {{"name", port.name}, {"type", PinTypeName(port.type)},
+    return {{"name", port.name}, {"type", PinTypeId(port.type)},
             {"required", port.required}, {"variadic", port.variadic},
             {"min_connections", port.min_connections},
             {"max_connections", port.max_connections},

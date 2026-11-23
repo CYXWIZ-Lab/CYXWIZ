@@ -5,15 +5,18 @@
 #include <arrow/compute/api.h>
 #include <spdlog/spdlog.h>
 
+#include "cyxwiz/portable_random.h"
+
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
-#include <limits>
 #include <map>
 #include <memory>
 #include <numeric>
 #include <random>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -40,12 +43,6 @@ struct NormalizedSplit {
     float test = 0.1f;
 };
 
-struct SplitCounts {
-    size_t train = 0;
-    size_t val = 0;
-    size_t test = 0;
-};
-
 inline NormalizedSplit Normalize(float train, float val, float test) {
     float split_sum = train + val + test;
     if (!(split_sum > 0.0f)) {
@@ -54,18 +51,120 @@ inline NormalizedSplit Normalize(float train, float val, float test) {
     return {train / split_sum, val / split_sum, test / split_sum};
 }
 
-inline SplitCounts CountsFor(size_t total, const NormalizedSplit& split) {
-    SplitCounts counts;
-    counts.train = static_cast<size_t>(total * split.train);
-    counts.val = static_cast<size_t>(total * split.val);
-    // Train gets at least one row when it has a share; a 0 / 0 / 1 split (a
-    // dataset that is the whole test part) keeps every row in its part.
-    if (total > 0 && counts.train == 0 && split.train > 0.0f) counts.train = 1;
-    if (counts.train > total) counts.train = total;
-    if (counts.train + counts.val > total) {
-        counts.val = total - counts.train;
+// The train / validation / test counts of each class. The totals are the
+// shares of all rows rounded by largest remainder, and each class is within
+// one row of its own exact shares: every class takes the floor of its shares,
+// then the rows left over go, largest fraction first, to the parts still short
+// of their totals (TOFIX223 0.18: each class once took the floor of its shares
+// and gave every remainder to Test, so 100 classes of 5 rows split
+// 400 / 0 / 100 at 0.8 / 0.1 / 0.1 instead of 400 / 50 / 50). One class (an
+// unstratified split) is the largest-remainder split of its rows. Train gets
+// at least one row when it has a share; a 0 / 0 / 1 split keeps every row in
+// its part. Leftover rows with equal fractions (classes of the same size) go
+// in an order drawn from `seed`, so which classes have no Validation or Test
+// row follows the seed, not the classes' order in the labels.
+inline std::vector<std::array<uint64_t, 3>> CountsPerClass(const std::vector<uint64_t>& class_rows,
+                                                           const NormalizedSplit& split, uint32_t seed = 0) {
+    const double share[3] = {split.train, split.val, split.test};
+    uint64_t total = 0;
+    for (const uint64_t rows : class_rows) total += rows;
+
+    // Each part's total, by largest remainder (ties: train, then validation).
+    std::array<uint64_t, 3> target{};
+    {
+        std::array<double, 3> fraction{};
+        uint64_t assigned = 0;
+        for (size_t p = 0; p < 3; ++p) {
+            const double exact = static_cast<double>(total) * share[p];
+            target[p] = static_cast<uint64_t>(exact);
+            fraction[p] = exact - static_cast<double>(target[p]);
+            assigned += target[p];
+        }
+        std::array<size_t, 3> order{0, 1, 2};
+        std::stable_sort(order.begin(), order.end(),
+                         [&](size_t a, size_t b) { return fraction[a] > fraction[b]; });
+        for (size_t i = 0; assigned < total; ++i, ++assigned) ++target[order[i % 3]];
+        if (total > 0 && target[0] == 0 && share[0] > 0.0) {
+            const size_t from = target[1] >= target[2] ? 1 : 2;
+            --target[from];
+            target[0] = 1;
+        }
     }
-    counts.test = total - counts.train - counts.val;
+
+    // Each class's floors, then its leftover rows.
+    std::vector<std::array<uint64_t, 3>> counts(class_rows.size(), std::array<uint64_t, 3>{0, 0, 0});
+    std::vector<uint64_t> left(class_rows.size(), 0);
+    std::array<int64_t, 3> need{static_cast<int64_t>(target[0]), static_cast<int64_t>(target[1]),
+                                static_cast<int64_t>(target[2])};
+    struct Remainder {
+        double fraction;
+        size_t cls;
+        size_t part;
+    };
+    std::vector<Remainder> remainders;
+    remainders.reserve(class_rows.size() * 3);
+    for (size_t c = 0; c < class_rows.size(); ++c) {
+        uint64_t floors = 0;
+        for (size_t p = 0; p < 3; ++p) {
+            const double exact = static_cast<double>(class_rows[c]) * share[p];
+            counts[c][p] = static_cast<uint64_t>(exact);
+            floors += counts[c][p];
+            need[p] -= static_cast<int64_t>(counts[c][p]);
+            remainders.push_back({exact - static_cast<double>(counts[c][p]), c, p});
+        }
+        left[c] = class_rows[c] - floors;
+    }
+    // A portable seeded order of the classes (SplitMix64), for ties.
+    const auto tie_key = [seed](size_t cls) {
+        uint64_t z = (static_cast<uint64_t>(seed) << 32) + static_cast<uint64_t>(cls) + 0x9E3779B97F4A7C15ull;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        return z ^ (z >> 31);
+    };
+    std::stable_sort(remainders.begin(), remainders.end(), [&](const Remainder& a, const Remainder& b) {
+        if (a.fraction != b.fraction) return a.fraction > b.fraction;
+        if (a.cls != b.cls) return tie_key(a.cls) < tie_key(b.cls);
+        return false;
+    });
+    for (const auto& r : remainders) {
+        if (left[r.cls] > 0 && need[r.part] > 0) {
+            ++counts[r.cls][r.part];
+            --left[r.cls];
+            --need[r.part];
+        }
+    }
+    // Rows the parts' needs could not place (rounding at a handful of rows):
+    // the part that is shortest of its total takes them.
+    for (size_t c = 0; c < class_rows.size(); ++c) {
+        while (left[c] > 0) {
+            const size_t p = static_cast<size_t>(std::max_element(need.begin(), need.end()) - need.begin());
+            ++counts[c][p];
+            --left[c];
+            --need[p];
+        }
+    }
+    // Train with a share and no row (a handful of rows with a small Train
+    // share, where the class floors outweighed the Train total): one row of
+    // the class with the most Validation or Test rows moves to Train.
+    if (total > 0 && share[0] > 0.0) {
+        uint64_t train_rows = 0;
+        for (const auto& c : counts) train_rows += c[0];
+        if (train_rows == 0) {
+            size_t best_cls = 0, best_part = 0;
+            uint64_t best = 0;
+            for (size_t c = 0; c < counts.size(); ++c)
+                for (size_t p = 1; p < 3; ++p)
+                    if (counts[c][p] > best) {
+                        best = counts[c][p];
+                        best_cls = c;
+                        best_part = p;
+                    }
+            if (best > 0) {
+                --counts[best_cls][best_part];
+                ++counts[best_cls][0];
+            }
+        }
+    }
     return counts;
 }
 
@@ -78,7 +177,16 @@ arrow::Status AppendNumericLabels(const std::shared_ptr<arrow::Array>& chunk,
             return arrow::Status::Invalid(
                 "stratified split requires non-null labels");
         }
-        labels.push_back(static_cast<int64_t>(typed->Value(i)));
+        using Value = std::decay_t<decltype(typed->Value(i))>;
+        if constexpr (std::is_floating_point_v<Value>) {
+            // A NaN has no class; casting it is undefined.
+            if (std::isnan(typed->Value(i)))
+                return arrow::Status::Invalid("stratified split requires labels that are numbers, not NaN");
+            const double value = static_cast<double>(typed->Value(i));
+            labels.push_back(value >= -9.2e18 && value <= 9.2e18 ? static_cast<int64_t>(value) : -1);
+        } else {
+            labels.push_back(static_cast<int64_t>(typed->Value(i)));
+        }
     }
     return arrow::Status::OK();
 }
@@ -142,6 +250,10 @@ inline arrow::Result<std::vector<int64_t>> ReadLabels(
                 ARROW_RETURN_NOT_OK(
                     AppendNumericLabels<arrow::DoubleArray>(chunk, labels));
                 break;
+            case arrow::Type::BOOL:
+                ARROW_RETURN_NOT_OK(
+                    AppendNumericLabels<arrow::BooleanArray>(chunk, labels));
+                break;
             default:
                 return arrow::Status::Invalid(
                     "stratified split label column '" + label_column +
@@ -181,7 +293,7 @@ inline arrow::Result<std::shared_ptr<arrow::Table>> AppendPartitionColumn(
 } // namespace split_partition_detail
 
 // The split rule every training path uses (TOFIX178 S0-g1): each class gets
-// the same share counts (CountsFor), and the rows, in file order, fill them by
+// its share counts (CountsPerClass), and the rows, in file order, fill them by
 // a draw without replacement - the same as shuffling each class and slicing,
 // but one pass with a few counters, so a table on disk splits like one in
 // memory. Unshuffled, each class fills Train, then Validation, then Test in
@@ -194,12 +306,8 @@ public:
     SplitAssigner(const std::vector<uint64_t>& class_rows, float train, float val, float test,
                   bool shuffle, uint32_t seed)
         : shuffle_(shuffle), rng_(seed) {
-        const auto split = split_partition_detail::Normalize(train, val, test);
-        remaining_.reserve(class_rows.size());
-        for (const uint64_t rows : class_rows) {
-            const auto counts = split_partition_detail::CountsFor(static_cast<size_t>(rows), split);
-            remaining_.push_back({counts.train, counts.val, counts.test});
-        }
+        remaining_ = split_partition_detail::CountsPerClass(
+            class_rows, split_partition_detail::Normalize(train, val, test), seed);
     }
 
     // The partition (0 train, 1 validation, 2 test) of the next row, which
@@ -207,7 +315,7 @@ public:
     int8_t Next(size_t class_id) {
         auto& left = remaining_.at(class_id);
         const uint64_t total = left[0] + left[1] + left[2];
-        uint64_t draw = shuffle_ && total > 0 ? Below(total) : 0;
+        uint64_t draw = shuffle_ && total > 0 ? cyxwiz::portable::Below(rng_, total) : 0;
         int8_t partition = 0;
         while (partition < 2 && draw >= left[static_cast<size_t>(partition)]) {
             draw -= left[static_cast<size_t>(partition)];
@@ -218,14 +326,6 @@ public:
     }
 
 private:
-    // Uniform in [0, bound): rejection sampling on the raw 64-bit output.
-    uint64_t Below(uint64_t bound) {
-        const uint64_t limit = std::numeric_limits<uint64_t>::max() - std::numeric_limits<uint64_t>::max() % bound;
-        uint64_t value = rng_();
-        while (value >= limit) value = rng_();
-        return value % bound;
-    }
-
     bool shuffle_;
     std::mt19937_64 rng_;
     std::vector<std::array<uint64_t, 3>> remaining_;

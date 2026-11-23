@@ -25,6 +25,7 @@
 #include "word_training_vocabulary.h"
 #include "word_vector_device.h"
 #include "word2vec_sampling.h"
+#include "device_random.h"
 
 #include <arrayfire.h>
 
@@ -151,7 +152,7 @@ Word2VecModel WordEmbeddings::TrainWord2Vec(const std::vector<std::vector<std::s
     const dim_t batch = StepBatch(options.batch_size, v);
 
     try {
-        af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, options.seed);
+        af::randomEngine engine = cyxwiz::DeviceRandomEngine(options.seed);
         // gensim: input vectors uniform in +-0.5 / vector_size, output vectors 0.
         af::array w_in = (af::randu(af::dim4(v, d), f32, engine) - 0.5f) / static_cast<float>(d);
         af::array w_out = af::constant(0.0f, v, d, f32);
@@ -168,7 +169,17 @@ Word2VecModel WordEmbeddings::TrainWord2Vec(const std::vector<std::vector<std::s
         for (int epoch = 0; epoch < options.epochs; ++epoch) {
             const EpochExamples epoch_examples =
                 MakeEpochExamples(corpus, corpus_sentence, keep_probability, window, options.cbow, false, engine);
-            if (epoch_examples.outputs.isempty()) continue;
+            if (epoch_examples.outputs.isempty()) {
+                // No context pairs this epoch: it still counts (loss 0, 0
+                // examples), so epoch_loss and the callbacks keep one entry per
+                // epoch and Stop is still heard.
+                model.epoch_loss.push_back(0.0);
+                if (options.on_epoch_loss) options.on_epoch_loss(epoch + 1, 0.0, 0);
+                if (options.on_progress &&
+                    !options.on_progress(static_cast<double>(epoch + 1) / options.epochs, epoch + 1))
+                    return fail("Training was stopped");
+                continue;
+            }
             ReleaseEpochScratch();
             const af::array& ex_inputs = epoch_examples.inputs;
             const af::array& ex_outputs = epoch_examples.outputs;

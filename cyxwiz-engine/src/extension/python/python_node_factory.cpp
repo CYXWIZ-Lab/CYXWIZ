@@ -176,6 +176,13 @@ public:
     void SetParameters(const std::map<std::string, Tensor>& params) override { target_->SetParameters(params); }
     std::map<std::string, Tensor> GetGradients() override { return target_->GetGradients(); }
     bool HasParameters() const override { return target_->HasParameters(); }
+    std::vector<std::string> GetStateNames() const override { return target_->GetStateNames(); }
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override {
+        return target_->CachedElementsPerSample(sample_input_shape);
+    }
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override {
+        return target_->BackwardWorkingElementsPerSample(sample_input_shape);
+    }
     std::string GetName() const override { return target_->GetName(); }
     void SetTraining(bool training) override {
         is_training_ = training;

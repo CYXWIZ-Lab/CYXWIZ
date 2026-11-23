@@ -56,57 +56,28 @@ class JobStatusPanel;
 class P2PTrainingPanel;
 class PatternBrowserPanel;
 class QueryConsolePanel;
-class MemoryPanel;
-class MemoryMonitor;
+class MonitorPanel;
 class VariableExplorerPanel;
 class PlotOutputPanel;
 class ExportDialog;
 class ImportDialog;
 class DeploymentDialog;
-class ModelSummaryPanel;
-class ArchitectureDiagram;
-class LRFinderPanel;
+class ModelPanel;
 class StudioDebuggerPanel;
-class GradCAMPanel;
 class FeatureImportancePanel;
-class NASPanel;
 class HyperparamSearchPanel;
+class NASPanel;
+struct TrialSetup;
 class ServingPanel;
-class DNNInferencePanel;
 // Model Evaluation panels (Phase 6B)
 // Linear Algebra panels (Phase 7)
-class MatrixCalculatorPanel;
-class EigenDecompPanel;
-class SVDPanel;
-class QRPanel;
-class CholeskyPanel;
-// Signal Processing panels (Phase 8)
-class FFTPanel;
-class SpectrogramPanel;
-class FilterDesignerPanel;
-class ConvolutionPanel;
-class WaveletPanel;
+class LinearAlgebraPanel;
 // Optimization & Calculus panels (Phase 9)
-class GradientDescentPanel;
-class ConvexityPanel;
-class LPPanel;
-class QPPanel;
-class DifferentiationPanel;
-class IntegrationPanel;
-// Text Processing panels (Phase 11)
-class TokenizationPanel;
-class WordFrequencyPanel;
-class TFIDFPanel;
-class EmbeddingsPanel;
-class SentimentPanel;
+class OptimizationPanel;
+// Text: Language Model Generation (the data tools are Explore > Text)
 class LanguageModelGenerationPanel;
 // Utilities panels (Phase 12)
-class CalculatorPanel;
-class UnitConverterPanel;
-class RandomGeneratorPanel;
-class HashGeneratorPanel;
-class JSONViewerPanel;
-class RegexTesterPanel;
+class UtilitiesPanel;
 // Plugin Manager panel
 class PluginManagerPanel;
 // Data Studio panel (Phase 1 Week 1)
@@ -114,6 +85,7 @@ class DataStudioPanel;
 class FoldsView;
 // Node Info panel (Phase 2)
 class NodeInfoPanel;
+class SimulationMonitorPanel;
 struct StudioDebuggerSnapshot;
 struct StudioDebuggerRunControl;
 struct StudioDebuggerRunInputs;
@@ -122,7 +94,6 @@ enum class StudioDebuggerRunMode;
 
 namespace scripting {
 class ScriptingEngine;
-class StartupScriptManager;
 } // namespace scripting
 
 namespace network {
@@ -167,6 +138,7 @@ public:
     bool HasUnsavedFiles() const;
     std::vector<std::string> GetUnsavedFileNames() const;
     void SaveAllFiles();
+    void AutoSaveFiles();  // File > Auto Save: only what already has a file
 
     // Get the scripting engine
     std::shared_ptr<scripting::ScriptingEngine> GetScriptingEngine() { return scripting_engine_; }
@@ -224,10 +196,25 @@ private:
         const std::vector<NodeLink>& links, cyxwiz::TrainingConfiguration config);
     std::shared_ptr<cyxwiz::AsyncTask> test_preparation_task_;
     std::shared_ptr<int> test_callback_lifetime_ = std::make_shared<int>(0);
-    // Results > Cross-validation / Learning curve (TOFIX129 D4): Run marks the
-    // next Train launch as theirs; it goes through Train's checks, data loads,
-    // memory question and preparation, and only the dispatch differs: the
-    // prepared table goes to core/cross_validation_runner on a task.
+    // A launch marked for another runner: Results > Cross-validation / Learning
+    // curve (TOFIX129 D4), Hyperparameter Search and Neural Architecture
+    // Search's Train the best N (TOFIX178 T4) mark the next
+    // Train launch as theirs; it goes through Train's checks, data loads,
+    // memory question and preparation, and only the dispatch differs.
+    struct MarkedLaunch {
+        std::string what;  // "Cross-validation", for the log
+        ::gui::GraphTrainingDispatch dispatch;
+        std::function<void(const std::string&)> not_started;  // it stopped before its dispatch: why
+    };
+    std::optional<MarkedLaunch> marked_launch_;
+    void EndMarkedLaunch(const std::string& why);
+    // The searches that train through a marked launch.
+    enum class SearchRunner { None, Parameters, Architecture };
+    // Why another run cannot start now ("" when it can); `starting` is not
+    // counted (it is already preparing its own launch).
+    std::string LaunchBlocker(SearchRunner starting = SearchRunner::None) const;
+    // Cross-validation / learning curve: the prepared table goes to
+    // core/cross_validation_runner on a task.
     struct FoldsLaunch {
         std::shared_ptr<cyxwiz::FoldsView> view;
         cyxwiz::CrossValidationSettings settings;
@@ -244,13 +231,20 @@ private:
     std::optional<FoldsNode> FindFoldsNode(bool learning_curve) const;
     // Results' Add to the graph: the node after the graph's Data Input.
     std::string AddFoldsNode(bool learning_curve, const cyxwiz::CrossValidationSettings& settings);
-    std::optional<FoldsLaunch> folds_launch_;
     uint64_t folds_task_ = 0;  // the running cross-validation / learning curve task
     void StartFoldsFromGraph(std::shared_ptr<cyxwiz::FoldsView> view, const cyxwiz::CrossValidationSettings& settings);
-    // A marked launch that stopped before its task: the view says why.
-    void EndFoldsLaunch(const std::string& why);
-    std::string FoldsBlocker() const;
     ::gui::GraphTrainingDispatch MakeFoldsDispatch(const FoldsLaunch& launch);
+    // Hyperparameter Search's trials and Architecture Search's versions: the
+    // prepared data becomes a TrialSetup for the runner's panel.
+    void StartTrialsFromGraph(SearchRunner runner, std::vector<MLNode> nodes, std::vector<NodeLink> links);
+    ::gui::GraphTrainingDispatch MakeTrialsDispatch(std::vector<MLNode> nodes, std::vector<NodeLink> links,
+                                                    std::function<void(cyxwiz::TrialSetup)> begin,
+                                                    std::function<void(const std::string&)> not_started);
+    // The Model window's learning rate range test (TOFIX129 D11): a marked
+    // launch whose dispatch trains with config.learning_rate_range; the
+    // trained model in use is kept. "" when it starts (or waits for the
+    // data), else why not.
+    std::string StartLearningRateRangeTest(const cyxwiz::LearningRateRangeSettings& settings);
 
 
     // Compile the current graph as a dry-run (no training) and show results in a popup
@@ -260,6 +254,23 @@ private:
     // compile found, or for why Train / Local Debug / a checkpoint load
     // stopped (`stop_reason`, empty when the findings say it).
     void ShowCompileReport(cyxwiz::compile_report::Mode mode, std::string stop_reason = {});
+    // The missing-values fix in that report (TOFIX223 0.3): the cards from
+    // the state below, the steps each action adds and removes, and the
+    // training "Fix and train" starts once its steps are on the canvas.
+    struct MissingValuesEntry;
+    void ShowMissingValuesReport(const std::vector<MissingValuesBlock>& blocks, const std::vector<MLNode>& nodes,
+                                 const std::string& source_dataset);
+    void RefreshMissingValuesReport();
+    void RenderMissingValuesCards();
+    // `steps` in the card's order: all go after the step that feeds the Data
+    // Split, as one chain in that order.
+    void AddMissingValuesSteps(MissingValuesEntry& entry, const std::vector<cyxwiz::missing_values_fix::Step>& steps);
+    void RemoveMissingValuesSteps(MissingValuesEntry& entry, bool label);
+    void LeaveColumnOut(size_t entry, const std::string& column);
+    // The entry's steps checked against the canvas; true when what it says changed.
+    bool SyncMissingValuesEntry(MissingValuesEntry& entry);
+    void TrackMissingValuesSteps();
+    void WireMissingValuesDashboard();
     // User-facing failure for an action that has no result panel of its own
     // (checkpoint load, Run Test refusals): shown on screen, also logged.
     void ShowOperationError(std::string title, std::string message);
@@ -299,11 +310,48 @@ private:
     std::string operation_error_message_;
     bool compile_result_success_ = false;
     bool compile_result_has_config_ = false;
+    std::shared_ptr<const cyxwiz::RLTrainingConfiguration> compile_result_rl_;  // an RL graph's compile
     cyxwiz::compile_report::ConfigFacts compile_result_config_;
     std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
     std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;
     cyxwiz::compile_report::Report compile_report_;
     cyxwiz::compile_report::Mode compile_report_mode_ = cyxwiz::compile_report::Mode::Compile;
+    cyxwiz::compile_report::Input compile_report_input_;  // the report's input, rebuilt as the fix acts
+
+    // Each input training refused for missing values, what was done there and
+    // the steps added for it. What the card says follows the canvas: a step
+    // is matched by id, type and name (an id another graph or an undo reused
+    // is not ours), a step the canvas no longer has makes its group open
+    // again, and one a redo puts back is taken back.
+    struct MissingValuesEntry {
+        struct AddedStep {
+            int id = -1;
+            NodeType type = NodeType::FilterRows;
+            std::string name;
+        };
+        MissingValuesBlock block;
+        std::string input_name;
+        std::string source_dataset;  // the Data Input's own dataset (its column roles)
+        std::string supplied_role;   // the Dashboard's run: a supplied input refused ("Validation" / "Test")
+        cyxwiz::missing_values_fix::Done features = cyxwiz::missing_values_fix::Done::No;  // from the steps
+        cyxwiz::missing_values_fix::Done label = cyxwiz::missing_values_fix::Done::No;
+        std::vector<std::string> left_out;
+        std::vector<AddedStep> feature_steps, label_steps;                // on the canvas
+        std::vector<AddedStep> undone_feature_steps, undone_label_steps;  // removed; taken back on a redo
+        // Requested, not on the canvas yet (ids -1), and the largest node id
+        // before the request: a new node has a larger one.
+        std::vector<AddedStep> awaiting_feature, awaiting_label;
+        int awaiting_after_id = -1;
+        uint64_t graph_generation = 0;  // the canvas graph it was made for
+    };
+    std::vector<MissingValuesEntry> missing_values_;
+    MissingValuesEntry dashboard_missing_;  // the Training Dashboard's refused run (one at a time)
+    cyxwiz::missing_values_fix::NumberFill missing_values_fill_ = cyxwiz::missing_values_fix::NumberFill::Mean;
+    // Start training once the fix's steps are on the canvas (Fix and train,
+    // the Dashboard's Train again): never from inside a panel's drawing.
+    bool train_after_missing_values_fix_ = false;
+    bool train_after_from_dashboard_ = false;  // Train again: the Dashboard's card must be fixed
+    bool reopen_missing_values_report_ = false;  // Fix and train could not add a step: show the report again
 
     // Main-thread confirmation state for a warning/risky operator estimate.
     // The worker is not queued until the user accepts this frozen graph copy.
@@ -322,17 +370,28 @@ private:
     std::vector<MLNode> pending_memory_confirmation_nodes_;
     std::vector<NodeLink> pending_memory_confirmation_links_;
 
-    // Train on a reopened project: the Data Inputs it has not loaded load
-    // first, each through an unshown Data Input dialog (the same Apply as its
-    // OK), then training starts with the loaded graph.
+    // Train or a Studio Debugger run on a reopened project: the Data Inputs
+    // it has not loaded load first, each through an unshown Data Input dialog
+    // (the same Apply as its OK), then what asked starts with the loaded graph.
     struct DataInputLoad {
         int node_id = -1;
         std::string node_name;
         std::unique_ptr<DataInputDialog> dialog;
     };
+    struct DebugRunAfterLoads {
+        cyxwiz::StudioDebuggerRunMode mode;
+        int sample_index = 0;
+        int explain_node_id = -1;
+    };
     std::vector<DataInputLoad> data_input_loads_;
     std::string data_input_loads_project_;
-    bool StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    std::string data_input_loads_names_;
+    bool train_after_loads_ = false;
+    bool data_items_after_loads_ = false;  // a debugger view waits for the loads
+    std::optional<DebugRunAfterLoads> debug_run_after_loads_;
+    // The names of the Data Inputs loading for the graph (started here when
+    // none are), empty when its data is loaded.
+    std::string StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
     // Train on a graph whose Training Dataset path has pipeline-run steps
     // (SQL, Text Clean ...): run them first, then train on the result.
     bool StartTrainingPipelineRun(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
@@ -365,6 +424,7 @@ private:
     // COMPILED card, link colours and tooltips follow it.
     std::unique_ptr<cyxwiz::LiveGraphCompile> live_compile_;
     uint64_t live_compile_serial_seen_ = 0;
+    uint64_t live_compile_clears_seen_ = 0;  // the node editor's ValidationClears when its pins were last coloured
     // Scopes the dataset catalog subscription that recompiles the graph when a
     // dataset is added, replaced or removed (declared after live_compile_, so
     // it goes first).
@@ -398,11 +458,13 @@ private:
     std::unique_ptr<gui::WalletPanel> wallet_panel_;
     std::unique_ptr<cyxwiz::TaskProgressPanel> task_progress_panel_;
     std::unique_ptr<cyxwiz::PatternBrowserPanel> pattern_browser_;
+    // The side panels the Studio Debugger's Full size hid, shown again when
+    // it turns off (TOFIX178 D1).
+    std::vector<bool*> debugger_hidden_panels_;
     std::unique_ptr<cyxwiz::QueryConsolePanel> query_console_;
     std::unique_ptr<gui::CustomNodeEditorPanel> custom_node_editor_;
     std::unique_ptr<gui::ThemeEditorPanel> theme_editor_;
-    std::unique_ptr<cyxwiz::MemoryPanel> memory_panel_;
-    std::unique_ptr<cyxwiz::MemoryMonitor> memory_monitor_;
+    std::unique_ptr<cyxwiz::MonitorPanel> monitor_panel_;
     std::unique_ptr<cyxwiz::VariableExplorerPanel> variable_explorer_;
     std::unique_ptr<cyxwiz::PlotOutputPanel> plot_output_panel_;
     std::unique_ptr<cyxwiz::ExportDialog> export_dialog_;
@@ -411,66 +473,37 @@ private:
     std::unique_ptr<cyxwiz::StudioDebuggerPanel> studio_debugger_panel_;
 
     // Model Analysis panels (Phase 2)
-    std::unique_ptr<cyxwiz::ModelSummaryPanel> model_summary_panel_;
-    std::unique_ptr<cyxwiz::ArchitectureDiagram> architecture_diagram_;
-    std::unique_ptr<cyxwiz::LRFinderPanel> lr_finder_panel_;
+    std::unique_ptr<cyxwiz::ModelPanel> model_panel_;
 
     // Statistics panels (Phase 4)
 
     // Advanced Tools panels (Phase 5)
-    std::unique_ptr<cyxwiz::GradCAMPanel> gradcam_panel_;
     std::unique_ptr<cyxwiz::FeatureImportancePanel> feature_importance_panel_;
-    std::unique_ptr<cyxwiz::NASPanel> nas_panel_;
     std::unique_ptr<cyxwiz::HyperparamSearchPanel> hyperparam_search_panel_;
+    std::unique_ptr<cyxwiz::NASPanel> nas_panel_;
     std::unique_ptr<cyxwiz::ServingPanel> serving_panel_;
-    std::unique_ptr<cyxwiz::DNNInferencePanel> dnn_inference_panel_;
 
     // Clustering panels (Phase 6A)
 
     // Model Evaluation panels (Phase 6B)
 
     // Linear Algebra panels (Phase 7)
-    std::unique_ptr<cyxwiz::MatrixCalculatorPanel> matrix_calculator_panel_;
-    std::unique_ptr<cyxwiz::EigenDecompPanel> eigen_decomp_panel_;
-    std::unique_ptr<cyxwiz::SVDPanel> svd_panel_;
-    std::unique_ptr<cyxwiz::QRPanel> qr_panel_;
-    std::unique_ptr<cyxwiz::CholeskyPanel> cholesky_panel_;
-
-    // Signal Processing panels (Phase 8)
-    std::unique_ptr<cyxwiz::FFTPanel> fft_panel_;
-    std::unique_ptr<cyxwiz::SpectrogramPanel> spectrogram_panel_;
-    std::unique_ptr<cyxwiz::FilterDesignerPanel> filter_designer_panel_;
-    std::unique_ptr<cyxwiz::ConvolutionPanel> convolution_panel_;
-    std::unique_ptr<cyxwiz::WaveletPanel> wavelet_panel_;
+    std::unique_ptr<cyxwiz::LinearAlgebraPanel> linear_algebra_panel_;
 
     // Optimization & Calculus panels (Phase 9)
-    std::unique_ptr<cyxwiz::GradientDescentPanel> gradient_descent_panel_;
-    std::unique_ptr<cyxwiz::ConvexityPanel> convexity_panel_;
-    std::unique_ptr<cyxwiz::LPPanel> lp_panel_;
-    std::unique_ptr<cyxwiz::QPPanel> qp_panel_;
-    std::unique_ptr<cyxwiz::DifferentiationPanel> differentiation_panel_;
-    std::unique_ptr<cyxwiz::IntegrationPanel> integration_panel_;
+    std::unique_ptr<cyxwiz::OptimizationPanel> optimization_panel_;
 
-    // Text Processing panels (Phase 11)
-    std::unique_ptr<cyxwiz::TokenizationPanel> tokenization_panel_;
-    std::unique_ptr<cyxwiz::WordFrequencyPanel> word_frequency_panel_;
-    std::unique_ptr<cyxwiz::TFIDFPanel> tfidf_panel_;
-    std::unique_ptr<cyxwiz::EmbeddingsPanel> embeddings_panel_;
-    std::unique_ptr<cyxwiz::SentimentPanel> sentiment_panel_;
+    // Text: Language Model Generation
     std::unique_ptr<cyxwiz::LanguageModelGenerationPanel> language_model_generation_panel_;
 
     // Utilities panels (Phase 12)
-    std::unique_ptr<cyxwiz::CalculatorPanel> calculator_panel_;
-    std::unique_ptr<cyxwiz::UnitConverterPanel> unit_converter_panel_;
-    std::unique_ptr<cyxwiz::RandomGeneratorPanel> random_generator_panel_;
-    std::unique_ptr<cyxwiz::HashGeneratorPanel> hash_generator_panel_;
-    std::unique_ptr<cyxwiz::JSONViewerPanel> json_viewer_panel_;
-    std::unique_ptr<cyxwiz::RegexTesterPanel> regex_tester_panel_;
+    std::unique_ptr<cyxwiz::UtilitiesPanel> utilities_panel_;
     
     // Cloud panels (DataStream)
     std::unique_ptr<gui::CloudBrowserPanel> cloud_browser_panel_;
     std::unique_ptr<gui::NodeBrowserPanel> node_browser_panel_;
     std::unique_ptr<cyxwiz::NodeInfoPanel> node_info_panel_;
+    std::unique_ptr<cyxwiz::SimulationMonitorPanel> simulation_monitor_panel_;
     std::unique_ptr<gui::CloudDatasetManagerPanel> cloud_dataset_manager_panel_;
 
     // Plugin Manager
@@ -482,8 +515,6 @@ private:
     // Scripting engine (shared between panels)
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
 
-    // Startup script manager
-    std::unique_ptr<scripting::StartupScriptManager> startup_script_manager_;
 
     bool first_time_layout_;
     bool reset_layout_requested_ = false;

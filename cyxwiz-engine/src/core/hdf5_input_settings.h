@@ -18,7 +18,6 @@ struct Hdf5InputSettingsResult {
     bool ok = false;
     Hdf5InputSettings settings;
     std::string error;
-    bool migrated_legacy = false;
 };
 
 bool ValidateHdf5InputSettings(const Hdf5InputSettings& settings,

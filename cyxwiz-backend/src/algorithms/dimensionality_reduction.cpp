@@ -63,10 +63,30 @@ Projection Project(af::array x, int k, bool center, bool scale) {
         divisor = af::select(divisor < 1e-10, 1.0, divisor);
     }
     x = (center ? centered : x) / af::tile(divisor, static_cast<unsigned>(n), 1);
-    const af::array covariance = af::matmul(x, x, AF_MAT_TRANS, AF_MAT_NONE) / static_cast<double>(n - 1);
-    af::array u, s, vt;
-    af::svd(u, s, vt, covariance);
-    af::array components = vt(af::seq(0, k - 1), af::span);
+    af::array u, s, vt, components;
+    double total_variance = 0.0;
+    if (d > n) {
+        // Wide data (a layer's 8192 features for a few hundred items): the n x n Gram
+        // matrix X X^T / (n - 1) has the covariance's nonzero eigenvalues, and each
+        // eigenvector u gives the component X^T u / sqrt((n - 1) lambda). The d x d
+        // SVD takes minutes where this takes well under a second.
+        const af::array gram = af::matmul(x, x, AF_MAT_NONE, AF_MAT_TRANS) / static_cast<double>(n - 1);
+        af::svd(u, s, vt, gram);
+        const af::array lambda = s(af::seq(0, k - 1));
+        const af::array norm = af::sqrt(af::max(lambda * static_cast<double>(n - 1), Constant(1e-300, lambda)));
+        components = af::matmul(u(af::span, af::seq(0, k - 1)), x, AF_MAT_TRANS, AF_MAT_NONE) /
+                     af::tile(norm, 1, static_cast<unsigned>(d));
+        // n items span at most n - 1 directions once centred: an eigenvalue at
+        // rounding level has no direction, and its component is zero, not noise.
+        const af::array real = (lambda > 1e-10 * af::max<double>(lambda)).as(components.type());
+        components = components * af::tile(real, 1, static_cast<unsigned>(d));
+        total_variance = af::sum<double>(af::diag(gram));
+    } else {
+        const af::array covariance = af::matmul(x, x, AF_MAT_TRANS, AF_MAT_NONE) / static_cast<double>(n - 1);
+        af::svd(u, s, vt, covariance);
+        components = vt(af::seq(0, k - 1), af::span);
+        total_variance = af::sum<double>(af::diag(covariance));
+    }
     af::array peak, column;
     MaxWithIndex(peak, column, af::abs(components), 1);
     const af::array flat_index = af::range(af::dim4(k), 0, u32) + column * static_cast<unsigned>(k);
@@ -77,7 +97,7 @@ Projection Project(af::array x, int k, bool center, bool scale) {
     result.components = components;
     result.transformed = af::matmul(x, components, AF_MAT_NONE, AF_MAT_TRANS);
     result.variances = s(af::seq(0, k - 1));
-    result.total_variance = af::sum<double>(af::diag(covariance));
+    result.total_variance = total_variance;
     return result;
 }
 

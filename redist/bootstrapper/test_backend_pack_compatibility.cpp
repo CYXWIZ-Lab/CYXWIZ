@@ -286,6 +286,44 @@ void TestBaseAndLocalCrashRemainIndependent() {
         "signed oneAPI support");
 }
 
+void TestPluginPackNeedsOnlyItsBase() {
+  using namespace cyxwiz::runtime;
+  VerifiedBackendPackManifest plugin;
+  plugin.kind = BackendPackManifestKind::PluginPack;
+  plugin.pack_id = "mujoco-v1";
+  plugin.plugin_id = "com.cyxwiz.simulation.mujoco";
+  plugin.platform = "win64";
+  plugin.architecture = "x86_64";
+  plugin.companion_base_id = "base-v1";
+  plugin.compatibility.support_status = BackendPackSupportStatus::Supported;
+  BackendPackCompatibilityContext context;
+  context.platform = "win64";
+  context.architecture = "x86_64";
+  context.base_pack_id = "base-v1";
+  // No runtime set, ArrayFire ABI or devices: a plugin pack does not use them.
+  const auto decision = EvaluateBackendPackCompatibility(plugin, context);
+  Check(decision.eligibility == BackendPackEligibility::Compatible &&
+            decision.install_recommendation ==
+                BackendPackInstallRecommendation::Available &&
+            decision.verification_requirement ==
+                BackendPackVerificationRequirement::NotRequired &&
+            decision.remediation == BackendPackRemediation::None,
+        "a plugin pack for the active base is available without route facts");
+  context.base_pack_id = "base-v2";
+  Check(EvaluateBackendPackCompatibility(plugin, context).eligibility ==
+            BackendPackEligibility::Incompatible,
+        "a plugin pack built for another base is not offered");
+  context.base_pack_id.clear();
+  Check(EvaluateBackendPackCompatibility(plugin, context).eligibility ==
+            BackendPackEligibility::Unknown,
+        "without a known base the plugin pack stays unknown");
+  plugin.compatibility.support_status = BackendPackSupportStatus::Diagnostic;
+  context.base_pack_id = "base-v1";
+  Check(EvaluateBackendPackCompatibility(plugin, context).install_recommendation ==
+            BackendPackInstallRecommendation::DiagnosticOnly,
+        "a diagnostic plugin pack is not offered for normal use");
+}
+
 void TestIndependentDefaultStates() {
   using namespace cyxwiz::runtime;
   const BackendPackCompatibilityDecision decision;
@@ -319,6 +357,7 @@ int main() {
   TestIndependentDefaultStates();
   TestCompatibilityEvaluation();
   TestBaseAndLocalCrashRemainIndependent();
+  TestPluginPackNeedsOnlyItsBase();
   std::cout << "Backend-pack compatibility contract tests passed\n";
   return 0;
 }

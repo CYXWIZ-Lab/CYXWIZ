@@ -30,16 +30,16 @@
 // into this header.
 namespace gui { struct MLNode; }
 
-// Forward declarations for LaunchTraining. The full types come from
-// core/graph_compiler.h + gui/panels/training_plot_panel.h; forward-
-// declaring them keeps this header from pulling in the whole training
-// toolchain for callers that only use the Apply-time surface.
+// Forward declarations for TrainingRecipeFor. The full types come from
+// core/graph_compiler.h + core/training_recipe.h; forward-declaring them
+// keeps this header from pulling in the whole training toolchain for
+// callers that only use the Apply-time surface.
 namespace cyxwiz {
     struct TrainingConfiguration;
-    class TrainingPlotPanel;
     class ArrowDataset;
     class ParquetBackedDataset;
     enum class PreprocessingDomain;  // defined in core/graph_compiler.h
+    struct TrainingRecipe;           // defined in core/training_recipe.h
 }
 
 namespace cyxwiz::loaders {
@@ -272,26 +272,15 @@ public:
         const AsyncLoadState& state) const = 0;
 
     // === Training dispatch (commit 6) ===
-    // Look up the registry entry for `dataset_name` and hand it to the
-    // right TrainingManager::StartTraining* method. Returns false if
-    // the registry entry is missing (registered but not retrievable,
-    // which would be a TOCTOU bug) or if TrainingManager declined to
-    // start (another session already running).
-    //
-    // Callers (MainWindow::StartTrainingFromGraph) used to fan out via
-    // a 5-way if/else-if on dataset type and a per-branch
-    // TrainingManager::StartTrainingX call. This method collapses that
-    // into a virtual dispatch — each loader owns the knowledge of
-    // which registry entry to fetch and which TrainingManager method
-    // to call.
-    virtual bool LaunchTraining(
-        TrainingConfiguration config,
+    // How to train on `dataset_name` (training_recipe.h): which registry
+    // entry to read and how its batches are made. Train starts the recipe
+    // through TrainingManager; a hyperparameter or architecture search
+    // builds a fresh run from it per trial. A recipe without `make` carries
+    // the reason in `error` (entry missing, or the data cannot train as is).
+    virtual cyxwiz::TrainingRecipe TrainingRecipeFor(
+        const cyxwiz::TrainingConfiguration& config,
         const std::string& dataset_name,
-        const std::string& label_column,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel,
-        std::function<void(bool)> node_editor_callback) = 0;
+        const std::string& label_column) const = 0;
 
     // === Compile-gate surface (commit 7) ===
     // Returns the PreprocessingDomain this loader serves. Tabular maps

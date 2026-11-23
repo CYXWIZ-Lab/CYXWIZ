@@ -5,14 +5,16 @@
 // Manages mjModel + mjData lifecycle and provides a Gymnasium-compatible
 // step/reset interface for reinforcement learning environments.
 
+#include "env/mj_scene.h"
+
 #include <mujoco/mujoco.h>
 
 #include <string>
 #include <vector>
-#include <deque>
 #include <map>
 #include <functional>
 #include <mutex>
+#include <optional>
 
 namespace cyxwiz::plugin::mujoco {
 
@@ -46,7 +48,25 @@ public:
     MjEnvManager& operator=(MjEnvManager&& other) noexcept;
 
     // --- Lifecycle ---
-    bool LoadModel(const std::string& mjcf_path);
+    // The model file with a stress scene added (env/mj_scene.h; none: the file as it is)
+    bool LoadModel(const std::string& mjcf_path, const MjScene& scene = {});
+    // The same model file with another scene, the state carried over. The
+    // caller holds the physics lock. False with the reason: the model is kept.
+    bool ChangeScene(const MjScene& scene, std::string& error);
+    // The model file read again (it may have changed on disk) with the scene
+    // in use. The model is replaced only when the file builds: false with the
+    // reason keeps it. The state starts over. The caller holds the physics lock.
+    bool Reload(std::string& error);
+    // Physics options set from the Inspect panel: applied to the model in use
+    // and to every model built for this file after (a scene change, Reload).
+    // ClearOption puts the file's own back. Another file clears them. The
+    // caller holds the physics lock.
+    void SetOption(const mjOption& option);
+    void ClearOption();
+    const mjOption* FileOption() const { return builder_.Loaded() ? &builder_.FileOption() : nullptr; }
+    const MjScene& Scene() const { return scene_; }
+    const MjRobotSize& Robot() const { return builder_.Robot(); }
+    const std::string& ModelPath() const { return builder_.Path(); }
     bool LoadModelFromString(const std::string& xml);
     void Close();
     bool IsLoaded() const { return model_ != nullptr; }
@@ -73,11 +93,13 @@ public:
     // --- Episode statistics ---
     float GetEpisodeReward() const { return episode_reward_; }
     int GetEpisodeCount() const { return episode_count_; }
-    float GetMeanEpisodeReward() const;
-    float GetMeanEpisodeLength() const;
+    // The last episode ended by its termination, not its step limit
+    bool LastEpisodeTerminated() const { return last_terminated_; }
 
     // --- Raw MuJoCo access (for renderer) ---
     const mjModel* GetModel() const { return model_; }
+    // The options the run uses now (SetOption, else the file's); null without a model
+    const mjOption* Option() const { return model_ ? &model_->opt : nullptr; }
     const mjData* GetData() const { return data_; }
     mjData* GetMutableData() { return data_; }
 
@@ -93,6 +115,11 @@ private:
     mjData* data_ = nullptr;
     mutable std::mutex physics_mutex_;
 
+    MjSceneBuilder builder_;  // the model file, parsed once; each scene builds on it
+    std::optional<mjOption> option_;  // SetOption
+    MjScene scene_;
+    bool last_terminated_ = false;
+
     int max_episode_steps_ = 1000;
     int frame_skip_ = 1;
     int current_step_ = 0;
@@ -100,9 +127,6 @@ private:
     // Episode tracking
     float episode_reward_ = 0.0f;
     int episode_count_ = 0;
-    std::deque<float> recent_episode_rewards_;
-    std::deque<int> recent_episode_lengths_;
-    static constexpr int kRecentBufferSize = 100;
 
     // Optional custom functions
     RewardFn reward_fn_;

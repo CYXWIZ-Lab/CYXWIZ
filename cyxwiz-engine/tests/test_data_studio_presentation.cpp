@@ -233,6 +233,59 @@ int main() {
                   half.split_sets[0].note == "validation: \"Base corpus v2 validation: 2,310 windows\" is not loaded",
               "a split not loaded: " + half.split_sets[0].note);
 
+        // The flow back from a split input (TOFIX178 1.8h). The 1.8 graph: Data
+        // Input (25,000 images) -> Quality Analyzer -> Data Split; the analyzer
+        // only leaves files of its source out, so the split reads the Data Input.
+        Input q;
+        GraphNode images = Node(1, NodeType::DataInput, "Cats_Dogs Data");
+        images.dataset_name = "cat_dog";
+        GraphNode quality = Node(2, NodeType::QualityAnalyzer, "Quality Analyzer");
+        quality.input_from = {1};
+        GraphNode image_split = Node(3, NodeType::DataSplit, "Split 80/10/10");
+        image_split.input_from = {2, -1, -1};
+        q.nodes = {images, quality, image_split};
+        q.datasets = {{"cat_dog", "Cats_Dogs Data", 25000, 0, false, true}};
+        const View qv = Build(q);
+        Check(qv.split_sets.size() == 1 && qv.split_sets[0].parts.size() == 1 &&
+                  qv.split_sets[0].parts[0].dataset == "cat_dog" &&
+                  qv.split_sets[0].parts[0].label == "Cats_Dogs Data, after Quality Analyzer" &&
+                  qv.split_sets[0].note.empty(),
+              "a Quality Analyzer before the split reads its Data Input: " + qv.split_sets[0].note);
+        q.datasets.clear();
+        Check(Build(q).split_sets[0].note == "train: \"Cats_Dogs Data\" is not loaded",
+              "through the analyzer, the Data Input not loaded is named");
+
+        // A table step before the split (SQL): training reads its run result.
+        Input r;
+        GraphNode table = Node(1, NodeType::DataInput, "Reviews");
+        table.dataset_name = "reviews";
+        GraphNode sql = Node(2, NodeType::SQLQuery, "Keep English rows");
+        sql.input_from = {1};
+        GraphNode table_split = Node(3, NodeType::DataSplit, "Split");
+        table_split.input_from = {2, -1, -1};
+        r.nodes = {table, sql, table_split};
+        r.datasets = {{"reviews", "Reviews", 5000, 3, true}};
+        Check(Build(r).split_sets[0].note ==
+                  "train: \"Keep English rows\" has not run yet: run the graph, and the split reads its result",
+              "a step that has not run: " + Build(r).split_sets[0].note);
+        r.nodes[1].ran = true;
+        r.nodes[1].output_dataset = "ds_sql_2";
+        r.datasets.push_back({"ds_sql_2", "Keep English rows", 4100, 3, true});
+        const View ran = Build(r);
+        Check(ran.split_sets[0].parts.size() == 1 && ran.split_sets[0].parts[0].dataset == "ds_sql_2" &&
+                  ran.split_sets[0].parts[0].label == "Keep English rows",
+              "a step that ran: the split reads its result");
+        r.nodes[1].error = "Binder Error: column \"lang\" not found";
+        Check(Build(r).split_sets[0].note == "train: \"Keep English rows\" failed in its last run",
+              "a step that failed is named");
+
+        // Two analyzers feeding each other: the walk stops.
+        q.nodes[1].input_from = {4};
+        GraphNode loop = Node(4, NodeType::QualityAnalyzer, "Second analyzer");
+        loop.input_from = {2};
+        q.nodes.push_back(loop);
+        Check(Build(q).split_sets[0].note == "train: the inputs loop back on themselves", "a loop stops the walk");
+
         // No Data Split: kjv80_base_v1's files, grouped by name.
         Input k;
         k.datasets = {{"documents_test", "", 66, 20, true},
@@ -298,7 +351,89 @@ int main() {
               "a run step and a passing check: " + ran[0].meta);
     }
 
+    // What training reads (TOFIX129 D7a): the node on the Data Split's first pin
+    // (the Data Loader's without a Split), its table once it ran, and the line
+    // Explore shows above any table.
+    {
+        Input g;
+        GraphNode raw = Node(1, NodeType::DataInput, "Spotify tracks");
+        raw.dataset_name = "spotify";
+        GraphNode scale = Ran(Node(2, NodeType::StandardScaler, "Scale numbers"), 8582, 20, 0.4, "12:00:01", "ds_scaler_2");
+        GraphNode split = Node(3, NodeType::DataSplit, "Split");
+        split.input_from = {2, -1, -1};
+        GraphNode plot = Node(4, NodeType::Plot, "Plot: popularity");
+        g.nodes = {raw, scale, split, plot};
+        g.datasets = {{"spotify", "Spotify tracks", 8582, 20, true}, {"ds_scaler_2", "", 8582, 20, true},
+                      {"ds_datainput_1__split", "", 8582, 21, true}};  // the run's partition-marked copy
+        const View gv = Build(g);
+        Check(gv.rail.size() == 3, "the run's __split copy is not listed under Other datasets");
+        Check(gv.training.node_id == 2 && gv.training.name == "Scale numbers" && gv.training.dataset == "ds_scaler_2" && gv.training.split,
+              "the scaler feeds the Split, so training reads its table");
+        Check(!gv.rail[0].items[0].training && gv.rail[1].items.size() == 1 && gv.rail[1].items[0].training &&
+                  gv.rail[1].items[0].tip.find("Training reads this table") != std::string::npos,
+              "the rail marks the scaler's result, not the raw input");
+        const ReadsNote this_one = TrainingReads(gv, "ds_scaler_2");
+        Check(this_one.kind == ReadsNote::Kind::This && this_one.text == "Training reads this table through the Data Split." &&
+                  this_one.link.empty(),
+              "the scaled table: " + this_one.text);
+        const ReadsNote other = TrainingReads(gv, "spotify");
+        Check(other.kind == ReadsNote::Kind::Other && other.text == "Training reads \"Scale numbers\", not this table." &&
+                  other.link == "Show what training reads",
+              "the raw input: " + other.text);
+
+        // Before the scaler ran: training reads it once it runs.
+        Input before = g;
+        before.nodes[1] = Node(2, NodeType::StandardScaler, "Scale numbers");
+        before.datasets.pop_back();
+        const View bv = Build(before);
+        Check(bv.training.node_id == 2 && bv.training.dataset.empty(), "not run: no table yet");
+        const ReadsNote not_run = TrainingReads(bv, "spotify");
+        Check(not_run.kind == ReadsNote::Kind::NotRun && not_run.text.find("has no table yet") != std::string::npos &&
+                  not_run.link == "Show the node",
+              "not run: " + not_run.text);
+
+        // A Data Input straight into a Data Loader (no Split): training reads it as loaded.
+        Input loader_only = g;
+        loader_only.nodes = {raw, Node(5, NodeType::DataLoader, "Loader")};
+        loader_only.nodes[1].input_from = {1};
+        const View lv = Build(loader_only);
+        Check(lv.training.node_id == 1 && lv.training.dataset == "spotify" && !lv.training.split &&
+                  lv.rail[0].items[0].training && lv.rail[0].items[0].tip.find("as it is loaded") != std::string::npos,
+              "a Data Input feeding the Loader is what training reads");
+        Check(TrainingReads(lv, "spotify").text == "Training reads this table through the Data Loader.", "loader wording");
+
+        // Nothing feeds training: say so, no link.
+        Input none = g;
+        none.nodes = {raw, scale};
+        const ReadsNote nothing = TrainingReads(Build(none), "spotify");
+        Check(nothing.kind == ReadsNote::Kind::None && nothing.link.empty() && nothing.text.find("reads no table") != std::string::npos,
+              "no training input: " + nothing.text);
+
+        // An unwired Split is skipped for a wired one (the launcher's rule); a
+        // Loader fed by an unwired Split feeds nothing; an unloaded Data Input
+        // "is not loaded yet", a step "has no table yet".
+        Input two = g;
+        GraphNode unwired = Node(6, NodeType::DataSplit, "Split (unwired)");
+        unwired.input_from = {-1, -1, -1};
+        two.nodes = {raw, scale, unwired, split};
+        Check(Build(two).training.node_id == 2, "the wired Split decides, not the unwired one in front of it");
+        Input loader_after_split = g;
+        GraphNode loader = Node(7, NodeType::DataLoader, "Loader");
+        loader.input_from = {6};
+        loader_after_split.nodes = {raw, unwired, loader};
+        Check(Build(loader_after_split).training.node_id == -1, "a Loader fed by an unwired Split feeds nothing");
+        Input unloaded = g;
+        unloaded.nodes = {Node(1, NodeType::DataInput, "Spotify tracks"), Node(5, NodeType::DataLoader, "Loader")};
+        unloaded.nodes[1].input_from = {1};
+        unloaded.datasets.clear();
+        const View uv = Build(unloaded);
+        Check(uv.training.node_id == 1 && uv.training.data_input && uv.training.dataset.empty(), "an unloaded Data Input feeds training");
+        Check(TrainingReads(uv, "other").text.find("is not loaded yet (open its dialog and Apply)") != std::string::npos,
+              "unloaded wording: " + TrainingReads(uv, "other").text);
+    }
+
     Check(Thousands(15349) == "15,349" && Thousands(7) == "7" && Thousands(1234567) == "1,234,567", "thousands");
-    std::cout << "data studio presentation: jobs, chips, rail, last run, failures (tier1 graph), split sets (Data Split inputs, catalog names). OK\n";
+    std::cout << "data studio presentation: jobs, chips, rail, last run, failures (tier1 graph), split sets (Data Split inputs, catalog names), "
+                 "what training reads. OK\n";
     return 0;
 }

@@ -138,7 +138,7 @@ void Properties::RenderCompiledCard(MLNode& node) {
         Wrapped(t.text_dim, card.input_note);
         ImGui::Spacing();
         KeyValueRows("##sizes", {{"Output memory per batch", card.output_memory},
-                                 {"Learnable parameters", card.parameters},
+                                 {card.parameters_label.c_str(), card.parameters},
                                  {"Parameter memory", card.parameter_memory}});
         Wrapped(t.text_dim, card.parameter_note);
     } else if (!card.table_rows.empty()) {

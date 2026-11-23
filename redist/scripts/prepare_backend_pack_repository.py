@@ -26,7 +26,9 @@ if str(SCRIPT_DIR) not in sys.path:
 from backend_pack_contract import (  # noqa: E402
     canonical_json_bytes,
     validate_catalog,
+    manifest_support_status,
     validate_pack_manifest,
+    validate_plugin_composition,
     validate_runtime_composition,
     validate_trust_root,
 )
@@ -340,7 +342,10 @@ def _validate_repository_packs(packs: Sequence[PackInput]) -> None:
             raise RepositoryError(
                 f"Pack {pack.signed['pack_id']} requires absent base {companion_id}"
             )
-        validate_runtime_composition(base.document, pack.document)
+        if pack.signed["pack_kind"] == "plugin_pack":
+            validate_plugin_composition(base.document, pack.document)
+        else:
+            validate_runtime_composition(base.document, pack.document)
 
 
 def _validate_hosted_asset_names(
@@ -451,7 +456,7 @@ def _catalog_document(
                     pack.manifest_bytes
                 ).hexdigest(),
                 "signing_key_id": pack.signing_key_id,
-                "support_status": pack.signed["compatibility"]["support_status"],
+                "support_status": manifest_support_status(pack.signed),
             }
         )
     body = {

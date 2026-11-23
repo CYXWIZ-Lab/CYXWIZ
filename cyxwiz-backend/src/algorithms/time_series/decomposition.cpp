@@ -171,6 +171,7 @@ struct Stl {
         double* work3 = work[4].data();
         double* work4 = season.data();  // scratch, as the Fortran does
         for (int j = 0; j < np; ++j) {
+            if ((j & 63) == 0) series_detail::ThrowIfStopped();
             const int k = (n - (j + 1)) / np + 1;
             for (int i = 0; i < k; ++i) work1[i] = y_[i * np + j];
             if (use_rw)
@@ -188,6 +189,7 @@ struct Stl {
 
     void OneStep(int inner) {
         for (int it = 0; it < inner; ++it) {
+            series_detail::ThrowIfStopped();
             for (int i = 0; i < n; ++i) work[0][static_cast<size_t>(i)] = y[static_cast<size_t>(i)] - trend[static_cast<size_t>(i)];
             Ss();
             Fts();
@@ -294,71 +296,73 @@ DecompositionResult TimeSeries::Decompose(const std::vector<double>& data, int p
 
 DecompositionResult TimeSeries::STLDecompose(const std::vector<double>& data, int period, int seasonal_window, int trend_window,
                                              int low_pass_window, bool robust) {
-    DecompositionResult r;
-    r.period = period;
-    r.method = "stl";
-    r.robust = robust;
-    if (period < 2) {
-        r.error_message = "The period must be at least 2";
+    return series_detail::UnlessStopped<DecompositionResult>([&]() -> DecompositionResult {
+        DecompositionResult r;
+        r.period = period;
+        r.method = "stl";
+        r.robust = robust;
+        if (period < 2) {
+            r.error_message = "The period must be at least 2";
+            return r;
+        }
+        if (const std::string refusal = series_detail::SeriesRefusal(data, 2 * static_cast<size_t>(period), "STL"); !refusal.empty()) {
+            r.error_message = refusal + " (two full periods)";
+            return r;
+        }
+        if (seasonal_window < 3 || seasonal_window % 2 == 0) {
+            r.error_message = "The seasonal window must be an odd number of 3 or more";
+            return r;
+        }
+        if (trend_window < 0) {
+            trend_window = static_cast<int>(std::ceil(1.5 * period / (1.0 - 1.5 / seasonal_window)));
+            if (trend_window % 2 == 0) ++trend_window;
+        }
+        if (trend_window < 3 || trend_window % 2 == 0 || trend_window <= period) {
+            r.error_message = "The trend window must be an odd number above the period";
+            return r;
+        }
+        if (low_pass_window < 0) {
+            low_pass_window = period + 1;
+            if (low_pass_window % 2 == 0) ++low_pass_window;
+        }
+        if (low_pass_window < 3 || low_pass_window % 2 == 0 || low_pass_window <= period) {
+            r.error_message = "The low-pass window must be an odd number above the period";
+            return r;
+        }
+        r.seasonal_window = seasonal_window;
+        r.trend_window = trend_window;
+        r.low_pass_window = low_pass_window;
+        const int n = static_cast<int>(data.size());
+        Stl stl;
+        stl.n = n;
+        stl.np = period;
+        stl.ns = seasonal_window;
+        stl.nt = trend_window;
+        stl.nl = low_pass_window;
+        // A long series (over 50,000 rows) takes the jumps Cleveland et al. advise
+        // (a tenth of each window: loess at every jump-th point, linear between),
+        // so a day-long period over months of seconds finishes; statsmodels' default
+        // (every point) is kept below that, where the references are checked.
+        if (n > 50000) {
+            stl.nsjump = std::max(1, static_cast<int>(std::ceil(seasonal_window / 10.0)));
+            stl.ntjump = std::max(1, static_cast<int>(std::ceil(trend_window / 10.0)));
+            stl.nljump = std::max(1, static_cast<int>(std::ceil(low_pass_window / 10.0)));
+        }
+        stl.y = data;
+        stl.season.assign(static_cast<size_t>(n), 0.0);
+        stl.trend.assign(static_cast<size_t>(n), 0.0);
+        stl.rw.assign(static_cast<size_t>(n), 1.0);
+        stl.work.assign(5, std::vector<double>(static_cast<size_t>(n + 2 * period), 0.0));
+        stl.Fit(robust ? 2 : 5, robust ? 15 : 0);
+        r.original = data;
+        r.trend = stl.trend;
+        r.seasonal = stl.season;
+        r.residual.resize(static_cast<size_t>(n));
+        for (size_t i = 0; i < r.residual.size(); ++i) r.residual[i] = data[i] - r.trend[i] - r.seasonal[i];
+        FinishStrengths(r);
+        r.success = true;
         return r;
-    }
-    if (const std::string refusal = series_detail::SeriesRefusal(data, 2 * static_cast<size_t>(period), "STL"); !refusal.empty()) {
-        r.error_message = refusal + " (two full periods)";
-        return r;
-    }
-    if (seasonal_window < 3 || seasonal_window % 2 == 0) {
-        r.error_message = "The seasonal window must be an odd number of 3 or more";
-        return r;
-    }
-    if (trend_window < 0) {
-        trend_window = static_cast<int>(std::ceil(1.5 * period / (1.0 - 1.5 / seasonal_window)));
-        if (trend_window % 2 == 0) ++trend_window;
-    }
-    if (trend_window < 3 || trend_window % 2 == 0 || trend_window <= period) {
-        r.error_message = "The trend window must be an odd number above the period";
-        return r;
-    }
-    if (low_pass_window < 0) {
-        low_pass_window = period + 1;
-        if (low_pass_window % 2 == 0) ++low_pass_window;
-    }
-    if (low_pass_window < 3 || low_pass_window % 2 == 0 || low_pass_window <= period) {
-        r.error_message = "The low-pass window must be an odd number above the period";
-        return r;
-    }
-    r.seasonal_window = seasonal_window;
-    r.trend_window = trend_window;
-    r.low_pass_window = low_pass_window;
-    const int n = static_cast<int>(data.size());
-    Stl stl;
-    stl.n = n;
-    stl.np = period;
-    stl.ns = seasonal_window;
-    stl.nt = trend_window;
-    stl.nl = low_pass_window;
-    // A long series (over 50,000 rows) takes the jumps Cleveland et al. advise
-    // (a tenth of each window: loess at every jump-th point, linear between),
-    // so a day-long period over months of seconds finishes; statsmodels' default
-    // (every point) is kept below that, where the references are checked.
-    if (n > 50000) {
-        stl.nsjump = std::max(1, static_cast<int>(std::ceil(seasonal_window / 10.0)));
-        stl.ntjump = std::max(1, static_cast<int>(std::ceil(trend_window / 10.0)));
-        stl.nljump = std::max(1, static_cast<int>(std::ceil(low_pass_window / 10.0)));
-    }
-    stl.y = data;
-    stl.season.assign(static_cast<size_t>(n), 0.0);
-    stl.trend.assign(static_cast<size_t>(n), 0.0);
-    stl.rw.assign(static_cast<size_t>(n), 1.0);
-    stl.work.assign(5, std::vector<double>(static_cast<size_t>(n + 2 * period), 0.0));
-    stl.Fit(robust ? 2 : 5, robust ? 15 : 0);
-    r.original = data;
-    r.trend = stl.trend;
-    r.seasonal = stl.season;
-    r.residual.resize(static_cast<size_t>(n));
-    for (size_t i = 0; i < r.residual.size(); ++i) r.residual[i] = data[i] - r.trend[i] - r.seasonal[i];
-    FinishStrengths(r);
-    r.success = true;
-    return r;
+    });
 }
 
 }  // namespace cyxwiz

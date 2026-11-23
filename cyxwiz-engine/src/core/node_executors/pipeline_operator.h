@@ -2,7 +2,6 @@
 
 #include "../materialization_memory_types.h"
 #include "../operator_figures.h"
-#include "../process_memory_snapshot.h"
 
 #include <arrow/result.h>
 #include <arrow/status.h>
@@ -78,7 +77,6 @@ using PipelineOperatorProgressCallback =
     std::function<void(const PipelineOperatorProgress&)>;
 
 using PipelineOperatorCancellationQuery = std::function<bool()>;
-using ProcessMemorySnapshotQuery = std::function<ProcessMemorySnapshot()>;
 
 struct PipelineOperatorCacheDependency {
     std::string role;
@@ -88,20 +86,9 @@ struct PipelineOperatorCacheDependency {
 struct PipelineOperatorExecutionContext {
     MaterializationMemoryContext memory;
     PipelineOperatorCancellationQuery cancellation_requested;
-    ProcessMemorySnapshotQuery process_memory_snapshot;
-    // Pre-start planning uses the normal operator estimator and stops as soon
-    // as that estimator publishes its first memory decision. The materializer
-    // owns the control flow; operators never need a UI-specific branch.
-    bool stop_after_memory_preflight = false;
 
     bool IsCancellationRequested() const {
         return cancellation_requested && cancellation_requested();
-    }
-
-    ProcessMemorySnapshot CaptureProcessMemory() const {
-        return process_memory_snapshot
-            ? process_memory_snapshot()
-            : DetectProcessMemorySnapshot();
     }
 };
 
@@ -187,10 +174,21 @@ public:
     // so the stream writes nothing.
     virtual bool PassesInputThrough() const { return false; }
     // It learns from every row it is given and cannot learn from the Train
-    // rows only yet (PCA, clustering, outlier limits, classic models): the
+    // rows only yet (clustering, outlier limits, classic models): the
     // compiler warns when one runs before a Data Split (TOFIX178 S0-g5).
     // PipelineStepLearnsFromEveryRow answers the same for a node type.
     virtual bool LearnsFromEveryRow() const { return false; }
+    // A second table (Linear Solve's b, Linear Projection's matrix; TOFIX129
+    // D9): the input pin it arrives on, or -1. The executor hands it over
+    // before Apply, null when that pin is not linked.
+    virtual int SecondTablePin() const { return -1; }
+    virtual void SetSecondTable(std::shared_ptr<arrow::Table>) {}
+    // It reads sparse features (a Count / TF-IDF vectorizer set to Sparse)
+    // without a dense copy and gives a table (Truncated SVD; TOFIX129 D9).
+    virtual bool AcceptsSparseInput() const { return false; }
+    virtual arrow::Result<std::shared_ptr<arrow::Table>> ApplySparseInput(const SparseFeatureDataset&) {
+        return arrow::Status::NotImplemented(GetName(), " does not read sparse features");
+    }
     // A check that needs every row at once can judge a table on disk from
     // one SQL query over it instead (TOFIX154): the query, its input named
     // `input`; empty when it has none. JudgeSql decides from the result as

@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cmath>
 #include <string>
 #include <utility>
 #include <vector>
@@ -63,7 +64,23 @@ void Curve(const std::vector<double>& ys, float width, float height, double leve
 void Dendrogram(const std::vector<std::array<double, 4>>& xs, const std::vector<std::array<double, 4>>& ys,
                 const std::vector<int64_t>& leaf_rows, double cut, float width, float height);
 
-// Bars of counts over lo .. hi (a histogram's bins), with the ends labelled.
-void Bars(const std::vector<int64_t>& bins, double lo, double hi, float width, float height);
+// Bars of counts over lo .. hi (a histogram's bins), with the ends labelled,
+// and a dashed mark at `mark` (NaN: none) captioned `caption`.
+void Bars(const std::vector<int64_t>& bins, double lo, double hi, float width, float height, double mark = NAN,
+          const std::string& caption = "");
+
+// One bar across per name, in the order given (the first on top), each with
+// its value at its end (`texts`, else the value in a few digits).
+void NamedBars(const std::vector<std::string>& names, const std::vector<double>& values, float width,
+               const std::vector<std::string>* texts = nullptr);
+
+// A heatmap of `cells[column][row]` (a spectrogram: frames across, bins up,
+// row 0 at the bottom), each value placed on the sequential scale from `lo`
+// (and below: the floor) to `hi`; at most `rows` rows are drawn (0: all). A
+// cell at or below the floor takes the plot background. The x axis ends are
+// labelled `x_lo` .. `x_hi` with `x_label` between; the y ends `y_lo` ..
+// `y_hi` in a gutter left of the cells.
+void Heatmap(const std::vector<std::vector<double>>& cells, size_t rows, double lo, double hi, float width, float height,
+             const std::string& x_lo, const char* x_label, const std::string& x_hi, const std::string& y_lo, const std::string& y_hi);
 
 }  // namespace cyxwiz::explore_plot

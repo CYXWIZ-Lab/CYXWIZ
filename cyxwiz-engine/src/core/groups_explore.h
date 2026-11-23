@@ -116,7 +116,7 @@ struct ProjectionRequest {
     bool standardise = true;
     ProjectionMethod method = ProjectionMethod::PCA;
     int perplexity = 30;
-    double learning_rate = 200.0;
+    double learning_rate = 0.0;  // 0: auto (TsneLearningRate: rows / 48, at least 50)
     int iterations = 1000;
     int neighbors = 15;
     double min_dist = 0.1;

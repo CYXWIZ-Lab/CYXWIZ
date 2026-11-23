@@ -13,6 +13,7 @@
 #include <optional>
 #include <filesystem>
 #include <algorithm>
+#include <chrono>
 #include <iterator>
 #include <sstream>
 
@@ -263,7 +264,7 @@ bool ScriptingEngine::ResetSession(std::string* error_out) {
         if (error_out) *error_out = e.what();
         return false;
     }
-    matlab_aliases_initialized_ = false;
+    session_prepared_ = false;
     return true;
 }
 
@@ -358,6 +359,52 @@ scripting::PythonProjectSwitch ScriptingEngine::SwitchPythonToProject(std::strin
     return result;
 }
 
+namespace {
+
+// Tools > Diagnostics > Log Every Python Command: a line when a command,
+// script or run starts (a command that hangs or crashes Python is the one to
+// see) and one when it ends, with how long it took. Off: a debug line only,
+// and none for the Engine's own internal commands. A script that runs through
+// the command path is logged once, as the script.
+class PythonCommandLog {
+public:
+    PythonCommandLog(bool to_log, const char* kind, const std::string& text, bool internal = false)
+        : outer_(Depth()++ == 0), to_log_(to_log), kind_(kind), start_(std::chrono::steady_clock::now()) {
+        to_log_ = to_log_ && outer_;
+        // The first line, at most 120 characters.
+        summary_ = text.substr(0, text.find('\n'));
+        if (summary_.size() > 120) summary_ = summary_.substr(0, 117) + "...";
+        lines_ = 1 + static_cast<size_t>(std::count(text.begin(), text.end(), '\n'));
+        if (to_log_) spdlog::info("Python {} started: {}", kind_, summary_);
+        else if (outer_ && !internal) spdlog::debug("Python {}: {}", kind_, summary_);
+    }
+    ~PythonCommandLog() {
+        --Depth();
+        if (!to_log_) return;
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_).count();
+        if (lines_ > 1) spdlog::info("Python {} took {:.1f} ms ({} lines): {}", kind_, ms, lines_, summary_);
+        else spdlog::info("Python {} took {:.1f} ms: {}", kind_, ms, summary_);
+    }
+    PythonCommandLog(const PythonCommandLog&) = delete;
+    PythonCommandLog& operator=(const PythonCommandLog&) = delete;
+
+private:
+    // How many of these are open on this thread: only the outermost logs.
+    static int& Depth() {
+        thread_local int depth = 0;
+        return depth;
+    }
+
+    bool outer_;
+    bool to_log_;
+    const char* kind_;
+    std::chrono::steady_clock::time_point start_;
+    std::string summary_;
+    size_t lines_ = 1;
+};
+
+}  // namespace
+
 ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
     ExecutionResult result;
     result.success = false;
@@ -368,16 +415,14 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
         return result;
     }
 
-    // Initialize MATLAB-style aliases on first command
-    if (!matlab_aliases_initialized_) {
-        InitializeMatlabAliases();
+    // The session's start (imports, startup scripts) before its first command
+    if (!session_prepared_) {
+        PrepareSession();
     }
 
-    // Debug: log commands (optionally skip internal Variable Explorer commands)
+    // Internal Variable Explorer commands skip the timeout below.
     bool is_internal = command.find("_cyxwiz_") != std::string::npos;
-    if (verbose_logging_ || !is_internal) {
-        spdlog::info("Executing command: [{}] (length={})", command, command.length());
-    }
+    const PythonCommandLog command_log(verbose_logging_, "command", command, is_internal);
 
     // Skip timeout for internal commands (fast operations)
     if (is_internal || console_timeout_seconds_ <= 0) {
@@ -802,9 +847,9 @@ void ScriptingEngine::CommandAsyncWorker(const std::string& command) {
     // Mark Python as busy before any GIL operations
     python_busy_ = true;
 
-    // Initialize MATLAB aliases if needed (must be done with GIL)
-    if (!matlab_aliases_initialized_) {
-        InitializeMatlabAliases();
+    // The session's start, once (takes the GIL itself)
+    if (!session_prepared_) {
+        PrepareSession();
     }
 
     // Reset cancel flag
@@ -981,6 +1026,7 @@ bool ScriptingEngine::IsSafeForNewCommand() const {
 }
 
 ExecutionResult ScriptingEngine::ExecuteScript(const std::string& script) {
+    const PythonCommandLog command_log(verbose_logging_, "script", script);
     std::string init_error;
     if (!EnsurePythonInitialized(&init_error)) {
         ExecutionResult result;
@@ -1612,6 +1658,7 @@ bool ScriptingEngine::DropNotebookNamespace(const std::string& key) {
 }
 
 ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script, const RunCallbacks& callbacks) {
+    const PythonCommandLog command_log(verbose_logging_, "run", script);
     const OutputCallback& on_output = callbacks.on_output;
     ExecutionResult result;
     result.success = false;
@@ -1621,11 +1668,11 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script,
         return result;
     }
 
-    // MATLAB-style names are installed once per interpreter, like the
-    // console does; re-running them before every script overwrote the
-    // user's own svd/norm/zeros... (TOFIX133 P0 item 11).
-    if (!matlab_aliases_initialized_) {
-        InitializeMatlabAliases();
+    // The session's start runs once per session, like the console does;
+    // re-running it before every script overwrote the user's own
+    // svd/norm/zeros... (TOFIX133 P0 item 11).
+    if (!session_prepared_) {
+        PrepareSession();
     }
 
     // Reset the cancellation flag at start
@@ -2019,16 +2066,27 @@ def _cyxwiz_run_cell(src, key, filename, count=0, on_error=None):
     return result;
 }
 
-void ScriptingEngine::InitializeMatlabAliases() {
-    if (matlab_aliases_initialized_) return;
+void ScriptingEngine::PrepareSession() {
+    // The console's worker and a script can both start a session's first
+    // command: the start (and the startup scripts) runs once
+    std::lock_guard<std::mutex> prepare_lock(prepare_session_mutex_);
+    if (session_prepared_) return;
 
-    spdlog::info("Initializing MATLAB-style aliases...");
+    const auto start = cyxwiz::core::EngineConfig::Instance().GetPythonStart();
+    spdlog::info("Preparing the Python session...");
 
     try {
         py::gil_scoped_acquire acquire;
 
+        const std::string numpy_setup = R"PYTHON(
+try:
+    import numpy as np
+except ImportError:
+    print("[CyxWiz] NumPy not installed - run: pip install numpy")
+)PYTHON";
+
         // MATLAB-style aliases setup code
-        std::string matlab_setup = R"PYTHON(
+        const std::string pycyxwiz_setup = R"PYTHON(
 # ============================================================================
 # MATLAB-style Console functions (flat namespace)
 # ============================================================================
@@ -2161,7 +2219,9 @@ except AttributeError as e:
 except Exception as e:
     # Any other error
     print(f"[CyxWiz] Error loading MATLAB functions: {e}")
+)PYTHON";
 
+        const std::string data_tools_setup = R"PYTHON(
 # ============================================================================
 # DuckDB - Fast Analytics Database
 # ============================================================================
@@ -2270,24 +2330,69 @@ except Exception as e:
     print(f"[CyxWiz] Polars error: {e}")
 )PYTHON";
 
-        py::exec(matlab_setup);
-        matlab_aliases_initialized_ = true;
-        spdlog::info("MATLAB-style aliases initialized");
+        py::exec((start.import_numpy ? numpy_setup : std::string()) +
+                 (start.import_pycyxwiz ? pycyxwiz_setup : std::string()) + data_tools_setup);
+        session_prepared_ = true;
+        spdlog::info("Python session ready (numpy as np: {}, pycyxwiz: {})", start.import_numpy ? "yes" : "no",
+                     start.import_pycyxwiz ? "yes" : "no");
 
         // RL metrics reach the dashboard (TOFIX134 P0 item 7): scripts call
         // pycyxwiz.rl_update_metric, which dropped every value because no
         // callback was ever set. The callback only queues; the UI takes.
-        if (py::module_::import("sys").attr("modules").contains("pycyxwiz")) {
+        // Set when pycyxwiz loads, whether or not the session imports it by name.
+        try {
             py::module_::import("pycyxwiz").attr("rl_set_metric_callback")(
                 py::cpp_function([this](const std::string& name, float value) {
                     rl_metrics_.Publish({RLMetricSample{name, value}});
                 }));
+        } catch (const py::error_already_set&) {
+            // pycyxwiz did not load (reported by the setup above when imported)
+        }
+
+        // Preferences > Python > Startup scripts, in order, in the session's
+        // namespace; one that is missing or stops does not stop the others
+        for (const std::string& script : start.startup_scripts) {
+            std::ifstream file(std::filesystem::path(script), std::ios::binary);
+            if (!file) {
+                spdlog::warn("The startup script {} is not there; the session starts without it", script);
+            } else {
+                const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+                // What it prints goes to the Console log (no command is
+                // capturing output while the session starts)
+                py::dict scope;
+                scope["_source"] = py::bytes(source);
+                scope["_path"] = script;
+                scope["_ns"] = py::module_::import("__main__").attr("__dict__");
+                const auto printed = [&scope]() {
+                    std::string text = scope.contains("_printed") ? scope["_printed"].cast<std::string>() : "";
+                    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
+                    if (text.size() > 4000) text = text.substr(0, 4000) + "...";
+                    return text;
+                };
+                try {
+                    py::exec(R"PYTHON(
+import contextlib as _contextlib, io as _io
+_out = _io.StringIO()
+try:
+    with _contextlib.redirect_stdout(_out), _contextlib.redirect_stderr(_out):
+        exec(compile(_source, _path, "exec"), _ns)
+finally:
+    _printed = _out.getvalue()
+)PYTHON",
+                             scope);
+                    spdlog::info("Ran the startup script {}", script);
+                    if (const std::string out = printed(); !out.empty()) spdlog::info("Startup script printed: {}", out);
+                } catch (const py::error_already_set& e) {
+                    if (const std::string out = printed(); !out.empty()) spdlog::info("Startup script printed: {}", out);
+                    spdlog::warn("The startup script {} stopped: {}", script, e.what());
+                }
+            }
         }
 
     } catch (const py::error_already_set& e) {
-        spdlog::error("Failed to initialize MATLAB aliases: {}", e.what());
+        spdlog::error("Could not prepare the Python session: {}", e.what());
     } catch (const std::exception& e) {
-        spdlog::error("Failed to initialize MATLAB aliases: {}", e.what());
+        spdlog::error("Could not prepare the Python session: {}", e.what());
     }
 }
 

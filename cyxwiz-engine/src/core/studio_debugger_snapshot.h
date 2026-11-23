@@ -8,6 +8,7 @@
 #include "debug_recommendation_engine.h"
 #include "debug_run_store.h"
 #include "debug_session.h"
+#include "engine_config.h"
 #include "smoke_run_executor.h"
 #include "training_trace_collector.h"
 
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <utility>
 #include <functional>
 #include <string>
@@ -75,12 +77,31 @@ struct StudioDebuggerRunControl {
 };
 
 // Inputs captured on the UI thread when a run starts.
+// A canvas group: the layer list's sections (TOFIX178 6.2e).
+struct StudioDebuggerNodeGroup {
+    std::string name;
+    std::vector<int> node_ids;
+};
+
 struct StudioDebuggerRunInputs {
     std::map<int, std::pair<float, float>> node_positions;
     // Project root for the prepared-data cache shared with Train.
     std::filesystem::path project_root;
     // Re-prepare the data instead of reusing the cache (one run).
     bool rebuild_prepared_data = false;
+    // The debugger's layer capture settings when the run started (TOFIX178
+    // 6.2d); empty = the user's defaults.
+    std::optional<core::StudioDebuggerConfig> capture_settings;
+    std::vector<StudioDebuggerNodeGroup> node_groups;
+};
+
+// What Local Debug's input was, item by item, for the layer views' sample
+// line and prediction (TOFIX178 6.2e). Saved with the run.
+struct StudioDebuggerSampleFacts {
+    std::vector<std::string> item_names;   // "cat.10599.jpg"; empty when items have no name
+    std::vector<int> labels;               // per item; -1 when not a class
+    std::vector<std::string> class_names;  // in label order; empty when unknown
+    std::string output_rule;               // layer_view::OutputRuleKey; empty when unknown
 };
 
 struct StudioDebuggerSnapshot {
@@ -105,6 +126,8 @@ struct StudioDebuggerSnapshot {
     std::string graph_summary;
     std::string preflight_summary;
     std::string sample_summary = "Synthetic sample 0 (POC)";
+    StudioDebuggerSampleFacts sample_facts;
+    std::vector<StudioDebuggerNodeGroup> node_groups;  // the canvas groups when the run started
     std::string failure_summary;
 
     DebugPreflightResult preflight;

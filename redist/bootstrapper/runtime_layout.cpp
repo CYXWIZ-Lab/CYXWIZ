@@ -121,25 +121,82 @@ bool ResolveContainedFile(
 }
 
 bool ReadState(const std::filesystem::path& path, Json& output, std::string& error) {
+    const auto name = path.filename().string();
     std::error_code filesystem_error;
     const auto size = std::filesystem::file_size(path, filesystem_error);
     if (filesystem_error) {
-        error = "active-runtime.json is missing: " + path.string();
+        error = name + " is missing: " + path.string();
         return false;
     }
     if (size == 0 || size > kMaximumStateBytes) {
-        error = "active-runtime.json has an invalid size";
+        error = name + " has an invalid size";
         return false;
     }
     try {
         std::ifstream stream(path, std::ios::binary);
         if (!stream) {
-            error = "active-runtime.json cannot be opened";
+            error = name + " cannot be opened";
             return false;
         }
         output = Json::parse(stream, nullptr, true, true);
     } catch (const std::exception& exception) {
-        error = std::string("active-runtime.json is invalid JSON: ") + exception.what();
+        error = name + " is invalid JSON: " + exception.what();
+        return false;
+    }
+    return true;
+}
+
+// Writes a sibling temporary file and atomically replaces `path` with it.
+bool WriteStateAtomic(const std::filesystem::path& path, const Json& document,
+                      std::string& error) {
+    std::error_code filesystem_error;
+    std::filesystem::create_directories(path.parent_path(), filesystem_error);
+    if (filesystem_error) {
+        error = "cannot create runtime-state directory: " +
+                filesystem_error.message();
+        return false;
+    }
+    auto temporary = path;
+    temporary += ".tmp." + std::to_string(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    try {
+        std::ofstream stream(
+            temporary, std::ios::binary | std::ios::trunc);
+        if (!stream) {
+            error = "cannot create temporary runtime state";
+            return false;
+        }
+        stream << document.dump(2) << '\n';
+        stream.flush();
+        if (!stream) {
+            error = "cannot write temporary runtime state";
+            stream.close();
+            std::filesystem::remove(temporary, filesystem_error);
+            return false;
+        }
+        stream.close();
+#ifdef _WIN32
+        if (!::MoveFileExW(
+                temporary.c_str(), path.c_str(),
+                MOVEFILE_WRITE_THROUGH | MOVEFILE_REPLACE_EXISTING)) {
+            error = "cannot atomically publish runtime state; Win32 error " +
+                    std::to_string(::GetLastError());
+            std::filesystem::remove(temporary, filesystem_error);
+            return false;
+        }
+#else
+        std::filesystem::rename(temporary, path, filesystem_error);
+        if (filesystem_error) {
+            error = "cannot atomically publish runtime state: " +
+                    filesystem_error.message();
+            std::filesystem::remove(temporary, filesystem_error);
+            return false;
+        }
+#endif
+    } catch (const std::exception& exception) {
+        error = std::string("runtime-state publication failed: ") +
+                exception.what();
+        std::filesystem::remove(temporary, filesystem_error);
         return false;
     }
     return true;
@@ -233,6 +290,62 @@ Json StateDocument(const ActiveRuntimeState& state) {
         {"packs", std::move(packs)}};
 }
 
+bool ParsePluginsState(
+    const Json& state,
+    ActivePluginsState& output,
+    std::string& error) {
+    output = {};
+    if (!HasExactKeys(state, {"schema_version", "base_pack_id", "plugins"})) {
+        error = "active-plugins.json has unknown or missing fields";
+        return false;
+    }
+    if (!state["schema_version"].is_number_unsigned() ||
+        state["schema_version"].get<std::uint64_t>() != 1) {
+        error = "active-plugins.json schema_version must be 1";
+        return false;
+    }
+    if (!ReadIdentifier(state, "base_pack_id", output.base_pack_id, error)) return false;
+    if (!state["plugins"].is_array()) {
+        error = "plugins must be an array";
+        return false;
+    }
+    std::set<std::string> seen;
+    for (std::size_t index = 0; index < state["plugins"].size(); ++index) {
+        const auto& entry = state["plugins"][index];
+        if (!HasExactKeys(entry, {"plugin_id", "pack_id"})) {
+            error = "plugins[" + std::to_string(index) +
+                    "] has unknown or missing fields";
+            return false;
+        }
+        ActivePluginPackState plugin;
+        if (!ReadIdentifier(entry, "plugin_id", plugin.plugin_id, error) ||
+            !ReadIdentifier(entry, "pack_id", plugin.pack_id, error)) {
+            return false;
+        }
+        if (!seen.insert(plugin.plugin_id).second) {
+            error = "duplicate active plugin: " + plugin.plugin_id;
+            return false;
+        }
+        output.plugins.push_back(std::move(plugin));
+    }
+    std::sort(output.plugins.begin(), output.plugins.end(),
+              [](const ActivePluginPackState& left, const ActivePluginPackState& right) {
+                  return left.plugin_id < right.plugin_id;
+              });
+    return true;
+}
+
+Json PluginsStateDocument(const ActivePluginsState& state) {
+    Json plugins = Json::array();
+    for (const auto& plugin : state.plugins) {
+        plugins.push_back({{"plugin_id", plugin.plugin_id}, {"pack_id", plugin.pack_id}});
+    }
+    return {
+        {"schema_version", std::uint64_t{1}},
+        {"base_pack_id", state.base_pack_id},
+        {"plugins", std::move(plugins)}};
+}
+
 bool ReadIdentifier(
     const Json& object,
     const char* key,
@@ -282,58 +395,7 @@ bool SaveActiveRuntimeStateAtomic(
     error.clear();
     ActiveRuntimeState normalized;
     if (!ParseState(StateDocument(state), normalized, error)) return false;
-
-    std::error_code filesystem_error;
-    std::filesystem::create_directories(path.parent_path(), filesystem_error);
-    if (filesystem_error) {
-        error = "cannot create runtime-state directory: " +
-                filesystem_error.message();
-        return false;
-    }
-    auto temporary = path;
-    temporary += ".tmp." + std::to_string(
-        std::chrono::steady_clock::now().time_since_epoch().count());
-    try {
-        std::ofstream stream(
-            temporary, std::ios::binary | std::ios::trunc);
-        if (!stream) {
-            error = "cannot create temporary runtime state";
-            return false;
-        }
-        stream << StateDocument(normalized).dump(2) << '\n';
-        stream.flush();
-        if (!stream) {
-            error = "cannot write temporary runtime state";
-            stream.close();
-            std::filesystem::remove(temporary, filesystem_error);
-            return false;
-        }
-        stream.close();
-#ifdef _WIN32
-        if (!::MoveFileExW(
-                temporary.c_str(), path.c_str(),
-                MOVEFILE_WRITE_THROUGH | MOVEFILE_REPLACE_EXISTING)) {
-            error = "cannot atomically publish runtime state; Win32 error " +
-                    std::to_string(::GetLastError());
-            std::filesystem::remove(temporary, filesystem_error);
-            return false;
-        }
-#else
-        std::filesystem::rename(temporary, path, filesystem_error);
-        if (filesystem_error) {
-            error = "cannot atomically publish runtime state: " +
-                    filesystem_error.message();
-            std::filesystem::remove(temporary, filesystem_error);
-            return false;
-        }
-#endif
-    } catch (const std::exception& exception) {
-        error = std::string("runtime-state publication failed: ") +
-                exception.what();
-        std::filesystem::remove(temporary, filesystem_error);
-        return false;
-    }
-    return true;
+    return WriteStateAtomic(path, StateDocument(normalized), error);
 }
 
 bool ResolveRuntimeState(
@@ -434,6 +496,77 @@ bool ResolveActiveRuntime(
     const auto path = runtime_root / "active-runtime.json";
     return LoadActiveRuntimeState(path, state, error) &&
            ResolveRuntimeState(runtime_root, state, output, error);
+}
+
+bool LoadActivePluginsState(
+    const std::filesystem::path& path,
+    ActivePluginsState& output,
+    std::string& error) {
+    output = {};
+    error.clear();
+    std::error_code filesystem_error;
+    const bool exists = std::filesystem::exists(path, filesystem_error);
+    if (filesystem_error) {
+        error = "cannot inspect active-plugins.json: " + filesystem_error.message();
+        return false;
+    }
+    if (!exists) return true;
+    Json state;
+    return ReadState(path, state, error) && ParsePluginsState(state, output, error);
+}
+
+bool SaveActivePluginsStateAtomic(
+    const std::filesystem::path& path,
+    const ActivePluginsState& state,
+    std::string& error) {
+    error.clear();
+    ActivePluginsState normalized;
+    if (!ParsePluginsState(PluginsStateDocument(state), normalized, error)) return false;
+    return WriteStateAtomic(path, PluginsStateDocument(normalized), error);
+}
+
+std::filesystem::path PluginPackDirectory(
+    const std::filesystem::path& runtime_root,
+    const std::string& plugin_id,
+    const std::string& pack_id) {
+    return runtime_root / "plugins" / plugin_id / pack_id;
+}
+
+bool ResolveActivePluginPacks(
+    const std::filesystem::path& runtime_root,
+    const std::string& active_base_pack_id,
+    std::vector<ActivePluginPack>& output,
+    std::vector<std::string>& skipped,
+    std::string& error) {
+    output.clear();
+    skipped.clear();
+    ActivePluginsState state;
+    if (!LoadActivePluginsState(runtime_root / kActivePluginsFileName, state, error)) {
+        return false;
+    }
+    if (state.plugins.empty() || state.base_pack_id != active_base_pack_id) return true;
+    std::error_code filesystem_error;
+    const auto canonical_root = std::filesystem::canonical(runtime_root, filesystem_error);
+    if (filesystem_error) {
+        error = "runtime root cannot be resolved: " + filesystem_error.message();
+        return false;
+    }
+    for (const auto& plugin : state.plugins) {
+        ActivePluginPack resolved{plugin.plugin_id, plugin.pack_id, {}};
+        std::filesystem::path manifest;
+        std::string problem;
+        if (!ResolveContainedDirectory(
+                canonical_root,
+                PluginPackDirectory(runtime_root, plugin.plugin_id, plugin.pack_id),
+                "plugin pack " + plugin.pack_id, resolved.directory, problem) ||
+            !ResolveContainedFile(canonical_root, resolved.directory / "plugin.json",
+                                  "plugin.json of " + plugin.pack_id, manifest, problem)) {
+            skipped.push_back(problem);
+            continue;
+        }
+        output.push_back(std::move(resolved));
+    }
+    return true;
 }
 
 void AppendBootstrapDiagnostic(

@@ -200,13 +200,6 @@ void TestRestoreSettingsWithoutTasks() {
     check_idle(inspector);
     Check(canonical == saved, "restoration must not change saved graph parameters");
 
-    const std::map<std::string, std::string> legacy{{"hdf5_dataset", "group/features"}};
-    inspector.RestoreSettings(legacy);
-    Check(inspector.Selection().data_path == "/group/features" &&
-              inspector.Selection().label_path.empty() && inspector.Error().empty(),
-          "legacy restoration should normalize the data path and clear old labels");
-    check_idle(inspector);
-
     std::vector<std::map<std::string, std::string>> invalid_settings;
     auto invalid = canonical;
     invalid["hdf5_selection_version"] = "unsupported";
@@ -217,7 +210,7 @@ void TestRestoreSettingsWithoutTasks() {
     invalid = canonical;
     invalid["hdf5_data_path"] = "/" + std::string(4096, 'x');
     invalid_settings.push_back(invalid);
-    invalid_settings.push_back({{"hdf5_dataset", ""}});
+    invalid_settings.push_back({{"hdf5_selection_version", "1"}});
     for (const auto& parameters : invalid_settings) {
         inspector.RestoreSettings(canonical);
         const auto parsed = cyxwiz::ReadHdf5InputSettings(parameters);
@@ -424,7 +417,7 @@ void TestRestoreInvalidSettingsClearsPreviewAndCancels(const std::string& file_p
     const auto task_id = FindInspectorTaskId();
     Check(task_id.has_value(), "restoration cancellation fixture should have a queued inspection");
     const auto task = cyxwiz::AsyncTaskManager::Instance().GetTask(*task_id);
-    inspector.RestoreSettings({{"hdf5_dataset", ""}});
+    inspector.RestoreSettings({{"hdf5_selection_version", "1"}});
     Check(task && task->IsCancelRequested() && !inspector.Busy(),
           "invalid settings restoration must cancel the previous inspection");
     Check(inspector.Selection().data_path.empty() && inspector.Selection().label_path.empty() &&

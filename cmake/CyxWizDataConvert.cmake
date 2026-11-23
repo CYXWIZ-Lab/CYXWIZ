@@ -1,5 +1,7 @@
-# Attach the same XLSX adapter to every executable compiling DataConvertService.
+# Attach the same XLSX / HDF5 adapters to every executable compiling DataConvertService.
+# Found here so every directory that includes this file sees the same features.
 find_package(OpenXLSX CONFIG QUIET)
+find_package(HighFive CONFIG QUIET)
 if(TARGET OpenXLSX::OpenXLSX)
     include("${CMAKE_CURRENT_LIST_DIR}/CyxWizLibArchive.cmake")
 endif()

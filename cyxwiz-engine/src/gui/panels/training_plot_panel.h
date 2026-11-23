@@ -6,6 +6,9 @@
 #include "../../core/training_run_comparison_record.h"
 #include "../../core/training_progress_estimate.h"
 #include "../../core/word_vector_runs.h"
+#include "../../core/training_dashboard_presentation.h"
+#include "../../core/engine_config.h"
+#include "../../core/missing_values_presentation.h"
 #include <chrono>
 #include <functional>
 #include <optional>
@@ -58,6 +61,8 @@ struct TrainingStatusSnapshot {
 class TrainingPlotPanel : public Panel {
 public:
     TrainingPlotPanel();
+    // How the charts start (Preferences > Training); View changes them for the session
+    void SetViewDefaults(const core::TrainingDashboardConfig& view);
     ~TrainingPlotPanel() override;
 
     void Render() override;
@@ -69,17 +74,16 @@ public:
     // Integer values still work — callers passing int are implicitly promoted.
     void AddLossPoint(double epoch, double train_loss, double val_loss = -1.0);
     void AddAccuracyPoint(double epoch, double train_acc, double val_acc = -1.0);
+    // A finished epoch: the train value over the whole epoch (what the cards'
+    // "best" reads) and its validation value. The train curve itself is the
+    // per-batch points (each the mean since the previous point); the epoch
+    // value is drawn only when that epoch had no batch point.
+    void AddEpochLoss(int epoch, double train_loss, double val_loss = -1.0);
+    void AddEpochAccuracy(int epoch, double train_acc, double val_acc = -1.0);
     void AddCustomMetric(const std::string& metric_name, int epoch, double value);
 
     // Control
     void Clear();
-    void ResetPlots();
-    void SetMaxPoints(size_t max_points);
-
-    // Export
-    void ExportToCSV(const std::string& filepath);
-    void ExportPlotImage(const std::string& filepath);
-    void ExportRunComparisonCSV(const std::string& filepath);
 
     // Word-vector runs (TOFIX152): word2vec and GloVe training of a Word
     // Embeddings node, from its figures. They have their own view behind the
@@ -113,10 +117,8 @@ public:
     void SetWordVectorHooks(WordVectorHooks hooks) { word_vector_hooks_ = std::move(hooks); }
 
     // Configuration
-    void ShowLossPlot(bool show) { show_loss_plot_ = show; }
     void ShowAccuracyPlot(bool show) { show_accuracy_plot_ = show; }
     void ShowCustomMetrics(bool show) { show_custom_metrics_ = show; }
-    void SetAutoScale(bool auto_scale) { auto_scale_ = auto_scale; }
 
     // Training state updates (thread-safe) - call from TrainingManager
     void SetTrainingState(bool is_training, int current_epoch, int total_epochs,
@@ -125,6 +127,7 @@ public:
                              const std::string& status_message = "",
                              float progress = 0.0f);
     void SetPreparationFailed(const std::string& error_message);
+    bool IsPreparing() const;
     void RecordMaterializationProgress(const std::string& stage,
                                        const std::string& message,
                                        float progress,
@@ -186,6 +189,24 @@ public:
                              int checkpoint_epoch = 0);
     void SetTrainingComplete(float total_time_seconds,
                              const TrainingMetrics& metrics);
+
+    // A run refused for missing values gets the fix under its outcome
+    // (TOFIX223 0.3, mockup board 2); the main window adds the steps.
+    // The main window keeps what was done (one state for the report and the
+    // Dashboard, following the canvas); the panel only draws it.
+    struct MissingValuesActions {
+        // Fills in what was done for the run's refusal (features, label, left out).
+        std::function<void(missing_values_fix::Input& in)> state;
+        // Adds a group's steps for the run's refusal (`in`: its columns).
+        std::function<void(bool label, const std::vector<missing_values_fix::Step>& steps,
+                           const missing_values_fix::Input& in)>
+            add;
+        std::function<void(bool label)> undo;
+        // Asks for a new run; it starts after the panels drew.
+        std::function<void()> train_again;
+        std::function<void()> show_input;
+    };
+    void SetMissingValuesActions(MissingValuesActions actions) { missing_values_actions_ = std::move(actions); }
     void SetActiveCheckpointLoaded(const std::string& checkpoint_path,
                                    int checkpoint_epoch,
                                    float validation_loss,
@@ -206,18 +227,12 @@ public:
     // The run's generation_previews folder (TOFIX159 A4); "" for a run without
     // previews. The Generations tab shows it while the run trains and after.
     void SetGenerationPreviewFolder(const std::filesystem::path& folder);
+    // The run's data for the header: the dataset and its training,
+    // validation and test rows (known once the first batch runs).
+    void SetRunData(const std::string& dataset, size_t train_rows, size_t validation_rows, size_t test_rows);
     void AddRunComparisonRecord(const TrainingRunComparisonRecord& record);
-    void ClearRunComparisonRecords();
 
     // Getters for live metrics (thread-safe)
-    bool HasData() const;
-    bool IsTraining() const;
-    int GetCurrentEpoch() const;
-    double GetCurrentTrainLoss() const;
-    double GetCurrentValLoss() const;
-    double GetCurrentTrainAccuracy() const;
-    double GetCurrentValAccuracy() const;
-    size_t GetDataPointCount() const;
     TrainingStatusSnapshot GetStatusSnapshot() const;
 
 private:
@@ -273,10 +288,24 @@ private:
     MetricSeries val_loss_;
     MetricSeries train_accuracy_;
     MetricSeries val_accuracy_;
+    MetricSeries train_loss_epochs_;      // one whole-epoch value per epoch
+    MetricSeries train_accuracy_epochs_;
     std::vector<MetricSeries> custom_metrics_;
     std::vector<TrainingRunComparisonRecord> run_comparison_records_;
-    std::string run_export_note_;  // where Export Run CSV wrote, or why it could not
-    bool run_export_failed_ = false;
+    // The exports (the header's More menu, the Runs card's Export): asked for
+    // while drawing and run after the frame's lock is released, so the save
+    // dialog never holds up the training thread.
+    enum class PendingExport { None, Metrics, Runs };
+    enum class ExportNoteAt { Header, Runs };
+    PendingExport pending_export_ = PendingExport::None;
+    ExportNoteAt export_note_at_ = ExportNoteAt::Header;  // where the note shows
+    ExportNoteAt pending_note_at_ = ExportNoteAt::Header;  // the menu that asked
+    std::string export_note_;  // where an export saved, or why it could not
+    bool export_failed_ = false;
+    bool runs_all_columns_ = false;
+    // The confirmations, opened outside the menus that ask for them.
+    bool open_clear_all_ = false;
+    bool open_clear_runs_ = false;
     std::vector<MaterializationProgress> materialization_events_;
     std::string materialization_output_dataset_;
     std::string materialization_status_;
@@ -296,19 +325,25 @@ private:
     uint64_t materialization_pruned_bytes_ = 0;
     std::string materialization_clear_message_;
     bool materialization_rebuild_pending_ = false;
-    bool materialization_details_open_ = false;
     bool materialization_cache_refresh_requested_ = false;
     bool materialization_clear_confirm_ = false;
 
 public:
-    // Tools > Monitoring > Clear Cache: shows the panel and asks the same
-    // question as the dashboard card (TOFIX129 G3).
-    void RequestClearPreparedDataCache() {
-        SetVisible(true);
-        materialization_clear_confirm_ = true;
+    // The training's health under the cards (TOFIX129 D11): a line when
+    // something stands out (dead units, gradients out of range), and a link
+    // to the Model window's Health tab.
+    struct HealthNotice {
+        bool show = false;
+        std::string text;
+    };
+    void SetHealthNotice(std::function<HealthNotice()> source, std::function<void()> open_health) {
+        health_notice_ = std::move(source);
+        open_health_ = std::move(open_health);
     }
 
 private:
+    std::function<HealthNotice()> health_notice_;
+    std::function<void()> open_health_;
     std::function<void(const std::string&)> materialization_action_callback_;
     SavePathCallback save_path_callback_;
 
@@ -354,6 +389,14 @@ private:
     float total_training_time_ = 0.0f;
     std::string terminal_status_;
     std::string terminal_reason_;
+    std::vector<MissingColumn> missing_columns_;  // a run refused for missing values
+    int64_t missing_values_total_rows_ = -1;
+    MissingValuesActions missing_values_actions_;
+    std::string missing_values_supplied_role_;  // a supplied Validation / Test refused: fix its file
+    missing_values_fix::NumberFill missing_values_fill_ = missing_values_fix::NumberFill::Mean;
+    void ClearMissingValues();
+    void RenderMissingValuesFix(const std::vector<MissingColumn>& columns, int64_t total_rows,
+                                const std::string& input_name);
     std::string checkpoint_used_;
     bool has_checkpoint_validation_metrics_ = false;
     float checkpoint_val_loss_ = 0.0f;
@@ -362,6 +405,16 @@ private:
     int checkpoint_step_ = 0;
     std::string active_model_provenance_;
     bool active_checkpoint_loaded_ = false;
+    // The run's data and its held-out test (the header).
+    std::string run_dataset_;
+    size_t run_train_rows_ = 0;
+    size_t run_validation_rows_ = 0;
+    size_t run_test_rows_ = 0;
+    bool has_test_metrics_ = false;
+    float test_loss_ = 0.0f;
+    float test_accuracy_ = 0.0f;
+    float test_mae_ = 0.0f;
+    bool run_details_open_ = false;
     std::vector<float> epoch_times_;  // For averaging
     bool last_render_visible_ = false;
 
@@ -386,7 +439,6 @@ private:
     };
     std::map<int, QuickCheck> quick_checks_;
     std::string word_vector_export_message_;
-    mutable size_t sampled_read_events_ = 0;
 
     // Thread safety
     mutable std::mutex data_mutex_;
@@ -430,11 +482,22 @@ private:
     void DrawChart(int chart, const ImVec2& size, bool fit, bool in_window);
 
     // Helper methods
+    // The header card: state, where it ran, on what data, how it ended, and
+    // the Run details fold (core/training_dashboard_presentation BuildHeader).
+    void RenderWindow();      // Render() without the pending export
+    void RunPendingExport();  // asks where to save, writes, says where it saved
     void RenderTrainingStatus();
+    training_dashboard::HeaderFacts HeaderFactsNow() const;
+    // Run details > Data: the preparation's file, cache key, memory figures.
+    std::vector<training_dashboard::DetailRow> PreparationRows() const;
     void RenderLossPlot(float plot_height);
     void RenderAccuracyPlot(float plot_height);
     void RenderCustomMetricsPlot(float plot_height);
     void RenderKpiCards();
+    // What the cards and the insights read (core/training_dashboard_presentation),
+    // built once a frame into facts_.
+    training_dashboard::RunFacts DashboardFacts() const;
+    training_dashboard::RunFacts facts_;
     void DrawLossPlot(const ImVec2& size, bool fit, bool in_window = false);
     void DrawAccuracyPlot(const ImVec2& size, bool fit, bool in_window = false);
     void DrawCustomMetricsPlot(const ImVec2& size, bool fit, bool in_window = false);
@@ -443,9 +506,10 @@ private:
     void RenderControls();
     void RenderCurveSummary();
     void RenderSequenceMetricsSummary();
-    void RenderActiveTaskSummary();
     void RenderMaterializationSummary();
-    void RenderTrainingWarningSummary();
+    // The engine tasks beside a word-vector run (the model run shows them
+    // under Run details).
+    void RenderActiveTaskSummary();
     void RenderRunComparisonTable();
     void RenderStatistics();
     // Word-vector runs (training_word_vector_runs.cpp).
@@ -464,15 +528,12 @@ private:
     // Render() already owns data_mutex_; these helpers must only be called
     // while that lock is held. Public entry points acquire the lock first.
     void ClearLocked();
-    void ExportToCSVLocked(const std::string& filepath) const;
+    std::string MetricsCsvLocked() const;
     std::pair<double, double> CalculateEpochWindow(const MetricSeries& series) const;
     ValueRange CalculateVisibleRange(const MetricSeries& primary,
                                      const MetricSeries& secondary,
                                      double min_epoch,
                                      double max_epoch) const;
-    std::vector<double> CalculateMovingAverage(
-        const std::vector<double>& values,
-        int window) const;
     void TrimDataIfNeeded(MetricSeries& series);
     void RecordPanelEvent(const std::string& action,
                           const std::string& detail = "") const;
@@ -480,9 +541,5 @@ private:
     double CalculateMin(const std::vector<double>& values) const;
     double CalculateMax(const std::vector<double>& values) const;
 };
-
-// Global accessor functions for Python integration
-void set_training_plot_panel(cyxwiz::TrainingPlotPanel* panel);
-cyxwiz::TrainingPlotPanel* get_training_plot_panel();
 
 } // namespace cyxwiz

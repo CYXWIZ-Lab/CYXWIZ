@@ -94,7 +94,7 @@ int main() {
           "Missing activation with an installed base is not a fresh install");
   }
   for (const auto *marker :
-       {"base", "packs", "installed-metadata", "rollback"}) {
+       {"base", "packs", "plugins", "installed-metadata", "rollback"}) {
     Fixture f;
     fs::create_directories(f.runtime / marker);
     check(InspectRuntimeInstallation(f.runtime).condition == C::Fresh,

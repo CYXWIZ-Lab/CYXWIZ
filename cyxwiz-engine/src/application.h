@@ -83,6 +83,8 @@ private:
     void HandleCloseRequest();
     bool ShouldPreventClose();
     bool HasUnsavedWork();
+    // Preferences > General > When the Engine starts: the last project
+    bool reopening_last_project_ = false;
     bool HasLoadedData();
 
     // Fonts
@@ -102,13 +104,13 @@ private:
     static constexpr double MINIMISED_WAIT_TIME = 0.25;  // no frames while minimised; wake 4x a second
 
     // Debug logging flags (can be toggled via console commands)
-    bool log_idle_transitions_ = false;  // Log idle mode enter/exit
+    bool log_idle_transitions_ = false;  // Tools > Diagnostics > Log Frame-rate Changes (saved in MonitorConfig)
 
     // Startup project path (from command line)
     std::string window_title_;  // as last set
     std::string startup_project_path_;
     std::string startup_graph_path_;
-    std::vector<std::string> startup_scripts_;  // .py / .cyx files named on the command line
+    std::vector<std::string> command_line_scripts_;  // .py / .cyx files named on the command line
     // A .cyxgraph named on the command line opens attached to its file (Save
     // writes it); a start-page starter opens detached.
     bool startup_graph_from_command_line_ = false;

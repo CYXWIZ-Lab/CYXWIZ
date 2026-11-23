@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <random>
+#include "cyxwiz/portable_random.h"
 
 namespace cyxwiz {
 namespace {
@@ -63,7 +64,7 @@ std::vector<double> SignalProcessing::GenerateWhiteNoise(int num_samples, double
     std::vector<double> signal(num_samples);
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_real_distribution<> dis(-amplitude, amplitude);
+    const auto dis = [low = -amplitude, high = amplitude](auto& r) { return cyxwiz::portable::Uniform(r, low, high); };
 
     for (int i = 0; i < num_samples; i++) {
         signal[i] = dis(gen);

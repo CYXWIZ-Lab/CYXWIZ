@@ -214,6 +214,10 @@ void VariablesView::OnResult(const scripting::VariablesService::Result& result, 
                 on_open_table(open, result);
             }
             break;
+        // The Console and the debugger send these and get their answers through their own callbacks.
+        case Kind::Evaluate:
+        case Kind::Console:
+            break;
     }
 }
 

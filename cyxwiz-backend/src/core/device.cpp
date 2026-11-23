@@ -203,7 +203,7 @@ DeviceInfo QuerySelectedArrayFireDeviceInfo(DeviceType type, int device_id) {
     char compute[256] = {};
     try {
         af::deviceInfo(name, platform, toolkit, compute);
-        info.name = std::string(name);
+        info.name = DeviceDisplayName(name);
         info.name_known = true;
         info.name_is_fallback = false;
         info.metadata_status = DeviceMetadataStatus::Available;

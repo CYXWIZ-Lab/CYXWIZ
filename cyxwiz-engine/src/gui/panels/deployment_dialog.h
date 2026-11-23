@@ -5,6 +5,7 @@
 #include "../../network/deployment_client.h"
 #include "../../network/grpc_client.h"
 #include "../../inference/local_inference_server.h"
+#include <functional>
 #include <string>
 #include <memory>
 #include <atomic>
@@ -40,6 +41,13 @@ public:
     // Dialog control
     void Open();
     void Close();
+
+    // "Change in Preferences" opens Preferences > Servers (TOFIX168 step 3b)
+    void SetOpenServerPreferencesCallback(std::function<void()> callback) {
+        open_server_preferences_ = std::move(callback);
+    }
+    // The server address changed: drop the connection to the old central.
+    void OnServerChanged();
     bool IsOpen() const { return is_open_; }
 
     // Pre-fill model path
@@ -139,7 +147,7 @@ private:
     // ========== Node Discovery (Central Server) ==========
     // Central Server connection
     std::unique_ptr<network::GRPCClient> central_server_client_;
-    char central_server_address_[256] = "localhost:50051";
+    std::function<void()> open_server_preferences_;
 
     // Node list from Central Server
     std::vector<network::NodeDisplayInfo> discovered_nodes_;

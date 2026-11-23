@@ -21,6 +21,7 @@
 #include "../src/core/normalize_statistics.h"
 #include "../src/gui/loaders/data_loader.h"
 
+#include <stdexcept>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -384,6 +385,109 @@ void CheckCompiler() {
                   {gui::NodeType::Resize, "Second resize", {{"width", "4"}, {"height", "4"}}}},
                  "Second resize", "Resize must come before the image transforms", "Resize after an OpenCV step");
 
+    // Image Filter (TOFIX178 1.10a): a kernel done once with the images.
+    const auto filter = Compile({kResize,
+                                 {gui::NodeType::ImageFilter, "Kirsch", {{"preset", "kirsch"}, {"direction", "se"},
+                                                                         {"border", "replicate"}}},
+                                 {gui::NodeType::ImageFilter, "Typed", {{"preset", "custom"}, {"kernel", "1 2 1; 2 4 2; 1 2 1"},
+                                                                        {"normalize", "true"}}},
+                                 kNormalize});
+    Check(filter.is_valid, "two Image Filters compile; errors:\n" + Errors(filter));
+    Check(filter.image_cv_steps.size() == 2 && filter.image_cv_steps[0].kind == cyxwiz::CvImageStepKind::Filter &&
+              filter.image_cv_steps[0].filter_preset == cyxwiz::CvFilterPreset::Kirsch &&
+              filter.image_cv_steps[0].filter_direction == cyxwiz::CvFilterDirection::SE &&
+              filter.image_cv_steps[0].filter_border == cyxwiz::CvFilterBorder::Replicate &&
+              filter.image_cv_steps[1].filter_preset == cyxwiz::CvFilterPreset::Custom &&
+              filter.image_cv_steps[1].filter_kernel == "1 2 1; 2 4 2; 1 2 1" && filter.image_cv_steps[1].filter_normalize,
+          "the filters keep their settings");
+    Check(filter.input_shape == std::vector<size_t>({8, 8, 3}), "a filter keeps the image's shape");
+    bool zero_sum = false, typed_told = false;
+    for (const auto& issue : filter.issues) {
+        const bool about_sum = issue.level == cyxwiz::IssueLevel::Info && issue.message.find("sums to 0") != std::string::npos;
+        zero_sum = zero_sum || (about_sum && issue.node_name == "Kirsch");
+        typed_told = typed_told || (about_sum && issue.node_name == "Typed");
+    }
+    Check(zero_sum && !typed_told, "a kernel that sums to 0 with output clip says what is lost; a blur does not");
+    CheckRefused({kResize, {gui::NodeType::ImageFilter, "Ragged", {{"preset", "custom"}, {"kernel", "1 2; 3"}}}},
+                 "Ragged", "rows differ in length", "a typed kernel with ragged rows");
+    CheckRefused({kResize, {gui::NodeType::ImageFilter, "Wide", {{"preset", "custom"}, {"kernel", "1 1 1 1 1 1 1 1 1"}}}},
+                 "Wide", "at most 8 each way here", "a kernel wider than the 8 x 8 image");
+    CheckRefused({kResize, {gui::NodeType::ImageFilter, "Gabor", {{"preset", "gabor"}}}},
+                 "Gabor", "preset must be", "an unknown preset");
+    CheckRefused({kResize, {gui::NodeType::HorizontalFlip, "Flip", {}}, {gui::NodeType::ImageFilter, "Late filter", {}}},
+                 "Late filter", "move it before Horizontal Flip", "a filter after a random step");
+
+    // Image Edges options (TOFIX178 1.10b): a direction, LoG and DoG.
+    const auto edges = Compile({kResize,
+                                {gui::NodeType::ImageEdges, "Sobel x", {{"method", "sobel"}, {"direction", "x"}}}});
+    Check(edges.is_valid && edges.image_cv_steps.size() == 1 &&
+              edges.image_cv_steps[0].edge_direction == cyxwiz::CvEdgeDirection::X &&
+              edges.input_shape == std::vector<size_t>({8, 8, 1}),
+          "Sobel x compiles to one channel; errors:\n" + Errors(edges));
+    const auto dog = Compile({kResize, {gui::NodeType::ImageEdges, "DoG", {{"method", "dog"}, {"sigma", "0.8"},
+                                                                        {"sigma2", "2"}}}});
+    Check(dog.is_valid && dog.image_cv_steps.size() == 1 && dog.image_cv_steps[0].edge_method == cyxwiz::CvEdgeMethod::DoG &&
+              dog.image_cv_steps[0].edge_sigma == 0.8f && dog.image_cv_steps[0].edge_sigma2 == 2.0f,
+          "DoG keeps its sigmas; errors:\n" + Errors(dog));
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "DoG backwards", {{"method", "dog"}, {"sigma", "2"}, {"sigma2", "1"}}}},
+                 "DoG backwards", "the second sigma must be greater than the first", "DoG sigmas the wrong way round");
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "LoG 4", {{"method", "log"}, {"kernel_size", "4"}}}},
+                 "LoG 4", "kernel size must be odd, at most 31, for LoG", "an even LoG kernel");
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "Sideways", {{"method", "sobel"}, {"direction", "diagonal"}}}},
+                 "Sideways", "direction must be", "an unknown direction");
+
+    // Image Edges with the image kept: four channels into the model, named.
+    const auto kept = Compile({kResize,
+                               {gui::NodeType::ImageEdges, "Edges kept", {{"keep_image", "true"}}},
+                               {gui::NodeType::HorizontalFlip, "Flip", {}},
+                               {gui::NodeType::Normalize, "Normalize",
+                                {{"statistics", "per_channel"}, {"channel_mean", "0.5,0.5,0.5,0.1"},
+                                 {"channel_std", "0.2,0.2,0.2,0.3"}}}});
+    Check(kept.is_valid, "RGB + edges compiles; errors:\n" + Errors(kept));
+    {
+        // Image Gabor: one channel per filter into the model, named; the default bank is too wide for 8 x 8.
+        const Step bank{gui::NodeType::ImageGabor, "Bank",
+                        {{"orientations", "2"}, {"wavelengths", "2"}, {"bandwidth", "2"}, {"keep_image", "true"}}};
+        const auto gabor = Compile({kResize, bank});
+        Check(gabor.is_valid, "RGB + a Gabor bank compiles; errors:\n" + Errors(gabor));
+        Check(gabor.input_shape == std::vector<size_t>({8, 8, 5}) && gabor.image_cv_steps.size() == 1 &&
+                  gabor.image_cv_steps[0].kind == cyxwiz::CvImageStepKind::Gabor && gabor.image_cv_steps[0].gabor_keep_image,
+              "the model sees [8, 8, 5]");
+        Check(gabor.image_channels.names == std::vector<std::string>({"R", "G", "B", "gabor 0 deg 2 px", "gabor 90 deg 2 px"}) &&
+                  gabor.image_channels.colour == 3,
+              "the channels are named for the views");
+        CheckRefused({kResize, {gui::NodeType::ImageGabor, "Wide", {}}}, "Wide", "kernel: at most 8",
+                     "a bank whose kernel is larger than the image");
+        CheckRefused({kResize, {gui::NodeType::ImageGabor, "Phase", {{"wavelengths", "2"}, {"bandwidth", "2"}, {"response", "both"}}}},
+                     "Phase", "response must be", "an unknown response");
+        CheckRefused({kResize, bank, {gui::NodeType::ImageEdges, "Late edges", {}}}, "Late edges", "needs grey or RGB images",
+                     "Image Edges after the bank");
+    }
+    Check(kept.input_shape == std::vector<size_t>({8, 8, 4}) && !kept.layers.empty() &&
+              kept.layers.front().input_shape == std::vector<size_t>({8, 8, 4}),
+          "the Conv2D sees [8, 8, 4]");
+    Check(kept.preprocessing.norm_channels == 4 &&
+              kept.preprocessing.norm_channel_names == std::vector<std::string>({"R", "G", "B", "edges"}),
+          "Normalize knows the four channels by name");
+    bool adds = false;
+    for (const auto& issue : kept.issues)
+        adds = adds || (issue.level == cyxwiz::IssueLevel::Info && issue.node_name == "Edges kept" &&
+                        issue.message.find("(R, G, B, edges)") != std::string::npos);
+    Check(adds, "Edges kept says the images become four channels and names them");
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "Edges kept", {{"keep_image", "true"}}},
+                  {gui::NodeType::Normalize, "ImageNet", {{"statistics", "imagenet"}}}},
+                 "ImageNet", "the images have 4 channels here (R, G, B, edges)", "ImageNet statistics on RGB + edges");
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "Edges kept", {{"keep_image", "true"}}},
+                  {gui::NodeType::Normalize, "Three", {{"statistics", "per_channel"}, {"channel_mean", "0.5,0.5,0.5"},
+                                                       {"channel_std", "0.2,0.2,0.2"}}}},
+                 "Three", "3 means for 4 channels", "three means for four channels");
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "Edges kept", {{"keep_image", "true"}}},
+                  {gui::NodeType::ColorJitter, "Jitter", {}}},
+                 "Jitter", "1- or 3-channel", "a colour transform after RGB + edges");
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "Edges kept", {{"keep_image", "true"}}},
+                  {gui::NodeType::ImageEdges, "Again", {}}},
+                 "Again", "needs grey or RGB images: these have 4 channels", "Image Edges after RGB + edges");
+
     // Normalize per channel (TOFIX178 1.4).
     const auto per_channel = Compile({kResize, {gui::NodeType::Normalize, "Normalize",
                                                 {{"statistics", "per_channel"},
@@ -495,8 +599,34 @@ void CheckBatcher() {
         Check(std::fabs(sample[1] - 40.0f / 255.0f) < 1e-6f, "validation: the crop starts at row 1");
     }
 
+    // Local Debug's picked sample (TOFIX178 6.0b): image N as validation sees
+    // it, whatever the phase - its validation values, and a train image
+    // centre-cropped and unflipped - with the part it falls in.
     batcher.SetPhase(cyxwiz::BatcherPhase::Train);
     batcher.Reset();
+    const size_t val_image = static_cast<size_t>(val.row_ids[0]);
+    const auto picked = batcher.GetSourceSamples({val_image});
+    Check(picked && picked->size == 1 && picked->data.Shape() == std::vector<size_t>({1, 2, 2, 3}),
+          "a picked image is one [1, 2, 2, 3] sample");
+    const float* p = picked->data.ReadData<float>();
+    bool same = true;
+    for (size_t i = 0; i < 12; ++i) same = same && p[i] == v[i];
+    Check(same, "a picked validation image has its validation batch values");
+    Check(batcher.SourceSamplePart(val_image) == cyxwiz::BatcherPhase::Val, "the picked image is in validation");
+    const size_t train_image = batcher.Part(cyxwiz::BatcherPhase::Train).front();
+    const auto picked_train = batcher.GetSourceSamples({train_image});
+    const float* pt = picked_train->data.ReadData<float>();
+    Check(std::fabs(pt[0] - Red(1)) < 1e-6f && std::fabs(pt[3] - Red(2)) < 1e-6f,
+          "a picked train image: centre crop, not flipped (no random steps)");
+    Check(batcher.SourceSamplePart(train_image) == cyxwiz::BatcherPhase::Train, "the train image is in train");
+    bool refused = false;
+    try {
+        batcher.GetSourceSamples({4});
+    } catch (const std::out_of_range&) {
+        refused = true;
+    }
+    Check(refused, "an image number past the set is refused");
+
     const auto train = batcher.GetNextBatch();
 
     // MixUp on every Train batch: one-hot labels come out mixed (rows still sum

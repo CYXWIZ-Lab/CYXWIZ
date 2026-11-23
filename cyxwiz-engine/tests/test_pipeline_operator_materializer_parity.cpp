@@ -757,14 +757,12 @@ void TestRemainingRowTransformMemoryPreflight() {
     cyxwiz::SentimentAnalyzerOperator sentiment;
     Check(sentiment.Configure({
         {"text_col", "text"},
-        {"label_col", "label"},
-        {"method", "simple"},
     }, error), error);
     assert_safe_preflight(
         sentiment,
         text_input,
         "SentimentAnalyzer memory preflight",
-        4ULL * 5ULL * static_cast<uint64_t>(sizeof(float)));
+        4ULL * 5ULL * static_cast<uint64_t>(sizeof(double)));
 
     cyxwiz::MaterializationMemoryContext blocked_context;
     blocked_context.policy.hard_limit_bytes = 1;
@@ -839,7 +837,7 @@ void TestPipelineRunStructuredFailures() {
         const std::vector<gui::MLNode> sentiment_nodes = {
             text,
             WithPins(MakeOperatorNode(904, gui::NodeType::SentimentAnalyzer, "Cancellable Sentiment",
-                                      {{"text_col", "text"}, {"method", "simple"}})),
+                                      {{"text_col", "text"}})),
         };
         const std::vector<gui::NodeLink> sentiment_links = {{2, 903, 0, 904, 0, gui::LinkType::TensorFlow}};
         cyxwiz::PipelineExecutor executor;
@@ -1112,9 +1110,8 @@ int main() {
                          {"output_format", "sparse"}});
     RunParityCase(text_csv_path, "SentimentAnalyzer",
                   gui::NodeType::SentimentAnalyzer, 707, 708,
-                  {{"text_col", "text"}, {"label_col", "label"},
-                   {"method", "simple"}},
-                  {});
+                  {{"text_col", "text"}},
+                  {"text_compound", "text_positive", "text_neutral", "text_negative"});
 
     const auto pca_csv_path = std::filesystem::temp_directory_path() /
         "cyxwiz_operator_materializer_parity_pca.csv";

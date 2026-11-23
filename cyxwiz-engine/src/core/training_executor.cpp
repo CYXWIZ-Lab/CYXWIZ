@@ -1,7 +1,8 @@
 #include "training_executor.h"
+#include "training_report_window.h"
 #include <set>
 #include <cyxwiz/optimizers/adam.h>
-#include <cyxwiz/optimizers/gradient_clipping.h>
+#include "optimizer_step.h"
 #include "training_generation_preview.h"
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
@@ -9,6 +10,8 @@
 #include "metric_learning_evaluation.h"
 #include "metric_learning_sampling.h"
 #include "checkpoint_manager.h"
+#include "weight_start.h"
+#include "layer_capture_store.h"
 #include "sequence_arrow_batcher.h"
 #include "crash_run_recorder.h"
 #include "error_codes.h"
@@ -17,6 +20,7 @@
 #include "training_profile_fence.h"
 #include <cyxwiz/debug_hooks.h>
 #include <cyxwiz/neural_provider.h>
+#include <cyxwiz/neural_provider_dispatch.h>
 #include <cyxwiz/utilities.h>
 #include "execution_device_context.h"
 #include "execution_device_preferences.h"
@@ -24,7 +28,7 @@
 #include "training_trace_collector.h"
 #include "backend_placement_capabilities.h"
 #include "model_builder.h"
-#include "runtime_log_store.h"
+#include "run_execution_device.h"
 #include "sequence_model_input.h"
 #include "sequence_training_step.h"
 #include "training_batcher_setup.h"
@@ -49,31 +53,6 @@
 namespace cyxwiz {
 
 namespace {
-
-void AppendExecutionDeviceLifecycleEvent(
-    const ExecutionDeviceContext& context, const std::string& run_id) {
-    RuntimeLogEvent event;
-    event.timestamp_utc = std::chrono::system_clock::now();
-    event.level = context.valid ? RuntimeLogLevel::Info
-                                : RuntimeLogLevel::Warning;
-    event.category = "device";
-    event.source = "TrainingExecutor";
-    event.event_name = "ExecutionDeviceContext.Bind";
-    event.run_id = run_id;
-    event.backend = context.effective_backend;
-    event.device_id = context.effective_device_id;
-    event.device_name = context.device_name;
-    event.message = context.Describe();
-    if (!context.valid) {
-        event.primary_error_code = errors::Runtime::ExecutionFailed;
-    }
-    event.details.emplace_back("requested_backend", context.requested_backend);
-    event.details.emplace_back(
-        "requested_device_id", std::to_string(context.requested_device_id));
-    event.details.emplace_back(
-        "execution_policy", context.ExecutionPolicyName());
-    RuntimeLogStore::Instance().Append(std::move(event));
-}
 
 void LogTrainingBackendPlacementPlan(const TrainingConfiguration& config) {
     if (config.backend_placements.empty()) {
@@ -697,11 +676,28 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
         return false;
     }
     model_ = std::move(built.model);
+    module_provenance_ = std::move(built.module_provenance);
     loss_ = std::move(built.loss);
     optimizer_ = std::move(built.optimizer);
     scheduler_controller_.reset();
     ConfigureWeightDecayExclusions();
     graph_schedule_pending_ = false;
+    range_test_.reset();
+    health_.reset();
+    if (config_.learning_rate_range.enabled) {
+        // The range test sets the rate of every step: no schedule.
+        range_test_ = std::make_unique<LearningRateRangeTest>(config_.learning_rate_range);
+        const double rate = range_test_->CurrentLearningRate();
+        optimizer_->SetLearningRate(rate);
+        UpdateMetrics([rate](TrainingMetrics& m) {
+            m.learning_rate = rate;
+            m.range_points.clear();
+            m.range_stop_reason.clear();
+        });
+        return true;
+    }
+    health_ = std::make_unique<TrainingHealthRecorder>();
+    UpdateMetrics([](TrainingMetrics& m) { m.health = TrainingHealth{}; });
     // A scheduler configured on the executor wins over the graph's scheduler
     // node (config_.scheduler, TOFIX140 A3).
     const std::optional<TrainingSchedulerSpec> scheduler_specification =
@@ -755,25 +751,19 @@ void TrainingExecutor::Train(
 
     is_training_.store(true);
     training_epochs_ = std::max(1, epochs);
+    if (config_.learning_rate_range.enabled) {
+        // A range test: no validation, early stop, best checkpoint or previews.
+        config_.save_best_checkpoint = false;
+        config_.early_stopping_patience = 0;
+        config_.generation_preview.enabled = false;
+    }
     stop_requested_.store(false);
     is_paused_.store(false);
 
-    const auto next_run_execution_policy = GetNextRunExecutionPolicy();
-    if (next_run_execution_policy.has_value()) {
-        config_.strict_execution =
-            *next_run_execution_policy ==
-            ExecutionPolicy::Strict;
-        spdlog::info(
-            "TrainingExecutor: applied next-run execution policy: {}",
-            ExecutionPolicyDisplayName(*next_run_execution_policy));
-    }
-
+    // The run's device follows the same flow for every kind of run (run_execution_device)
     const ExecutionPolicy execution_policy_value =
-        config_.strict_execution
-            ? ExecutionPolicy::Strict
-            : ExecutionPolicy::Compatibility;
-    spdlog::info("TrainingExecutor: execution policy {}",
-                 ExecutionPolicyDisplayName(execution_policy_value));
+        ResolveRunExecutionPolicy(config_.strict_execution, "TrainingExecutor");
+    config_.strict_execution = execution_policy_value == ExecutionPolicy::Strict;
 
     CrashRunRecorder::Instance().StartTrainingRun(
         config_,
@@ -814,20 +804,48 @@ void TrainingExecutor::Train(
         is_paused_.store(false);
         is_training_.store(false);
     };
+    // A missing-values refusal keeps its columns on the run for the fix.
+    auto keep_missing_columns = [&](const MissingValuesError& e) {
+        UpdateMetrics([&](TrainingMetrics& m) {
+            m.missing_columns = e.Columns();
+            m.missing_values_total_rows = e.TotalRows();
+            m.missing_values_supplied_role = e.SuppliedRole();
+        });
+    };
+    // A supplied Validation / Test read from its own Data Input (not joined
+    // to the Training table): a refusal there names that role, since a step
+    // after the training input does not reach it.
+    const auto supplied_role_input = [](const ResolvedDatasetRole& role) {
+        return role.IsSupplied() && !role.joined_to_training;
+    };
+    // Stopped before the first batch (while waiting for the GPU, while the
+    // data was being prepared): cancelled, not failed
+    auto cancel_run = [&](const std::string& message) {
+        UpdateMetrics([&](TrainingMetrics& m) {
+            m.total_epochs = epochs;
+            m.is_training = false;
+            m.is_paused = false;
+            m.is_complete = true;
+            m.terminal_status = "cancelled";
+            m.terminal_reason = "user_cancelled";
+            m.status_message = message;
+        });
+        CrashRunRecorder::Instance().MarkCancelled();
+        TrainingTraceCollector::Instance().RecordTerminalEvent("cancelled", "user_cancelled", 0, 0.0f, 0.0f);
+        TrainingTraceCollector::Instance().FinishRun("cancelled");
+        BackendDebugHooks::SetDebugEventCallback({});
+        is_paused_.store(false);
+        is_training_.store(false);
+    };
 
     // Pre-device failures must close the same run as later setup/epoch failures.
     // Do not publish an effective device until preflight actually succeeds.
     ExecutionDeviceContext execution_context;
     try {
-        execution_context = PrepareExecutionDeviceForRun(
-            execution_policy_value, [this](DeviceType type, int device_id) {
+        execution_context = PrepareRunExecutionDevice(
+            execution_policy_value, "TrainingExecutor", [this](DeviceType type, int device_id) {
                 return ModelUnsupportedOnRoute(config_, type, device_id);
             });
-        if (execution_context.selection_fallback_applied) {
-            spdlog::warn("TrainingExecutor: {}", execution_context.error);
-        }
-        spdlog::info("TrainingExecutor: ArrayFire device preflight completed: {}",
-                     execution_context.Describe());
     } catch (const std::exception& e) {
         const std::string reason = std::string("device_preflight_failed: ") + e.what();
         spdlog::error("TrainingExecutor: {}", reason);
@@ -838,11 +856,37 @@ void TrainingExecutor::Train(
         throw;
     }
     const ScopedExecutionDeviceContext execution_context_scope(execution_context);
+    // One training run per GPU on this machine (TOFIX206 3.2 E): wait for it,
+    // Stop ends the wait; held for the whole run
+    bool gpu_waited = false;
+    auto gpu_lease = AcquireGpuRunLease(
+        execution_context,
+        [this]() {
+            if (gpu_wait_hooks_.should_cancel && gpu_wait_hooks_.should_cancel()) stop_requested_.store(true);
+            return stop_requested_.load();
+        },
+        [&](const std::string& message) {
+            gpu_waited = true;
+            UpdateMetrics([&](TrainingMetrics& m) {
+                m.status_message = message;
+                m.waiting_for_gpu = message;
+            });
+            if (gpu_wait_hooks_.on_change) gpu_wait_hooks_.on_change(message);
+        });
+    if (gpu_waited) {
+        UpdateMetrics([](TrainingMetrics& m) { m.waiting_for_gpu.clear(); });
+        if (gpu_wait_hooks_.on_change) gpu_wait_hooks_.on_change({});
+    }
+    if (gpu_lease.cancelled) {
+        spdlog::info("TrainingExecutor: stopped while waiting for the GPU");
+        cancel_run("Training cancelled while waiting for the GPU");
+        return;
+    }
+    if (!gpu_lease.error.empty()) spdlog::warn("TrainingExecutor: {}; the run goes on without it", gpu_lease.error);
     const ScopedActiveExecutionDeviceContext active_execution_context_scope;
     CrashRunRecorder::Instance().MarkBackendEvent(
         "ExecutionDeviceContext.Bind", execution_context.Describe());
-    training_trace.RecordExecutionDeviceContext(execution_context);
-    AppendExecutionDeviceLifecycleEvent(execution_context, training_run_id);
+    RecordRunExecutionDeviceBind(execution_context, training_run_id, "TrainingExecutor");
     const auto execution_placement_plan =
         BuildExecutionPlacementPlan(config_, execution_context);
     training_trace.RecordPlacementPlan(
@@ -855,6 +899,11 @@ void TrainingExecutor::Train(
                     execution_placement_plan.summary));
     const ScopedArrayFireHostSyncObserver host_sync_observer(
         &RecordArrayFireHostSyncForActiveTrace);
+    // Every provider dispatch goes into the trace; under Strict a provider
+    // failure stops the run instead of changing its route (TOFIX232).
+    const ScopedNeuralDispatchObserver provider_observer(&RecordNeuralDispatchForActiveTrace);
+    const ScopedNeuralProviderFailurePolicy provider_policy(
+        config_.strict_execution ? NeuralProviderFailurePolicy::Fail : NeuralProviderFailurePolicy::FallBack);
     training_trace.RecordRuntimeEvent(
         "TrainingDevicePolicy",
         std::string("Execution policy: ") +
@@ -1002,22 +1051,7 @@ void TrainingExecutor::Train(
                 if (stop_requested_.load()) {
                     // Stopped while the data was being prepared: cancelled, not failed.
                     spdlog::info("TrainingExecutor: stopped while preparing the data");
-                    UpdateMetrics([&](TrainingMetrics& m) {
-                        m.total_epochs = epochs;
-                        m.is_training = false;
-                        m.is_paused = false;
-                        m.is_complete = true;
-                        m.terminal_status = "cancelled";
-                        m.terminal_reason = "user_cancelled";
-                        m.status_message = "Training cancelled while preparing the data";
-                    });
-                    CrashRunRecorder::Instance().MarkCancelled();
-                    TrainingTraceCollector::Instance().RecordTerminalEvent("cancelled", "user_cancelled", 0, 0.0f,
-                                                                           0.0f);
-                    TrainingTraceCollector::Instance().FinishRun("cancelled");
-                    BackendDebugHooks::SetDebugEventCallback({});
-                    is_paused_.store(false);
-                    is_training_.store(false);
+                    cancel_run("Training cancelled while preparing the data");
                     return;
                 }
                 spdlog::error("TrainingExecutor: preparing the dataset batchers failed: {}", e.what());
@@ -1062,6 +1096,80 @@ void TrainingExecutor::Train(
         spdlog::error("TrainingExecutor: no batcher for this dataset mode");
         fail_run("unsupported_dataset_mode");
         return;
+    }
+
+    // class_weight=balanced, for every kind of data: from the Train part's
+    // class counts, now that the batchers exist; the loss is rebuilt with the
+    // weights. When the counts cannot be had, the run stops with the reason
+    // instead of training unweighted (TOFIX223 0.16).
+    if (IsBalancedClassWeightRequest(config_)) {
+        try {
+            ResolveBalancedClassWeights(config_, active_train_ibatcher);
+            loss_ = BuildLossFromConfig(config_);
+        } catch (const MissingValuesError& e) {
+            // Counting the classes met the missing values first: the run
+            // stops with that refusal and its columns, as at the first batch.
+            keep_missing_columns(e);
+            fail_run(errors::FormatError(errors::Training::TrainingExecutionFailed, "Training failed", e.what()));
+            spdlog::error("TrainingExecutor: {}", e.what());
+            return;
+        } catch (const std::exception& e) {
+            spdlog::error("TrainingExecutor: {}", e.what());
+            fail_run(std::string("class_weight_failed: ") + e.what());
+            return;
+        }
+    }
+
+    // Layer snapshots on items by number (6.1c): from the batchers built
+    // here, before any metric sampler wraps them.
+    if (layer_snapshot_schedule_) snapshot_run_record_ = {};
+    if (layer_snapshot_schedule_ && layer_snapshot_schedule_->source_count > 0) {
+        auto& schedule = *layer_snapshot_schedule_;
+        std::optional<Batch> items;
+        std::string off;
+        for (IBatcher* source : {active_val_ibatcher, active_train_ibatcher, active_test_ibatcher}) {
+            if (!source || items || !off.empty()) continue;
+            try {
+                items = GetSourceSampleRange(*source, schedule.source_index, schedule.source_count);
+            } catch (const std::exception& e) {
+                off = "item " + std::to_string(schedule.source_index) + " is not in the data (" + e.what() + ")";
+            }
+        }
+        if (off.empty() && !items) off = "this data's batchers cannot reach an item by number";
+        if (off.empty() && items->data.NumElements() == 0) off = "this data's batches carry sparse (CSR) features";
+        if (off.empty()) {
+            schedule.features = items->data;
+            schedule.labels = items->labels;
+            // The items' names and classes, saved with the run's epochs.
+            for (IBatcher* source : {active_val_ibatcher, active_train_ibatcher, active_test_ibatcher}) {
+                if (!source || !snapshot_run_record_.class_names.empty() || !snapshot_run_record_.item_names.empty())
+                    continue;
+                for (size_t i = 0; i < schedule.source_count; ++i)
+                    snapshot_run_record_.item_names.push_back(source->SourceSampleName(schedule.source_index + i));
+                if (std::all_of(snapshot_run_record_.item_names.begin(), snapshot_run_record_.item_names.end(),
+                                [](const std::string& n) { return n.empty(); }))
+                    snapshot_run_record_.item_names.clear();
+                snapshot_run_record_.class_names = source->ClassNames();
+            }
+        } else {
+            spdlog::warn("TrainingExecutor: layer snapshots are off: {}", off);
+            layer_snapshot_schedule_.reset();
+        }
+    }
+    // The snapshot items' labels (a few values: one small read) and how the
+    // output reads, saved with the run's epochs too.
+    if (layer_snapshot_schedule_) {
+        const Tensor& labels = layer_snapshot_schedule_->labels;
+        if (labels.NumElements() > 0 && labels.NumElements() <= 4096) {
+            const af::array flat = labels.GetRowMajorFlatArray();
+            snapshot_run_record_.label_values.resize(static_cast<size_t>(flat.elements()));
+            MaterializeArrayFireToHost(flat.as(f32), snapshot_run_record_.label_values.data(),
+                                       ArrayFireHostSyncCategory::DebugSampleDump, "TrainingExecutor::SnapshotLabels",
+                                       "arrayfire_column_major", "bounded_debug_readback",
+                                       "the snapshot items' labels (at most 4096 values)");
+            snapshot_run_record_.label_shape = labels.Shape();
+        }
+        snapshot_run_record_.output_rule = layer_snapshot_schedule_->output_rule;
     }
 
     if (config_.metric_sampling != MetricSampling::None) {
@@ -1218,6 +1326,11 @@ void TrainingExecutor::Train(
             "Training loop attached to existing setup trace");
     }
     ReportPinMemoryTransferStatus(config_);
+    {
+        std::lock_guard<std::mutex> lock(layer_snapshots_mutex_);
+        layer_snapshots_.clear();
+    }
+    snapshot_run_record_.epochs.clear();
     gradient_accumulator_.clear();
     gradient_accumulated_batches_ = 0;
     gradient_accumulation_weight_ = 0.0f;
@@ -1266,14 +1379,10 @@ void TrainingExecutor::Train(
             fail_run("warm_start_failed: a run either resumes a checkpoint or starts from one, not both");
             return;
         }
-        SequentialModel* sequential = model_->AsSequentialModel();
-        if (!sequential) {
-            fail_run("warm_start_failed: starting from a checkpoint needs a sequential model");
-            return;
-        }
+        // Any executable model: a layer stack or a graph with branches.
         const std::filesystem::path source = std::filesystem::absolute(config_.initialize_from_checkpoint);
         std::string warm_error;
-        const auto loaded = LoadWarmStartCheckpoint(source, *sequential, tokenizer_sha256, warm_error);
+        const auto loaded = LoadWarmStartCheckpoint(source, *model_, tokenizer_sha256, warm_error);
         if (!loaded) {
             fail_run("warm_start_failed: " + warm_error);
             return;
@@ -1283,6 +1392,31 @@ void TrainingExecutor::Train(
         spdlog::info("TrainingExecutor: initialized model weights from {} (source epoch {}, val_loss {}); "
                      "optimizer, schedule and epochs start fresh", initialized_from, loaded->epoch, loaded->val_loss);
         TrainingTraceCollector::Instance().RecordRuntimeEvent("WarmStart", initialized_from);
+    }
+    // A published weight file: matched by node name; layers without fitting
+    // weights start fresh. Optimizer, schedule, data order and epochs start fresh.
+    if (!config_.initialize_from_weights_file.empty()) {
+        if (!resume_from_.empty() || !config_.initialize_from_checkpoint.empty()) {
+            fail_run("weights_file_failed: a run starts from a weights file, starts from a checkpoint or resumes "
+                     "one; choose one");
+            return;
+        }
+        const std::filesystem::path source = std::filesystem::absolute(config_.initialize_from_weights_file);
+        weight_match::Report report;
+        std::string weights_error;
+        if (!StartFromWeightsFile(source, *model_, module_provenance_, report, weights_error)) {
+            fail_run("weights_file_failed: " + source.filename().string() + ": " + weights_error);
+            return;
+        }
+        initialized_from = source.lexically_normal().string();
+        const std::string summary = report.Summary();
+        UpdateMetrics([&](TrainingMetrics& m) { m.initialized_from = initialized_from; });
+        spdlog::info("TrainingExecutor: started from {} ({}): {}; optimizer, schedule and epochs start fresh",
+                     source.filename().string(), report.format, summary);
+        for (const auto& row : report.layers) {
+            if (!row.loaded) spdlog::debug("TrainingExecutor: {} ({}) starts fresh: {}", row.node_name, row.type_label, row.reason);
+        }
+        TrainingTraceCollector::Instance().RecordRuntimeEvent("WeightsFile", initialized_from + ": " + summary);
     }
     checkpoint_manager->SetProvenance(tokenizer_sha256,
                                       static_cast<int>(config_.sequence_batch.enabled ? config_.input_size : 0),
@@ -1493,10 +1627,18 @@ void TrainingExecutor::Train(
         // For Arrow/Parquet/legacy paths these are separate instances so
         // SetPhase is a no-op on the default IBatcher impl.
         const bool should_validate_this_epoch =
-            ShouldRunValidationEpoch(config_, epoch, epochs);
+            !range_test_ && ShouldRunValidationEpoch(config_, epoch, epochs);
         bool validation_ran_this_epoch = false;
         if (should_validate_this_epoch) {
             model_->SetTraining(false);
+        }
+        // Dead units: the ReLUs' outputs on the validation pass (layer stacks).
+        SequentialModel* observed = health_ && should_validate_this_epoch ? model_->AsSequentialModel() : nullptr;
+        if (observed) {
+            TrainingHealthRecorder* recorder = health_.get();
+            observed->SetForwardObserver([recorder](size_t index, const Module& module, const Tensor& output) {
+                recorder->OnValidationOutput(index, module, output);
+            });
         }
         if (should_validate_this_epoch &&
                    mode_ == DatasetMode::SequenceExternal &&
@@ -1508,7 +1650,12 @@ void TrainingExecutor::Train(
             // Not without a validation part (an image Data Split at 0.9 / 0 /
             // 0.1): it scored 0 samples and gave early stopping metrics of 0.
             active_val_ibatcher->SetPhase(val_batcher_phase);
-            RunValidationArrow(*active_val_ibatcher);
+            try {
+                RunValidationArrow(*active_val_ibatcher);
+            } catch (MissingValuesError& e) {
+                if (supplied_role_input(config_.dataset_roles.dev)) e.SetSuppliedRole("Validation");
+                throw;
+            }
             active_val_ibatcher->SetPhase(train_batcher_phase);
             validation_ran_this_epoch = true;
             if ((config_.pair_metrics || config_.retrieval_metrics) && metric_eval_val) {
@@ -1533,6 +1680,14 @@ void TrainingExecutor::Train(
 
         auto epoch_end = std::chrono::steady_clock::now();
         float epoch_time = std::chrono::duration<float>(epoch_end - epoch_start).count();
+
+        if (observed) observed->SetForwardObserver({});
+        if (health_) {
+            // Frozen layers get no gradients: judged, they would read as vanishing.
+            EpochHealth epoch_health = health_->EndEpoch(epoch, model_->GetTrainableParameters());
+            if (!validation_ran_this_epoch) epoch_health.relus.clear();
+            UpdateMetrics([&epoch_health](TrainingMetrics& m) { m.health.epochs.push_back(std::move(epoch_health)); });
+        }
 
         // Get current metrics for callback
         TrainingMetrics current = GetMetrics();
@@ -1695,6 +1850,26 @@ void TrainingExecutor::Train(
             if (!RunGenerationPreview(point)) break;
         }
 
+        if (layer_snapshot_schedule_) {
+            const TrainingMetrics m = GetMetrics();
+            TrainingEpochRecord record;
+            record.epoch = epoch;
+            record.train_loss = m.train_loss;
+            record.train_metric = regression_metrics ? m.train_mae : m.train_accuracy;
+            if (validation_ran_this_epoch) {
+                record.val_loss = m.val_loss;
+                record.val_metric = regression_metrics ? m.val_mae : m.val_accuracy;
+            }
+            snapshot_run_record_.run_id = training_run_id;
+            snapshot_run_record_.graph_name = layer_snapshot_schedule_->graph_name;
+            snapshot_run_record_.total_epochs = epochs;
+            snapshot_run_record_.regression = regression_metrics;
+            snapshot_run_record_.epochs.push_back(record);
+            if (epoch % std::max(1, layer_snapshot_schedule_->every_epochs) == 0 || epoch == epochs ||
+                stop_after_epoch)
+                TakeLayerSnapshot(epoch, training_run_id);
+        }
+
         // Notify plugin hooks: epoch end
         {
             cyxwiz::plugin::TrainingContext ctx;
@@ -1745,7 +1920,8 @@ void TrainingExecutor::Train(
                         100.0 * static_cast<double>(sampler.RowsLeftOut()) /
                             static_cast<double>(std::max<size_t>(sampler.RowsSeen(), 1)));
                 }
-                active_train_ibatcher->Reset();
+                // The Train batcher is reset at the start of the next epoch
+                // (RunTrainingEpochArrow), with that epoch's seed.
                 if (active_val_ibatcher != active_train_ibatcher) {
                     active_val_ibatcher->Reset();
                 }
@@ -1897,7 +2073,14 @@ void TrainingExecutor::Train(
         // follows its phase; out of it, a wired test set reads 0).
         model_->SetTraining(false);
         active_test_ibatcher->SetPhase(test_batcher_phase);
-        const auto test_evaluation = EvaluateArrowBatcher(*active_test_ibatcher);
+        const auto test_evaluation = [&] {
+            try {
+                return EvaluateArrowBatcher(*active_test_ibatcher);
+            } catch (MissingValuesError& e) {
+                if (supplied_role_input(config_.dataset_roles.test)) e.SetSuppliedRole("Test");
+                throw;
+            }
+        }();
         active_test_ibatcher->SetPhase(train_batcher_phase);
         UpdateMetrics([test_evaluation](TrainingMetrics& m) {
             m.test_loss = test_evaluation.loss;
@@ -2016,6 +2199,15 @@ void TrainingExecutor::Train(
     }
 
     spdlog::info("TrainingExecutor: Training complete");
+    } catch (const MissingValuesError& e) {
+        keep_missing_columns(e);
+        const std::string coded_error = errors::FormatError(
+            errors::Training::TrainingExecutionFailed,
+            "Training failed",
+            e.what());
+        fail_run(coded_error);
+        spdlog::error("TrainingExecutor: {}", coded_error);
+        throw;
     } catch (const std::exception& e) {
         const std::string coded_error = errors::FormatError(
             errors::Training::TrainingExecutionFailed,
@@ -2266,32 +2458,15 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
         TrainingTraceStage::UpdateParameters, epoch, batch_num,
         total_batches, batch_loss, current_acc);
 
-    auto params = model_->GetParameters();
-    // Regularization node (TOFIX140 A4): the gradient of
-    // l1 x sum(|w|) + l2 x sum(w^2), once per step and before clipping, as
-    // torch's backward of loss + penalty gives it.
-    const float l1 = config_.regularization_l1;
-    const float l2 = config_.regularization_l2;
-    if (l1 > 0.0f || l2 > 0.0f) {
-        for (auto& [name, grad] : averaged_grads) {
-            const auto found = params.find(name);
-            if (found == params.end()) continue;
-            const Tensor weight = found->second.Shape() == grad.Shape()
-                ? found->second
-                : found->second.Reshape(grad.Shape());
-            if (l1 > 0.0f) grad = grad + weight.Sign() * l1;
-            if (l2 > 0.0f) grad = grad + weight * (2.0f * l2);
-        }
-    }
-
-    if (config_.grad_clip_norm > 0.0f) {
-        const float norm = ClipGradientsByGlobalNorm(averaged_grads, config_.grad_clip_norm);
-        UpdateMetrics([norm](TrainingMetrics& m) { m.grad_norm = norm; });
-    }
-
     const auto optimizer_start = std::chrono::steady_clock::now();
-    optimizer_->Step(params, averaged_grads);
-    model_->SetParameters(params);
+    OptimizerStepSettings step_settings;
+    step_settings.regularization_l1 = config_.regularization_l1;
+    step_settings.regularization_l2 = config_.regularization_l2;
+    step_settings.grad_clip_norm = config_.grad_clip_norm;
+    if (health_) step_settings.on_gradients = [this](const std::map<std::string, Tensor>& g) { health_->OnStep(g); };
+    const float norm = ApplyOptimizerStep(*model_, *optimizer_, averaged_grads, step_settings);
+    // With clipping on, the norm as computed: NaN and infinite ones too (they are not refused)
+    if (step_settings.grad_clip_norm > 0.0f) UpdateMetrics([norm](TrainingMetrics& m) { m.grad_norm = norm; });
     TrainingProfileStageFence();
     const auto optimizer_ms = std::chrono::duration<float, std::milli>(
         std::chrono::steady_clock::now() - optimizer_start).count();
@@ -2307,6 +2482,17 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
         ApplySchedulerAdvance(
             scheduler_controller_->OnOptimizerStep());
     }
+    if (range_test_) {
+        const bool done = range_test_->Record(range_batch_loss_);
+        const double next = range_test_->CurrentLearningRate();
+        UpdateMetrics([this, next](TrainingMetrics& m) {
+            m.range_points = range_test_->Points();
+            m.range_stop_reason = range_test_->StopReason();
+            m.learning_rate = next;
+        });
+        if (done) Stop();
+        else optimizer_->SetLearningRate(next);
+    }
 
     gradient_accumulator_.clear();
     gradient_accumulated_batches_ = 0;
@@ -2314,6 +2500,52 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     gradient_accumulation_device_weight_ = Tensor();
     gradient_accumulation_device_weight_initialized_ = false;
     return true;
+}
+
+void TrainingExecutor::EnableLayerSnapshots(LayerSnapshotSchedule schedule) {
+    layer_snapshot_schedule_ = std::move(schedule);
+}
+
+std::vector<TrainingExecutor::LayerSnapshot> TrainingExecutor::LayerSnapshots() const {
+    std::lock_guard<std::mutex> lock(layer_snapshots_mutex_);
+    return layer_snapshots_;
+}
+
+void TrainingExecutor::TakeLayerSnapshot(int epoch, const std::string& run_id) {
+    const auto& schedule = *layer_snapshot_schedule_;
+    try {
+        const Tensor input = UsesSpatialSequentialInput(config_)
+                                 ? SpatialBatchFromRows(schedule.features, config_.input_shape)
+                                 : schedule.features;
+        LayerCaptureOptions options = schedule.options;
+        options.images_batch_first = !UsesSpatialSequentialInput(config_);  // TOFIX207
+        options.input_channels = config_.image_channels;
+        auto capture = CaptureStep(*model_, *loss_, input, schedule.labels, options, module_provenance_);
+        spdlog::info("TrainingExecutor: layer snapshot after epoch {} ({} layers, {:.1f} MB{})", epoch,
+                     capture->Layers().size(), capture->BytesHeld() / 1048576.0,
+                     capture->Truncated() ? ", over the budget: some tensors left out" : "");
+        LayerSnapshot snapshot{epoch, std::move(capture), {}, {}};
+        if (schedule.save) {
+            const std::string label = EpochCaptureLabel(epoch);
+            std::string error;
+            if (SaveLayerCapture(*snapshot.capture, run_id, label, &error)) {
+                snapshot.run_id = run_id;
+                snapshot.label = label;
+                // It is on disk now: holding every epoch's tensors on the device
+                // would grow with the run.
+                snapshot.capture.reset();
+                if (!SaveTrainingRunRecord(snapshot_run_record_, &error))
+                    spdlog::warn("TrainingExecutor: the run's epochs were not saved with the snapshot: {}", error);
+                PruneLayerCaptures(schedule.keep_runs);
+            } else {
+                spdlog::warn("TrainingExecutor: the layer snapshot after epoch {} was not saved: {}", epoch, error);
+            }
+        }
+        std::lock_guard<std::mutex> lock(layer_snapshots_mutex_);
+        layer_snapshots_.push_back(std::move(snapshot));
+    } catch (const std::exception& e) {
+        spdlog::warn("TrainingExecutor: layer snapshot after epoch {} failed: {}", epoch, e.what());
+    }
 }
 
 bool TrainingExecutor::RunGenerationPreview(GenerationPreviewPoint point) {
@@ -2360,37 +2592,35 @@ bool TrainingExecutor::RunGenerationPreview(GenerationPreviewPoint point) {
 void TrainingExecutor::ConfigureWeightDecayExclusions() {
     if (config_.weight_decay_exclude == "none") return;
     auto* adam = dynamic_cast<AdamOptimizer*>(optimizer_.get());
-    if (!adam) {
-        throw std::runtime_error("TrainingExecutor: weight_decay_exclude needs the AdamW optimizer");
+    auto* sgd = dynamic_cast<SGDOptimizer*>(optimizer_.get());
+    if (!adam && !sgd) {
+        throw std::runtime_error("TrainingExecutor: weight_decay_exclude needs the AdamW or SGD optimizer");
     }
     // 1-D tensors are biases and normalization scales/shifts; embedding tables
-    // are the Embedding and learned-position modules (SequentialModel names
-    // parameters "layer<i>.<name>").
+    // are the Embedding and learned-position modules (parameters are named
+    // "layer<i>.<name>" by module index, in a layer stack and in a graph with
+    // branches alike).
     std::set<std::string> excluded;
     std::set<std::string> embedding_prefixes;
     if (config_.weight_decay_exclude == "norms_biases_embeddings") {
-        SequentialModel* sequential = model_->AsSequentialModel();
-        if (!sequential) {
-            throw std::runtime_error(
-                "TrainingExecutor: weight_decay_exclude=norms_biases_embeddings needs a sequential model");
-        }
-        for (size_t i = 0; i < sequential->Size(); ++i) {
-            Module* module = sequential->GetModule(i);
+        for (size_t i = 0; i < model_->LayerCount(); ++i) {
+            Module* module = model_->LayerModule(i);
             if (dynamic_cast<EmbeddingModule*>(module) || dynamic_cast<LearnedPositionalEmbeddingModule*>(module)) {
                 embedding_prefixes.insert("layer" + std::to_string(i) + ".");
             }
         }
     }
     size_t total = 0;
-    for (const auto& [name, tensor] : model_->GetParameters()) {
+    for (const auto& [name, tensor] : model_->GetTrainableParameters()) {
         ++total;
         bool embedding = false;
         for (const auto& prefix : embedding_prefixes) embedding = embedding || name.rfind(prefix, 0) == 0;
         if (tensor.Shape().size() < 2 || embedding) excluded.insert(name);
     }
-    spdlog::info("TrainingExecutor: AdamW weight decay skips {} of {} parameter tensors ({})",
+    spdlog::info("TrainingExecutor: {} weight decay skips {} of {} parameter tensors ({})", adam ? "AdamW" : "SGD",
                  excluded.size(), total, config_.weight_decay_exclude);
-    adam->SetNoDecayParameters(std::move(excluded));
+    if (adam) adam->SetNoDecayParameters(std::move(excluded));
+    else sgd->SetNoDecayParameters(std::move(excluded));
 }
 
 void TrainingExecutor::EnableResumeCheckpoints(std::filesystem::path root, TrainingResumeIdentity identity,
@@ -2467,6 +2697,27 @@ void TrainingExecutor::AttachGraphScheduleIfPending(size_t batches_per_epoch) {
     if (total > std::numeric_limits<int>::max()) {
         throw std::runtime_error("TrainingExecutor: lr_schedule step count exceeds the supported range");
     }
+    std::string error;
+    const auto resume_state = std::exchange(graph_schedule_resume_, std::nullopt);
+    if (config_.lr_schedule == "one_cycle") {
+        // torch.optim.lr_scheduler.OneCycleLR (cos, two phases, cycle_momentum off): from
+        // learning_rate / 25 up to learning_rate over warmup_ratio of the updates, then
+        // down to learning_rate / 250,000.
+        OneCycleLRSchedulerSpec cycle;
+        cycle.max_lr = config_.learning_rate;
+        cycle.total_steps = static_cast<int>(total);
+        cycle.pct_start = config_.warmup_ratio;
+        scheduler_controller_ = std::make_unique<TrainingSchedulerController>(cycle);
+        if (!scheduler_controller_->Attach(*optimizer_, resume_state, error)) {
+            scheduler_controller_.reset();
+            throw std::runtime_error("TrainingExecutor: lr_schedule could not be attached: " + error);
+        }
+        const double first_lr = scheduler_controller_->GetScheduler()->GetLR();
+        spdlog::info("TrainingExecutor: lr_schedule=one_cycle max_lr={:.6g} rise={:.3g} of {} updates first_lr={:.6g}",
+                     cycle.max_lr, cycle.pct_start, cycle.total_steps, first_lr);
+        UpdateMetrics([first_lr](TrainingMetrics& m) { m.learning_rate = first_lr; });
+        return;
+    }
     WarmupDecayLRSchedulerSpec spec;
     spec.peak_lr = config_.learning_rate;
     spec.total_steps = static_cast<int>(total);
@@ -2475,8 +2726,6 @@ void TrainingExecutor::AttachGraphScheduleIfPending(size_t batches_per_epoch) {
                : config_.lr_schedule == "warmup_constant" ? "constant" : "cosine";
     spec.min_lr_ratio = config_.min_lr_ratio;
     scheduler_controller_ = std::make_unique<TrainingSchedulerController>(spec);
-    std::string error;
-    const auto resume_state = std::exchange(graph_schedule_resume_, std::nullopt);
     if (!scheduler_controller_->Attach(*optimizer_, resume_state, error)) {
         scheduler_controller_.reset();
         throw std::runtime_error("TrainingExecutor: lr_schedule could not be attached: " + error);
@@ -2608,6 +2857,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
     int batch_num = 0;
     size_t sample_count = 0;
     SequenceTagMetrics aggregate_metrics;
+    ReportWindow report_window;
 
     const size_t total_batches = batcher.GetNumBatches();
     AttachGraphScheduleIfPending(total_batches);
@@ -2703,6 +2953,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
             static_cast<int>(total_batches));
         const auto loss_start = std::chrono::steady_clock::now();
         const float batch_loss = ComputeLoss(predictions, targets);
+        range_batch_loss_ = batch_loss;
         const std::string loss_status =
             std::isfinite(batch_loss) ? "ok" : "failed";
         TrainingTraceCollector::Instance().RecordStage(
@@ -2821,6 +3072,16 @@ void TrainingExecutor::RunTrainingEpochSequence(
                              ? fmt::format(" grad_norm={:.3g}", snapshot.grad_norm) : std::string());
         }
 
+        if (ShouldReportTrainingBatch(config_, batch_num, static_cast<int>(total_batches), false) &&
+            ReportWindow::Ends(epoch, batch_num)) {
+            const float window_loss = report_window.Loss(loss_->GetReduction(), current_loss, loss_weight_sum);
+            const float window_acc = report_window.Accuracy(aggregate_metrics.correct_tokens,
+                                                            aggregate_metrics.total_tokens, current_acc);
+            UpdateMetrics([window_loss, window_acc](TrainingMetrics& m) {
+                m.report_loss = window_loss;
+                m.report_accuracy = window_acc;
+            });
+        }
         NotifyPluginBatch(false, epoch, batch_num, static_cast<int>(total_batches), batch_loss, current_acc);
         if (batch_cb) {
             CrashRunRecorder::Instance().MarkStage(
@@ -2829,8 +3090,11 @@ void TrainingExecutor::RunTrainingEpochSequence(
             TrainingTraceCollector::Instance().RecordStage(
                 TrainingTraceStage::BatchCallback, epoch, batch_num,
                 static_cast<int>(total_batches), batch_loss, current_acc);
+            // The epoch's running loss with its running accuracy, as the
+            // Arrow epoch reports them (the batch's own loss went here, beside
+            // the running accuracy: ORA-33).
             batch_cb(epoch, batch_num, static_cast<int>(total_batches),
-                     batch_loss, current_acc);
+                     current_loss, current_acc);
         }
 
         // Mid-epoch resume checkpoint (TOFIX118 P4e-2): every N optimizer
@@ -3018,6 +3282,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
     int batch_num = 0;
     float current_loss = 0.0f;
     float current_acc = 0.0f;
+    ReportWindow report_window;
     double fetch_total_ms = 0.0;
     double fetch_max_ms = 0.0;
 
@@ -3038,6 +3303,13 @@ void TrainingExecutor::RunTrainingEpochArrow(
     // it impossible to tell "alive but slow" from "hung". This is
     // the fix for the tofix.md entry "Training logs silent mid-epoch".
     const auto epoch_start_time = std::chrono::steady_clock::now();
+
+    // The epoch's order comes from its own seed (set just before, from
+    // (run seed, epoch)), as in RunTrainingEpochSequence. Without this Reset
+    // the seed took effect only at the epoch's end: epoch 1 trained in the
+    // batcher's construction order and epoch k in epoch k-1's, so a resumed
+    // run did not replay its data order (TOFIX228 1.6, the level 3 oracle).
+    batcher.Reset();
 
     spdlog::debug("RunTrainingEpochArrow: Entering batch loop");
     while (!batcher.IsEpochComplete()) {
@@ -3169,12 +3441,20 @@ void TrainingExecutor::RunTrainingEpochArrow(
         LossAggregationWeightValue loss_weight;
         if (regression_metrics) {
             batch_loss = ComputeLoss(predictions, batch.labels);
+            range_batch_loss_ = batch_loss;
             loss_weight = ResolveLossAggregationWeight(*loss_, batch.size);
             loss_weight_sum += loss_weight.host;
             epoch_loss += batch_loss * loss_weight.host;
             loss_status = std::isfinite(batch_loss) ? "ok" : "failed";
         } else {
             Tensor loss_tensor = ComputeLossTensor(predictions, batch.labels);
+            if (range_test_) {
+                // The range test reads every batch's loss (the run is short).
+                const ScopedArrayFireHostSyncAttribution range_sync_attribution(
+                    ArrayFireHostSyncCategory::LossScalarReadback,
+                    "TrainingExecutor::RangeTestBatchLoss");
+                range_batch_loss_ = loss_tensor.ReadData<float>()[0];
+            }
             loss_weight = ResolveLossAggregationWeight(*loss_, batch.size);
             Tensor weighted_loss = loss_weight.device != nullptr
                 ? ApplyDeviceScalar(loss_tensor, *loss_weight.device, false)
@@ -3247,9 +3527,46 @@ void TrainingExecutor::RunTrainingEpochArrow(
                       static_cast<float>(accuracy_count.total)
                 : 0.0f;
             batch_loss = current_loss;
+            if (ReportWindow::Ends(epoch, batch_num)) {
+                double weight = loss_weight_sum;
+                if (device_loss_weight_sum_initialized) {
+                    const ScopedArrayFireHostSyncAttribution weight_sync_attribution(
+                        ArrayFireHostSyncCategory::LossScalarReadback,
+                        "TrainingExecutor::ReportWindowWeight");
+                    weight = device_loss_weight_sum.ReadData<float>()[0];
+                }
+                const float window_loss = report_window.Loss(loss_->GetReduction(), current_loss, weight);
+                const float window_acc =
+                    report_window.Accuracy(accuracy_count.correct, accuracy_count.total, current_acc);
+                UpdateMetrics([window_loss, window_acc](TrainingMetrics& m) {
+                    m.report_loss = window_loss;
+                    m.report_accuracy = window_acc;
+                });
+            }
         } else if (regression_metrics) {
             current_loss = FinalizeAggregatedLoss(
                 *loss_, epoch_loss, loss_weight_sum);
+            if (should_report && ReportWindow::Ends(epoch, batch_num)) {
+                const float window_loss = report_window.Loss(loss_->GetReduction(), current_loss, loss_weight_sum);
+                UpdateMetrics([window_loss](TrainingMetrics& m) { m.report_loss = window_loss; });
+            }
+        }
+
+        // A NaN or infinite loss fails the run, before the optimizer step, as
+        // the sequence loop does (TOFIX223 0.6). The classification loss is
+        // summed on the device and read on the report interval (always on an
+        // epoch's last batch), so it is checked there: no extra device sync.
+        // A learning rate range test ends on a non-finite loss itself (its
+        // Record, after the step): that is its result, not a failure.
+        if (!range_test_ && (regression_metrics || should_report)) {
+            const float checked_loss = regression_metrics ? batch_loss : current_loss;
+            if (!std::isfinite(checked_loss)) {
+                throw std::runtime_error("the training loss became " +
+                                         std::string(std::isnan(checked_loss) ? "NaN" : "infinite") +
+                                         " at epoch " + std::to_string(epoch) + ", batch " +
+                                         std::to_string(batch_num) +
+                                         " (a learning rate too high, or NaN / infinite values in the data)");
+            }
         }
 
         // Update metrics
@@ -3433,6 +3750,13 @@ ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
                 ? &device_loss_weight_sum
                 : nullptr,
             "TrainingExecutor::ReadValidationLoss");
+    }
+    if (batch_num > 0 && !std::isfinite(final_loss)) {
+        // As the sequence evaluation does: early stopping and the best model
+        // cannot use a NaN or infinite loss (TOFIX223 0.6).
+        throw std::runtime_error("the evaluation loss became " +
+                                 std::string(std::isnan(final_loss) ? "NaN" : "infinite") +
+                                 " (NaN / infinite values in the evaluation data, or a diverged model)");
     }
     float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
 

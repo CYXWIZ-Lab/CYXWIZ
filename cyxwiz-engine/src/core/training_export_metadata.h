@@ -50,6 +50,9 @@ inline ExportOptions TrainingExportMetadata(const TrainingConfiguration& source)
         threshold << source.pair_score_threshold;
         options.custom_metadata["pair_score_threshold"] = threshold.str();
     }
+    // The threshold / calibration kept with the model (TOFIX129 D11); the
+    // local inference server applies it.
+    if (!source.decision.Empty()) options.custom_metadata["decision"] = ModelDecisionToJson(source.decision);
     return options;
 }
 } // namespace cyxwiz

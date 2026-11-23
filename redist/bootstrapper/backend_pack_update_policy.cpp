@@ -44,6 +44,7 @@ EvaluateBackendPackUpdate(const VerifiedBackendPackManifest &installed,
   using D = BackendPackUpdateDisposition;
   if (installed.kind != candidate.kind ||
       installed.backend != candidate.backend ||
+      installed.plugin_id != candidate.plugin_id ||
       installed.platform != candidate.platform ||
       installed.architecture != candidate.architecture)
     return {D::Unknown, "Installed and offered package targets differ"};

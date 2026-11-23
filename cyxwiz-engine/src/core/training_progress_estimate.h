@@ -30,8 +30,14 @@ inline double TrainingFractionComplete(int epoch, int batch, int batches_per_epo
     return std::clamp(done_epochs / total_epochs, 0.0, 1.0);
 }
 
-// "1h 04m", "12m 30s", "45s".
+// "1h 04m", "12m 30s", "45s"; under 10 s with a tenth ("2.2s": a fast run
+// read "2s ... avg 0.0s/epoch").
 inline std::string FormatTrainingDuration(double seconds) {
+    if (seconds < 9.95) {
+        char short_buffer[16];
+        std::snprintf(short_buffer, sizeof(short_buffer), "%.1fs", std::max(0.0, seconds));
+        return short_buffer;
+    }
     const long long total = std::max(0LL, static_cast<long long>(std::llround(seconds)));
     const long long h = total / 3600, m = (total % 3600) / 60, s = total % 60;
     char buffer[48];

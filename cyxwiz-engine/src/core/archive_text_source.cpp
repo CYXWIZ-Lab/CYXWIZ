@@ -1,4 +1,5 @@
 #include "archive_text_source.h"
+#include "gcc_diagnostics.h"
 #include <archive.h>
 #include <arrow/api.h>
 #include <cyxwiz/utilities.h>
@@ -149,6 +150,8 @@ std::string ReadZipTextMember(const std::filesystem::path& path,
 }
 
 namespace {
+// Arrow's builders inlined here: GCC -Warray-bounds false positive (TOFIX187).
+CYXWIZ_GCC_IGNORE_BEGIN("-Warray-bounds")
 std::shared_ptr<arrow::Table> LoadMembers(const std::filesystem::path& path,
     const std::vector<std::string>& members, const ArchiveTextLimits& limits,
     const std::function<bool()>& cancelled) {
@@ -185,6 +188,7 @@ std::shared_ptr<arrow::Table> LoadMembers(const std::filesystem::path& path,
     if (!valid.ok()) throw std::runtime_error(valid.ToString());
     return table;
 }
+CYXWIZ_GCC_IGNORE_END
 } // namespace
 
 std::shared_ptr<arrow::Table> LoadZipTextTable(const std::filesystem::path& path,

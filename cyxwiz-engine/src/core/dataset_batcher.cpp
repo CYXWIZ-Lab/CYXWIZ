@@ -1,9 +1,11 @@
 #include "dataset_batcher.h"
+#include "batch_uploads.h"
 #include "annotation_manager.h"
 #include "../preprocessing/preprocessing_config.h"
 #include "../preprocessing/statistics_calculator.h"
 #include "../preprocessing/normalization_transform.h"
 #include "../preprocessing/scaling_transform.h"
+#include "cyxwiz/portable_random.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cstring>
@@ -174,8 +176,8 @@ Batch DatasetBatcher::GetNextBatch() {
         for (int label : batch_labels) {
             scalar_labels.push_back(static_cast<float>(label));
         }
-        batch.labels = Tensor(
-            {batch_labels.size(), 1}, scalar_labels.data(), DataType::Float32);
+        batch.labels =
+            HostBatchTensor("DatasetBatcher", "labels", {batch_labels.size(), 1}, scalar_labels.data());
     } else if (one_hot_) {
         batch.labels = LabelsToOneHot(batch_labels);
     } else {
@@ -236,6 +238,7 @@ void DatasetBatcher::SetLegacyOneHotEncoding(size_t num_classes) {
 }
 
 Tensor DatasetBatcher::VectorToTensor(const std::vector<float>& data, const std::vector<size_t>& shape) {
+    RecordBatchUpload("DatasetBatcher", "features", BatchUploadReason::Batch, shape, DataType::Float32);
     Tensor tensor(shape, DataType::Float32);
 
     // Copy data to tensor
@@ -247,6 +250,7 @@ Tensor DatasetBatcher::VectorToTensor(const std::vector<float>& data, const std:
 
 Tensor DatasetBatcher::LabelsToOneHot(const std::vector<int>& labels) {
     std::vector<size_t> shape = {labels.size(), num_classes_};
+    RecordBatchUpload("DatasetBatcher", "labels", BatchUploadReason::Batch, shape, DataType::Float32);
     Tensor tensor(shape, DataType::Float32);
 
     float* data = tensor.MutableData<float>();
@@ -264,6 +268,7 @@ Tensor DatasetBatcher::LabelsToOneHot(const std::vector<int>& labels) {
 
 Tensor DatasetBatcher::LabelsToTensor(const std::vector<int>& labels) {
     std::vector<size_t> shape = {labels.size()};
+    RecordBatchUpload("DatasetBatcher", "labels", BatchUploadReason::Batch, shape, DataType::Int32);
     Tensor tensor(shape, DataType::Int32);
 
     int* data = tensor.MutableData<int>();
@@ -283,7 +288,7 @@ void DatasetBatcher::NormalizeData(std::vector<float>& data) {
 }
 
 void DatasetBatcher::ShuffleIndices() {
-    std::shuffle(indices_.begin(), indices_.end(), rng_);
+    cyxwiz::portable::Shuffle(indices_.begin(), indices_.end(), rng_);
 }
 
 // Preprocessing pipeline methods

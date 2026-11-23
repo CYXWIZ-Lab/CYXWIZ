@@ -74,10 +74,12 @@ public:
   void Render();
   void SetScriptingEngine(
       std::shared_ptr<scripting::ScriptingEngine> scripting_engine);
+  // refresh_context runs on the UI thread before each assistant command.
   void SetAssistantCommandHandler(
       std::function<cyxwiz::plugin::AssistantCommandResponse(
           const cyxwiz::plugin::AssistantCommandRequest &)>
-          handler);
+          handler,
+      std::function<void()> refresh_context);
   void SetProjectRoot(std::string project_root);
   void CloseProject(std::string_view project_root);
   bool ActivatePythonRepl();

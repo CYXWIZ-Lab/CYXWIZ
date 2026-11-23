@@ -8,6 +8,7 @@
 #include "graph_training_prep.h"
 #include "node_metadata_registry.h"
 #include "parquet_backed_dataset.h"
+#include "project_data_path.h"
 #include "pipeline_runtime_capabilities.h"
 #include "sequence_arrow_batcher.h"
 #include "sha256_digest.h"
@@ -22,6 +23,7 @@
 #include <chrono>
 #include <thread>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <mutex>
 #include <set>
@@ -306,9 +308,11 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
         ApplySequenceBatcherBuildResultToTrainingConfig(sequence, config);
         executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(sequence.batcher),
                                                       std::move(sequence.id_to_label));
-    } else if (role_on_disk || (train_on_disk && (roles.dev.IsSupplied() || roles.test.IsSupplied()))) {
-        // Supplied roles with any of them on disk: one batcher per role, each
-        // from memory or from its file (the Engine's TabularLoader path).
+    } else if (roles.dev.IsSupplied() || roles.test.IsSupplied()) {
+        // Supplied roles: one batcher per role, each from memory or from its
+        // file, as the Engine's TabularLoader does. In memory too (TOFIX223
+        // 0.17: with every role in memory the job trained the plain table,
+        // whose split gives a supplied role no rows, and never validated).
         ResolvedTabularDatasets resolved;
         const auto pick = [&](const std::string& name, std::shared_ptr<ArrowDataset>& memory,
                               std::shared_ptr<ParquetBackedDataset>& file) {
@@ -454,6 +458,21 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
 }
 
 
+std::map<std::string, std::string> DataInputFiles(const std::string& graph_json, const std::string& project_root) {
+    std::map<std::string, std::string> files;
+    GraphDocument graph;
+    std::string error;
+    if (!ParseGraphDocument(graph_json, graph, error)) return files;
+    for (const auto& node : graph.nodes) {
+        if (node.type != gui::NodeType::DataInput) continue;
+        const std::string name = Parameter(node, "dataset_name");
+        const std::string path = Parameter(node, "file_path");
+        if (name.empty() || path.empty()) continue;
+        files[name] = ResolveProjectDataPath(path, project_root);
+    }
+    return files;
+}
+
 bool PlanGraphJobDatasets(const std::string& graph_json, GraphJobDatasetPlan& plan, std::string& error) {
     plan = {};
     GraphDocument graph;
@@ -486,9 +505,34 @@ bool PlanGraphJobDatasets(const std::string& graph_json, GraphJobDatasetPlan& pl
             return false;
         }
         if (!seen.insert(name).second) continue;
-        (test_inputs.count(node.id) > 0 ? plan.kept_private : plan.ship).push_back(name);
+        if (test_inputs.count(node.id) > 0) {
+            plan.kept_private.push_back(name);
+            continue;
+        }
+        const std::string cloud_file_id = Parameter(node, "cloud_file_id");
+        if (cloud_file_id.empty()) {
+            plan.ship.push_back(name);
+            continue;
+        }
+        CloudJobDataset cloud;
+        cloud.dataset_name = name;
+        cloud.dataset_id = Parameter(node, "cloud_dataset_id");
+        cloud.file_id = cloud_file_id;
+        cloud.file_name = Parameter(node, "cloud_file_name");
+        if (cloud.dataset_id.empty()) {
+            error = "Data Input '" + node.name + "' names a CyxCloud file but not its dataset (cloud_dataset_id)";
+            return false;
+        }
+        if (!CloudDatasetFileFormatKnown(cloud.file_name)) {
+            error = "Data Input '" + node.name + "': CyxCloud file '" + cloud.file_name +
+                    "' is not Arrow IPC or Parquet; remote nodes train from those two formats only";
+            return false;
+        }
+        const std::string size = Parameter(node, "cloud_size_bytes");
+        if (!size.empty()) cloud.size_bytes = std::strtoull(size.c_str(), nullptr, 10);
+        plan.cloud.push_back(std::move(cloud));
     }
-    if (plan.ship.empty()) {
+    if (plan.ship.empty() && plan.cloud.empty()) {
         error = "the graph has no training Data Input";
         return false;
     }

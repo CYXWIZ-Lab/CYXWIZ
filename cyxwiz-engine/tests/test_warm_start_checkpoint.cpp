@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <vector>
 
@@ -111,6 +112,72 @@ int main() {
             const auto reloaded = manager.LoadCheckpoint(*Model(3), nullptr, "best");
             Require(reloaded && reloaded->initialized_from == best.string() && reloaded->context == 512 &&
                     reloaded->tokenizer_sha256 == "abc123", "provenance round trip");
+        }
+        // BatchNorm's running statistics are state, not trained: named as
+        // such, saved with the weights, and a checkpoint from before they
+        // were saved still loads (the state starts from the model's own).
+        {
+            const auto bn_model = [] {
+                auto model = std::make_unique<SequentialModel>();
+                model->Add<LinearModule>(4, 3);
+                model->Add<BatchNormModule>(3);
+                return model;
+            };
+            auto bn = bn_model();
+            const std::set<std::string> state{"layer1.running_mean", "layer1.running_var"};
+            Require(bn->GetStateParameterNames() == state, "the BatchNorm running statistics are its state");
+            Require(bn->GetParameters().count("layer1.running_mean") == 1, "state is saved with the weights");
+            Require(bn->GetGradients().count("layer1.running_mean") == 0, "state has no gradient");
+            const fs::path bn_run = run.parent_path() / "train-bn";
+            CheckpointManager manager(bn_run.string());
+            Require(!manager.SaveCheckpoint(*bn, nullptr, TrainingMetrics{}, "best").empty(), "save BatchNorm model");
+            const fs::path manifest_path = bn_run / "best" / "model" / "manifest.json";
+            auto manifest = ReadJson(manifest_path);
+            manifest.erase("layer1_running_mean.bin");
+            manifest.erase("layer1_running_var.bin");
+            WriteJson(manifest_path, manifest);
+            Require(manager.LoadCheckpoint(*bn_model(), nullptr, "best").has_value(),
+                    "a checkpoint without the running statistics loads");
+        }
+        // A frozen layer stays part of the model: saved and loaded with the
+        // rest, never stepped (weight decay included), and without a gradient.
+        {
+            auto frozen = Model(3);
+            const size_t all = frozen->GetParameters().size();
+            frozen->FreezeLayer(0);
+            const auto frozen_names = frozen->GetFrozenParameterNames();
+            Require(!frozen_names.empty(), "the frozen layer's parameters are named");
+            for (const auto& name : frozen_names) Require(name.rfind("layer0.", 0) == 0, "frozen name " + name);
+            Require(frozen->GetParameters().size() == all, "a frozen layer stays in the model's parameters");
+            Require(frozen->GetTrainableParameters().size() == all - frozen_names.size(),
+                    "the optimizer is handed the other layers only");
+
+            const std::vector<float> rows{0.5f, -1.0f, 2.0f, 0.25f, -0.75f, 1.5f, 0.0f, 3.0f};
+            const std::vector<float> ones(4, 1.0f);
+            AdamWOptimizer optimizer(0.05, 0.9, 0.999, 1e-8, 0.1);
+            const auto frozen_before = Weights(*frozen);
+            for (int step = 0; step < 3; ++step) {
+                frozen->Forward(Tensor({2, 4}, rows.data()));
+                frozen->Backward(Tensor({2, 2}, ones.data()));
+                for (const auto& [name, gradient] : frozen->GetGradients())
+                    Require(!frozen_names.count(name), "no gradient is reported for " + name);
+                frozen->UpdateParameters(&optimizer);
+            }
+            const auto after = Weights(*frozen);
+            bool others_moved = false;
+            for (const auto& [name, values] : after) {
+                if (frozen_names.count(name)) Require(values == frozen_before.at(name), name + " is unchanged, bit for bit");
+                else others_moved = others_moved || values != frozen_before.at(name);
+            }
+            Require(others_moved, "the layers that are not frozen still train");
+
+            const fs::path frozen_run = run.parent_path() / "train-frozen";
+            CheckpointManager manager(frozen_run.string());
+            Require(!manager.SaveCheckpoint(*frozen, nullptr, TrainingMetrics{}, "best").empty(), "save frozen model");
+            auto reloaded = Model(3);
+            Require(manager.LoadCheckpoint(*reloaded, nullptr, "best").has_value(),
+                    "the checkpoint loads into a model with nothing frozen: " + manager.GetLastError());
+            Require(Weights(*reloaded) == after, "the checkpoint holds the frozen layer's weights too");
         }
         fs::remove_all(run.parent_path());
         std::cout << "Warm start checkpoint passed: " << checks << " checks\n";

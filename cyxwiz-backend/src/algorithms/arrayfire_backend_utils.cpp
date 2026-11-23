@@ -59,6 +59,8 @@ uint64_t NextAttentionDropoutStream() {
 
 std::string SeedCurrentArrayFireRandomEngine(uint64_t seed) {
     g_attention_dropout_streams = 0;
+    // Philox: its draws are the same on CPU, CUDA and OpenCL (device_random.h).
+    af::setDefaultRandomEngineType(AF_RANDOM_ENGINE_PHILOX_4X32_10);
     const auto type = af::getDefaultRandomEngine().getType();
     int major = 0, minor = 0, patch = 0;
     const af_err version_status = af_get_version(&major, &minor, &patch);

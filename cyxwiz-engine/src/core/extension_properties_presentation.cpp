@@ -182,9 +182,12 @@ ExtensionPropertiesView BuildExtensionPropertiesView(const ExtensionPropertiesIn
     // Unapproved code: its refusal is the approval message the card shows.
     bool error_placed = in.shape_error.empty() || in.needs_approval;
     for (const auto& definition : d.metadata.parameters) {
+        // Read before the row exists: GCC 16 otherwise sees the new row's
+        // strings as maybe-uninitialized (false positive, TOFIX187).
+        const std::string& label = definition.display_name.empty() ? definition.name : definition.display_name;
         ExtensionSettingRow row;
         row.key = definition.name;
-        row.label = definition.display_name.empty() ? definition.name : definition.display_name;
+        row.label = label;
         row.value = values.at(definition.name);
         row.editor = EditorFor(definition.type);
         row.choices = definition.enum_values;

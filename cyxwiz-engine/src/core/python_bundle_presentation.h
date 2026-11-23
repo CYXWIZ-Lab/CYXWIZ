@@ -94,7 +94,7 @@ struct CreateNodeFound {
     // After the check:
     bool checked = false;
     PythonCheckKind kind = PythonCheckKind::NotChecked;
-    std::string check;  // "Gradient passed 4.5e-05"
+    std::string check{};  // "Gradient passed 4.5e-05"
 };
 
 struct CreateNodeInputs {

@@ -8,6 +8,7 @@
 // facts (truth report, dataset facts, compile result) and hands them in.
 
 #include "compiled_node_presentation.h"
+#include "layer_inside_presentation.h"
 #include "node_metadata.h"
 #include "sequence_fusion_presentation.h"
 #include "../gui/properties_truth.h"
@@ -132,6 +133,8 @@ struct View {
     std::vector<const Truth*> loose_truths;  // truths no metadata row matched (listed read-only)
     std::string settings_note;               // under the rows; "" when none
     std::optional<DataFact> data;
+
+    LayerInside inside;                      // inside.applies when the node has steps inside
 
     bool has_compiled = false;
     CompiledNodeCard compiled;

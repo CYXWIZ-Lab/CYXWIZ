@@ -1,4 +1,5 @@
 #include "node_doctor.h"
+#include "common/server_address.h"
 
 #include "node_data_dir.h"
 
@@ -158,7 +159,7 @@ DoctorFacts GatherDoctorFacts(const DoctorOptions& options) {
 
     facts.central_server = options.central_server;
     if (!options.central_server.empty()) {
-        auto channel = grpc::CreateChannel(options.central_server, grpc::InsecureChannelCredentials());
+        auto channel = cyxwiz::protocol::CreateServerChannel(options.central_server);
         facts.central_server_reachable =
             channel->WaitForConnected(std::chrono::system_clock::now() + std::chrono::seconds(3));
     }

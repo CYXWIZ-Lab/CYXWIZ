@@ -1,6 +1,7 @@
 #pragma once
 
 #include "node_config_dialog.h"
+#include "word_map_view.h"
 
 #include "../core/word_embeddings_presentation.h"
 #include "../core/word_vectors_training_record.h"
@@ -90,6 +91,9 @@ private:
     void RenderCoverage(bool full_list);
     void RenderVocabulary();
     void RenderNearest();
+    void RenderMap();
+    // The vectors Nearest words and Map show: the run's (or the saved training's) when training, else the file read.
+    std::shared_ptr<const cyxwiz::WordVectors> ShownVectors() const;
     void RenderOutputs();
     void RenderRunCard();
     void RenderSavedCard();
@@ -138,6 +142,7 @@ private:
     std::shared_ptr<const cyxwiz::WordVectors> saved_vectors_;
 
     char query_[128] = "";
+    std::unique_ptr<cyxwiz::WordMapView> map_view_;  // the Map tab and its window (TOFIX129 D8, M-7)
     std::string query_word_;
     std::vector<std::pair<std::string, double>> nearest_;
     std::string nearest_note_;

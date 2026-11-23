@@ -97,15 +97,18 @@ void MainWindow::ShowCompileReport(cyxwiz::compile_report::Mode mode, std::strin
     in.placements = compile_result_backend_placements_;
     in.has_config = compile_result_has_config_;
     in.config = compile_result_config_;
-    // Parameters: the layers' counts of the live compile (the AS COMPILED
-    // cards' numbers), when it compiled the same layers.
+    // Parameters and the training-step memory: from the live compile's build
+    // (the AS COMPILED cards' numbers), when it compiled the same layers.
     if (in.has_config && live_compile_ && live_compile_->ParametersCounted() && live_compile_->Config() &&
         live_compile_->Config()->layers.size() == in.config.layers) {
         long long total = 0;
         for (const auto& [layer, count] : live_compile_->LayerParameters()) total += count;
         in.config.parameters = total;
+        in.config.memory = live_compile_->Memory();
     }
-    compile_report_ = report::BuildReport(in);
+    // The missing-values cards come from the fix's state (empty for any other report).
+    compile_report_input_ = std::move(in);
+    RefreshMissingValuesReport();
     compile_report_mode_ = mode;
     show_compile_result_popup_ = true;
 }
@@ -121,7 +124,7 @@ void MainWindow::RenderCompileResultPopup() {
     NextWindowFits(860.0f, 640.0f);
     int focus_node = -1, open_node = -1, add_tokenizer_after = -1, add_after_input = -1;
     gui::NodeType add_type = gui::NodeType::Resize;
-    bool open_data_studio = false, train = false, run_debug = false, open_debugger = false;
+    bool open_data_studio = false, train = false, run_debug = false, open_debugger = false, fix_and_train = false;
     // The next step's state (TOFIX178 UI-1): the Compile and Train-blocked
     // reports show the last Local Debug run against the graph now.
     const bool show_debug = compile_report_mode_ == report::Mode::Compile ||
@@ -141,10 +144,12 @@ void MainWindow::RenderCompileResultPopup() {
 
         const float body_h = -FooterHeight() - (show_debug ? ImGui::GetFrameHeightWithSpacing() + 6.0f : 0.0f);
         if (ImGui::BeginTabBar("##compile_report_tabs")) {
-            const std::string findings_tab = "Findings (" + std::to_string(r.findings.size()) + ")###findings";
+            const std::string findings_tab =
+                "Findings (" + std::to_string(r.findings.size() + r.missing_value_groups) + ")###findings";
             if (ImGui::BeginTabItem(findings_tab.c_str())) {
                 ImGui::BeginChild("##findings", ImVec2(0.0f, body_h));
-                if (r.findings.empty()) ImGui::TextColored(t.text_dim, "No findings.");
+                if (!r.missing_values.empty()) RenderMissingValuesCards();
+                if (r.findings.empty() && r.missing_values.empty()) ImGui::TextColored(t.text_dim, "No findings.");
                 int last_level = -1;
                 for (size_t i = 0; i < r.findings.size(); ++i) {
                     const auto& f = r.findings[i];
@@ -320,6 +325,8 @@ void MainWindow::RenderCompileResultPopup() {
         const char* run_debug_label = ICON_FA_BUG " Run Local Debug (F6)";
         float right = cyxwiz::ui::ButtonWidth("Close", cyxwiz::ui::ButtonSize::Regular);
         if (r.offer_train) right += spacing + cyxwiz::ui::ButtonWidth("Train", cyxwiz::ui::ButtonSize::Regular);
+        if (r.offer_fix_and_train)
+            right += spacing + cyxwiz::ui::ButtonWidth("Fix and train", cyxwiz::ui::ButtonSize::Regular);
         if (show_debug) right += spacing + cyxwiz::ui::ButtonWidth(run_debug_label, cyxwiz::ui::ButtonSize::Regular);
         cyxwiz::ui::SameLineRight(right);
         if (show_debug) {
@@ -329,7 +336,17 @@ void MainWindow::RenderCompileResultPopup() {
             ImGui::SameLine();
         }
         bool close = false;
-        if (r.offer_train) {
+        if (r.offer_fix_and_train) {
+            // Missing values: every open group gets its recommended fix, then Train.
+            close = cyxwiz::ui::SecondaryButton("Close", true, nullptr, cyxwiz::ui::ButtonSize::Regular);
+            ImGui::SameLine();
+            if (cyxwiz::ui::PrimaryButton("Fix and train", r.fix_and_train_blocked.empty(),
+                                          r.fix_and_train_blocked.c_str()))
+                fix_and_train = true;
+            if (ImGui::IsItemHovered() && r.fix_and_train_blocked.empty() && !r.missing_values.empty())
+                ImGui::SetTooltip("%s", r.missing_values.front().fix_all_hint.c_str());
+            ImGui::SetItemDefaultFocus();
+        } else if (r.offer_train) {
             close = cyxwiz::ui::SecondaryButton("Close", true, nullptr, cyxwiz::ui::ButtonSize::Regular);
             ImGui::SameLine();
             if (cyxwiz::ui::PrimaryButton("Train")) train = true;
@@ -338,7 +355,8 @@ void MainWindow::RenderCompileResultPopup() {
             close = cyxwiz::ui::PrimaryButton("Close");
             ImGui::SetItemDefaultFocus();
         }
-        if (close || train || run_debug || open_debugger || EscapePressedHere() || focus_node >= 0 || open_node >= 0 ||
+        if (close || train || fix_and_train || run_debug || open_debugger || EscapePressedHere() || focus_node >= 0 ||
+            open_node >= 0 ||
             open_data_studio ||
             add_tokenizer_after >= 0 || add_after_input >= 0)
             ImGui::CloseCurrentPopup();
@@ -357,6 +375,15 @@ void MainWindow::RenderCompileResultPopup() {
     }
     if (run_debug) LocalDebugGraphAndReport();
     if (open_debugger && studio_debugger_panel_) studio_debugger_panel_->Show();
+    if (fix_and_train) {
+        // The open groups' steps, one chain in the card's order, then
+        // training once the canvas has them (TrackMissingValuesSteps).
+        const auto cards = compile_report_.missing_values;  // each add rebuilds the report
+        for (size_t i = 0; i < cards.size() && i < missing_values_.size(); ++i)
+            AddMissingValuesSteps(missing_values_[i], cards[i].fix_all_steps);
+        train_after_missing_values_fix_ = true;
+        train_after_from_dashboard_ = false;
+    }
     if (train && node_editor_) {
         StartTrainingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
         if (training_plot_panel_) training_plot_panel_->SetVisible(true);
@@ -474,7 +501,7 @@ void MainWindow::RenderMaterializationMemoryConfirmationPopup() {
         if (training_plot_panel_)
             training_plot_panel_->SetPreparationFailed("Training not started: cancelled at the memory-risk question.");
         spdlog::info("StartTrainingFromGraph: materialization memory confirmation cancelled by user");
-        EndFoldsLaunch("Not started: cancelled at the memory question.");
+        EndMarkedLaunch("Not started: cancelled at the memory question.");
     } else if (continue_training) {
         auto nodes = std::move(pending_memory_confirmation_nodes_);
         auto links = std::move(pending_memory_confirmation_links_);

@@ -32,8 +32,7 @@ TFIDFResult TextProcessing::ComputeTFIDF(
         std::vector<std::vector<std::string>> tokenized_docs;
 
         for (const auto& doc : documents) {
-            auto tokens = TokenizeWord(doc, true, true);
-            tokens = RemoveStopwords(tokens, "english");
+            auto tokens = RemoveStopwords(Words(doc), "english");
             tokenized_docs.push_back(tokens);
 
             for (const auto& token : tokens) {
@@ -96,8 +95,8 @@ TFIDFResult TextProcessing::ComputeTFIDF(
             for (const auto& pair : tf_map) {
                 auto it = word_to_idx.find(pair.first);
                 if (it != word_to_idx.end()) {
-                    double tf = static_cast<double>(pair.second) / tokens.size();
-                    tfidf_vec[it->second] = tf * result.idf_scores[it->second];
+                    // The raw count, as scikit-learn's TfidfVectorizer.
+                    tfidf_vec[it->second] = static_cast<double>(pair.second) * result.idf_scores[it->second];
                 }
             }
 
@@ -138,7 +137,7 @@ std::vector<double> TextProcessing::ComputeTF(
     const std::string& document,
     const std::vector<std::string>& vocabulary
 ) {
-    auto tokens = TokenizeWord(document, true, true);
+    const auto tokens = Words(document);
 
     std::map<std::string, int> word_counts;
     for (const auto& token : tokens) {
@@ -149,7 +148,7 @@ std::vector<double> TextProcessing::ComputeTF(
     for (size_t i = 0; i < vocabulary.size(); ++i) {
         auto it = word_counts.find(vocabulary[i]);
         if (it != word_counts.end()) {
-            tf[i] = static_cast<double>(it->second) / tokens.size();
+            tf[i] = static_cast<double>(it->second);
         }
     }
 
@@ -172,7 +171,7 @@ std::vector<double> TextProcessing::ComputeIDF(
 
     // Count document frequency
     for (const auto& doc : documents) {
-        auto tokens = TokenizeWord(doc, true, true);
+        const auto tokens = Words(doc);
         std::set<std::string> unique_tokens(tokens.begin(), tokens.end());
         for (const auto& token : unique_tokens) {
             auto it = word_to_idx.find(token);

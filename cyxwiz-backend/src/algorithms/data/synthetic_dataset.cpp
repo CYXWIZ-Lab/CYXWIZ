@@ -1,4 +1,5 @@
 #include "cyxwiz/dataloader.h"
+#include "cyxwiz/portable_random.h"
 
 #include <random>
 
@@ -21,8 +22,8 @@ SyntheticDataset::SyntheticDataset(size_t num_samples, const std::vector<size_t>
 std::pair<std::vector<float>, int> SyntheticDataset::GetItem(size_t index) const {
     // Generate deterministic random data based on index
     std::mt19937 local_rng(static_cast<unsigned>(index));
-    std::uniform_real_distribution<float> data_dist(0.0f, 1.0f);
-    std::uniform_int_distribution<int> label_dist(0, static_cast<int>(num_classes_) - 1);
+    const auto data_dist = [low = 0.0f, high = 1.0f](auto& r) { return cyxwiz::portable::UniformFloat(r, low, high); };
+    const auto label_dist = [low = 0, high = static_cast<int>(num_classes_) - 1](auto& r) { return cyxwiz::portable::UniformInt<int>(r, low, high); };
 
     std::vector<float> data(sample_size_);
     for (size_t i = 0; i < sample_size_; i++) {

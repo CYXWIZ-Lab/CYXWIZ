@@ -1,6 +1,7 @@
 // Headless graph training (TOFIX118 P2): trains the tracked causal-LM example
 // graph through RunGraphTrainingJob, linked against cyxwiz-training-core only
 // (what a Server Node links), and checks the fail-closed refusals.
+#include "oracle/training_oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/data_budget.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
@@ -142,6 +143,7 @@ nlohmann::json& NodeNamed(nlohmann::json& graph, int id) {
 }  // namespace
 
 int main() {
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_graph_training_job")) return 1;
     const fs::path root = CYXWIZ_SOURCE_ROOT;
     const fs::path work = fs::temp_directory_path() / "cyxwiz_graph_training_job_test";
     std::error_code ec;
@@ -153,10 +155,6 @@ int main() {
         std::cerr << "could not write the Parquet fixture\n";
         return EXIT_FAILURE;
     }
-
-    // The executor's route preflight refuses unqualified devices; qualify the
-    // inventory as a verified host would have.
-    cyxwiz::test::InstallQualifiedRouteSnapshot();
 
     // A host catalog the job must restore afterwards.
     bool host_catalog_called = false;
@@ -272,7 +270,7 @@ int main() {
                              (result.error.empty() ? "" : " (" + result.error + ")"));
     }
 
-    std::cout << "keeps inputs over the data budget on disk (TOFIX154)\n";
+    std::cout << "keeps inputs over the data budget on disk\n";
     {
         // The same graph with a validation input and no test share, unshuffled
         // and seeded: in memory, then with a 1-byte budget so both files stay
@@ -355,7 +353,7 @@ int main() {
         cyxwiz::SetDataBudgetBytes(0);
     }
 
-    std::cout << "trains a table kept on disk (TOFIX154)\n";
+    std::cout << "trains a table kept on disk\n";
     {
         const fs::path blobs = work / "blobs.parquet";
         const fs::path blobs_validation = work / "blobs_validation.parquet";
@@ -370,6 +368,13 @@ int main() {
         };
         const auto memory = run(false, "checkpoints_tabular_memory");
         Check(memory.ok, "tabular in memory: trained" + (memory.error.empty() ? "" : " (" + memory.error + ")"));
+        // Both in memory, with a validation input: validation reads that input
+        // (TOFIX223 0.17: the job trained the plain table and never validated).
+        const auto memory_validation = run(true, "checkpoints_tabular_memory_validation");
+        Check(memory_validation.ok && memory_validation.metrics.has_validation_metrics &&
+                  !memory_validation.metrics.val_loss_history.empty(),
+              "tabular in memory with a validation input in memory: validated on it" +
+                  (memory_validation.error.empty() ? "" : " (" + memory_validation.error + ")"));
         cyxwiz::SetDataBudgetBytes(1);
         const auto on_disk = run(false, "checkpoints_tabular_disk");
         Check(on_disk.ok && on_disk.model != nullptr,
@@ -560,6 +565,15 @@ int main() {
               "a failed device preflight is a device error");
         Check(ClassifyTrainingFailure("CW-T-0501 Training failed: vector subscript") == TrainingFailureKind::Internal,
               "anything else is internal");
+        Check(ClassifyTrainingFailure("[CW-T-0501] Training failed. Detail: ArrowDatasetBatcher: the data has missing "
+                                      "values (empty cells or NaN), which training does not use: feature 'age' 3 "
+                                      "rows.") == TrainingFailureKind::DataError,
+              "a missing-values refusal is a data error");
+        Check(ClassifyTrainingFailure("[CW-T-0501] Training failed. Detail: ParquetArrowBatcher: the data has missing "
+                                      "values (empty cells or NaN), which training does not use: feature "
+                                      "'is_cancelled' 2 rows; feature 'gpu_out_of_memory_flag' 1 row.") ==
+                  TrainingFailureKind::DataError,
+              "a column name in the refusal never makes it a cancellation or out of memory");
         Check(std::string(cyxwiz::TrainingFailureCode(TrainingFailureKind::OutOfMemory)) == "OUT_OF_MEMORY" &&
                   std::string(cyxwiz::TrainingFailureLabel("OUT_OF_MEMORY")) == "Out of memory" &&
                   std::string(cyxwiz::TrainingFailureLabel("TRAINING_FAILED")) == "Training failed",
@@ -653,6 +667,8 @@ int main() {
 
     fs::remove_all(work, ec);
     cyxwiz::SetGraphDatasetCatalog({});
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     if (g_failures > 0) {
         std::cout << g_failures << " check(s) failed\n";
         return EXIT_FAILURE;

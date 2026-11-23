@@ -19,6 +19,7 @@
 
 #include "pipeline_operator.h"
 
+#include <cyxwiz/text_processing.h>
 #include <cyxwiz/word_embeddings.h>
 
 #include <string>
@@ -42,8 +43,12 @@ public:
         progress_callback_ = std::move(callback);
     }
 
-    // The words of `text` as the Text Tokenizer's Word mode gives them.
-    static std::vector<std::string> SplitWords(const std::string& text);
+    // The words of `text` as the Text Tokenizer's Word mode gives them
+    // (Tokenizer::Split, Word mode: lowercase, then runs of letters and
+    // digits); inline, so Data Studio's Text tab splits the same way.
+    static std::vector<std::string> SplitWords(const std::string& text) {
+        return TextProcessing::Tokenize(TextProcessing::ToLowercase(text), "word", 2, false, true).tokens;
+    }
     // Where a node saves its vectors when no path is set, relative to the
     // project's artifacts: word_embeddings/<id>_<name>.vec.
     static std::string DefaultVectorsFile(int node_id, const std::string& node_name);

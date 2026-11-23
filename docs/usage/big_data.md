@@ -119,7 +119,9 @@ A Data Input kept on disk can feed training:
   the scalers and the Quantile / Power transforms, Fill Missing (mean,
   median, most frequent), Target Encoder (the Validation and Test labels
   never reach the encoding; a category with no Train row gets the Train
-  mean), TF-IDF and Count (a word seen only in Validation or Test rows is
+  mean), PCA, Truncated SVD, Whitening and Linear Solve (their directions
+  or x come from the Train rows; see [Linear algebra](linear_algebra.md)),
+  TF-IDF and Count (a word seen only in Validation or Test rows is
   not a feature; the IDF counts Train documents) and the Text Tokenizer's
   vocabulary. Training then reads the same marks, so the rows a step learned
   from are the rows the model trains on. The marks are not data: steps that
@@ -129,12 +131,12 @@ A Data Input kept on disk can feed training:
   neither Shuffle nor Stratified and no supplied input (the rows keep their
   order), and a table kept on disk (a warning says its steps learn from
   every row).
-- **Steps that still learn from every row.** PCA, the clustering steps
+- **Steps that still learn from every row.** The clustering steps
   (K-Means, DBSCAN, Hierarchical, GMM), the Outlier Detector and the classic
   models (regression, trees, Naive Bayes, KNN, Logistic Regression, SVM)
   cannot learn from the Train rows only yet. Placed before a Data Split,
   they learn from the Validation and Test rows too, and Compile warns:
-  "'PCA (4 components)' learns from every row before the Data Split, the
+  "'Groups (K-Means)' learns from every row before the Data Split, the
   Validation and Test rows too (it cannot learn from the Train rows only
   yet), so their scores read better than new data would" (*CW-C-0206*).
   Training still runs; the Validation and Test scores are then optimistic.

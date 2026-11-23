@@ -45,8 +45,6 @@ void ScriptEditorPanel::SetScriptOutputSink(
     script_output_sink_ = output_sink;
 }
 
-float ScriptEditorPanel::GetFontScale() const { return gui::CodeFontScale(); }
-
 void ScriptEditorPanel::SetFontScale(float scale) {
     ::gui::SetCodeTextScale(scale);
     font_scale_ = gui::CodeFontScale();
@@ -418,7 +416,7 @@ void ScriptEditorPanel::RenderMenuBar() {
             }
 
             ImGui::Separator();
-            ImGui::TextDisabled("Also in: Edit > Preferences > Editor");
+            ImGui::TextDisabled("Also in: File > Preferences > Script Editor");
 
             ImGui::EndMenu();
         }

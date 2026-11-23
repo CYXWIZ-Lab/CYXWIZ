@@ -63,12 +63,12 @@ void CheckWriteFailure(const cyxwiz::Hdf5InputSettings& settings,
 
 void TestDefaultsAndCanonicalRoundTrip() {
     auto defaults = cyxwiz::ReadHdf5InputSettings({});
-    Check(defaults.ok && defaults.error.empty() && !defaults.migrated_legacy,
+    Check(defaults.ok && defaults.error.empty(),
           "missing HDF5 keys should read defaults");
     CheckSettings(defaults.settings, "/data", "",
                   cyxwiz::Hdf5NumericPolicy::Preserve, 256ULL * 1024 * 1024);
 
-    Params params = {{"unrelated", "keep"}, {"hdf5_dataset", "legacy"}};
+    Params params = {{"unrelated", "keep"}};
     cyxwiz::Hdf5InputSettings settings;
     settings.selection = {"/nested/data", "/nested/labels"};
     settings.numeric_policy = cyxwiz::Hdf5NumericPolicy::Float64;
@@ -78,8 +78,6 @@ void TestDefaultsAndCanonicalRoundTrip() {
               error.empty(),
           "canonical write should succeed");
     Check(params.at("unrelated") == "keep", "canonical write preserves unrelated keys");
-    Check(params.find("hdf5_dataset") == params.end(),
-          "canonical write erases legacy hdf5_dataset");
     Check(params.at("hdf5_selection_version") == "1", "version key");
     Check(params.at("hdf5_data_path") == "/nested/data", "data path key");
     Check(params.at("hdf5_label_path") == "/nested/labels", "label path key");
@@ -88,35 +86,21 @@ void TestDefaultsAndCanonicalRoundTrip() {
     Check(params.at("hdf5_max_materialized_bytes") == "4096", "budget key");
 
     const auto read = cyxwiz::ReadHdf5InputSettings(params);
-    Check(read.ok && !read.migrated_legacy && read.error.empty(),
+    Check(read.ok && read.error.empty(),
           "canonical read should succeed");
     CheckSettings(read.settings, "/nested/data", "/nested/labels",
                   cyxwiz::Hdf5NumericPolicy::Float64, 4096);
 }
 
-void TestLegacyMigrationAndCanonicalPrecedence() {
-    auto legacy = cyxwiz::ReadHdf5InputSettings({{"hdf5_dataset", "group/data"}});
-    Check(legacy.ok && legacy.migrated_legacy, "legacy relative path should migrate");
-    CheckSettings(legacy.settings, "/group/data", "",
+// The old single "hdf5_dataset" key is not read any more: a node is set up
+// on the canonical keys (Apply writes them), not migrated.
+void TestOldDatasetKeyIsNotRead() {
+    const auto old = cyxwiz::ReadHdf5InputSettings({{"hdf5_dataset", "group/data"}});
+    Check(old.ok, "an old hdf5_dataset key alone reads the defaults");
+    CheckSettings(old.settings, "/data", "",
                   cyxwiz::Hdf5NumericPolicy::Preserve, 256ULL * 1024 * 1024);
 
-    legacy = cyxwiz::ReadHdf5InputSettings({{"hdf5_dataset", "/already/absolute"}});
-    Check(legacy.ok && legacy.migrated_legacy, "legacy absolute path should migrate");
-    CheckSettings(legacy.settings, "/already/absolute", "",
-                  cyxwiz::Hdf5NumericPolicy::Preserve, 256ULL * 1024 * 1024);
-
-    CheckReadFailure({{"hdf5_dataset", ""}}, "empty legacy path");
-
-    auto params = Canonical("/canonical/data", "", "preserve", "123");
-    params["hdf5_dataset"] = "legacy/data";
-    auto read = cyxwiz::ReadHdf5InputSettings(params);
-    Check(read.ok && !read.migrated_legacy, "canonical keys win over legacy");
-    CheckSettings(read.settings, "/canonical/data", "",
-                  cyxwiz::Hdf5NumericPolicy::Preserve, 123);
-
-    Params malformed = {{"hdf5_selection_version", "2"},
-                        {"hdf5_dataset", "legacy/data"}};
-    CheckReadFailure(malformed, "malformed canonical must not fallback to legacy");
+    CheckReadFailure({{"hdf5_selection_version", "2"}}, "a malformed canonical version fails");
 }
 
 void TestCanonicalMalformedKeys() {
@@ -195,7 +179,7 @@ void TestPathValidation() {
 }
 
 void TestTransactionalWriteFailure() {
-    const Params before = {{"unrelated", "keep"}, {"hdf5_dataset", "legacy"}};
+    const Params before = {{"unrelated", "keep"}};
 
     cyxwiz::Hdf5InputSettings invalid_path;
     invalid_path.selection.data_path = "relative";
@@ -218,7 +202,7 @@ void TestTransactionalWriteFailure() {
 
 int main() try {
     TestDefaultsAndCanonicalRoundTrip();
-    TestLegacyMigrationAndCanonicalPrecedence();
+    TestOldDatasetKeyIsNotRead();
     TestCanonicalMalformedKeys();
     TestPathValidation();
     TestTransactionalWriteFailure();

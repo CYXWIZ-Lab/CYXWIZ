@@ -1,12 +1,15 @@
 #include "job_execution_service.h"
+#include "core/grpc_listen.h"
 #include "node_data_dir.h"
 #include "node_job_timing.h"
+#include "node_job_route.h"
 #include "core/sha256_digest.h"
 #include "core/execution_device_preferences.h"
 #include "core/route_qualification_snapshot.h"
 #include "job_executor.h"
 #include "node_client.h"
 #include "remote_dataset_fetcher.h"
+#include "cloud_dataset_fetcher.h"
 #include "core/backend_manager.h"
 #include "core/state_manager.h"
 #include "core/device_pool.h"
@@ -94,7 +97,9 @@ bool JobExecutionServiceImpl::StartServer(const std::string& listen_address) {
 
     try {
         grpc::ServerBuilder builder;
-        builder.AddListeningPort(listen_address, grpc::InsecureServerCredentials());
+        int selected_port = 0;
+        cyxwiz::servernode::core::ListenExclusively(builder, listen_address, grpc::InsecureServerCredentials(),
+                                                    &selected_port);
         builder.RegisterService(this);
 
         // Set max message size for large model transfers
@@ -107,8 +112,9 @@ bool JobExecutionServiceImpl::StartServer(const std::string& listen_address) {
             return false;
         }
 
+        bound_port_ = selected_port;
         is_running_ = true;
-        spdlog::info("JobExecutionService listening on {}", listen_address);
+        spdlog::info("JobExecutionService listening on {} (port {})", listen_address, bound_port_);
         return true;
     } catch (const std::exception& e) {
         spdlog::error("Failed to start JobExecutionService: {}", e.what());
@@ -133,6 +139,7 @@ void JobExecutionServiceImpl::StopServer() {
 
     server_->Shutdown();
     is_running_ = false;
+    bound_port_ = 0;
     spdlog::info("JobExecutionService stopped");
 }
 
@@ -220,8 +227,8 @@ grpc::Status JobExecutionServiceImpl::DisconnectFromNode(
     return grpc::Status::OK;
 }
 
-// The route jobs will train on (the machine's saved preference, else the
-// current device), whether it is verified, and its memory as the device
+// The route jobs will train on (NodeJobRoute: the machine's saved preference,
+// else the device the daemon activated), whether it is verified, and its memory as the device
 // pool recorded it at startup (no device enumeration here: that would
 // switch backends under a running job).
 cyxwiz::AdmissionFacts JobExecutionServiceImpl::GatherAdmissionFacts(
@@ -229,12 +236,9 @@ cyxwiz::AdmissionFacts JobExecutionServiceImpl::GatherAdmissionFacts(
     cyxwiz::AdmissionFacts facts;
     cyxwiz::DeviceType type = cyxwiz::DeviceType::CPU;
     int device_id = 0;
-    if (const auto selection = cyxwiz::GetSavedExecutionDeviceSelection()) {
-        type = selection->type;
-        device_id = selection->device_id;
-    } else if (const auto* device = cyxwiz::Device::GetCurrentDevice()) {
-        type = device->GetType();
-        device_id = device->GetDeviceId();
+    if (const auto route = cyxwiz::servernode::NodeJobRoute()) {
+        type = route->type;
+        device_id = route->device_id;
     }
     facts.route = cyxwiz::ExecutionDeviceSelectionBackendName(type) + ":" + std::to_string(device_id);
     if (const auto snapshot = cyxwiz::GetRouteQualificationSnapshot()) {
@@ -457,6 +461,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     const auto cancel_fetch = [session] {
         std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
         if (session->dataset_fetcher) session->dataset_fetcher->Cancel();
+        if (session->cloud_fetcher) session->cloud_fetcher->Cancel();
     };
 
     // Flags for reservation-based multi-job flow
@@ -647,18 +652,21 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     if (run_config.dataset_uri().rfind("remote://", 0) == 0) {
         job_data_dir = NodeJobDataDir(current_job_id);
         auto fetcher = std::make_shared<RemoteDatasetFetcher>(write_update, current_job_id, job_data_dir);
+        auto cloud_fetcher = std::make_shared<CloudDatasetFetcher>(job_data_dir);
         {
             std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
             session->dataset_fetcher = fetcher;
+            session->cloud_fetcher = cloud_fetcher;
         }
         std::string fetch_error;
         const auto fetch_start = std::chrono::steady_clock::now();
-        job_ready = FetchRemoteJobDatasets(*fetcher, run_config, fetch_error);
+        job_ready = FetchRemoteJobDatasets(*fetcher, cloud_fetcher.get(), run_config, fetch_error);
         phases.transfer_seconds =
             std::chrono::duration<double>(std::chrono::steady_clock::now() - fetch_start).count();
         {
             std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
             session->dataset_fetcher.reset();
+            session->cloud_fetcher.reset();
         }
         if (!job_ready) {
             spdlog::error("[P2P WORKFLOW] Job {} not trained: {}", current_job_id, fetch_error);
@@ -1314,6 +1322,7 @@ void JobExecutionServiceImpl::CleanupJob(const std::string& job_id) {
         {
             std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
             if (session->dataset_fetcher) session->dataset_fetcher->Cancel();
+        if (session->cloud_fetcher) session->cloud_fetcher->Cancel();
         }
 
         // Mark job as stopped
@@ -1442,7 +1451,9 @@ void JobExecutionServiceImpl::ResetJobSession(JobSession* session) {
     {
         std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
         if (session->dataset_fetcher) session->dataset_fetcher->Cancel();
+        if (session->cloud_fetcher) session->cloud_fetcher->Cancel();
         session->dataset_fetcher.reset();
+        session->cloud_fetcher.reset();
     }
 
     // Clear paths

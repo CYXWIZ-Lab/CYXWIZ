@@ -571,14 +571,9 @@ void CloudDatasetManagerPanel::TryAutoConnect() {
         owned_client_ = std::make_unique<network::DataStreamClient>();
     }
 
-    std::string gateway_addr = cyxwiz::core::EngineConfig::Instance().GetCentralServerAddress();
-    if (gateway_addr.empty()) {
-        gateway_addr = "localhost:50052";
-    }
-    // CyxCloud gateway uses port 50052 for DataStream
-    if (gateway_addr.find(":50051") != std::string::npos) {
-        gateway_addr.replace(gateway_addr.find(":50051"), 6, ":50052");
-    }
+    // Same source as the cloud browser: the config's gateway address, or the
+    // central server's host on the gateway's port (TOFIX164).
+    const std::string gateway_addr = cyxwiz::core::EngineConfig::Instance().GetCloudGatewayAddress();
 
     spdlog::info("CloudDatasetManager: Connecting to CyxCloud gateway at {}", gateway_addr);
 

@@ -5,6 +5,7 @@
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 #include "plot_style.h"
+#include "../../core/display_text.h"
 #include "../../core/plot/plot_arrow_source.h"
 #include "../../core/plot/plot_image.h"
 #include "../../core/plot/plot_presets.h"
@@ -375,7 +376,7 @@ void PlotWindow::Render() {
     ImGui::PopStyleColor();
     {
         ui::FontScope heading(ui::Font::Medium);
-        ImGui::TextUnformatted(spec_.title.c_str());
+        ImGui::TextUnformatted(core::DisplayText(spec_.title).c_str());
     }
     if (!table_ && !arrow_table_) {
         // No data: the reason where the plot would be.
@@ -662,7 +663,7 @@ bool PlotWindow::DrawColours(float w) {
             const ImVec4 now = view_.DrawnColour(i);
             if (ImGui::ColorButton("##swatch", now, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder)) ImGui::OpenPopup("##series_colour");
             ImGui::SameLine();
-            ImGui::TextUnformatted(names[i].c_str());
+            ImGui::TextUnformatted(core::DisplayText(names[i]).c_str());  // as the legend shows it
             if (ImGui::BeginPopup("##series_colour")) {
                 ImGui::TextColored(t.text_dim, "Theme colours");
                 for (int k = 0; k < ui::Tokens::kSeriesCount; ++k) {
@@ -1260,7 +1261,7 @@ void PlotWindow::DrawSettings() {
                 ImGui::TableNextColumn();
                 ImGui::TextUnformatted(value.c_str());
             };
-            if (!d.positive_label.empty()) row("positive class", d.positive_label);
+            if (!d.positive_label.empty()) row("positive class", core::DisplayText(d.positive_label));
             for (const auto& [name, v] : d.metrics) row(name, MetricText(name, v));
             ImGui::EndTable();
         }

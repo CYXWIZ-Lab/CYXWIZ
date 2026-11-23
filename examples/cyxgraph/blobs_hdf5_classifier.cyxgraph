@@ -1,0 +1,43 @@
+{
+  "id": "blobs_hdf5_classifier",
+  "name": "Classifier from an HDF5 file",
+  "description": "A small classifier trained straight from an HDF5 file. The Data Input reads the 480 x 8 float dataset /blobs/features as columns col_0..col_7 and the 480 class indices in /blobs/labels as the column label. Data: examples/datasets/metric_blobs.h5 (the metric_blobs.csv table written by make_metric_blobs_h5.py). Open it, then Compile (F7) and Train (F5).",
+  "category": "Classification",
+  "tags": ["hdf5", "h5", "classification", "tabular"],
+  "parameters": [
+    {"name": "hidden_units", "type": "int", "default_value": "32", "description": "Width of the hidden layer"},
+    {"name": "learning_rate", "type": "float", "default_value": "0.005", "description": "Adam learning rate"},
+    {"name": "epochs", "type": "int", "default_value": "30", "description": "Number of training epochs"}
+  ],
+  "template": {
+    "nodes": [
+      {"id": "in", "type": "DataInput", "name": "Metric blobs (HDF5)", "pos": [0, 240],
+       "params": {"file_path": "examples/datasets/metric_blobs.h5", "file_category": "tabular", "file_type": "hdf5",
+                  "hdf5_selection_version": "1", "hdf5_import_mode": "numeric_table",
+                  "hdf5_data_path": "/blobs/features", "hdf5_label_path": "/blobs/labels",
+                  "hdf5_numeric_policy": "preserve", "hdf5_max_materialized_bytes": "268435456",
+                  "label_column": "label"}},
+      {"id": "split", "type": "DataSplit", "name": "Split 70 / 15 / 15", "pos": [260, 240],
+       "params": {"train_ratio": "0.7", "val_ratio": "0.15", "test_ratio": "0.15", "seed": "42", "stratified": "true"}},
+      {"id": "loader", "type": "DataLoader", "name": "Loader", "pos": [520, 240],
+       "params": {"batch_size": "32", "epochs": "$epochs", "shuffle": "true", "drop_last": "false", "num_workers": "0"}},
+      {"id": "hidden", "type": "Dense", "name": "Dense", "pos": [780, 160], "params": {"units": "$hidden_units"}},
+      {"id": "relu", "type": "ReLU", "name": "ReLU", "pos": [1000, 160], "params": {}},
+      {"id": "head", "type": "Dense", "name": "Classes (4)", "pos": [1220, 160], "params": {"units": "4"}},
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "Cross Entropy", "pos": [1440, 240], "params": {}},
+      {"id": "adam", "type": "Adam", "name": "Adam", "pos": [1660, 240], "params": {"learning_rate": "$learning_rate"}},
+      {"id": "out", "type": "Output", "name": "Output", "pos": [1880, 240], "params": {"num_classes": "4"}}
+    ],
+    "links": [
+      {"from": "in", "to": "split"},
+      {"from": "split", "to": "loader"},
+      {"from": "loader", "to": "hidden"},
+      {"from": "hidden", "to": "relu"},
+      {"from": "relu", "to": "head"},
+      {"from": "head", "to": "loss"},
+      {"from": "loader", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "adam"},
+      {"from": "adam", "to": "out"}
+    ]
+  }
+}

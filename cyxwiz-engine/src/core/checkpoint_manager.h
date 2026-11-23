@@ -69,7 +69,14 @@ struct CheckpointMetadata {
     int context = 0;                // training sequence length
     std::string initialized_from;   // warm-start checkpoint this run started from
     CheckpointDataSplit split;      // the Data Split training used
+    // The decision kept with the model (TOFIX129 D11): ModelDecision JSON, or empty.
+    std::string decision_json;
 };
+
+// Writes (or with an empty `decision_json`, removes) the kept decision in a
+// checkpoint folder's metadata.json, leaving its other entries as they are.
+// "" when written, else why not.
+std::string WriteCheckpointDecision(const std::filesystem::path& checkpoint, const std::string& decision_json);
 
 /**
  * Read-only capability classification for one checkpoint.
@@ -264,16 +271,6 @@ private:
      */
     template <typename Model>
     bool LoadModelParameters(const std::filesystem::path& dir, Model& model);
-
-    /**
-     * Save a single tensor to binary file
-     */
-    bool SaveTensor(const std::filesystem::path& path, const Tensor& tensor);
-
-    /**
-     * Load a single tensor from binary file
-     */
-    std::optional<Tensor> LoadTensor(const std::filesystem::path& path);
 
     /**
      * Clean up old checkpoints to maintain max_to_keep limit

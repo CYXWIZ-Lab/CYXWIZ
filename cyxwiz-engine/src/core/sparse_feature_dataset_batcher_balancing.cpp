@@ -1,4 +1,5 @@
 #include "sparse_feature_dataset_batcher.h"
+#include "cyxwiz/portable_random.h"
 
 #include <spdlog/spdlog.h>
 
@@ -60,7 +61,7 @@ void SparseFeatureDatasetBatcher::RebuildBalancedIndices() {
     if (balance_mode_ == "undersample") {
         for (auto& entry : by_label) {
             auto rows = entry.second;
-            std::shuffle(rows.begin(), rows.end(), balance_rng_);
+            cyxwiz::portable::Shuffle(rows.begin(), rows.end(), balance_rng_);
             const size_t keep = std::min(target_count, rows.size());
             balanced.insert(
                 balanced.end(), rows.begin(), rows.begin() + keep);
@@ -71,14 +72,10 @@ void SparseFeatureDatasetBatcher::RebuildBalancedIndices() {
         for (const auto& entry : by_label) {
             labels.push_back(entry.first);
         }
-        std::uniform_int_distribution<size_t> class_distribution(
-            0, labels.size() - 1);
         balanced.reserve(base_indices_.size());
         for (size_t sample = 0; sample < base_indices_.size(); ++sample) {
-            auto& rows = by_label[labels[class_distribution(balance_rng_)]];
-            std::uniform_int_distribution<size_t> row_distribution(
-                0, rows.size() - 1);
-            balanced.push_back(rows[row_distribution(balance_rng_)]);
+            auto& rows = by_label[labels[cyxwiz::portable::Below(balance_rng_, labels.size())]];
+            balanced.push_back(rows[cyxwiz::portable::Below(balance_rng_, rows.size())]);
         }
     } else {
         if (balance_mode_ != "oversample") {
@@ -89,7 +86,7 @@ void SparseFeatureDatasetBatcher::RebuildBalancedIndices() {
         }
         for (auto& entry : by_label) {
             auto rows = entry.second;
-            std::shuffle(rows.begin(), rows.end(), balance_rng_);
+            cyxwiz::portable::Shuffle(rows.begin(), rows.end(), balance_rng_);
             for (size_t sample = 0; sample < target_count; ++sample) {
                 balanced.push_back(rows[sample % rows.size()]);
             }

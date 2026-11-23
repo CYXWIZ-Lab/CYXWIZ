@@ -6,6 +6,7 @@
 // transforms (done per batch), on the ArrayFire device. Normalize is left out
 // so the pictures stay in 0..1.
 
+#include "image_sheet.h"
 #include "prepared_image_set.h"
 
 #include <cyxwiz/image_augmentation.h>
@@ -20,7 +21,11 @@ struct PreviewPicture {
     std::string title;               // "Center Crop 64 x 64", "Draw 1"
     std::string detail;              // "64 x 64, once", "flipped, rotated 7.5 degrees"
     int width = 0, height = 0;
-    std::vector<uint8_t> rgba;       // width * height * 4
+    std::vector<uint8_t> rgba;       // width * height * 4: the picture, or a sheet's first tile
+    // An image that is neither grey nor RGB (TOFIX209): the first tile's
+    // name and the further tiles, each a named grey channel.
+    std::string first_name;
+    std::vector<ImageSheetTile> more;
 };
 
 struct ImagePipelinePreview {
@@ -34,6 +39,10 @@ struct ImagePipelinePreview {
 // Changes with the Resize or any image step: views that depend on them redo.
 std::string ImageStepsKey(const PreparedImageSpec& spec, const image::ImageAugmentation& augmentation,
                           const std::vector<CvImageStep>& cv_steps);
+
+// The preview's seed for an image: FNV-1a of its path, so a picture shows the
+// same draws on every platform (std::hash differs between libraries).
+uint32_t PreviewSeedOf(const std::string& path);
 
 ImagePipelinePreview PreviewImagePipeline(const std::string& path, const PreparedImageSpec& spec,
                                           const image::ImageAugmentation& augmentation,

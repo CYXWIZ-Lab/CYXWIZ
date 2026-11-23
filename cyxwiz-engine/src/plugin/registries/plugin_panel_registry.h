@@ -33,6 +33,9 @@ public:
     bool IsPanelVisible(const std::string& panel_id) const;
     void SetPanelVisible(const std::string& panel_id, bool visible);
     void TogglePanelVisible(const std::string& panel_id);
+    // A plugin opening one of its own panels: shown and focused on the next
+    // frame. False when `plugin_id` owns no panel `panel_id`.
+    bool ShowPanel(const std::string& plugin_id, const std::string& panel_id);
     bool* GetVisiblePtr(const std::string& panel_id);
 
     size_t GetCount() const;
@@ -47,6 +50,7 @@ private:
         PluginPanelInfo info;
         IPanelProvider* provider = nullptr;  // non-owning
         bool visible = false;
+        bool focus_pending = false;  // ShowPanel: focus on the next render
     };
 
     mutable std::mutex mutex_;

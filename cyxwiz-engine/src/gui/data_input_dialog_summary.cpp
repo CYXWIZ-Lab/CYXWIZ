@@ -1,6 +1,7 @@
 // DataInputDialog data strip: what the node loads and how far it got, above
 // the tabs (TOFIX129 B-2; words from core/data_input_presentation).
 
+#include "../core/cloud_dataset_file_format.h"
 #include "node_config_dialog.h"
 #include "ui_tokens.h"
 #include "ui_widgets.h"
@@ -51,6 +52,25 @@ void DataInputDialog::RenderDataStrip() {
     if (!in.loading && !apply_success_ && !apply_status_message_.empty()) {
         in.failed = true;
         in.failure = apply_status_message_;
+    }
+    if (CloudSourceChosen()) {
+        // The live choice when there is one, else what the graph remembers.
+        std::string name = cloud_remembered_.file_name, dataset = cloud_remembered_.dataset_name;
+        uint64_t size = cloud_remembered_.size_bytes;
+        for (const auto& f : cloud_files_) {
+            if (f.id != cloud_selected_file_) continue;
+            name = f.name;
+            size = static_cast<uint64_t>(f.size_bytes);
+            for (const auto& d : cloud_datasets_) {
+                if (d.id == cloud_selected_dataset_) dataset = d.name;
+            }
+        }
+        in.cloud = true;
+        in.source = name;
+        in.kind = name.empty() ? std::string() : cyxwiz::CloudFileFormatWord(name) + " table";
+        in.file_size = size;
+        in.cloud_dataset = dataset;
+        in.loaded = false;
     }
     const view::Strip strip = view::BuildStrip(in);
 

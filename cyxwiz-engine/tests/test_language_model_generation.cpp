@@ -264,6 +264,7 @@ public:
     std::map<std::string, cyxwiz::Tensor> GetGradients() override { return {}; }
     void UpdateParameters(cyxwiz::Optimizer*) override {}
     size_t LayerCount() const override { return 1; }
+    cyxwiz::Module* LayerModule(size_t) override { return &module; }
     ScriptedLogitModule module;
     int forwards = 0;
 };

@@ -81,19 +81,6 @@ std::string FirstLine(const std::string& text, size_t max_chars) {
     return line;
 }
 
-
-
-const char* CheckKindLabel(GenerationPreviewCheckKind kind) {
-    switch (kind) {
-        case GenerationPreviewCheckKind::None: return "No check";
-        case GenerationPreviewCheckKind::Contains: return "Output contains";
-        case GenerationPreviewCheckKind::NotContains: return "Output does not contain";
-        case GenerationPreviewCheckKind::Regex: return "Output matches the pattern";
-        case GenerationPreviewCheckKind::EndsWithStop: return "Stops by itself";
-    }
-    return "";
-}
-
 std::string CheckShort(const cyxwiz::GenerationPreviewCheck& check) {
     switch (check.kind) {
         case GenerationPreviewCheckKind::Contains: return "contains " + check.value;

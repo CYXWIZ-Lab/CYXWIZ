@@ -1,3 +1,4 @@
+#include "oracle/oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/split_partitioning.h"
 #include "../src/core/classification_decision.h"
@@ -22,6 +23,8 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -287,11 +290,18 @@ std::shared_ptr<cyxwiz::SparseFeatureDataset> MakeSparseDataset(
     return dataset.ValueOrDie();
 }
 
+// As the compiler makes it for a Time Series Window graph: a continuous target
+// (graph_compiler.cpp TimeSeriesWindow -> TargetValueKind::Continuous). The
+// config once left the target unspecified with the default cross-entropy loss,
+// so the targets (1.5, 2.5, ...) were one-hot encoded at width 1 into all-zero
+// rows; the batchers now refuse a class label outside the width (TOFIX223 0.4).
 cyxwiz::TrainingConfiguration MakeTimeSeriesConfig() {
     auto config = MakeConfig();
     config.is_time_series = true;
     config.input_size = 2;
     config.output_size = 1;
+    config.loss_type = gui::NodeType::MSELoss;
+    config.target.value_kind = cyxwiz::TargetValueKind::Continuous;
     return config;
 }
 
@@ -582,7 +592,7 @@ void CheckOneSplitRule(const std::shared_ptr<arrow::Table>& table, const cyxwiz:
     for (const bool stratified : {true, false}) {
         const std::string kind = stratified ? "stratified" : "unstratified";
         std::string error;
-        auto disk = cyxwiz::BuildParquetRowSplit(dataset, stratified ? "label" : "", {0.8, 0.1, 0.1}, true, 17, error);
+        auto disk = cyxwiz::BuildParquetRowSplit(dataset, stratified ? "label" : "", {0.8, 0.1, 0.1}, true, true, 17, error);
         Check(disk != nullptr, kind + " shuffled row split builds: " + error);
         auto memory = cyxwiz::AddSplitPartitionColumn(
             table, cyxwiz::SplitPartitionOptions{"label", 0.8f, 0.1f, 0.1f, true, 17, stratified, "split rule test"});
@@ -631,7 +641,7 @@ void TestParquetRowSplit(const std::filesystem::path& work_dir) {
 
     std::string error;
     // Stratified, unshuffled: each class in file order (the in-memory rows).
-    auto split = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, false, 17, error);
+    auto split = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, false, true, 17, error);
     Check(split != nullptr, "row split builds: " + error);
     bool ordered = true;
     for (int i = 0; i < kRows; ++i) {
@@ -642,7 +652,7 @@ void TestParquetRowSplit(const std::filesystem::path& work_dir) {
     Check(ordered, "unshuffled, each class fills train, validation, test in file order");
     // Shuffled: CountsFor's sizes per class (floor train, floor val, the
     // rest test), drawn by the seed.
-    auto shuffled = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, 17, error);
+    auto shuffled = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, true, 17, error);
     Check(shuffled != nullptr, "shuffled row split builds: " + error);
     std::array<std::array<int, 3>, 2> per_class{};
     for (int i = 0; i < kRows; ++i) ++per_class[labels[i]][shuffled->bucket[i]];
@@ -650,17 +660,17 @@ void TestParquetRowSplit(const std::filesystem::path& work_dir) {
     Check(per_class[1] == std::array<int, 3>{240, 30, 30}, "class 1 splits 240 / 30 / 30");
     Check(shuffled->counts == std::array<size_t, 3>{800, 100, 100}, "split totals 800 / 100 / 100");
     Check(shuffled->bucket != split->bucket, "a shuffled split draws other rows than file order");
-    auto again = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, 17, error);
+    auto again = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, true, 17, error);
     Check(again && again->bucket == shuffled->bucket, "the same seed draws the same rows");
-    auto other = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, 18, error);
+    auto other = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, true, 18, error);
     Check(other && other->bucket != shuffled->bucket, "another seed draws other rows");
-    // Unstratified, unshuffled: ArrowDatasetBatcher's contiguous slices.
-    auto plain = cyxwiz::BuildParquetRowSplit(*dataset, "", {0.8, 0.1, 0.1}, false, 17, error);
+    // Unstratified, unshuffled: the shared rule in file order, contiguous slices.
+    auto plain = cyxwiz::BuildParquetRowSplit(*dataset, "", {0.8, 0.1, 0.1}, false, true, 17, error);
     bool contiguous = plain != nullptr;
     for (int i = 0; contiguous && i < kRows; ++i) contiguous = plain->bucket[i] == (i < 800 ? 0 : i < 900 ? 1 : 2);
     Check(contiguous, "unstratified, unshuffled: rows 0-799 train, 800-899 validation, 900-999 test");
     CheckOneSplitRule(table, *dataset);
-    Check(!cyxwiz::BuildParquetRowSplit(*dataset, "missing", {0.8, 0.1, 0.1}, false, 17, error) &&
+    Check(!cyxwiz::BuildParquetRowSplit(*dataset, "missing", {0.8, 0.1, 0.1}, false, true, 17, error) &&
               error.find("missing") != std::string::npos,
           "a missing column is refused with its name");
 
@@ -700,6 +710,35 @@ void TestParquetRowSplit(const std::filesystem::path& work_dir) {
     Check(!overlap, "no row is served twice");
     Check(std::count(seen.begin(), seen.end(), -1) == 0, "every row is served once");
     Check(class1_held_out == 60, "validation and test hold 60 rows of class 1");
+
+    // Rows by number (TOFIX178 6.0b, Local Debug's picked sample): each file
+    // row as the batchers read it, from its own row group, with its part.
+    const std::vector<size_t> picks{5, 565, 650, 705, 990};
+    const auto picked = batchers.parquet_val->GetSourceSamples(picks);
+    Check(picked && picked->size == picks.size() && picked->data.Shape()[0] == picks.size(),
+          "rows on disk are picked by number");
+    for (size_t i = 0; i < picks.size(); ++i) {
+        const float* row = picked->data.Data<float>() + i * 2;
+        Check(row[0] == static_cast<float>(picks[i]) && row[1] == static_cast<float>(picks[i] % 7) &&
+                  picked->row_ids[i] == static_cast<int64_t>(picks[i]),
+              "a picked row is that file row");
+        std::optional<cyxwiz::BatcherPhase> part;
+        for (const cyxwiz::IBatcher* batcher :
+             {static_cast<cyxwiz::IBatcher*>(batchers.parquet_train.get()),
+              static_cast<cyxwiz::IBatcher*>(batchers.parquet_val.get()),
+              static_cast<cyxwiz::IBatcher*>(batchers.parquet_test.get())})
+            if (!part) part = batcher->SourceSamplePart(picks[i]);
+        Check(part && static_cast<int>(*part) == static_cast<int>(split->bucket[picks[i]]),
+              "a picked row names its part of the row split");
+    }
+    bool refused = false;
+    try {
+        batchers.parquet_val->GetSourceSamples({static_cast<size_t>(kRows)});
+    } catch (const std::out_of_range&) {
+        refused = true;
+    }
+    Check(refused, "a row past the file is refused");
+
     std::error_code ignored;  // the batchers above still map the file
     std::filesystem::remove(path, ignored);
 }
@@ -811,6 +850,20 @@ void TestTextLabels(const std::filesystem::path& work_dir) {
     Check(cyxwiz::BuildLabelVocabulary(std::vector<std::string>{"north", "", "east", "delta", "east"}).names ==
               full.names,
           "plain values give the same sorted vocabulary (empty = missing)");
+    {
+        // An empty text is a missing label in a column too: no class "", and
+        // it encodes to null (refused by training). A text of spaces is a value.
+        arrow::StringBuilder texts;
+        (void)texts.AppendValues(std::vector<std::string>{"b", "", "a", " "});
+        std::shared_ptr<arrow::Array> array;
+        (void)texts.Finish(&array);
+        const auto column = std::make_shared<arrow::ChunkedArray>(array);
+        const cyxwiz::LabelVocabulary vocabulary = cyxwiz::BuildLabelVocabulary({column});
+        Check(vocabulary.names == std::vector<std::string>({" ", "a", "b"}), "an empty text is not a class");
+        const auto encoded = cyxwiz::EncodeLabels(*column, vocabulary);
+        Check(encoded.ok() && (*encoded)->null_count() == 1 && (*encoded)->chunk(0)->IsNull(1),
+              "an empty text encodes to a missing label");
+    }
 
     auto config = MakeConfig();
     config.output_size = 3;
@@ -859,7 +912,111 @@ void TestTextLabels(const std::filesystem::path& work_dir) {
     std::filesystem::remove(parquet_path);
 }
 
+// Properties' "Dataset classes" for any label type: text counts its vocabulary,
+// whole numbers from 0 are class indices (max + 1), the rest is a regression target.
+// The split's totals are the requested shares rounded by largest remainder,
+// and each class is within one row of its exact shares (TOFIX223 0.18): 100
+// classes of 5 rows at 0.8 / 0.1 / 0.1 split 400 / 50 / 50, where flooring
+// each class gave 400 / 0 / 100.
+void TestSplitCountsAcrossClasses() {
+    const auto tally = [](const std::vector<int8_t>& parts) {
+        std::array<size_t, 3> totals{};
+        for (const int8_t p : parts) ++totals[static_cast<size_t>(p)];
+        return totals;
+    };
+    for (const bool shuffle : {false, true}) {
+        std::vector<uint32_t> classes;
+        for (uint32_t c = 0; c < 100; ++c)
+            for (int i = 0; i < 5; ++i) classes.push_back(c);
+        const auto parts = cyxwiz::AssignSplitPartitions(classes.size(), classes, 0.8f, 0.1f, 0.1f, shuffle, 7);
+        Check(tally(parts) == std::array<size_t, 3>{400, 50, 50},
+              "100 classes of 5 rows split 400 / 50 / 50 (got " + std::to_string(tally(parts)[0]) + " / " +
+                  std::to_string(tally(parts)[1]) + " / " + std::to_string(tally(parts)[2]) + ")");
+        std::vector<std::array<size_t, 3>> per_class(100, std::array<size_t, 3>{0, 0, 0});
+        for (size_t row = 0; row < parts.size(); ++row) ++per_class[classes[row]][static_cast<size_t>(parts[row])];
+        bool within_one = true;
+        for (const auto& c : per_class) within_one = within_one && c[0] == 4 && c[1] + c[2] == 1;
+        Check(within_one, "each class keeps 4 Train rows and gives its fifth to Validation or Test");
+    }
+    // Unstratified: 7 rows at 0.7 / 0.15 / 0.15 -> 5 / 1 / 1 (largest remainder).
+    Check(tally(cyxwiz::AssignSplitPartitions(7, {}, 0.7f, 0.15f, 0.15f, false, 1)) == std::array<size_t, 3>{5, 1, 1},
+          "7 rows at 0.7 / 0.15 / 0.15 split 5 / 1 / 1");
+    // A whole Test dataset keeps every row in Test; a tiny set still trains.
+    Check(tally(cyxwiz::AssignSplitPartitions(4, {}, 0.0f, 0.0f, 1.0f, false, 1)) == std::array<size_t, 3>{0, 0, 4},
+          "a 0 / 0 / 1 split keeps every row in Test");
+    Check(tally(cyxwiz::AssignSplitPartitions(2, {}, 0.1f, 0.45f, 0.45f, false, 1))[0] == 1,
+          "Train gets at least one row when it has a share");
+    // One class of 4 rows at 1/16 / 3/16 / 3/4 (exact in float): the class's
+    // Test floor (3) outweighed the Train total, so the leftover row went to
+    // Validation and Train was empty (0 / 1 / 3).
+    {
+        const std::vector<uint32_t> one_class(4, 0);
+        const auto small = tally(cyxwiz::AssignSplitPartitions(4, one_class, 0.0625f, 0.1875f, 0.75f, false, 1));
+        Check(small[0] >= 1 && small[0] + small[1] + small[2] == 4,
+              "a small Train share still gets a row (got " + std::to_string(small[0]) + " / " +
+                  std::to_string(small[1]) + " / " + std::to_string(small[2]) + ")");
+    }
+    // Which classes get the Validation row and which the Test row (equal
+    // remainders) follows the seed, not the label order: it once was always
+    // classes 0-49 to Validation and 50-99 to Test.
+    {
+        std::vector<uint32_t> classes;
+        for (uint32_t c = 0; c < 100; ++c)
+            for (int i = 0; i < 5; ++i) classes.push_back(c);
+        const auto val_classes = [&](uint32_t seed) {
+            const auto parts = cyxwiz::AssignSplitPartitions(classes.size(), classes, 0.8f, 0.1f, 0.1f, false, seed);
+            std::vector<uint32_t> out;
+            for (size_t row = 0; row < parts.size(); ++row)
+                if (parts[row] == 1) out.push_back(classes[row]);
+            return out;
+        };
+        const auto first = val_classes(7);
+        std::vector<uint32_t> low_half;
+        for (uint32_t c = 0; c < 50; ++c) low_half.push_back(c);
+        Check(first.size() == 50 && first != low_half, "the Validation classes are not simply the first 50");
+        Check(val_classes(7) == first, "the same seed picks the same Validation classes");
+        Check(val_classes(8) != first, "another seed picks other Validation classes");
+    }
+}
+
+void TestLabelClassCount() {
+    arrow::Int32Builder ints;
+    Check(ints.AppendValues({0, 3, 1, 3}).ok() && ints.AppendNull().ok(), "int append");
+    arrow::BooleanBuilder flags;
+    Check(flags.Append(true).ok() && flags.Append(false).ok() && flags.AppendNull().ok() && flags.AppendNull().ok() &&
+              flags.Append(true).ok(),
+          "bool append");
+    arrow::StringBuilder text;
+    for (const char* v : {"cat", "dog", "cat", "bird", "dog"}) Check(text.Append(v).ok(), "text append");
+    arrow::Int64Builder negative;
+    Check(negative.AppendValues({-1, 0, 1, 2, 3}).ok(), "negative append");
+    arrow::Int32Builder nulls;
+    Check(nulls.AppendNulls(5).ok(), "null append");
+    std::shared_ptr<arrow::Array> int_array, flag_array, text_array, negative_array, null_array;
+    Check(ints.Finish(&int_array).ok() && flags.Finish(&flag_array).ok() && text.Finish(&text_array).ok() &&
+              negative.Finish(&negative_array).ok() && nulls.Finish(&null_array).ok(),
+          "label finish");
+    const auto table = arrow::Table::Make(
+        arrow::schema({arrow::field("index", arrow::int32()), arrow::field("whole_float", arrow::float32()),
+                       arrow::field("price", arrow::float32()), arrow::field("flag", arrow::boolean()),
+                       arrow::field("name", arrow::utf8()), arrow::field("delta", arrow::int64()),
+                       arrow::field("empty", arrow::int32())}),
+        {int_array, FinishFloatArray({0, 1, 2, 2, 1}), FinishFloatArray({0.5f, 1, 2, 3, 4}), flag_array, text_array,
+         negative_array, null_array},
+        5);
+    Check(cyxwiz::LabelClassCount(table, "index") == std::optional<size_t>(4), "int indices 0..3: 4 classes");
+    Check(cyxwiz::LabelClassCount(table, "whole_float") == std::optional<size_t>(3),
+          "whole floats 0..2 are indices: 3 classes");
+    Check(cyxwiz::LabelClassCount(table, "flag") == std::optional<size_t>(2), "booleans: 2 classes");
+    Check(cyxwiz::LabelClassCount(table, "name") == std::optional<size_t>(3), "text: its 3 distinct values");
+    Check(!cyxwiz::LabelClassCount(table, "price"), "fractional values are a regression target");
+    Check(!cyxwiz::LabelClassCount(table, "delta"), "negative values are not class indices");
+    Check(!cyxwiz::LabelClassCount(table, "empty"), "an all-null column has no classes");
+    Check(!cyxwiz::LabelClassCount(table, "missing"), "a missing column has no classes");
+}
+
 int main(int argc, char** argv) {
+    if (!cyxwiz::test::BeginOracleTest("test_training_batcher_setup")) return 1;
     namespace fs = std::filesystem;
 
     const auto training_core_fixture = LoadTrainingCoreFixture(
@@ -891,6 +1048,12 @@ int main(int argc, char** argv) {
           "tabular input size should not use compiled override");
     Check(tabular_resolution.has_separate_label_column,
           "tabular multi-column data should report a separate label column");
+    // The Data Input's roles keep columns out (TOFIX129 D7a G1): an ID role on
+    // f2 and Ignore on f3 leave two features.
+    auto roles_config = MakeConfig();
+    roles_config.excluded_feature_columns = {"f2", "f3", "label"};
+    Check(cyxwiz::ResolveTabularTrainingInputSize(roles_config, tabular_schema, "label").input_size == 2,
+          "column roles keep f2 and f3 out of the input width");
 
     auto single_col_resolution = cyxwiz::ResolveTabularTrainingInputSize(
         MakeConfig(), arrow::schema({arrow::field("x", arrow::float64())}), "");
@@ -970,12 +1133,16 @@ int main(int argc, char** argv) {
         MakeMultiGroupDataset(),
         "label",
         /*batch_size=*/2);
+    // The shared split rule's counts (TOFIX228 1.6, ORA-23): 6 rows at
+    // 0.5 / 0.25 / 0.25 are 3 / 1.5 / 1.5, and the half row left over goes to
+    // Validation first (its tie order), as a pipeline-marked run splits them;
+    // the batchers' floor slicing once gave 3 / 1 / 2.
     Check(explicit_split_batchers.num_train_samples == 3,
           "explicit Arrow DataSplit train split should contain 3 samples");
-    Check(explicit_split_batchers.num_val_samples == 1,
-          "explicit Arrow DataSplit val split should contain 1 sample");
-    Check(explicit_split_batchers.num_test_samples == 2,
-          "explicit Arrow DataSplit test split should contain 2 held-out samples");
+    Check(explicit_split_batchers.num_val_samples == 2,
+          "explicit Arrow DataSplit val split should contain 2 samples");
+    Check(explicit_split_batchers.num_test_samples == 1,
+          "explicit Arrow DataSplit test split should contain 1 held-out sample");
 
     // Validation 0 with a Test share (TOFIX157): the rows after Train are
     // the Test set, and Validation is empty.
@@ -1135,19 +1302,23 @@ int main(int argc, char** argv) {
     balanced_loss_config.output_size = 2;
     balanced_loss_config.loss_type = gui::NodeType::CrossEntropyLoss;
     balanced_loss_config.loss_params["class_weight"] = "balanced";
-    const bool applied_balanced_weights =
-        cyxwiz::TryApplyBalancedClassWeightsFromArrowTable(
-            balanced_loss_config,
-            MakeStratifiedDataset()->GetArrowTable(),
-            "label",
-            "",
-            "test balanced loss weights");
-    Check(applied_balanced_weights,
-          "balanced CrossEntropy weights should be computed from Arrow train split");
+    // The run's Train batcher counts the classes (TOFIX223 0.16).
+    const auto balanced_loss_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        balanced_loss_config,MakeStratifiedDataset(), "label", /*batch_size=*/4);
+    cyxwiz::ResolveBalancedClassWeights(balanced_loss_config, balanced_loss_batchers.train);
     Check(balanced_loss_config.loss_params["class_weight"] == "manual",
           "balanced class_weight should be resolved to manual weights");
     Check(balanced_loss_config.loss_params["class_weights"] == "[0.5625, 4.5]",
           "balanced class_weights should use n_samples / (n_classes * class_count)");
+    // The request picks class-index targets before the weights exist, as
+    // manual weights do: the weighted loss is then PyTorch's weighted mean
+    // (sum w_y l / sum w_y), not a mean over one-hot rows.
+    {
+        auto balanced_batch = balanced_loss_batchers.train->GetNextBatch();
+        Check(balanced_batch.labels.GetDataType() == cyxwiz::DataType::Int32 &&
+                  balanced_batch.labels.Shape() == std::vector<size_t>({balanced_batch.size}),
+              "balanced class weights read class-index targets in memory");
+    }
 
     auto stratified_loss_config = MakeConfig();
     stratified_loss_config.has_data_split = true;
@@ -1160,15 +1331,9 @@ int main(int argc, char** argv) {
     stratified_loss_config.output_size = 2;
     stratified_loss_config.loss_type = gui::NodeType::CrossEntropyLoss;
     stratified_loss_config.loss_params["class_weight"] = "balanced";
-    const bool applied_stratified_weights =
-        cyxwiz::TryApplyBalancedClassWeightsFromArrowTable(
-            stratified_loss_config,
-            MakeStratifiedDataset()->GetArrowTable(),
-            "label",
-            "",
-            "test stratified balanced loss weights");
-    Check(applied_stratified_weights,
-          "balanced CrossEntropy weights should support stratified train splits");
+    const auto stratified_loss_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        stratified_loss_config, MakeStratifiedDataset(), "label", /*batch_size=*/4);
+    cyxwiz::ResolveBalancedClassWeights(stratified_loss_config, stratified_loss_batchers.train);
     Check(stratified_loss_config.loss_params["class_weights"] == "[0.75, 1.5]",
           "stratified balanced class_weights should use stratified train counts");
 
@@ -1219,6 +1384,17 @@ int main(int argc, char** argv) {
           "train pointer should target Parquet train owner");
     auto parquet_batch = parquet_batchers.train->GetNextBatch();
     CheckFeatureAndLabelShapes(parquet_batch, 2, 2, 2, "tabular Parquet");
+    {
+        auto balanced_parquet_config = MakeConfig();
+        balanced_parquet_config.loss_type = gui::NodeType::CrossEntropyLoss;
+        balanced_parquet_config.loss_params["class_weight"] = "balanced";
+        auto balanced_parquet =
+            cyxwiz::BuildParquetTrainingBatchers(balanced_parquet_config, parquet_dataset, "label", /*batch_size=*/2);
+        auto balanced_batch = balanced_parquet.train->GetNextBatch();
+        Check(balanced_batch.labels.GetDataType() == cyxwiz::DataType::Int32 &&
+                  balanced_batch.labels.Shape() == std::vector<size_t>({balanced_batch.size}),
+              "balanced class weights read class-index targets from Parquet");
+    }
 
     // Validation 0 with a Test share on disk, as in memory.
     auto parquet_test_only_config = MakeConfig();
@@ -1378,6 +1554,73 @@ int main(int argc, char** argv) {
               all_external_build.batchers.num_val_samples == 4 &&
               all_external_build.batchers.num_test_samples == 4,
           "Train+Dev+Test typed partitions must preserve every external role in full");
+
+    // A regression graph's supplied Validation (Arrow) and Test (Parquet)
+    // tables read their targets as Train does: the label values themselves,
+    // not one-hot classes (TOFIX223 0.5). The tables' labels are 0, 1, 0, 1;
+    // a one-hot read of width 1 would give 1, 0, 1, 0.
+    {
+        auto regression_config = all_external_config;
+        regression_config.loss_type = gui::NodeType::MSELoss;
+        regression_config.output_size = 1;
+        auto regression_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+            regression_config, all_external_datasets, /*batch_size=*/4);
+        Check(regression_build.ok(), regression_build.error_message);
+        const auto targets_of = [](cyxwiz::IBatcher* batcher) {
+            std::vector<float> values;
+            if (!batcher) return values;
+            batcher->Reset();
+            while (!batcher->IsEpochComplete()) {
+                const cyxwiz::Batch batch = batcher->GetNextBatch();
+                if (batch.size == 0) break;
+                const float* labels = batch.labels.ReadData<float>();
+                values.insert(values.end(), labels, labels + batch.labels.NumElements());
+            }
+            return values;
+        };
+        const std::vector<float> expected = {0.0f, 1.0f, 0.0f, 1.0f};
+        Check(targets_of(regression_build.batchers.train) == expected,
+              "regression Train role reads the label values as targets");
+        Check(targets_of(regression_build.batchers.val) == expected,
+              "regression supplied Validation role reads the label values, as Train does");
+        Check(targets_of(regression_build.batchers.test) == expected,
+              "regression supplied Test role (Parquet) reads the label values, as Train does");
+    }
+
+    // A supplied Validation joined to the Training table before the split is
+    // a slice of the split: it already reads Train's targets ("y", "y_1",
+    // "y_2" of a time-series window). It was transformed again with the
+    // role's own label column and asked for "temp_1", which the table does not
+    // have, so the build threw.
+    {
+        auto joined_config = MakeMultiStepTimeSeriesConfig();
+        joined_config.dataset_roles.train = {"joined_train", "temp", 40, true};
+        joined_config.dataset_roles.dev = {"joined_dev", "temp", 41, true};
+        joined_config.dataset_roles.dev.joined_to_training = true;
+        joined_config.dataset_roles.policy.train_ratio = 0.75f;
+        joined_config.dataset_roles.policy.dev_ratio = 0.25f;
+        joined_config.dataset_roles.policy.test_ratio = 0.0f;
+        cyxwiz::ResolvedTabularDatasets joined_datasets;
+        joined_datasets.train_arrow = MakeMultiStepTimeSeriesDataset();
+        std::string error;
+        try {
+            auto joined_build =
+                cyxwiz::BuildResolvedTabularTrainingBatchers(joined_config, joined_datasets, /*batch_size=*/2);
+            if (!joined_build.ok()) error = joined_build.error_message;
+            else if (!joined_build.batchers.val || joined_build.batchers.val->GetNumSamples() != 1)
+                error = "the joined Validation slice holds the partition-1 row";
+            else {
+                joined_build.batchers.val->Reset();
+                const auto joined_batch = joined_build.batchers.val->GetNextBatch();
+                if (joined_batch.labels.Shape() != std::vector<size_t>({1, 3}) ||
+                    joined_batch.labels.ReadData<float>()[2] != 6.5f)
+                    error = "the joined Validation slice reads Train's three targets";
+            }
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
+        Check(error.empty(), "a joined supplied Validation keeps Train's targets: " + error);
+    }
 
     auto sparse_config = MakeConfig();
     sparse_config.has_data_split = true;
@@ -1856,6 +2099,8 @@ int main(int argc, char** argv) {
     fs::remove(multi_ts_parquet_path);
     fs::remove(multi_step_ts_parquet_path);
     TestTextLabels(fs::temp_directory_path());
+    TestLabelClassCount();
+    TestSplitCountsAcrossClasses();
     TestParquetRowSplit(fs::temp_directory_path());
     TestParquetClassBalancing(fs::temp_directory_path());
     fs::remove_all(work_dir);

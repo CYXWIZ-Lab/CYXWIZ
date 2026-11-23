@@ -71,9 +71,9 @@ struct DatasetSourceRef {
     bool joined_to_training = false;
     DatasetStorageKind storage_kind = DatasetStorageKind::Unknown;
     DatasetModality modality = DatasetModality::Unknown;
-    std::string source_fingerprint;
-    std::string schema_fingerprint;
-    std::string feature_schema_fingerprint;
+    std::string source_fingerprint{};
+    std::string schema_fingerprint{};
+    std::string feature_schema_fingerprint{};
     int64_t row_count = -1;
 
     bool IsSupplied() const { return !dataset_name.empty(); }

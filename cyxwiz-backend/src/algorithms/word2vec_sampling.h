@@ -121,11 +121,13 @@ inline EpochExamples MakeEpochExamples(const af::array& corpus, const af::array&
 
     if (cbow) {
         const af::array centres = af::where(af::anyTrue(contexts >= 0, 1));
+        if (centres.isempty()) return out;  // No kept word has a neighbour in its sentence.
         out.inputs = contexts(centres, af::span);
         out.outputs = words(centres);
     } else {
         const af::array flat_by_centre = af::flat(contexts.T());  // centre-major
         const af::array valid = af::where(flat_by_centre >= 0);
+        if (valid.isempty()) return out;  // No kept word has a neighbour in its sentence.
         const af::array context = flat_by_centre(valid).as(s32);
         const af::array centre = words(valid / static_cast<unsigned>(2 * window)).as(s32);
         out.inputs = centre_input ? centre : context;

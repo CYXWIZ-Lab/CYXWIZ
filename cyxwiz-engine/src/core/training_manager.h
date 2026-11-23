@@ -17,6 +17,7 @@
 namespace cyxwiz {
 
 class TrainingPlotPanel;
+struct TrainingRecipe;
 
 enum class ActiveModelOrigin {
     None,
@@ -87,90 +88,17 @@ public:
 
     // Get current training metrics (thread-safe)
     TrainingMetrics GetCurrentMetrics() const;
+    // Why the run waits for another training run's GPU, while it does ("" otherwise)
+    std::string WaitingForGpu() const;
 
     /**
-     * Start training with compiled graph configuration
-     * @param config Compiled training configuration from GraphCompiler
-     * @param dataset Dataset handle
-     * @param epochs Number of epochs
-     * @param batch_size Batch size
-     * @param plot_panel Optional plot panel for progress visualization
-     * @param node_editor_callback Callback to update node editor training state
-     * @return true if training started, false if already training
+     * Start a training run from a recipe (training_recipe.h): how the run's
+     * data is read, the same for a search's trials. False, with the reason
+     * logged, when already training or the recipe cannot build the run.
      */
-    bool StartTraining(
+    bool StartTrainingRecipe(
+        const TrainingRecipe& recipe,
         TrainingConfiguration config,
-        ExternalBatcherFactory batcher_factory,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
-        std::function<void(bool)> node_editor_callback = nullptr
-    );
-    /**
-     * Start training from role-resolved external batchers. The caller owns
-     * modality-specific construction; TrainingManager owns the common loop.
-     */
-    bool StartTrainingExternal(
-        TrainingConfiguration config,
-        ResolvedExternalBatchers batchers,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
-        std::function<void(bool)> node_editor_callback = nullptr
-    );
-
-    /**
-     * Start training with Arrow dataset (modern API)
-     */
-    bool StartTrainingArrow(
-        TrainingConfiguration config,
-        std::shared_ptr<ArrowDataset> arrow_dataset,
-        const std::string& label_column,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
-        std::function<void(bool)> node_editor_callback = nullptr
-    );
-
-    /**
-     * Start training with a disk-backed Parquet dataset. Used when
-     * DataRegistry::LoadTabularCSV picked the disk-backed path because
-     * the CSV was larger than available RAM. Mirrors StartTrainingArrow
-     * exactly; differs only in the dataset type carried through to the
-     * TrainingExecutor, which picks its Parquet batcher accordingly.
-     */
-    bool StartTrainingParquet(
-        TrainingConfiguration config,
-        std::shared_ptr<class ParquetBackedDataset> parquet_dataset,
-        const std::string& label_column,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
-        std::function<void(bool)> node_editor_callback = nullptr
-    );
-
-    bool StartTrainingSequence(
-        TrainingConfiguration config,
-        std::unique_ptr<ISequenceBatcher> sequence_batcher,
-        std::vector<std::string> id_to_label,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
-        std::function<void(bool)> node_editor_callback = nullptr
-    );
-
-    bool StartTrainingImage(
-        TrainingConfiguration config,
-        const DataRegistry::ImageDatasetEntry& image_entry,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
-        std::function<void(bool)> node_editor_callback = nullptr
-    );
-
-    bool StartTrainingAudio(
-        TrainingConfiguration config,
-        const DataRegistry::AudioDatasetEntry& audio_entry,
         int epochs,
         int batch_size,
         std::weak_ptr<TrainingPlotPanel> plot_panel = {},
@@ -210,6 +138,12 @@ public:
     using ProgressCallback = std::function<void(int epoch, float loss, float accuracy)>;
 
     void SetOnTrainingStart(TrainingStartCallback callback) { on_training_start_ = callback; }
+    // Layer snapshots for the next training started (TOFIX178 6.1c); nullopt
+    // turns them off. Set before each start: a start takes and clears it.
+    void SetNextLayerSnapshots(std::optional<TrainingExecutor::LayerSnapshotSchedule> schedule) {
+        std::lock_guard<std::mutex> lock(next_layer_snapshots_mutex_);
+        next_layer_snapshots_ = std::move(schedule);
+    }
     void SetOnTrainingEnd(TrainingEndCallback callback) { on_training_end_ = callback; }
     void SetOnProgress(ProgressCallback callback) { on_progress_ = callback; }
 
@@ -230,6 +164,24 @@ public:
     std::shared_ptr<SequentialModel> GetActiveSequentialModel() const;
 
     ActiveModelInfo GetActiveModelInfo() const;
+
+    // The last learning rate range test (a run with
+    // config.learning_rate_range): its points and why it stopped. A range
+    // test keeps the trained model in use; `serial` grows with each one.
+    struct RangeTestOutcome {
+        uint64_t serial = 0;
+        std::vector<LearningRateRangePoint> points;
+        std::string stop_reason;
+        std::string failure;  // why the run failed, when it did
+        bool cancelled = false;  // stopped by the user before the test ended
+    };
+    RangeTestOutcome GetLastRangeTest() const;
+
+    // Keeps a threshold / calibration with the trained model in use (Results
+    // > Test, TOFIX129 D11): Test applies it, its checkpoint's metadata.json
+    // and an export carry it. An empty decision forgets it. "" when kept,
+    // else why not.
+    std::string SetActiveModelDecision(const ModelDecision& decision);
 
     /**
      * Get the last optimizer (preserved after training completes)
@@ -317,6 +269,11 @@ private:
     std::atomic<bool> is_training_{false};
     std::atomic<bool> stop_requested_{false};
     std::atomic<uint64_t> current_task_id_{0};
+    // This run's execution trace, by its start (taken when the run starts and
+    // again at its first batch; the executor renames the trace but keeps its
+    // start): the Runs table takes the device from it only while it is still
+    // this run's, also for a run that ends before its first batch.
+    long long trace_started_ns_ = 0;
 
     mutable std::mutex mutex_;
     std::unique_ptr<TrainingExecutor> current_executor_;
@@ -328,6 +285,8 @@ private:
 
     // Callbacks
     TrainingStartCallback on_training_start_;
+    std::mutex next_layer_snapshots_mutex_;
+    std::optional<TrainingExecutor::LayerSnapshotSchedule> next_layer_snapshots_;
     TrainingEndCallback on_training_end_;
     ProgressCallback on_progress_;
 
@@ -335,6 +294,7 @@ private:
     std::shared_ptr<IExecutableModel> last_trained_model_;
     std::unique_ptr<Optimizer> last_optimizer_;
     TrainingMetrics last_metrics_;
+    RangeTestOutcome last_range_test_;  // guarded by mutex_
     ActiveModelInfo active_model_info_;
 };
 

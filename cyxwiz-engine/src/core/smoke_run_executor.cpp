@@ -317,6 +317,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     batcher->SetBatchInspectionEnabled(true);
 
     BuiltModel built = BuildSequentialFromConfig(config);
+    // Training mode, as a training run sets it (a frozen BatchNorm then runs on its kept statistics).
+    if (built.ok()) built.model->SetTraining(true);
     if (!built.ok() || !built.loss || !built.optimizer) {
         result.summary = built.error_message.empty()
             ? "Smoke Run failed to build model/loss/optimizer."

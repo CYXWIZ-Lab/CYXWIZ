@@ -76,6 +76,10 @@ public:
     // Open registration page in browser
     static void OpenRegistrationPage();
 
+    // GET a URL (http or https, certificates checked) with a short timeout:
+    // the status, 0 when nothing answered. The server address probe uses it.
+    static int HttpGet(const std::string& url, std::string* body);
+
 private:
     AuthClient();
     ~AuthClient();

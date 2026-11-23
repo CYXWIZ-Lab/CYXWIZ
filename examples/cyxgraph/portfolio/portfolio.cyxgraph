@@ -1,0 +1,68 @@
+{
+ "version": "2.1",
+ "data_boundary_version": 2,
+ "data_validator_contract_version": 2,
+ "evaluation_table_contract_version": 2,
+ "classical_tree_table_contract_version": 2,
+ "framework": 0,
+ "execution_mode": 1,
+ "workflow_description": "Portfolio weights: the least risky mix of five assets from 120 months of returns, and the least risky mix earning 0.5 % a month, both without short positions.",
+ "groups": [],
+ "annotations": [],
+ "nodes": [
+  {
+   "id": 1,
+   "type": 157,
+   "name": "Returns",
+   "pos_x": 0,
+   "pos_y": 0,
+   "parameters": {
+    "source_type": "file",
+    "file_path": "returns.csv",
+    "file_type": "csv",
+    "file_category": "tabular",
+    "has_header": "true"
+   }
+  },
+  {
+   "id": 2,
+   "type": 371,
+   "name": "Least risky mix",
+   "pos_x": 320,
+   "pos_y": -150,
+   "parameters": {
+    "asset_cols": "equity,growth,credit,bonds,gold",
+    "target_return": "",
+    "long_only": "true"
+   }
+  },
+  {
+   "id": 3,
+   "type": 371,
+   "name": "Earning 0.5 % a month",
+   "pos_x": 320,
+   "pos_y": 150,
+   "parameters": {
+    "asset_cols": "equity,growth,credit,bonds,gold",
+    "target_return": "0.005",
+    "long_only": "true"
+   }
+  }
+ ],
+ "links": [
+  {
+   "id": 1,
+   "from_node": 1,
+   "to_node": 2,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  },
+  {
+   "id": 2,
+   "from_node": 1,
+   "to_node": 3,
+   "from_pin_index": 0,
+   "to_pin_index": 0
+  }
+ ]
+}

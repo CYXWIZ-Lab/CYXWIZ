@@ -37,14 +37,10 @@ public:
     CompletedLoadDescription DescribeCompletedLoad(
         const AsyncLoadState& state) const override;
 
-    bool LaunchTraining(
-        TrainingConfiguration config,
+    cyxwiz::TrainingRecipe TrainingRecipeFor(
+        const cyxwiz::TrainingConfiguration& config,
         const std::string& dataset_name,
-        const std::string& label_column,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel,
-        std::function<void(bool)> node_editor_callback) override;
+        const std::string& label_column) const override;
 
     cyxwiz::PreprocessingDomain Domain(
         const std::string& file_category) const override;

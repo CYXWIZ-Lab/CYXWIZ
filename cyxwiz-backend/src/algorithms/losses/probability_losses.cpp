@@ -29,9 +29,11 @@ BCELoss::BCELoss(Reduction reduction, float denominator_epsilon)
     }
 }
 
-BCEWithLogitsLoss::BCEWithLogitsLoss(Reduction reduction, float pos_weight)
+BCEWithLogitsLoss::BCEWithLogitsLoss(Reduction reduction, float pos_weight,
+                                     float label_smoothing)
     : Loss(reduction), pos_weight_(pos_weight) {
     SetPosWeight(pos_weight);
+    SetLabelSmoothing(label_smoothing);
 }
 
 void BCEWithLogitsLoss::SetPosWeight(float pos_weight) {
@@ -40,6 +42,15 @@ void BCEWithLogitsLoss::SetPosWeight(float pos_weight) {
             "BCEWithLogitsLoss pos_weight must be finite and positive");
     }
     pos_weight_ = pos_weight;
+}
+
+void BCEWithLogitsLoss::SetLabelSmoothing(float label_smoothing) {
+    if (!std::isfinite(label_smoothing) || label_smoothing < 0.0f ||
+        label_smoothing >= 1.0f) {
+        throw std::invalid_argument(
+            "BCEWithLogitsLoss label_smoothing must be finite and in [0, 1)");
+    }
+    label_smoothing_ = label_smoothing;
 }
 
 SoftDiceLoss::SoftDiceLoss(Reduction reduction, float smooth)
@@ -127,6 +138,9 @@ Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targe
     try {
         af::array logits = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
+        if (label_smoothing_ > 0.0f) {
+            target = target * (1.0f - label_smoothing_) + 0.5f * label_smoothing_;
+        }
 
         // Stable weighted BCEWithLogits, matching the CPU reference and
         // supporting binary as well as fractional targets.
@@ -159,6 +173,9 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
     try {
         af::array logits = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
+        if (label_smoothing_ > 0.0f) {
+            target = target * (1.0f - label_smoothing_) + 0.5f * label_smoothing_;
+        }
 
         af::array log_weight =
             1.0f + (pos_weight_ - 1.0f) * target;

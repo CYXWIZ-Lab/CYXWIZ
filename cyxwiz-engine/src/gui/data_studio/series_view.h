@@ -24,9 +24,11 @@ namespace cyxwiz {
 // The Time (a date column, a text that reads as dates, numbers, or the row
 // order), Value (a number column) and Period pickers shared by the Series and
 // Forecast tabs; the defaults are the Data Input's time column, else the one
-// date column, else the row order (D6-4). True when a choice changed.
+// date column, else the row order (D6-4). True when a choice changed. The
+// Signal tab takes the Time and Value pickers without the Period (`period`
+// false) and names the value "Signal".
 bool RenderSeriesPickers(const char* id, const ExploreContext& context, const DatasetProfile& profile, plot::ColumnPicker& picker,
-                         series::SeriesRequest& base);
+                         series::SeriesRequest& base, bool period = true, const char* value_label = "Value");
 
 class SeriesView {
 public:

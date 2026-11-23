@@ -1,5 +1,6 @@
 #include "time_series_window_operator.h"
 #include "../materialization_memory_guard.h"
+#include "../column_list.h"
 #include "../profiler_trace.h"
 #include "ts_column_utils.h"
 
@@ -18,19 +19,9 @@ namespace cyxwiz {
 
 namespace {
 
-// Parse a comma-separated list of column names. Empty string -> empty vector.
-// Whitespace around commas is trimmed.
+// Parse a comma-separated list of column names (core/column_list.h).
 void ParseColList(const std::string& s, std::vector<std::string>& out) {
-    out.clear();
-    if (s.empty()) return;
-    std::stringstream ss(s);
-    std::string token;
-    while (std::getline(ss, token, ',')) {
-        size_t start = token.find_first_not_of(" \t");
-        size_t end = token.find_last_not_of(" \t");
-        if (start == std::string::npos) continue;
-        out.push_back(token.substr(start, end - start + 1));
-    }
+    out = ParseColumnList(s);
 }
 
 std::string BuildWindowMemoryPreflightMessage(

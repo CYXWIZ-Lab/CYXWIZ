@@ -11,6 +11,7 @@
 #include "arrayfire_host_materialization.h"
 #include "arrayfire_indexed.h"
 #include "text_utf8.h"
+#include "device_random.h"
 
 #include <arrayfire.h>
 
@@ -424,9 +425,9 @@ WordAlignment WordEmbeddings::Align(const WordVectors& vectors, const std::vecto
         }
         if (!missing_ids.empty() && options.missing == "random") {
             const float scale = af::stdev<float>(af::flat(table), AF_VARIANCE_POPULATION);
-            af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, options.seed);
+            af::randomEngine engine = cyxwiz::DeviceRandomEngine(options.seed);
             const af::array ids(static_cast<dim_t>(missing_ids.size()), missing_ids.data());
-            aligned(af::span, ids) = af::randn(af::dim4(dim, static_cast<dim_t>(missing_ids.size())), f32, engine) * scale;
+            aligned(af::span, ids) = cyxwiz::DeviceNormal(af::dim4(dim, static_cast<dim_t>(missing_ids.size())), f32, engine) * scale;
         }
         if (unknown_is_mean && options.unknown_id >= 0 && options.unknown_id < m)
             aligned(af::span, options.unknown_id) = af::mean(table, 1);

@@ -6,6 +6,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/file_dialogs.h"
 #include "../../core/project_manager.h"
+#include "../../core/test_manager.h"
 #include "../../core/training_manager.h"
 
 #include <imgui.h>
@@ -136,7 +137,10 @@ std::string LanguageModelLoadDialog::Blocker() const {
     if (load_) return "Loading";
     switch (source_) {
         case LanguageModelLoadRequest::Source::Session:
-            if (TrainingManager::Instance().IsTrainingActive()) return "Training is running; use the model when it ends";
+            if (const auto busy = ActiveModelBusy(TrainingManager::Instance().IsTrainingActive(),
+                                                  TestManager::Instance().IsTestingActive());
+                !busy.empty())
+                return busy + "; use it when that ends";
             if (!TrainingManager::Instance().GetActiveModel()) return "This session has no trained or loaded model";
             return {};
         case LanguageModelLoadRequest::Source::Checkpoint:
@@ -398,6 +402,15 @@ void LanguageModelLoadDialog::Start() {
     request.package_path = package_path_;
     error_.clear();
     auto state = std::make_shared<LoadState>();
+    if (source_ == LanguageModelLoadRequest::Source::Session) {
+        std::string busy;
+        state->use = ActiveModelUse::TryClaim("Loading a language model", TrainingManager::Instance().IsTrainingActive(),
+                                              TestManager::Instance().IsTestingActive(), &busy);
+        if (!state->use) {
+            error_ = busy + "; use it when that ends";
+            return;
+        }
+    }
     load_ = state;
     std::weak_ptr<const void> owner = state;
     state->task_id = AsyncTaskManager::Instance().RunAsync(
@@ -420,6 +433,7 @@ void LanguageModelLoadDialog::Start() {
                 state->ok = success && state->result;
                 state->error = error;
             }
+            state->use.reset();
             state->done.store(true);
         },
         owner);

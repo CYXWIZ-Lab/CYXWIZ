@@ -1,9 +1,11 @@
 #include "cyxwiz/audio_processing.h"
+#include "cyxwiz/portable_random.h"
 #include <cmath>
 #include <algorithm>
 #include <numeric>
 #include <random>
 #include <cstring>
+#include <mutex>
 #include <spdlog/spdlog.h>
 
 #ifdef CYXWIZ_HAS_SNDFILE
@@ -115,6 +117,18 @@ std::vector<float> AudioProcessing::HammingWindow(int size) {
 // Spectrogram via FFTW3
 // ============================================================================
 
+#ifdef CYXWIZ_HAS_FFTW
+namespace {
+// FFTW's planner is not thread-safe; only fftw_execute is (FFTW manual,
+// "Thread safety"). Audio workers compute features in parallel, so making
+// and destroying plans share this lock (TOFIX223 0.13, audit AUD-03).
+std::mutex& FftwPlannerMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+}  // namespace
+#endif
+
 AudioFeatures AudioProcessing::ComputeSpectrogram(const AudioData& audio,
                                                    const SpectrogramConfig& config) {
     AudioFeatures result;
@@ -127,6 +141,18 @@ AudioFeatures AudioProcessing::ComputeSpectrogram(const AudioData& audio,
     int n_fft = config.n_fft;
     int hop = config.hop_length > 0 ? config.hop_length : n_fft / 2;
     int win_len = config.win_length > 0 ? config.win_length : n_fft;
+    // The window is copied into an n_fft buffer, so it cannot be longer
+    // (torch.stft refuses win_length > n_fft the same way).
+    if (n_fft < 2 || hop <= 0) {
+        result.error_message = "n_fft must be at least 2 and hop_length at least 1 (n_fft " + std::to_string(n_fft) +
+                               ", hop_length " + std::to_string(hop) + ")";
+        return result;
+    }
+    if (win_len > n_fft) {
+        result.error_message = "win_length (" + std::to_string(win_len) + ") must not be larger than n_fft (" +
+                               std::to_string(n_fft) + ")";
+        return result;
+    }
 
     // Create window
     std::vector<float> window;
@@ -163,22 +189,30 @@ AudioFeatures AudioProcessing::ComputeSpectrogram(const AudioData& audio,
 
 #ifdef CYXWIZ_HAS_FFTW
     {
-        // Allocate FFTW buffers with RAII cleanup
-        double* fft_in = fftw_alloc_real(n_fft);
-        fftw_complex* fft_out = fftw_alloc_complex(freq_bins);
-        if (!fft_in || !fft_out) {
+        // Buffers and plan made, and later destroyed, under the planner lock;
+        // only fftw_execute runs unlocked.
+        double* fft_in = nullptr;
+        fftw_complex* fft_out = nullptr;
+        fftw_plan plan = nullptr;
+        {
+            const std::lock_guard<std::mutex> planner(FftwPlannerMutex());
+            fft_in = fftw_alloc_real(n_fft);
+            fft_out = fftw_alloc_complex(freq_bins);
+            if (fft_in && fft_out) plan = fftw_plan_dft_r2c_1d(n_fft, fft_in, fft_out, FFTW_ESTIMATE);
+        }
+        auto cleanup = [&]() {
+            const std::lock_guard<std::mutex> planner(FftwPlannerMutex());
+            if (plan) fftw_destroy_plan(plan);
             if (fft_in) fftw_free(fft_in);
             if (fft_out) fftw_free(fft_out);
-            result.error_message = "FFTW allocation failed";
+        };
+        if (!plan) {
+            const bool allocated = fft_in && fft_out;
+            cleanup();
+            result.error_message = allocated ? "FFTW could not plan an FFT of size " + std::to_string(n_fft)
+                                             : "FFTW allocation failed";
             return result;
         }
-        fftw_plan plan = fftw_plan_dft_r2c_1d(n_fft, fft_in, fft_out, FFTW_ESTIMATE);
-        // Ensure cleanup on any exit
-        auto cleanup = [&]() {
-            fftw_destroy_plan(plan);
-            fftw_free(fft_in);
-            fftw_free(fft_out);
-        };
 
         for (int frame = 0; frame < n_frames; frame++) {
             // Zero-fill and apply window
@@ -353,7 +387,7 @@ AudioFeatures AudioProcessing::ComputeMFCC(const AudioData& audio, const MFCCCon
 // Augmentation
 // ============================================================================
 
-AudioData AudioProcessing::AddNoise(const AudioData& audio, float snr_db) {
+AudioData AudioProcessing::AddNoise(const AudioData& audio, float snr_db, uint32_t seed) {
     AudioData result = audio;
     if (!audio.valid) return result;
 
@@ -364,11 +398,9 @@ AudioData AudioProcessing::AddNoise(const AudioData& audio, float snr_db) {
     float noise_power = signal_power / std::pow(10.0f, snr_db / 10.0f);
     float noise_std = std::sqrt(noise_power);
 
-    std::mt19937 rng(42);
-    std::normal_distribution<float> dist(0.0f, noise_std);
-
+    std::mt19937 rng(seed);
     for (size_t i = 0; i < result.num_samples; i++) {
-        result.samples[i] += dist(rng);
+        result.samples[i] += static_cast<float>(cyxwiz::portable::Normal(rng, 0.0, noise_std));
     }
 
     return result;

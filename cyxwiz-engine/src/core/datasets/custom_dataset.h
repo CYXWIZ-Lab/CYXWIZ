@@ -2,6 +2,7 @@
 
 #include "../dataset_base.h"
 #include "../data_registry.h"
+#include "cyxwiz/portable_random.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <filesystem>
@@ -627,8 +628,8 @@ private:
         size_t num_samples = 100;
 
         std::mt19937 rng(42);
-        std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-        std::uniform_int_distribution<int> label_dist(0, 9);
+        const auto dist = [low = 0.0f, high = 1.0f](auto& r) { return cyxwiz::portable::UniformFloat(r, low, high); };
+        const auto label_dist = [low = 0, high = 9](auto& r) { return cyxwiz::portable::UniformInt<int>(r, low, high); };
 
         for (size_t i = 0; i < num_samples; i++) {
             std::vector<float> sample(sample_size);

@@ -90,6 +90,15 @@ public:
         ++ticket_;
     }
     bool Running() const { return task_id_ != 0; }
+    // The running task's progress (0 .. 1) and its message ("" when it reports none).
+    float Progress(std::string* message = nullptr) const {
+        if (task_id_ == 0) return 0.0f;
+        const auto task = AsyncTaskManager::Instance().GetTask(task_id_);
+        if (!task) return 0.0f;
+        const TaskInfo info = task->GetInfo();
+        if (message) *message = info.status_message;
+        return info.progress;
+    }
     // The answer for `key`, or null.
     const T* Answer(const std::string& key) const { return key == key_ ? answer_.get() : nullptr; }
     const std::string& Error() const { return error_; }

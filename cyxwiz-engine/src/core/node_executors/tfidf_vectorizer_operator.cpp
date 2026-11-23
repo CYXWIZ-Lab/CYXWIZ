@@ -3,10 +3,10 @@
 #include "text_column_utils.h"
 #include "text_vectorizer_contract.h"
 
+#include <cyxwiz/text_processing.h>
+
 #include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
-
-#include <cyxwiz/text_processing.h>
 
 #include <arrow/api.h>
 #include <arrow/builder.h>
@@ -21,7 +21,6 @@
 #include <numeric>
 #include <sstream>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace cyxwiz {
@@ -35,8 +34,8 @@ namespace {
 
 struct TFIDFTermStats {
     std::string term;
-    int doc_freq = 0;
-    int corpus_count = 0;
+    int64_t doc_freq = 0;
+    int64_t corpus_count = 0;
     double idf = 1.0;
 };
 
@@ -385,58 +384,34 @@ TFIDFVectorizerOperator::ApplyConfigured(
         0,
         static_cast<uint64_t>(n));
 
-    std::vector<std::unordered_map<std::string, int>> doc_counts;
-    doc_counts.reserve(n);
-
-    std::unordered_map<std::string, TFIDFTermStats> term_stats_by_name;
+    // The shared word rule (Data Studio's Text tab counts the same).
+    text_vectorizer_contract::CountedTerms counted;
+    arrow::Status cancelled = arrow::Status::OK();
     try {
-        for (size_t row = 0; row < texts.size(); ++row) {
-            if ((row & 1023) == 0) {
-                ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-            }
-            const auto& text = texts[row];
-            auto tokenized = TextProcessing::Tokenize(
-                text, "word", 2, /*lowercase=*/true,
-                /*remove_punctuation=*/true);
-            if (!tokenized.success) {
-                return arrow::Status::ExecutionError(
-                    "TFIDFVectorizer: tokenization failed: " +
-                    tokenized.error_message);
-            }
-
-            auto base_tokens = stop_words_ == "english"
-                ? TextProcessing::RemoveStopwords(tokenized.tokens, "english")
-                : tokenized.tokens;
-            auto tokens = text_vectorizer_contract::BuildNGramFeatures(
-                base_tokens, ngram_min_, ngram_max_);
-            std::unordered_map<std::string, int> counts;
-            for (const auto& token : tokens) {
-                counts[token]++;
-            }
-
-            if (!state_options_.IsTransformOnly() && (fit_row.empty() || fit_row[row])) {
-                for (const auto& pair : counts) {
-                    auto& stats = term_stats_by_name[pair.first];
-                    stats.term = pair.first;
-                    stats.doc_freq++;
-                    stats.corpus_count += pair.second;
+        const bool counted_all = text_vectorizer_contract::CountTerms(
+            texts, stop_words_ == "english", ngram_min_, ngram_max_,
+            [&](size_t row) {
+                return !state_options_.IsTransformOnly() &&
+                       (fit_row.empty() || fit_row[row]);
+            },
+            [&](size_t rows_done) {
+                cancelled = CheckCancellation(GetName());
+                if (!cancelled.ok()) return false;
+                if (rows_done > 0) {
+                    report_progress(
+                        "Tokenizing text",
+                        "Tokenized " + std::to_string(rows_done) + "/" +
+                            std::to_string(texts.size()) + " rows",
+                        0.10f + 0.25f * (static_cast<float>(rows_done) /
+                                         static_cast<float>(texts.size())),
+                        initial_memory_estimate,
+                        static_cast<uint64_t>(rows_done),
+                        static_cast<uint64_t>(texts.size()));
                 }
-            }
-            doc_counts.push_back(std::move(counts));
-            if ((row + 1) % 5000 == 0 || row + 1 == texts.size()) {
-                const float p = 0.10f + 0.25f *
-                    (static_cast<float>(row + 1) /
-                     static_cast<float>(texts.size()));
-                report_progress(
-                    "Tokenizing text",
-                    "Tokenized " + std::to_string(row + 1) +
-                        "/" + std::to_string(texts.size()) + " rows",
-                    p,
-                    initial_memory_estimate,
-                    static_cast<uint64_t>(row + 1),
-                    static_cast<uint64_t>(texts.size()));
-            }
-        }
+                return true;
+            },
+            counted);
+        if (!counted_all) return cancelled;
     } catch (const std::bad_alloc&) {
         return arrow::Status::CapacityError(
             "TFIDFVectorizer: insufficient memory while building bounded "
@@ -450,7 +425,9 @@ TFIDFVectorizerOperator::ApplyConfigured(
     size_t filtered_vocab = fitted_terms.size();
     std::vector<TFIDFTermStats> all_terms = std::move(fitted_terms);
     if (!state_options_.IsTransformOnly()) {
-        full_vocab = term_stats_by_name.size();
+        full_vocab = static_cast<size_t>(std::count_if(
+            counted.doc_freq.begin(), counted.doc_freq.end(),
+            [](int64_t df) { return df > 0; }));
         if (full_vocab == 0) {
             return arrow::Status::Invalid(
                 "TFIDFVectorizer: empty vocabulary after tokenization and stopword removal");
@@ -463,36 +440,59 @@ TFIDFVectorizerOperator::ApplyConfigured(
             initial_memory_estimate,
             static_cast<uint64_t>(full_vocab),
             static_cast<uint64_t>(full_vocab));
-        all_terms.reserve(full_vocab);
-        for (auto& pair : term_stats_by_name) {
-            auto stats = std::move(pair.second);
-            if (stats.doc_freq < min_df_) {
-                continue;
+        std::vector<int32_t> pick;
+        for (size_t id = 0; id < counted.terms.size(); ++id) {
+            if (counted.doc_freq[id] >= min_df_) {
+                pick.push_back(static_cast<int32_t>(id));
             }
-            if (use_idf_) {
-                const double df = smooth_idf_
-                    ? static_cast<double>(stats.doc_freq + 1)
-                    : static_cast<double>(stats.doc_freq);
-                const double total = smooth_idf_
-                    ? static_cast<double>(fit_n + 1)
-                    : static_cast<double>(fit_n);
-                stats.idf = std::log(total / df) + 1.0;
-            } else {
-                stats.idf = 1.0;
-            }
-            all_terms.push_back(std::move(stats));
         }
-        if (all_terms.empty()) {
+        if (pick.empty()) {
             return arrow::Status::Invalid(
                 "TFIDFVectorizer: empty vocabulary after applying min_df=" +
                 std::to_string(min_df_));
         }
-
-        std::sort(all_terms.begin(), all_terms.end(),
-                  [](const TFIDFTermStats& a, const TFIDFTermStats& b) {
-                      return a.term < b.term;
-                  });
-        filtered_vocab = all_terms.size();
+        const auto term_of = [&](int32_t id) -> const std::string& {
+            return counted.terms[static_cast<size_t>(id)];
+        };
+        const auto by_term = [&](int32_t a, int32_t b) {
+            return term_of(a) < term_of(b);
+        };
+        std::sort(pick.begin(), pick.end(), by_term);
+        filtered_vocab = pick.size();
+        const size_t keep =
+            std::min(filtered_vocab, static_cast<size_t>(max_features_));
+        if (filtered_vocab > keep) {
+            // The most frequent terms; the idf follows the document
+            // frequency, then the term breaks ties.
+            std::partial_sort(
+                pick.begin(), pick.begin() + static_cast<std::ptrdiff_t>(keep),
+                pick.end(), [&](int32_t a, int32_t b) {
+                    const size_t x = static_cast<size_t>(a);
+                    const size_t y = static_cast<size_t>(b);
+                    if (counted.corpus_count[x] != counted.corpus_count[y]) {
+                        return counted.corpus_count[x] > counted.corpus_count[y];
+                    }
+                    if (counted.doc_freq[x] != counted.doc_freq[y]) {
+                        return counted.doc_freq[x] > counted.doc_freq[y];
+                    }
+                    return term_of(a) < term_of(b);
+                });
+            pick.resize(keep);
+            std::sort(pick.begin(), pick.end(), by_term);
+        }
+        all_terms.reserve(pick.size());
+        for (const int32_t id : pick) {
+            TFIDFTermStats stats;
+            stats.term = term_of(id);
+            stats.doc_freq = counted.doc_freq[static_cast<size_t>(id)];
+            stats.corpus_count = counted.corpus_count[static_cast<size_t>(id)];
+            stats.idf = use_idf_
+                ? text_vectorizer_contract::Idf(
+                      static_cast<double>(fit_n),
+                      static_cast<double>(stats.doc_freq), smooth_idf_)
+                : 1.0;
+            all_terms.push_back(std::move(stats));
+        }
     } else {
         report_progress(
             "Loading fitted vocabulary",
@@ -504,53 +504,22 @@ TFIDFVectorizerOperator::ApplyConfigured(
             static_cast<uint64_t>(all_terms.size()));
     }
 
-    const size_t kept = state_options_.IsTransformOnly()
-        ? all_terms.size()
-        : std::min(filtered_vocab, static_cast<size_t>(max_features_));
-    if (!state_options_.IsTransformOnly() && filtered_vocab > kept) {
-        std::partial_sort(
-            all_terms.begin(),
-            all_terms.begin() + kept,
-            all_terms.end(),
-            [](const TFIDFTermStats& a, const TFIDFTermStats& b) {
-                if (a.corpus_count != b.corpus_count) {
-                    return a.corpus_count > b.corpus_count;
-                }
-                if (a.doc_freq != b.doc_freq) {
-                    return a.doc_freq > b.doc_freq;
-                }
-                if (a.idf != b.idf) return a.idf > b.idf;
-                return a.term < b.term;
-            });
-        all_terms.resize(kept);
-        std::sort(all_terms.begin(), all_terms.end(),
-                  [](const TFIDFTermStats& a, const TFIDFTermStats& b) {
-                      return a.term < b.term;
-                  });
-    } else if (!state_options_.IsTransformOnly()) {
-        all_terms.resize(kept);
-    }
-
-    std::unordered_map<std::string, size_t> kept_index_by_term;
-    kept_index_by_term.reserve(kept);
+    const size_t kept = all_terms.size();
+    std::vector<std::string> kept_names;
+    kept_names.reserve(kept);
     std::vector<double> kept_idf;
     kept_idf.reserve(kept);
-    for (size_t i = 0; i < kept; ++i) {
-        kept_index_by_term[all_terms[i].term] = i;
-        kept_idf.push_back(all_terms[i].idf);
+    for (const auto& term : all_terms) {
+        kept_names.push_back(term.term);
+        kept_idf.push_back(term.idf);
     }
+    const std::vector<int32_t> column_of =
+        text_vectorizer_contract::ColumnsOf(counted, kept_names);
+    counted.terms = {};
 
     uint64_t expected_nnz = 0;
-    for (const auto& counts : doc_counts) {
-        for (const auto& [term, _] : counts) {
-            if (kept_index_by_term.find(term) != kept_index_by_term.end()) {
-                if (expected_nnz == (std::numeric_limits<uint64_t>::max)()) {
-                    return arrow::Status::CapacityError(
-                        "TFIDFVectorizer: sparse nnz count overflow");
-                }
-                ++expected_nnz;
-            }
-        }
+    for (const int32_t id : counted.ids) {
+        if (column_of[static_cast<size_t>(id)] >= 0) ++expected_nnz;
     }
     constexpr uint64_t kSparseIndexMax = static_cast<uint64_t>(
         (std::numeric_limits<int32_t>::max)());
@@ -655,18 +624,20 @@ TFIDFVectorizerOperator::ApplyConfigured(
             ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         }
         std::vector<TextFeatureEntry> row_entries;
-        const auto& counts = doc_counts[r];
-        row_entries.reserve(std::min(counts.size(), kept));
-        for (const auto& pair : counts) {
-            auto kept_it = kept_index_by_term.find(pair.first);
-            if (kept_it == kept_index_by_term.end()) {
+        const int64_t begin = counted.starts[r];
+        const int64_t end = counted.starts[r + 1];
+        row_entries.reserve(std::min(static_cast<size_t>(end - begin), kept));
+        for (int64_t k = begin; k < end; ++k) {
+            const int32_t column =
+                column_of[static_cast<size_t>(counted.ids[static_cast<size_t>(k)])];
+            if (column < 0) {
                 continue;
             }
-            const size_t column = kept_it->second;
             row_entries.push_back({
-                static_cast<int32_t>(column),
+                column,
                 static_cast<float>(
-                    static_cast<double>(pair.second) * kept_idf[column])});
+                    static_cast<double>(counted.counts[static_cast<size_t>(k)]) *
+                    kept_idf[static_cast<size_t>(column)])});
         }
         ARROW_RETURN_NOT_OK(AppendNormalizedTextFeatureRow(
             feature_matrix, std::move(row_entries), norm_));

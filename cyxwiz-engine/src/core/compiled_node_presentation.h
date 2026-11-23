@@ -55,7 +55,8 @@ struct CompiledNodeCard {
     std::string input_sample, input_batch, output_sample, output_batch;
     std::string input_note;
     std::string output_memory;
-    std::string parameters;         // "3,002,048", "0", "counting..."
+    std::string parameters;         // "3,002,048", "0", "counting...", "9,408 frozen"
+    std::string parameters_label = "Learnable parameters";  // "Weights" on a frozen layer
     std::string parameter_memory;
     std::string parameter_note;
     std::string no_shapes_text;     // why there are no shapes, when there are none
@@ -82,7 +83,8 @@ std::string FormatCompiledBytes(unsigned long long bytes);
 std::string FormatCompiledShape(const std::vector<size_t>& shape);
 
 // Learnable parameters per compiled layer index from a built model's
-// parameter names ("layer<i>.<rest>" -> counts summed per i).
+// parameter names ("layer<i>.<rest>" -> counts summed per i); running
+// statistics of normalization layers are not counted.
 std::map<size_t, long long> CountParametersPerLayer(
     const std::vector<std::pair<std::string, long long>>& named_counts);
 

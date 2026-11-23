@@ -267,7 +267,7 @@ struct DataLabel {
     size_t total = 0;  // all of them; 0 when unknown (truncated)
     // The rows chosen in the spec, in words ("filtered · 7,293 of 70,000
     // rows", "first 1,000 of 70,000 rows"); empty for all rows.
-    std::string selection;
+    std::string selection{};
     // "exact · all 2,000 values", "reduced · 4,000 of 120,000 points",
     // "sampled · 50,000 of 1,200,000 rows", "first 100,000 rows"; the
     // selection comes first and an exact label then adds nothing.

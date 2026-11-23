@@ -11,6 +11,7 @@
 #include "icons.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
+#include "cyxwiz/portable_random.h"
 
 #include <arrow/compute/api.h>
 #include <imgui.h>
@@ -259,7 +260,7 @@ void SqlWorkbenchDialog::StartRun(RunKind kind, size_t part_index, bool on_sampl
             std::vector<int64_t> rows(static_cast<size_t>(main->num_rows()));
             for (size_t r = 0; r < rows.size(); ++r) rows[r] = static_cast<int64_t>(r);
             std::mt19937_64 random(42);
-            std::shuffle(rows.begin(), rows.end(), random);
+            cyxwiz::portable::Shuffle(rows.begin(), rows.end(), random);
             rows.resize(1000);
             std::sort(rows.begin(), rows.end());
             arrow::Int64Builder builder;

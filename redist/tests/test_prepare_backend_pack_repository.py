@@ -120,6 +120,7 @@ class BackendPackRepositoryTests(unittest.TestCase):
         signing_key_id: str = "pack-2026",
         runtime_set_id: str = "runtime-310",
         archive_name: str | None = None,
+        platform: str = "win64",
     ) -> Path:
         archive_name = archive_name or f"{pack_id}.zip"
         archive = self.inputs / archive_name
@@ -172,13 +173,23 @@ class BackendPackRepositoryTests(unittest.TestCase):
             },
             "generated_utc": "2026-08-25T10:00:00Z",
         }
+        schema_version = 1
+        if backend == "plugin":
+            # Schema-2 plugin pack: no backend, ArrayFire or device fields.
+            schema_version = 2
+            for name in ("backend", "runtime_set_id", "arrayfire"):
+                del body[name]
+            body["pack_kind"] = "plugin_pack"
+            body["plugin_id"] = "com.cyxwiz.simulation.mujoco"
+            body["support_status"] = body.pop("compatibility")["support_status"]
+            body["platform"] = platform
         signature = repository.sign_with_openssl(
             repository.canonical_json_bytes(body),
             private_key or self.pack_key,
             self.openssl,
         )
         document = {
-            "schema_version": 1,
+            "schema_version": schema_version,
             "kind": "cyxwiz-backend-pack-manifest",
             "signed": body,
             "signatures": [
@@ -337,6 +348,40 @@ class BackendPackRepositoryTests(unittest.TestCase):
         ):
             repository.prepare_repository(self._args([opencl], output))
 
+        self.assertFalse(output.exists())
+
+    def test_assembles_a_plugin_pack_with_its_base(self) -> None:
+        base = self._manifest("base-v1", "cpu", None)
+        plugin = self._manifest("mujoco-v1", "plugin", "base-v1")
+        output = self.root / "repository"
+
+        repository.prepare_repository(self._args([base, plugin], output))
+
+        catalog = json.loads(
+            (output / "hosted" / "catalogs" / "current.json").read_bytes()
+        )
+        entries = {entry["pack_id"]: entry for entry in catalog["signed"]["packs"]}
+        self.assertEqual("supported", entries["mujoco-v1"]["support_status"])
+        self.assertTrue(
+            (output / "bootstrap" / "catalogs" / "manifests" / "mujoco-v1.json").is_file()
+        )
+
+    def test_rejects_plugin_pack_without_its_exact_base(self) -> None:
+        base = self._manifest("base-v2", "cpu", None)
+        plugin = self._manifest("mujoco-v1", "plugin", "base-v1")
+        output = self.root / "repository"
+
+        with self.assertRaisesRegex(repository.RepositoryError, "requires absent base"):
+            repository.prepare_repository(self._args([base, plugin], output))
+        self.assertFalse(output.exists())
+
+    def test_rejects_plugin_pack_for_another_platform(self) -> None:
+        base = self._manifest("base-v1", "cpu", None)
+        plugin = self._manifest("mujoco-v1", "plugin", "base-v1", platform="linux64")
+        output = self.root / "repository"
+
+        with self.assertRaisesRegex(ValueError, "different platforms"):
+            repository.prepare_repository(self._args([base, plugin], output))
         self.assertFalse(output.exists())
 
     def test_rejects_untrusted_pack_signature(self) -> None:

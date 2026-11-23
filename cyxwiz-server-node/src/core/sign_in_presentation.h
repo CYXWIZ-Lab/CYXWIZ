@@ -3,6 +3,8 @@
 // the GUI renders exactly what the test checks.
 #pragma once
 
+#include "common/server_address_view.h"
+
 #include <string>
 #include <utility>
 #include <vector>
@@ -92,33 +94,25 @@ std::string ServiceHost(const std::string& api_url);
 // The website behind an API address: "https://cyxwiz.com/api" -> "https://cyxwiz.com".
 std::string WebsiteOf(const std::string& api_url);
 
-// ---- Change the sign-in service --------------------------------------------
-
-struct ServiceAddressCheck {
-    bool ok = false;
-    std::string normalized;           // trimmed, "/api" added when the path is empty
-    std::string message;              // why not, when !ok
-};
-
-ServiceAddressCheck CheckServiceAddress(const std::string& typed);
-
-enum class ServiceReach { Unknown, Checking, Reachable, Unreachable };
+// ---- The CyxWiz server (TOFIX168 step 3b) -----------------------------------
+// "Change" on the card opens this: the one server address the node signs in
+// at and reports to central through. The rows and their wording come from
+// cyxwiz-protocol's server_address_view, as in Settings > Network.
 
 struct ServiceDialog {
     std::string title;
     std::string explanation;
     std::string address_label;
     std::vector<std::pair<std::string, std::string>> examples;  // (what, address)
-    std::string reach_line;           // "Reachable · CyxWiz API" ("" when unknown)
-    ServiceReach reach = ServiceReach::Unknown;
+    cyxwiz::protocol::ServerAddressView view;  // kind of address and one row per service
     std::string note;
     std::string cancel_label;
     std::string use_label;
     bool use_enabled = false;
-    std::string address_problem;      // under the field when the address is malformed
+    std::string address_problem;      // under the field when the address can't be used
 };
 
-ServiceDialog BuildServiceDialog(const std::string& typed_address, ServiceReach reach);
+ServiceDialog BuildServiceDialog(const std::string& typed_address, const cyxwiz::protocol::ServerReach& reach);
 
 // ---- Work offline ------------------------------------------------------------
 

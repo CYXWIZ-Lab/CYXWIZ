@@ -1,0 +1,356 @@
+{
+ "about": "Every oracle fixture and the script that writes it, with both hashes (scripts/checks/check_oracle_fixtures.py, TOFIX228 1.4). Baseline 2026-11-22: the hashes were recorded from the committed files.",
+ "fixtures": {
+  "batchnorm1d_pytorch.json": {
+   "fixture_sha256": "44068eb704bbab597e49ac0b31e8d7b72490bd45e86aafe1619586df3371f5f7",
+   "generator": "reference/generate_batchnorm1d_fixtures.py",
+   "generator_sha256": "1d6035d926b69a537214434165de1091d05f77bbe94e85e67c033c611efe24c2"
+  },
+  "branch_graph_pytorch.json": {
+   "fixture_sha256": "738244e7bab6ad5e7950473b49b2ddccc4bef1688b7d65444d842b1e68273afc",
+   "generator": "reference/generate_branch_graph_fixtures.py",
+   "generator_sha256": "fed875b7e5cbef5c6af676f817b4451ca67132c72a4de08c8e6f371e8f55ddd6"
+  },
+  "classic_ml_sklearn.json": {
+   "fixture_sha256": "ac6617c71b33117c0d8e7fcfdd176cab9d158951400f5fba32c3379991d99cbf",
+   "generator": "reference/generate_classic_ml_fixtures.py",
+   "generator_sha256": "27fdaec76893b5fc77c0d400663355b264cb43d506c88cb574ce80165e2cd317"
+  },
+  "classification_metrics_sklearn_pytorch.json": {
+   "fixture_sha256": "952fdb7348b14f820bd0aa8669ce49900f1184754b74df1ab6273944e6978ea0",
+   "generator": "reference/generate_classification_metrics_fixtures.py",
+   "generator_sha256": "35adcc57a5aa7d643cc042b883b55e4a38aadfa8c1f727437847512094d3f6bd"
+  },
+  "clustering_pytorch.json": {
+   "fixture_sha256": "6048352e331b615104e58f9ea2ff64cbb7276bf2bfe01594843e046b9caea78e",
+   "generator": "reference/generate_clustering_fixtures.py",
+   "generator_sha256": "41728cd1e26d69e5fa332d2bc9ec2dd33ed232ca32c63e70a90272d7bcc45fc2"
+  },
+  "cnn_graph_pytorch.json": {
+   "fixture_sha256": "4523869e5fd9f40a8c0e6da0db292292b9313aa443f68aac110281c4d6364b64",
+   "generator": "reference/generate_cnn_graph_fixtures.py",
+   "generator_sha256": "2ff2e3cf6053f9dccff253b934956bf4ae42397dd54612b4f39b219940d19f43"
+  },
+  "conv1d_graph_pytorch.json": {
+   "fixture_sha256": "7d9b1a2ee5aa5c1fc73fae98954af7a60244a32054f3f0809d5f411b1e7cd79b",
+   "generator": "reference/generate_conv1d_graph_fixtures.py",
+   "generator_sha256": "b7a0faa6cd4c0a162c3315d642da115d40797ebb0098c300a673773ff4e9ef68"
+  },
+  "conv3d_pytorch.json": {
+   "fixture_sha256": "7a5973a16bc476b1fdadd16721b61d633cf029427f68cefef8bcea63785c47ef",
+   "generator": "reference/generate_conv3d_fixtures.py",
+   "generator_sha256": "29e4bf47feff52498c6795446912eea52ae73a1e6ef1d10295c226c4b0539de1"
+  },
+  "cross_attention_graph_pytorch.json": {
+   "fixture_sha256": "4ac5fa0abf6ad7290b8fc12867acf5179fec51ce609b564f36ecc3f034d94ddc",
+   "generator": "reference/generate_cross_attention_graph_fixtures.py",
+   "generator_sha256": "2e8fe0a49e7881f8ed73924c1cfa8bc5f98f218d8408dec311d1930a4da04d07"
+  },
+  "cross_validation_pytorch.json": {
+   "fixture_sha256": "41f5abc4fd2e8733006ec0e3b216215bbf633d6828c4ea260a7c696d7be4a917",
+   "generator": "reference/generate_cross_validation_fixtures.py",
+   "generator_sha256": "62001d0b468da4f48d4f43997809d7bdad6880c848a110a53a69e4bef40384e0",
+   "live_skip": "needs the Palmer penguins CSV (not committed): py -3.12 generate_cross_validation_fixtures.py path/to/penguins.csv"
+  },
+  "data_parity_audio.json": {
+   "fixture_sha256": "4fafcb51d84fb82c0c9d33fe2c5c519ea893d44f28da07620681788f519dcd06",
+   "generator": "reference/generate_data_parity_kinds.py",
+   "generator_sha256": "efcd41d432f9e77dbbec709ab439e4fd6ef339321e8df16fbb14eca945dc036a",
+   "note": "also writes the audio input files under data_parity/; batch level, test_oracle_data"
+  },
+  "data_parity_image.json": {
+   "fixture_sha256": "d1009a5b81548e934cc8e08ab3177212118a8bd579a0f1a245c2b3a02e7f7d02",
+   "generator": "reference/generate_data_parity_kinds.py",
+   "generator_sha256": "efcd41d432f9e77dbbec709ab439e4fd6ef339321e8df16fbb14eca945dc036a",
+   "note": "also writes the image input files under data_parity/; batch level, test_oracle_data"
+  },
+  "data_parity_series.json": {
+   "fixture_sha256": "29ce94030e3aa9ab8db5ccc36a9b241eed88590eedc00bca19f0844f3f7f4682",
+   "generator": "reference/generate_data_parity_kinds.py",
+   "generator_sha256": "efcd41d432f9e77dbbec709ab439e4fd6ef339321e8df16fbb14eca945dc036a",
+   "note": "also writes the series input files under data_parity/; batch level, test_oracle_data"
+  },
+  "data_parity_sparse.json": {
+   "fixture_sha256": "045e6fde944b7a6d8838d0dca21484cea693dfb041339022353397403564e16b",
+   "generator": "reference/generate_data_parity_kinds.py",
+   "generator_sha256": "efcd41d432f9e77dbbec709ab439e4fd6ef339321e8df16fbb14eca945dc036a",
+   "note": "also writes the sparse input files under data_parity/; batch level, test_oracle_data"
+  },
+  "data_parity_tabular_pytorch.json": {
+   "fixture_sha256": "1975c3df2dbaef3e57ba83e3a6a7453fde5428746638b979162f541e506dece9",
+   "generator": "reference/generate_data_parity_fixtures.py",
+   "generator_sha256": "d6b6f8f279ea9d983940ca8f5f05390ce9c87139ebcd4d45cd92c1ced2bf4ed0",
+   "note": "also writes data_parity/tabular.csv and tabular_mlp_init.pth; made from the committed export data_parity/tabular_mlp.py (test_oracle_data --write-exports)"
+  },
+  "data_parity_text.json": {
+   "fixture_sha256": "ea5a64f349dea1da01e6042accf47b78ec2f93eb55e73c9d4ab27ac210ef2806",
+   "generator": "reference/generate_data_parity_kinds.py",
+   "generator_sha256": "efcd41d432f9e77dbbec709ab439e4fd6ef339321e8df16fbb14eca945dc036a",
+   "note": "also writes the text input files under data_parity/; batch level, test_oracle_data"
+  },
+  "data_transform_pytorch.json": {
+   "fixture_sha256": "98d24062b60b29194c2c14b37d4be2febd9f93b41640e7e5a4a05f3403de2d38",
+   "generator": "reference/generate_data_transform_fixtures.py",
+   "generator_sha256": "6801297fa3e2f70bbaef8c8573ad0436008b20fcb2495a2a1b6511d8de6666aa"
+  },
+  "dimensionality_reduction_pytorch.json": {
+   "fixture_sha256": "6d28788ab24399b863057ad06a89da5204fb85185bc9db6474df98e8dcc018c2",
+   "generator": "reference/generate_dimensionality_reduction_fixtures.py",
+   "generator_sha256": "a986e553adb075161adfd4a900f28d54dabbc0b065abe9cb85214b8487317260"
+  },
+  "fasttext_reference.json": {
+   "fixture_sha256": "fd0ffde600139afd2f6b5b1582d55dc928b08a529d533e174e36b325db4b3233",
+   "generator": "reference/generate_fasttext_fixtures.py",
+   "generator_sha256": "bb7bf67aa978a37c058442e49c0c710e328d600529f433ab6d2ae1244e61cd45"
+  },
+  "glove_reference.json": {
+   "fixture_sha256": "562ff506cf3931543938576234e86f177ea6478ee93ef4648ede02245df40023",
+   "generator": "reference/generate_glove_fixtures.py",
+   "generator_sha256": "4a410dfdb49bb2d9e5742378fc23d4b05ac7b3ffa57d354727557048822194c6"
+  },
+  "gradient_clipping_pytorch.json": {
+   "fixture_sha256": "61a5be5218cf2be1c0039a80ee20d5e86c4eb27d4dbd25368e36155ee81f601b",
+   "generator": "reference/generate_gradient_clipping_fixtures.py",
+   "generator_sha256": "ba09927e8ec5e8596df51d404e2e38ab1ea70e5207c6cc7eded63804a1147246"
+  },
+  "image_quality_opencv.json": {
+   "fixture_sha256": "fff4675fdb9ca86de02eb69d8df6a585bc6e28beb559eb006df4f75555c30e63",
+   "generator": "reference/generate_image_quality_fixtures.py",
+   "generator_sha256": "c22b16d5cb07482b1890462153ce531a30b29d63f01b97c107dd63f8b7d29fa9"
+  },
+  "image_transforms_torchvision.json": {
+   "fixture_sha256": "c0b424a34614aa16361dd8959b160640400e00d94b48944a1cb01f34ef6d715b",
+   "generator": "reference/generate_image_transform_fixtures.py",
+   "generator_sha256": "ebbb05bc03a20a1406f6634b6d7463a4346edb374abf7958acaf9a4a1b009310"
+  },
+  "learning_rate_range_pytorch.json": {
+   "fixture_sha256": "6ad6b8a40af2bd5abe05414bcb5f44852ae5376cfe91d811390189fd212da01d",
+   "generator": "reference/generate_learning_rate_range_fixtures.py",
+   "generator_sha256": "6bdb07fe363223b46413b876c00d11cada81a511a0a53e8132f722d2e9f7c5b9"
+  },
+  "linear_algebra_pytorch.json": {
+   "fixture_sha256": "646ad2d93e6a02008da36b647eb6ed47676a7676977d7b223286873b6f38a2de",
+   "generator": "reference/generate_linear_algebra_fixtures.py",
+   "generator_sha256": "b9d5974a78d59e1fcbf10b06ff4b57b128aa3cb7465ce4783a20d59b5f95347b"
+  },
+  "linear_attention_pytorch.json": {
+   "fixture_sha256": "ae919e6c3cc393c736641fd994d30e3eb2b5562cb4f750f73f9fcababfb1d32f",
+   "generator": "reference/generate_linear_attention_fixtures.py",
+   "generator_sha256": "2658e68e59764434d6f35c82c1ce806dcdd91d8d33abfd549d4eb5f162771bde"
+  },
+  "metric_graph_pytorch.json": {
+   "fixture_sha256": "21ebfe9470feb0cd0c53910828602c2c748d2b586690526e5d169d98a06220b5",
+   "generator": "reference/generate_metric_graph_fixtures.py",
+   "generator_sha256": "82646948c8787a1e4621231e4c5b56e1b221c8ec621adbcf92e7ea0165b4cc61"
+  },
+  "mobilenet_v2_imagenet.cyxgraph": {
+   "fixture_sha256": "22bfd1d23ef0ed6a9f086b9832ba8afee530f11536ad3a103f9cccfb0587b87a",
+   "generator": "reference/generate_pretrained_network_fixtures.py",
+   "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66",
+   "live_skip": "needs the published ImageNet weight files (not committed): --imagenet DIR",
+   "note": "written with --imagenet DIR (the published weights, not committed)"
+  },
+  "mobilenet_v2_imagenet_pytorch.json": {
+   "fixture_sha256": "e1d1ef5a41dfba4e7134f76c3909f0d86dd49da7a2ac3d3e390ec08036ab09e1",
+   "generator": "reference/generate_pretrained_network_fixtures.py",
+   "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66",
+   "live_skip": "needs the published ImageNet weight files (not committed): --imagenet DIR",
+   "note": "written with --imagenet DIR (the published weights, not committed)"
+  },
+  "mobilenet_v2_thin.cyxgraph": {
+   "fixture_sha256": "823c3d8d56a0e49189a25da8d6bc4fd033abaaf93b6a38dae328a31adecb7941",
+   "generator": "reference/generate_pretrained_network_fixtures.py",
+   "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66"
+  },
+  "mobilenet_v2_thin_pytorch.json": {
+   "fixture_sha256": "eeb2b1c97e7f0d2138d84fd674edb4c91cd59f6d618f8dfff1a804c7129caa5a",
+   "generator": "reference/generate_pretrained_network_fixtures.py",
+   "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66"
+  },
+  "mobilenet_v3_small_imagenet.cyxgraph": {
+   "fixture_sha256": "9cd965d962243bbaceac90c35d6a28f2165b40ff36e0133b5eca23148ac16729",
+   "generator": "reference/generate_pretrained_network_fixtures.py",
+   "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66",
+   "live_skip": "needs the published ImageNet weight files (not committed): --imagenet DIR",
+   "note": "written with --imagenet DIR (the published weights, not committed)"
+  },
+  "mobilenet_v3_small_imagenet_pytorch.json": {
+   "fixture_sha256": "0226983718f4949cb81fe1c46d7b922726764ca8c1c1be3dfa34404f50e8d61b",
+   "generator": "reference/generate_pretrained_network_fixtures.py",
+   "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66",
+   "live_skip": "needs the published ImageNet weight files (not committed): --imagenet DIR",
+   "note": "written with --imagenet DIR (the published weights, not committed)"
+  },
+  "mobilenet_v3_small_thin.cyxgraph": {
+   "fixture_sha256": "43a5349ab81556e41ac621b0a8063d9a6c251798579f9c4715bd6ac26ba02542",
+   "generator": "reference/generate_pretrained_network_fixtures.py",
+   "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66"
+  },
+  "mobilenet_v3_small_thin_pytorch.json": {
+   "fixture_sha256": "123f2a39f747e41ae96f621a1cf9c9921c96f532c516ab75164d94bf4f0e9e92",
+   "generator": "reference/generate_pretrained_network_fixtures.py",
+   "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66"
+  },
+  "model_explain_pytorch.json": {
+   "fixture_sha256": "b8df90198ccb41419fd9468605c6ac4611882a49e30a4b105a2f1c37d39d230d",
+   "generator": "reference/generate_model_explain_fixtures.py",
+   "generator_sha256": "8246485f80d7e4a74320acf0119cc35ce06077ba5fe27d84d8e4ef078752dfc7"
+  },
+  "model_python_torch.json": {
+   "fixture_sha256": "383c8124aea1d5c228a2d18cc59b2f208eeee0a6abe8ef672dc6d6af523bea71",
+   "generator": "reference/generate_model_python_fixtures.py",
+   "generator_sha256": "773566cdd9ec2a17d4ac7a2548f23f7c7e392dcd32709cf082eb8de199d42bec"
+  },
+  "model_summary_pytorch.json": {
+   "fixture_sha256": "6e65fa87c4abac8e6b69a770079ea3cd978af1fd8f2e30260c24849c8536eadf",
+   "generator": "reference/generate_model_summary_fixtures.py",
+   "generator_sha256": "7894d4a8c97485c17be20faa25345b6a0c31ee16880626237d88f0cc22db1c5a"
+  },
+  "optimization_truth.json": {
+   "fixture_sha256": "aefa5ecefaddf9bd7232a052b28f0f4081ae43556be5a69d7ead86ae3063cb99",
+   "generator": "reference/generate_optimization_fixtures.py",
+   "generator_sha256": "cb66fb24bc890dd16e857a3adf486d55f95491cfcdae93ca2b117c86ae883631"
+  },
+  "optimizer_trajectory_pytorch.json": {
+   "fixture_sha256": "6ae10b0802f383b1ffabb1c462bfd60d4a0b5bf778b81f8ec7734c779fe23ea0",
+   "generator": "reference/generate_optimizer_trajectory_fixtures.py",
+   "generator_sha256": "a5c9558a0a7c637c3ffd716a433b633e04fd78eb9d52f0d0f4958ae64f6f3a30"
+  },
+  "ppo_pytorch.json": {
+   "fixture_sha256": "087bfeda6a2bd4d05d58cd5f9b5a6f72ee014b98851ca47e05be29ec13cf0d0b",
+   "generator": "reference/generate_ppo_fixtures.py",
+   "generator_sha256": "13efaaff306f78f1c476efd346c4aa0bfd0e83bb69e9404ac928fbc28b4059c3"
+  },
+  "recurrent_pytorch.json": {
+   "fixture_sha256": "ef0a38cb5a5d30b1929cd5efb52ea232559eea718c0c72ad09ac11861d98b6ad",
+   "generator": "reference/generate_recurrent_fixtures.py",
+   "generator_sha256": "7541f08fa11a8a7545f5523788a7ddf4e80bb09632539b116e7732e2381c9dee"
+  },
+  "regression_metrics_sklearn.json": {
+   "fixture_sha256": "53fbb7e72223ff616eed12ac286b0a0aef1010654590047777b9a1a4de1eabf0",
+   "generator": "reference/generate_regression_metrics_fixtures.py",
+   "generator_sha256": "ce36c0ad5cc5b45a4860e21f36e6741eb925720cc4e5bb6f105167038e907159"
+  },
+  "regularization_node_pytorch.json": {
+   "fixture_sha256": "52b3990fb9d2fa41eb2e35a5f217af79c3b777d64973afdd92a11772530cf1dc",
+   "generator": "reference/generate_regularization_node_fixtures.py",
+   "generator_sha256": "b86ad756f3c8e8e7879aa4e84053f9d835c4990ef4d3afd183b125dedebfeaa3"
+  },
+  "resnet18_imagenet.cyxgraph": {
+   "fixture_sha256": "13ae686185378c6fbe235e2d44888ba67af0b4651a165d8a57493607e0358f85",
+   "generator": "reference/generate_pretrained_network_fixtures.py",
+   "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66",
+   "live_skip": "needs the published ImageNet weight files (not committed): --imagenet DIR",
+   "note": "written with --imagenet DIR (the published weights, not committed)"
+  },
+  "resnet18_imagenet_pytorch.json": {
+   "fixture_sha256": "ed9334a487e3fe692f746e9d70fd1990d2dc3c122ea04b111611423180924398",
+   "generator": "reference/generate_pretrained_network_fixtures.py",
+   "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66",
+   "live_skip": "needs the published ImageNet weight files (not committed): --imagenet DIR",
+   "note": "written with --imagenet DIR (the published weights, not committed)"
+  },
+  "resnet18_thin.cyxgraph": {
+   "fixture_sha256": "0821b0f4765c57b06a6a48df9dda6b03dfa9a071000934af8e6df97265ee43a4",
+   "generator": "reference/generate_pretrained_network_fixtures.py",
+   "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66"
+  },
+  "resnet18_thin_pytorch.json": {
+   "fixture_sha256": "378627a30561931d43bc2be465a8dabdf64c1da07dc1411f3c9ac0f32e594ec3",
+   "generator": "reference/generate_pretrained_network_fixtures.py",
+   "generator_sha256": "0f516ed0682fd1e66b3ee59acbf1c3ced6359987d0dc3b5185c005ca0196fe66"
+  },
+  "roc_pr_sklearn.json": {
+   "fixture_sha256": "8015f6b62cfeeabd1a222fcd7d6b3a6779c9769db0837390b3b2f3eb8225ab78",
+   "generator": "reference/generate_roc_pr_fixtures.py",
+   "generator_sha256": "e875c543bf7009628a339341641f015f5fa39fc0c8f310d2d064acfeccf15aed"
+  },
+  "saliency_pytorch.json": {
+   "fixture_sha256": "3c74b40ab46d2bf6d85e6d09126f2cf046b8b22b3fee6d2e9dfa602c112f71a3",
+   "generator": "reference/generate_saliency_fixtures.py",
+   "generator_sha256": "2fed2ce1a60b53900ccaa67d0ecbc8f4c7795f0d945462f16ccd7f6d1b7be26c"
+  },
+  "scheduler_node_pytorch.json": {
+   "fixture_sha256": "e5b97b52ad37b052c6c847d64e2e1f52bd95be31aed0d2b6bef8943dc366efde",
+   "generator": "reference/generate_scheduler_node_fixtures.py",
+   "generator_sha256": "e84832b0eeb43ee0fec15ee5bbdc31116dd7d1a05ed0abde19ea1b8fecf7306c"
+  },
+  "signal_scipy.json": {
+   "fixture_sha256": "31e9e202168a7bce8d864143aaa88344b68f3838ed3c2d6debadc3f09ad44a7c",
+   "generator": "reference/generate_signal_fixtures.py",
+   "generator_sha256": "cc295a1a94d710f1136920fe05b71efa65cfd9b62ef6d07906c07d09658dcdc0"
+  },
+  "sparse_linear_pytorch.json": {
+   "fixture_sha256": "db97ed8d077c1250b63d23dbfe46fa6e6af3a7e15d8e0d9b83f65eae1ee16061",
+   "generator": "reference/generate_sparse_linear_fixture.py",
+   "generator_sha256": "9940fa9c0d59abddc1c60e16fa9ecd4f109ea4d114c3cf478f47ca47aade1e1b"
+  },
+  "spatial_layers_pytorch.json": {
+   "fixture_sha256": "f4a8a0b5fc0b35c4fdad4378f0bdb761e4203a2788d9fb39ea2b6dea1af19e2f",
+   "generator": "reference/generate_spatial_layer_fixtures.py",
+   "generator_sha256": "e9896ab784b1c7c8f02acf7c8f6af8d3f0f1fe05b93894295ac4cbb9494f296f"
+  },
+  "statistical_tests_scipy.json": {
+   "fixture_sha256": "870f66d4b1082730e81b9c99d39470acd16ff00f4dcb122ddd4b174d7a99c682",
+   "generator": "reference/generate_statistical_tests_fixtures.py",
+   "generator_sha256": "bcb67b5ff02c67c379e4b543af4b14aa1aa087840731e6771fda9d20620684ec"
+  },
+  "text_truth.json": {
+   "fixture_sha256": "f334b108c27473ef604b7d1c9ad99f7cf59bca3ffe84b834d7b68058b7a6ba6a",
+   "generator": "reference/generate_text_fixtures.py",
+   "generator_sha256": "0bc5e3ef748c293d19ed384da2f80f3ba77066c227ea174c23dea62547d3862c"
+  },
+  "text_vectorizers_sklearn.json": {
+   "fixture_sha256": "e100ba3a99024c55953292f53c9bab1e7822739f9fd0a93e6e46194020cd28bf",
+   "generator": "reference/generate_text_vectorizer_fixtures.py",
+   "generator_sha256": "a67c43a3eb9a8471c1982860f636f1e6af4cdfc8e9b3560644e497a08b127782"
+  },
+  "threshold_calibration_sklearn.json": {
+   "fixture_sha256": "0b4cb5b60e5cea0c73f1ed9d1afd163b3d0b2315db2d07497fcb3f7b1fcdeb2a",
+   "generator": "reference/generate_threshold_calibration_fixtures.py",
+   "generator_sha256": "b692b7f489eb191456d0a807c5c4342a2039e3ac9824de3579637bad40d244ed"
+  },
+  "time_series_statsmodels.json": {
+   "fixture_sha256": "dd2036b2c7a2d765d4cc343f346d3ea849e02b344881e968d06f354927532916",
+   "generator": "reference/generate_time_series_fixtures.py",
+   "generator_sha256": "079aee832c7fb114f96a2ca42c8398821eff198a2322d694b639aaab8b672e0e"
+  },
+  "train_trajectory_pytorch.json": {
+   "fixture_sha256": "a6d6f83990da89c7f75140ef406ea6609687a5d2ed9da763b3d1b6de7f35d530",
+   "generator": "reference/generate_train_trajectory_fixtures.py",
+   "generator_sha256": "ea6a85ae75fe1e89641a4649b33f2ef1e275bed5b8966386c47969398bea29be",
+   "note": "made from the committed exports in train_trajectory/ (test_oracle_train --write-exports); the test checks a fresh export equals them and the fixture's export_sha256"
+  },
+  "training_core_pytorch.json": {
+   "fixture_sha256": "5b5574b5a53cb9084eee149d4d2e7b08313979a699b7337745e2f24d5eb4bacb",
+   "generator": "reference/generate_training_core_fixtures.py",
+   "generator_sha256": "9e8a9d917123e5a67abcc67f2800ef7302fa3ef6a45dcfb6a536a3fcf048d46a"
+  },
+  "training_health_pytorch.json": {
+   "fixture_sha256": "690a3474c1a1626b79464c12b05511a746f3638f27564877e98d24754ddef78a",
+   "generator": "reference/generate_training_health_fixtures.py",
+   "generator_sha256": "865467e79454785e17d06d9938e9a85ccf094ff828f5a6fb69dd14b41c7c99af"
+  },
+  "utilities_truth.json": {
+   "fixture_sha256": "8834530b35ec7bd42cb8c31ca56f9dc546f5c32b45da2541af1293b56db36dfb",
+   "generator": "reference/generate_utilities_fixtures.py",
+   "generator_sha256": "4f53ef4d2895e38603f874c7fd3e0b686267671ed0c104d0f7c87b57c7f5f269"
+  },
+  "vec_normalize_sb3.json": {
+   "fixture_sha256": "6e1aca6c9cf08f6262a331410518fa4945b683f49815eeba4352728d1ad2d9e2",
+   "generator": "reference/generate_vec_normalize_fixtures.py",
+   "generator_sha256": "6eb81cd879a3442cd2abc2b9409e7b3ee1a85f9b7c0fdb93af90765ce1a934eb"
+  },
+  "word2vec_reference.json": {
+   "fixture_sha256": "d9003f068de1e71db5b4a9cb99cd939f58d07cc7c7c48c0f6ed1404c4fd37bfe",
+   "generator": "reference/generate_word2vec_fixtures.py",
+   "generator_sha256": "1f9e966e39154dd57e98faadddb864ea8e7584f9b20f51c5e95847eb8a801d3e"
+  },
+  "word_embeddings_gensim.json": {
+   "fixture_sha256": "5a5731a00adca2e0aa25c87ad4d929dd6fe41d4b76e9e3360edb92de21909b1f",
+   "generator": "reference/generate_word_embeddings_fixtures.py",
+   "generator_sha256": "15aa7ec07d1f32f2e4db8ce9696b7d0bcaff471f9a5414e3cccade54e51f9e85"
+  }
+ },
+ "schema_version": 1
+}

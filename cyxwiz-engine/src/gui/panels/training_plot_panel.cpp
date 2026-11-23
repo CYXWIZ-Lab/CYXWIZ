@@ -1,7 +1,8 @@
 #include "../ui_tokens.h"
 #include "../../core/series_decimation.h"
 #include "training_plot_panel.h"
-#include "training_dashboard_look.h"
+#include "../missing_values_view.h"
+#include "../../core/training_dashboard_presentation.h"
 #include "../separate_windows.h"
 // Test builds that draw the dashboard without the training system define
 // CYXWIZ_DASHBOARD_WITHOUT_TRAINING (no TrainingManager, task manager or crash recorder).
@@ -15,6 +16,8 @@
 #include "../../core/training_run_comparison.h"
 #include "../../core/route_qualification_snapshot.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_widgets.h"
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
@@ -47,8 +50,6 @@
 
 namespace cyxwiz {
 
-using namespace dash;
-
 namespace {
 
 bool IsSequenceMetricName(const std::string& name) {
@@ -73,7 +74,8 @@ constexpr float kTrainingPlotMaxHeight = 480.0f;
 // Loss and accuracy go side by side from this content width.
 constexpr float kTrainingPlotSideBySideWidth = 860.0f;
 
-// Title and y-axis label of the custom metrics chart from the metric names.
+// Title and y-axis label (when asked) of the custom metrics chart from the
+// metric names.
 template <typename Series>
 void ClassifyCustomMetrics(const std::vector<Series>& metrics,
                            const char** plot_title,
@@ -98,6 +100,7 @@ void ClassifyCustomMetrics(const std::vector<Series>& metrics,
         has_sequence_metrics && !has_non_sequence_metrics
             ? "Sequence Metrics"
             : (has_regression_metrics ? "Regression Metrics" : "Custom Metrics");
+    if (!y_label) return;
     *y_label =
         has_sequence_metrics && !has_non_sequence_metrics
             ? "Score (%)"
@@ -201,6 +204,8 @@ bool OpenDirectoryInFileBrowser(const std::string& directory) {
 #endif
 }
 
+// The header and Run details read the execution trace (training builds only).
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 const char* ClassifyTrainingWarning(const std::string& text) {
     std::string lower = text;
     std::transform(lower.begin(), lower.end(), lower.begin(),
@@ -229,7 +234,6 @@ const char* ClassifyTrainingWarning(const std::string& text) {
     return "Warning";
 }
 
-#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 const TrainingTraceEvent* FindLatestPinMemoryTransferEvent(
     const TrainingTraceSummary& trace) {
     for (auto it = trace.recent_events.rbegin();
@@ -244,12 +248,6 @@ const TrainingTraceEvent* FindLatestPinMemoryTransferEvent(
 
 bool IsPinMemoryTransferWarning(const std::string& warning) {
     return warning.rfind("DataLoader.PinMemoryTransfer", 0) == 0;
-}
-
-bool HasResidencyVerdict(const TrainingTraceSummary& trace) {
-    return !trace.residency_verdict.empty() &&
-           trace.residency_verdict != "unavailable" &&
-           trace.residency_verdict != "in_progress";
 }
 
 const char* ResidencyVerdictDisplayName(const std::string& verdict) {
@@ -270,25 +268,6 @@ const char* ResidencyVerdictDisplayName(const std::string& verdict) {
         : verdict.c_str();
 }
 
-ImVec4 ResidencyVerdictColor(const std::string& verdict) {
-    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
-    if (verdict == "strict_arrayfire_declared_boundaries") {
-        return t.success;
-    }
-    if (verdict == "terminal_without_residency_pass") {
-        return t.error;
-    }
-    return t.warning;
-}
-
-void RenderExecutionTruthRow(const char* label, const std::string& value) {
-    ImGui::TableNextRow();
-    ImGui::TableNextColumn();
-    ImGui::TextDisabled("%s", label);
-    ImGui::TableNextColumn();
-    ImGui::TextWrapped("%s", value.empty() ? "Not recorded" : value.c_str());
-}
-
 std::string FormatRouteQualification(
     bool evidence_available,
     bool qualified,
@@ -307,7 +286,161 @@ std::string FormatRouteQualification(
     }
     return value;
 }
+
+// The latest execution trace, read at most every 500 ms: LatestTrace copies
+// the whole trace (events, timings) and may read the saved one from disk; it
+// ran every frame with data_mutex_ held (TOFIX134 P0 item 8). UI thread only.
+const TrainingTraceSummary& LatestTraceCached() {
+    static TrainingTraceSummary cached;
+    static std::chrono::steady_clock::time_point read_at{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - read_at > std::chrono::milliseconds(500)) {
+        cached = TrainingTraceCollector::LatestTrace();
+        read_at = now;
+    }
+    return cached;
+}
+
+std::optional<training_dashboard::Route> TraceRoute(const TrainingTraceSummary& trace) {
+    if (trace.effective_backend.empty()) return std::nullopt;
+    training_dashboard::Route route;
+    route.requested_backend = trace.requested_backend;
+    route.effective_backend = trace.effective_backend;
+    route.effective_device_id = trace.effective_device_id;
+    route.device_name = trace.effective_device_name;
+    route.policy = trace.execution_policy;
+    route.fallback = trace.selection_fallback_applied;
+    return route;
+}
+
+// Run details > Where it ran: Execution Truth's rows, the placement stages
+// and the latest pin-memory transfer.
+std::vector<training_dashboard::DetailRow> TraceRows(const TrainingTraceSummary& trace) {
+    std::vector<training_dashboard::DetailRow> rows;
+    if (!trace.available && trace.run_id.empty()) return rows;
+    const auto add = [&rows](const char* key, const std::string& value) {
+        rows.push_back({key, value.empty() ? std::string("Not recorded") : value});
+    };
+    const bool has_truth = !trace.requested_backend.empty() || !trace.effective_backend.empty() ||
+                           !trace.placement_fingerprint.empty();
+    if (has_truth || !trace.residency_verdict.empty()) {
+        add("Residency", ResidencyVerdictDisplayName(trace.residency_verdict));
+        if (!trace.residency_verdict.empty() && trace.residency_verdict != "unavailable")
+            add("Verdict code", trace.residency_verdict);
+        add("Requested backend", trace.requested_backend);
+        add("Requested qualification",
+            FormatRouteQualification(trace.requested_qualification_evidence_available, trace.requested_route_qualified,
+                                     trace.requested_qualification_matrix_id, trace.requested_qualification_message));
+        std::string effective = trace.effective_backend;
+        if (!trace.effective_device_name.empty()) effective += " | " + trace.effective_device_name;
+        if (!trace.effective_backend.empty()) effective += " | device " + std::to_string(trace.effective_device_id);
+        add("Effective backend", effective);
+        add("Effective qualification",
+            FormatRouteQualification(trace.effective_qualification_evidence_available, trace.effective_route_qualified,
+                                     trace.effective_qualification_matrix_id, trace.effective_qualification_message));
+        std::string identity = trace.identity_confidence;
+        if (!trace.physical_fingerprint.empty()) identity += (identity.empty() ? "" : " | ") + trace.physical_fingerprint;
+        add("Physical identity", identity);
+        add("Execution preflight", trace.execution_validated
+                                       ? std::string("Validated")
+                                       : (trace.preflight_stage.empty() ? std::string("Not recorded")
+                                                                        : "Not validated | " + trace.preflight_stage));
+        if (trace.selection_fallback_applied) add("Selection fallback", "Applied to ArrayFire CPU");
+        add("Execution policy", RecordedExecutionPolicyDisplayName(trace.execution_policy));
+        std::string placement = trace.placement_fingerprint;
+        if (!placement.empty()) placement += " | " + std::to_string(trace.placement_entry_count) + " entries";
+        add("Placement", placement);
+        add("Host boundaries", std::to_string(trace.declared_output_boundary_count));
+        add("Transfers", std::to_string(trace.transfer_event_count) + " events | " +
+                             FormatTraceBytes(trace.transfer_known_bytes));
+        add("Transfer reasons", trace.transfer_summary.empty() ? "None recorded" : trace.transfer_summary);
+        add("Synchronizations", std::to_string(trace.synchronization_event_count) + " events | " +
+                                    FormatTraceBytes(trace.synchronization_known_bytes));
+        add("Sync reasons", trace.synchronization_summary.empty() ? "None recorded" : trace.synchronization_summary);
+        if (!trace.placement_summary.empty()) add("Placement stages", trace.placement_summary);
+    }
+    if (const TrainingTraceEvent* transfer = FindLatestPinMemoryTransferEvent(trace)) {
+        add("Pin-memory transfer", transfer->status == "warning" ? "with a warning" : "done");
+        add("Transfer mode", transfer->transfer_mode);
+        add("Transfer reason", transfer->transfer_reason);
+        add("Transfer backend", transfer->transfer_backend);
+        add("Transfer batch size", std::to_string(transfer->transfer_batch_size));
+    }
+    return rows;
+}
+
+// The trace's latest warnings (up to 3) as "Class: text", on the surface.
+std::vector<std::string> TraceWarnings(const TrainingTraceSummary& trace) {
+    std::vector<std::string> lines;
+    if (!trace.available && trace.run_id.empty()) return lines;
+    const bool has_transfer = FindLatestPinMemoryTransferEvent(trace) != nullptr;
+    const int start = std::max(0, static_cast<int>(trace.warnings.size()) - 3);
+    for (int i = start; i < static_cast<int>(trace.warnings.size()); ++i) {
+        const std::string& warning = trace.warnings[static_cast<size_t>(i)];
+        if (has_transfer && IsPinMemoryTransferWarning(warning)) continue;
+        lines.push_back(std::string(ClassifyTrainingWarning(warning)) + ": " + warning);
+    }
+    return lines;
+}
 #endif
+
+// One group of Run details: its title and key / value rows, the key column
+// as wide as its longest key, the values wrapped.
+void DetailGroup(const char* title, const std::vector<training_dashboard::DetailRow>& rows) {
+    if (rows.empty()) return;
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    cyxwiz::ui::SettingsSection(title);
+    float key_width = 0.0f;
+    for (const auto& row : rows) key_width = std::max(key_width, ImGui::CalcTextSize(row.key.c_str()).x);
+    key_width = std::min(key_width, ImGui::GetContentRegionAvail().x * 0.45f);
+    if (!ImGui::BeginTable(title, 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings)) return;
+    ImGui::TableSetupColumn("key", ImGuiTableColumnFlags_WidthFixed, key_width);
+    ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
+    for (const auto& row : rows) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "%s", row.key.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::TableNextColumn();
+        cyxwiz::ui::TextWrapAnywhere(row.value, t.text);  // paths and cache keys break too
+    }
+    ImGui::EndTable();
+}
+
+// A line and its muted tail ("(188 rows the model never saw)"): together
+// when they fit, the tail on the next line otherwise; both wrap.
+void LineWithTail(const std::string& text, const ImVec4& colour, const std::string& tail, const ImVec4& tail_colour) {
+    if (text.empty()) return;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(colour, "%s", text.c_str());
+    if (!tail.empty()) {
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float end = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + spacing;
+        if (end + ImGui::CalcTextSize(tail.c_str()).x <= ImGui::GetWindowContentRegionMax().x) ImGui::SameLine();
+        ImGui::TextColored(tail_colour, "%s", tail.c_str());
+    }
+    ImGui::PopTextWrapPos();
+}
+
+// A chip that turns a choice on and off (the Charts row, Rebuild on next
+// run): ui::ToggleChip in the accent text colour. True when clicked.
+bool ChipToggle(const char* label, bool* on) {
+    const bool clicked = ui::ToggleChip(label, label, "", *on, ui::ToU32(ui::CurrentTokens().accent_text));
+    if (clicked) *on = !*on;
+    return clicked;
+}
+
+float ChipToggleWidth(const char* label) { return ui::ToggleChipWidth(label, ""); }
+
+// "Epoch window [ 10 ] - +": a label and a typed whole-number field with
+// steps (B4-6: no sliders), its range on hover.
+void EpochsField(const char* label, const char* id, int* value, int min, int max, const char* hint) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine();
+    ui::NumberField(id, value, min, max, 1, 44.0f, hint);
+}
 
 } // namespace
 
@@ -336,6 +469,15 @@ void ApplySeriesColours(Series& train_loss, Series& val_loss, Series& train_accu
 }
 }  // namespace
 
+void TrainingPlotPanel::SetViewDefaults(const core::TrainingDashboardConfig& view) {
+    auto_scale_ = view.auto_scale;
+    follow_current_epoch_ = view.follow_current_epoch;
+    visible_epoch_window_ = view.epoch_window;
+    log_loss_scale_ = view.log_loss_axis;
+    show_smoothed_curves_ = view.smooth;
+    smoothing_window_ = view.smooth_window;
+}
+
 TrainingPlotPanel::TrainingPlotPanel()
     : Panel("Training Dashboard") {
 
@@ -355,6 +497,11 @@ TrainingPlotPanel::~TrainingPlotPanel() {
 }
 
 void TrainingPlotPanel::Render() {
+    RenderWindow();
+    RunPendingExport();
+}
+
+void TrainingPlotPanel::RenderWindow() {
     if (!visible_) {
         if (last_render_visible_) {
             RecordPanelEvent("TrainingPlotPanel.Hidden");
@@ -405,9 +552,11 @@ void TrainingPlotPanel::Render() {
         }
     }
 
+    // What the header, the cards and the insights read, once a frame
+    // (data_mutex_ is held).
+    facts_ = DashboardFacts();
     // Header: run status, progress and run actions (always visible).
     RenderTrainingStatus();
-    RenderActiveTaskSummary();
 
     // Generations (TOFIX159 A4): the run's samples, beside the metrics.
     if (!generation_folder_.empty()) {
@@ -435,6 +584,13 @@ void TrainingPlotPanel::Render() {
 
     // Metric cards: latest values, change and timing.
     RenderKpiCards();
+    if (health_notice_) {
+        const HealthNotice notice = health_notice_();
+        if (notice.show) {
+            ui::NoticeLine(notice.text, ui::CurrentTokens().caution);
+            if (open_health_ && ui::LinkButton("Open Model > Health")) open_health_();
+        }
+    }
 
     // Check if we have any training data
     bool has_data = !train_loss_.values.empty() || !train_accuracy_.values.empty() || !custom_metrics_.empty();
@@ -506,9 +662,8 @@ void TrainingPlotPanel::Render() {
         }
     }
 
-    // Run details below the charts: data preparation and execution truth.
+    // Data preparation below the charts (its details are under Run details).
     RenderMaterializationSummary();
-    RenderTrainingWarningSummary();
 
     if (!has_data) {
         RenderEmptyState();
@@ -523,9 +678,9 @@ void TrainingPlotPanel::Render() {
 }
 
 void TrainingPlotPanel::RenderEmptyState() {
-    const DashColors c = CurrentDashColors();
-    ImGui::Spacing();
-    if (BeginDashCard("##dash_empty", c)) {
+    const ui::Tokens& c = ui::CurrentTokens();
+    ui::BeginCard("##dash_empty");
+    {
         const auto centered = [](const char* text, const ImVec4& color) {
             const float width = ImGui::GetContentRegionAvail().x;
             const float text_width = ImGui::CalcTextSize(text).x;
@@ -543,222 +698,94 @@ void TrainingPlotPanel::RenderEmptyState() {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
                                  std::max(0.0f, (width - extent.x) * 0.5f));
             ImGui::GetWindowDrawList()->AddText(font, size, ImGui::GetCursorScreenPos(),
-                                                ImGui::GetColorU32(c.faint), icon);
+                                                ImGui::GetColorU32(c.text_faint), icon);
             ImGui::Dummy(extent);
         }
         ImGui::Spacing();
         centered("No training data yet", c.text);
         // Only canvas training reports here; the script hint named a file
         // that does not exist and scripts cannot feed this panel.
-        centered("Press Train on the canvas to see real-time metrics", c.muted);
+        centered("Press Train on the canvas to see real-time metrics", c.text_dim);
         ImGui::Spacing();
-        centered("Loss and accuracy charts will appear here", c.faint);
+        centered("Loss and accuracy charts will appear here", c.text_faint);
         ImGui::Dummy(ImVec2(0.0f, 48.0f));
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::RenderKpiCards() {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
+    namespace td = training_dashboard;
+    const std::vector<td::Card> cards = td::BuildCards(facts_);
+    if (cards.empty()) return;
 
-    struct Card {
-        std::string id;
-        std::string label;
-        ImVec4 dot;
-        std::string value;
-        std::string tooltip;
-        std::string sub1;
-        ImVec4 sub1_color;
-        std::string sub2;
-        ImVec4 sub2_color;
+    const auto tone = [&](td::Tone t) {
+        switch (t) {
+        case td::Tone::Good: return c.success;
+        case td::Tone::Bad: return c.caution;
+        case td::Tone::Error: return c.error;
+        case td::Tone::Plain: return c.text;
+        case td::Tone::Faint: break;
+        }
+        return c.text_dim;
     };
-    std::vector<Card> cards;
+    const ImVec4 dots[] = {train_loss_.color, val_loss_.color, train_accuracy_.color, val_accuracy_.color};
 
-    const auto count_of = [](const MetricSeries& s) {
-        return std::min(s.epochs.size(), s.values.size());
-    };
-    // Change of the latest value against the point about one epoch earlier
-    // (the first point while still in the first epoch).
-    const auto change_text = [&](const MetricSeries& s, bool lower_is_better,
-                                 const char* value_format, std::string& text,
-                                 ImVec4& color) {
-        const size_t n = count_of(s);
-        if (n < 2) {
-            text = "first value";
-            color = c.faint;
-            return;
-        }
-        const double target = s.epochs[n - 1] - 1.0;
-        size_t reference = 0;
-        for (size_t i = n - 1; i-- > 0;) {
-            if (s.epochs[i] <= target + 1e-9) {
-                reference = i;
-                break;
-            }
-        }
-        const double delta = s.values[n - 1] - s.values[reference];
-        if (std::abs(delta) < 1e-12) {
-            text = "no change since epoch " + FormatEpochValue(s.epochs[reference]);
-            color = c.muted;
-            return;
-        }
-        char amount[48];
-        std::snprintf(amount, sizeof(amount), value_format, std::abs(delta));
-        text = std::string(delta < 0.0 ? ICON_FA_CARET_DOWN : ICON_FA_CARET_UP) + " " +
-               amount + " since epoch " + FormatEpochValue(s.epochs[reference]);
-        const bool better = lower_is_better ? delta < 0.0 : delta > 0.0;
-        color = better ? c.success : c.caution;
-    };
-    const auto best_text = [&](const MetricSeries& s, bool lower_is_better,
-                               const char* value_format) {
-        const size_t n = count_of(s);
-        size_t best = 0;
-        for (size_t i = 1; i < n; ++i) {
-            if ((lower_is_better && s.values[i] < s.values[best]) ||
-                (!lower_is_better && s.values[i] > s.values[best])) {
-                best = i;
-            }
-        }
-        char value[48];
-        std::snprintf(value, sizeof(value), value_format, s.values[best]);
-        return std::string("best ") + value + " at epoch " + FormatEpochValue(s.epochs[best]);
-    };
-    const auto add_metric = [&](const char* id, const char* label, const MetricSeries& s,
-                                bool lower_is_better, const char* value_format,
-                                const char* delta_format, const char* tooltip_format) {
-        if (count_of(s) == 0) {
-            return;
-        }
-        Card card;
-        card.id = id;
-        card.label = label;
-        card.dot = s.color;
-        char value[48];
-        std::snprintf(value, sizeof(value), value_format, s.values.back());
-        card.value = value;
-        char tooltip[96];
-        std::snprintf(tooltip, sizeof(tooltip), tooltip_format, s.values.back());
-        card.tooltip = tooltip;
-        change_text(s, lower_is_better, delta_format, card.sub1, card.sub1_color);
-        card.sub2 = best_text(s, lower_is_better, value_format);
-        card.sub2_color = c.muted;
-        cards.push_back(std::move(card));
-    };
-
-    add_metric("##kpi_loss", "Loss", train_loss_, true, "%.4f", "%.4f", "Training loss: %.6f");
-    add_metric("##kpi_acc", "Accuracy", train_accuracy_, false, "%.2f%%", "%.2f%%",
-               "Training accuracy: %.2f%%");
-    add_metric("##kpi_val_loss", "Val loss", val_loss_, true, "%.4f", "%.4f",
-               "Validation loss: %.6f");
-    if (!val_loss_.values.empty() && !cards.empty() && cards.back().id == "##kpi_val_loss") {
-        // Validation signal: how far validation loss sits above training loss.
-        const double recent_val_loss = val_loss_.values.back();
-        const double recent_train_loss =
-            train_loss_.values.empty() ? recent_val_loss : train_loss_.values.back();
-        const double gap = recent_val_loss - recent_train_loss;
-        char text[96];
-        if (gap > 0.25) {
-            std::snprintf(text, sizeof(text), "above train loss by %.4f", gap);
-            cards.back().sub2_color = c.caution;
-        } else {
-            std::snprintf(text, sizeof(text), "gap to train loss controlled (%+.4f)", gap);
-            cards.back().sub2_color = c.success;
-        }
-        cards.back().sub2 = text;
-    }
-    add_metric("##kpi_val_acc", "Val accuracy", val_accuracy_, false, "%.2f%%", "%.2f%%",
-               "Validation accuracy: %.2f%%");
-
-    // Timing card.
-    if (is_training_ && (total_batches_ > 0 || avg_epoch_time_ > 0)) {
-        Card card;
-        card.id = "##kpi_time";
-        card.label = "Time remaining";
-        card.dot = c.warning;
-        // Dynamic estimate: remaining batches over all epochs at the rate of the
-        // last two minutes, plus measured epoch-boundary overhead. It follows
-        // speed changes and appears after ~10 s, also in single-epoch runs.
-        const auto remaining = eta_estimator_.RemainingSeconds();
-        if (remaining) {
-            card.value = FormatTrainingDuration(*remaining);
-            card.tooltip =
-                "Remaining batches across all epochs at the recent rate (last 2 minutes),\n"
-                "plus " +
-                (eta_estimator_.HasMeasuredEpochOverhead()
-                     ? FormatTrainingDuration(eta_estimator_.MeanEpochOverheadSeconds())
-                     : std::string("not yet measured")) +
-                " per remaining epoch boundary (validation, previews, checkpoint).\n"
-                "Updates as the training speed changes.";
-        } else {
-            card.value = "Estimating...";
-        }
-        char text[96] = "";
-        std::string speed;
-        if (const double rate = eta_estimator_.BatchesPerSecond(); rate > 0.0) {
-            std::snprintf(text, sizeof(text), "%.2f batches/s", rate);
-            speed = text;
-        }
-        if (samples_per_second_ > 0) {
-            std::snprintf(text, sizeof(text), "%.0f samples/s", samples_per_second_);
-            speed += (speed.empty() ? "" : " \xC2\xB7 ") + std::string(text);
-        }
-        card.sub1 = speed.empty() ? "measuring speed" : speed;
-        card.sub1_color = speed.empty() ? c.faint : c.muted;
-        if (avg_epoch_time_ > 0) {
-            std::snprintf(text, sizeof(text), "last epoch %.1fs \xC2\xB7 avg %.1fs/epoch",
-                          last_epoch_time_, avg_epoch_time_);
-            card.sub2 = text;
-            card.sub2_color = c.muted;
-        } else {
-            card.sub2 = "epoch time after the first epoch";
-            card.sub2_color = c.faint;
-        }
-        cards.push_back(std::move(card));
-    } else if (!is_training_ && total_training_time_ > 0) {
-        Card card;
-        card.id = "##kpi_time";
-        card.label = "Total time";
-        card.dot = c.info;
-        card.value = FormatTrainingDuration(total_training_time_);
-        char text[96];
-        if (total_epochs_ > 0) {
-            std::snprintf(text, sizeof(text), "%d / %d epochs run",
-                          last_executed_epoch_, total_epochs_);
-            card.sub1 = text;
-        } else {
-            card.sub1 = "run finished";
-        }
-        card.sub1_color = c.muted;
-        if (avg_epoch_time_ > 0) {
-            std::snprintf(text, sizeof(text), "avg %.1fs/epoch", avg_epoch_time_);
-            card.sub2 = text;
-        } else {
-            card.sub2 = " ";
-        }
-        card.sub2_color = c.muted;
-        cards.push_back(std::move(card));
-    }
-
-    if (cards.empty()) {
-        return;
-    }
-
-    const float min_card_width = 190.0f;
+    // As many columns as cards of at least 150 px fit (two in the 340 px slot).
+    const float min_card_width = 150.0f;
     const float available = ImGui::GetContentRegionAvail().x;
-    const int columns = std::clamp(static_cast<int>(available / min_card_width), 1,
-                                   static_cast<int>(cards.size()));
+    const int columns = std::clamp(static_cast<int>(available / min_card_width), 1, static_cast<int>(cards.size()));
     ImGui::Spacing();
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4.0f, 4.0f));
-    if (ImGui::BeginTable("##dash_kpis", columns,
-                          ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX)) {
+    if (ImGui::BeginTable("##dash_kpis", columns, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX)) {
         for (const auto& card : cards) {
             ImGui::TableNextColumn();
-            DashKpiCard(card.id.c_str(), card.label.c_str(), card.dot, card.value.c_str(), card.tooltip.c_str(),
-                        card.sub1.c_str(), card.sub1_color, card.sub2.c_str(), card.sub2_color, c);
+            const ImVec4 dot = card.series >= 0 && card.series < 4 ? dots[card.series] : c.info;
+            std::string change = card.change;
+            if (card.direction != 0) change = std::string(card.direction < 0 ? ICON_FA_CARET_DOWN : ICON_FA_CARET_UP) + " " + change;
+            ui::KpiCard(card.id.c_str(), card.label.c_str(), dot, card.value.c_str(), card.tooltip.c_str(), change.c_str(),
+                        tone(card.change_tone), card.line2.c_str(), tone(card.line2_tone),
+                        card.line3.empty() ? nullptr : card.line3.c_str(), tone(card.line3_tone));
         }
         ImGui::EndTable();
     }
     ImGui::PopStyleVar();
+}
+
+training_dashboard::RunFacts TrainingPlotPanel::DashboardFacts() const {
+    namespace td = training_dashboard;
+    const auto series = [](const MetricSeries& s) {
+        td::Series out;
+        out.x = s.epochs;
+        out.y = s.values;
+        return out;
+    };
+    const auto latest = [](const MetricSeries& s) -> std::optional<td::Point> {
+        if (s.epochs.empty() || s.values.empty()) return std::nullopt;
+        const size_t n = std::min(s.epochs.size(), s.values.size());
+        return td::Point{s.epochs[n - 1], s.values[n - 1]};
+    };
+    td::RunFacts f;
+    f.training = is_training_;
+    // The batch curves can hold 100,000 points: only their last point is read.
+    f.latest_loss_point = latest(train_loss_);
+    f.latest_accuracy_point = latest(train_accuracy_);
+    f.train_loss_epochs = series(train_loss_epochs_);
+    f.train_accuracy_epochs = series(train_accuracy_epochs_);
+    f.val_loss = series(val_loss_);
+    f.val_accuracy = series(val_accuracy_);
+    f.current_epoch = current_epoch_;
+    f.total_epochs = total_epochs_;
+    f.last_executed_epoch = last_executed_epoch_;
+    f.current_batch = current_batch_;
+    f.total_batches = total_batches_;
+    f.remaining_seconds = eta_estimator_.RemainingSeconds();
+    f.batches_per_second = eta_estimator_.BatchesPerSecond();
+    f.samples_per_second = samples_per_second_;
+    f.avg_epoch_seconds = avg_epoch_time_;
+    if (eta_estimator_.HasMeasuredEpochOverhead()) f.epoch_end_seconds = eta_estimator_.MeanEpochOverheadSeconds();
+    f.total_seconds = total_training_time_;
+    return f;
 }
 
 void TrainingPlotPanel::AddLossPoint(double epoch, double train_loss, double val_loss) {
@@ -790,6 +817,47 @@ void TrainingPlotPanel::AddAccuracyPoint(double epoch, double train_acc, double 
     train_accuracy_.values.push_back(train_acc);
     TrimDataIfNeeded(train_accuracy_);
 
+    if (val_acc >= 0.0) {
+        val_accuracy_.epochs.push_back(epoch);
+        val_accuracy_.values.push_back(val_acc);
+        TrimDataIfNeeded(val_accuracy_);
+    }
+}
+
+namespace {
+// A batch point already drawn inside this epoch (x in (epoch - 1, epoch]).
+bool HasPointInEpoch(const std::vector<double>& xs, int epoch) {
+    return std::any_of(xs.begin(), xs.end(), [epoch](double x) { return x > epoch - 1 && x <= epoch; });
+}
+}  // namespace
+
+void TrainingPlotPanel::AddEpochLoss(int epoch, double train_loss, double val_loss) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    ++data_version_;
+    train_loss_epochs_.epochs.push_back(epoch);
+    train_loss_epochs_.values.push_back(train_loss);
+    if (!HasPointInEpoch(train_loss_.epochs, epoch)) {
+        train_loss_.epochs.push_back(epoch);
+        train_loss_.values.push_back(train_loss);
+        TrimDataIfNeeded(train_loss_);
+    }
+    if (val_loss >= 0.0) {
+        val_loss_.epochs.push_back(epoch);
+        val_loss_.values.push_back(val_loss);
+        TrimDataIfNeeded(val_loss_);
+    }
+}
+
+void TrainingPlotPanel::AddEpochAccuracy(int epoch, double train_acc, double val_acc) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    ++data_version_;
+    train_accuracy_epochs_.epochs.push_back(epoch);
+    train_accuracy_epochs_.values.push_back(train_acc);
+    if (!HasPointInEpoch(train_accuracy_.epochs, epoch)) {
+        train_accuracy_.epochs.push_back(epoch);
+        train_accuracy_.values.push_back(train_acc);
+        TrimDataIfNeeded(train_accuracy_);
+    }
     if (val_acc >= 0.0) {
         val_accuracy_.epochs.push_back(epoch);
         val_accuracy_.values.push_back(val_acc);
@@ -829,11 +897,6 @@ void TrainingPlotPanel::AddRunComparisonRecord(
         SortTrainingRunComparisonsByBestMetric(run_comparison_records_);
 }
 
-void TrainingPlotPanel::ClearRunComparisonRecords() {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    run_comparison_records_.clear();
-}
-
 void TrainingPlotPanel::Clear() {
     std::lock_guard<std::mutex> lock(data_mutex_);
     ClearLocked();
@@ -847,6 +910,8 @@ void TrainingPlotPanel::ClearLocked() {
     val_loss_.values.clear();
     train_accuracy_.epochs.clear();
     train_accuracy_.values.clear();
+    train_loss_epochs_ = {};
+    train_accuracy_epochs_ = {};
     val_accuracy_.epochs.clear();
     val_accuracy_.values.clear();
     custom_metrics_.clear();
@@ -879,6 +944,7 @@ void TrainingPlotPanel::ClearLocked() {
     total_training_time_ = 0.0f;
     terminal_status_.clear();
     terminal_reason_.clear();
+    ClearMissingValues();
     checkpoint_used_.clear();
     checkpoint_epoch_ = 0;
     checkpoint_step_ = 0;
@@ -887,6 +953,9 @@ void TrainingPlotPanel::ClearLocked() {
     checkpoint_val_loss_ = 0.0f;
     checkpoint_val_accuracy_ = 0.0f;
     active_checkpoint_loaded_ = false;
+    run_dataset_.clear();
+    run_train_rows_ = run_validation_rows_ = run_test_rows_ = 0;
+    has_test_metrics_ = false;
     epoch_times_.clear();
 }
 
@@ -903,6 +972,7 @@ void TrainingPlotPanel::SetTrainingState(bool is_training, int current_epoch, in
         preparation_progress_ = 0.0f;
         terminal_status_.clear();
         terminal_reason_.clear();
+        ClearMissingValues();
         last_executed_epoch_ = 0;
         checkpoint_used_.clear();
         checkpoint_epoch_ = 0;
@@ -910,6 +980,7 @@ void TrainingPlotPanel::SetTrainingState(bool is_training, int current_epoch, in
         active_model_provenance_.clear();
         has_checkpoint_validation_metrics_ = false;
         active_checkpoint_loaded_ = false;
+        has_test_metrics_ = false;
         total_training_time_ = 0.0f;
     }
     current_epoch_ = current_epoch;
@@ -958,6 +1029,7 @@ void TrainingPlotPanel::SetTrainingComplete(float total_time_seconds,
         ? "run_final_state"
         : "restored_best_checkpoint";
     active_checkpoint_loaded_ = false;
+    has_test_metrics_ = false;
 }
 
 void TrainingPlotPanel::SetTrainingComplete(
@@ -974,6 +1046,10 @@ void TrainingPlotPanel::SetTrainingComplete(
     total_training_time_ = total_time_seconds;
     terminal_status_ = metrics.terminal_status;
     terminal_reason_ = metrics.terminal_reason;
+    ClearMissingValues();
+    missing_columns_ = metrics.missing_columns;
+    missing_values_total_rows_ = metrics.missing_values_total_rows;
+    missing_values_supplied_role_ = metrics.missing_values_supplied_role;
     current_epoch_ = metrics.current_epoch;
     last_executed_epoch_ = metrics.last_executed_epoch;
     if (metrics.total_epochs > 0) {
@@ -987,6 +1063,24 @@ void TrainingPlotPanel::SetTrainingComplete(
     checkpoint_val_loss_ = metrics.val_loss;
     checkpoint_val_accuracy_ = metrics.val_accuracy;
     active_checkpoint_loaded_ = false;
+    if (metrics.train_sample_count > 0) {
+        run_train_rows_ = metrics.train_sample_count;
+        run_validation_rows_ = metrics.val_sample_count;
+        run_test_rows_ = metrics.test_sample_count;
+    }
+    has_test_metrics_ = metrics.has_test_metrics;
+    test_loss_ = metrics.test_loss;
+    test_accuracy_ = metrics.test_accuracy;
+    test_mae_ = metrics.test_mae;
+}
+
+void TrainingPlotPanel::SetRunData(const std::string& dataset, size_t train_rows, size_t validation_rows,
+                                   size_t test_rows) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    run_dataset_ = dataset;
+    run_train_rows_ = train_rows;
+    run_validation_rows_ = validation_rows;
+    run_test_rows_ = test_rows;
 }
 
 void TrainingPlotPanel::SetGenerationPreviewFolder(const std::filesystem::path& folder) {
@@ -1010,6 +1104,8 @@ void TrainingPlotPanel::SetActiveCheckpointLoaded(
     checkpoint_val_loss_ = validation_loss;
     checkpoint_val_accuracy_ = validation_accuracy;
     has_checkpoint_validation_metrics_ = has_validation_metrics;
+    checkpoint_step_ = 0;
+    has_test_metrics_ = false;  // the test was the run's model, not this one
     active_checkpoint_loaded_ = true;
     active_model_provenance_ = "loaded_checkpoint_for_testing";
 }
@@ -1053,66 +1149,64 @@ void TrainingPlotPanel::SetMetricReportingCadence(int batch_interval) {
     metric_reporting_interval_ = std::max(0, batch_interval);
 }
 
-void TrainingPlotPanel::ResetPlots() {
-    Clear();
+std::string TrainingPlotPanel::MetricsCsvLocked() const {
+    // The charts' points (training: the batch windows inside each epoch and
+    // the epoch ends), then the whole-epoch training values the cards show.
+    const auto column = [](const char* name, const MetricSeries& series) {
+        training_dashboard::CsvColumn c;
+        c.name = name;
+        c.values.x = series.epochs;
+        c.values.y = series.values;
+        return c;
+    };
+    std::vector<training_dashboard::CsvColumn> columns = {
+        column("TrainLoss", train_loss_),          column("ValLoss", val_loss_),
+        column("TrainAccuracy", train_accuracy_), column("ValAccuracy", val_accuracy_),
+        column("TrainLossEpoch", train_loss_epochs_), column("TrainAccuracyEpoch", train_accuracy_epochs_)};
+    for (const auto& metric : custom_metrics_) columns.push_back(column(metric.name.c_str(), metric));
+    return training_dashboard::MetricsCsv(columns);
 }
 
-void TrainingPlotPanel::SetMaxPoints(size_t max_points) {
-    max_points_ = max_points;
-}
+void TrainingPlotPanel::RunPendingExport() {
+    const PendingExport kind = pending_export_;  // UI thread only
+    if (kind == PendingExport::None) return;
+    pending_export_ = PendingExport::None;
+    if (!save_path_callback_) return;
+    const bool metrics = kind == PendingExport::Metrics;
 
-void TrainingPlotPanel::ExportToCSV(const std::string& filepath) {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    ExportToCSVLocked(filepath);
-}
-
-void TrainingPlotPanel::ExportToCSVLocked(
-    const std::string& filepath) const {
-    std::ofstream file(filepath);
-    if (!file.is_open()) {
-        return;
-    }
-
-    // Write header
-    file << "Epoch,TrainLoss,ValLoss,TrainAccuracy,ValAccuracy";
-    for (const auto& metric : custom_metrics_) {
-        file << "," << metric.name;
-    }
-    file << "\n";
-
-    // Find max number of rows
-    size_t max_rows = std::max({train_loss_.epochs.size(),
-                                 val_loss_.epochs.size(),
-                                 train_accuracy_.epochs.size(),
-                                 val_accuracy_.epochs.size()});
-
-    // Write data
-    for (size_t i = 0; i < max_rows; ++i) {
-        file << (i < train_loss_.epochs.size() ? train_loss_.epochs[i] : -1) << ",";
-        file << (i < train_loss_.values.size() ? train_loss_.values[i] : 0.0) << ",";
-        file << (i < val_loss_.values.size() ? val_loss_.values[i] : 0.0) << ",";
-        file << (i < train_accuracy_.values.size() ? train_accuracy_.values[i] : 0.0) << ",";
-        file << (i < val_accuracy_.values.size() ? val_accuracy_.values[i] : 0.0);
-
-        for (const auto& metric : custom_metrics_) {
-            file << "," << (i < metric.values.size() ? metric.values[i] : 0.0);
+    // Copy what to write, then ask with the lock released.
+    std::string metrics_csv;
+    std::vector<TrainingRunComparisonRecord> runs;
+    {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        if (metrics) {
+            metrics_csv = MetricsCsvLocked();
+        } else {
+            runs = run_comparison_records_;
         }
-        file << "\n";
     }
+    const auto path = metrics ? save_path_callback_("Export metrics", "training_metrics.csv")
+                              : save_path_callback_("Export runs", "training_run_comparison.csv");
+    if (!path) return;  // cancelled
 
-    file.close();
-}
-
-void TrainingPlotPanel::ExportPlotImage(const std::string& /*filepath*/) {
-    // TODO: Implement screenshot/export functionality
-    // This would require rendering to a framebuffer and saving as image
-}
-
-void TrainingPlotPanel::ExportRunComparisonCSV(const std::string& filepath) {
-    std::lock_guard<std::mutex> lock(data_mutex_);
     std::string error;
-    if (!WriteTrainingRunComparisonCsv(filepath, run_comparison_records_, &error)) {
-        RecordPanelEvent("TrainingPlotPanel.ExportRunComparisonFailed", error);
+    bool ok = false;
+    if (metrics) {
+        std::ofstream file(*path, std::ios::binary | std::ios::trunc);
+        ok = file && (file << metrics_csv) && file.flush();
+        if (!ok) error = "could not write " + *path;
+    } else {
+        ok = WriteTrainingRunComparisonCsv(*path, runs, &error);
+    }
+    const char* what = metrics ? "metrics" : "runs";
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    export_note_at_ = pending_note_at_;
+    export_failed_ = !ok;
+    export_note_ = ok ? std::string("Saved the ") + what + " to " + *path
+                      : std::string("Could not save the ") + what + ": " + error;
+    if (!ok) {
+        RecordPanelEvent(metrics ? "TrainingPlotPanel.ExportMetricsFailed" : "TrainingPlotPanel.ExportRunComparisonFailed",
+                         error);
     }
 }
 
@@ -1131,17 +1225,26 @@ void TrainingPlotPanel::SetPreparationState(bool is_preparing,
         total_training_time_ = 0.0f;
         terminal_status_.clear();
         terminal_reason_.clear();
+        ClearMissingValues();
         last_executed_epoch_ = 0;
         checkpoint_used_.clear();
         checkpoint_epoch_ = 0;
         checkpoint_step_ = 0;
         active_model_provenance_.clear();
         active_checkpoint_loaded_ = false;
+        run_dataset_.clear();
+        run_train_rows_ = run_validation_rows_ = run_test_rows_ = 0;
+        has_test_metrics_ = false;
     } else {
         // Preparation over: a word-vector run it trained that never finished
         // was stopped with it.
         word_vector_runs_.EndAllLive(true, "");
     }
+}
+
+bool TrainingPlotPanel::IsPreparing() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    return is_preparing_;
 }
 
 void TrainingPlotPanel::SetPreparationFailed(
@@ -1161,6 +1264,7 @@ void TrainingPlotPanel::SetPreparationFailed(
     total_training_time_ = 0.0f;
     terminal_status_ = "failed";
     terminal_reason_ = error_message;
+    ClearMissingValues();
     word_vector_runs_.EndAllLive(false, error_message);
 }
 
@@ -1331,17 +1435,16 @@ void TrainingPlotPanel::SetMaterializationClearResult(
 }
 
 void TrainingPlotPanel::RenderLossPlot(float plot_height) {
-    const DashColors c = CurrentDashColors();
-    ImGui::Spacing();
-    if (BeginDashCard("##dash_loss_card", c)) {
-        DashCardTitle("Loss", log_loss_scale_ ? "training and validation, log axis" : "training and validation", c);
+    ui::BeginCard("##dash_loss_card");
+    {
+        ui::CardTitle("Loss", log_loss_scale_ ? "training and validation, log axis" : "training and validation");
         // Open this chart in its own dockable window.
         ImGui::SameLine();
         const char* pop_label = ICON_FA_WINDOW_RESTORE "##pop_loss";
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
                                       ImGui::GetWindowContentRegionMax().x -
                                           ImGui::CalcTextSize(ICON_FA_WINDOW_RESTORE).x - 12.0f));
-        if (DashIconButton(pop_label, loss_window_open_, c)) {
+        if (ui::GhostButton(pop_label, true, nullptr, loss_window_open_)) {
             loss_window_open_ = !loss_window_open_;
         }
         if (ImGui::IsItemHovered()) {
@@ -1350,7 +1453,7 @@ void TrainingPlotPanel::RenderLossPlot(float plot_height) {
         }
         DrawLossPlot(ImVec2(-1, plot_height), false);
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit, bool in_window) {
@@ -1359,17 +1462,16 @@ void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit, bool in_windo
 
 
 void TrainingPlotPanel::RenderAccuracyPlot(float plot_height) {
-    const DashColors c = CurrentDashColors();
-    ImGui::Spacing();
-    if (BeginDashCard("##dash_accuracy_card", c)) {
-        DashCardTitle("Accuracy", "training and validation, percent", c);
+    ui::BeginCard("##dash_accuracy_card");
+    {
+        ui::CardTitle("Accuracy", "training and validation, percent");
         // Open this chart in its own dockable window.
         ImGui::SameLine();
         const char* pop_label = ICON_FA_WINDOW_RESTORE "##pop_accuracy";
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
                                       ImGui::GetWindowContentRegionMax().x -
                                           ImGui::CalcTextSize(ICON_FA_WINDOW_RESTORE).x - 12.0f));
-        if (DashIconButton(pop_label, accuracy_window_open_, c)) {
+        if (ui::GhostButton(pop_label, true, nullptr, accuracy_window_open_)) {
             accuracy_window_open_ = !accuracy_window_open_;
         }
         if (ImGui::IsItemHovered()) {
@@ -1378,7 +1480,7 @@ void TrainingPlotPanel::RenderAccuracyPlot(float plot_height) {
         }
         DrawAccuracyPlot(ImVec2(-1, plot_height), false);
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::DrawAccuracyPlot(const ImVec2& size, bool fit, bool in_window) {
@@ -1388,20 +1490,17 @@ void TrainingPlotPanel::DrawAccuracyPlot(const ImVec2& size, bool fit, bool in_w
 
 void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
     const char* plot_title = nullptr;
-    const char* y_label = nullptr;
-    ClassifyCustomMetrics(custom_metrics_, &plot_title, &y_label);
-    (void)y_label;
-    const DashColors c = CurrentDashColors();
-    ImGui::Spacing();
-    if (BeginDashCard("##dash_custom_card", c)) {
-        DashCardTitle(plot_title, "per epoch", c);
+    ClassifyCustomMetrics(custom_metrics_, &plot_title, nullptr);
+    ui::BeginCard("##dash_custom_card");
+    {
+        ui::CardTitle(plot_title, "per epoch");
         // Open this chart in its own dockable window.
         ImGui::SameLine();
         const char* pop_label = ICON_FA_WINDOW_RESTORE "##pop_custom";
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
                                       ImGui::GetWindowContentRegionMax().x -
                                           ImGui::CalcTextSize(ICON_FA_WINDOW_RESTORE).x - 12.0f));
-        if (DashIconButton(pop_label, custom_window_open_, c)) {
+        if (ui::GhostButton(pop_label, true, nullptr, custom_window_open_)) {
             custom_window_open_ = !custom_window_open_;
         }
         if (ImGui::IsItemHovered()) {
@@ -1410,7 +1509,7 @@ void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
         }
         DrawCustomMetricsPlot(ImVec2(-1, plot_height), false);
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::DrawCustomMetricsPlot(const ImVec2& size, bool fit, bool in_window) {
@@ -1505,6 +1604,8 @@ void TrainingPlotPanel::DrawChart(int chart, const ImVec2& size, bool fit, bool 
     o.tool_fit = false;
     o.tool_log = false;
     o.own_window_button = false;
+    // In the dashboard the wheel scrolls it; a chart window zooms with it.
+    o.zoom_with_ctrl = !in_window;
     // Auto scale and Follow current epoch, as before: the epoch window and
     // the value range of what is visible.
     if (chart == 0 && auto_scale_ && !d.train_loss.line.epochs.empty()) {
@@ -1541,7 +1642,9 @@ void TrainingPlotPanel::DrawChart(int chart, const ImVec2& size, bool fit, bool 
         // Not following: all epochs so far, set once (as before the port);
         // with Auto scale the value range follows the data, like the loss
         // chart (it used to stay at the first fit, so the curve left the top).
-        const double max_epoch = std::max(1.0, d.train_accuracy.line.epochs.back()) + 1.0;
+        // The planned epochs, as the loss chart (it took the epochs so far,
+        // set once: 0..2 while epoch 1 ran, for the rest of the run).
+        const double max_epoch = CalculateEpochWindow(d.train_accuracy.line).second;
         o.x_range = {true, 0.0, max_epoch, true};
         const ValueRange range = CalculateVisibleRange(d.train_accuracy.line, d.val_accuracy.line, 0.0, max_epoch);
         double padding = (range.max - range.min) * 0.1;
@@ -1553,7 +1656,7 @@ void TrainingPlotPanel::DrawChart(int chart, const ImVec2& size, bool fit, bool 
 
 
 void TrainingPlotPanel::RenderChartWindows() {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     const auto chart_window = [&](const char* title, bool* open, int kind) {
         if (!*open) {
             return;
@@ -1562,7 +1665,7 @@ void TrainingPlotPanel::RenderChartWindows() {
         if (ImGui::Begin(title, open)) {
             // Toolbar: fit, the shared view options, help.
             bool fit = false;
-            if (DashButton(ICON_FA_EXPAND " Fit", DashButtonKind::Secondary, c)) {
+            if (ui::SecondaryButton(ICON_FA_EXPAND " Fit")) {
                 fit = true;
             }
             if (ImGui::IsItemHovered()) {
@@ -1581,8 +1684,8 @@ void TrainingPlotPanel::RenderChartWindows() {
             }
             if (follow_current_epoch_) {
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(120.0f);
-                ImGui::SliderInt("Epoch window", &visible_epoch_window_, 3, 50);
+                EpochsField("Epoch window", "##win_epochs", &visible_epoch_window_, 3, 50,
+                            "Epochs shown while following live training");
             }
             if (kind == 0) {
                 ImGui::SameLine();
@@ -1593,12 +1696,12 @@ void TrainingPlotPanel::RenderChartWindows() {
                 ImGui::Checkbox("Smooth", &show_smoothed_curves_);
                 if (show_smoothed_curves_) {
                     ImGui::SameLine();
-                    ImGui::SetNextItemWidth(100.0f);
-                    ImGui::SliderInt("Smooth window", &smoothing_window_, 2, 50);
+                    EpochsField("Smooth window", "##win_smooth", &smoothing_window_, 2, 50,
+                                "Points in the moving average");
                 }
             }
             ImGui::SameLine(0.0f, 14.0f);
-            ImGui::TextColored(c.muted, ICON_FA_CIRCLE_INFO);
+            ImGui::TextColored(c.text_dim, ICON_FA_CIRCLE_INFO);
             if (ImGui::IsItemHovered()) {
                 ImGui::BeginTooltip();
                 ImGui::Text("Plot Controls:");
@@ -1618,7 +1721,7 @@ void TrainingPlotPanel::RenderChartWindows() {
                           : (kind == 1 ? !train_accuracy_.values.empty() : !custom_metrics_.empty());
             if (!has_series) {
                 ImGui::Spacing();
-                ImGui::TextColored(c.muted, "%s",
+                ImGui::TextColored(c.text_dim, "%s",
                                    kind == 0 ? "No loss data yet. Start training to see the curve."
                                    : kind == 1 ? "No accuracy data yet. Start training to see the curve."
                                                : "No custom metrics yet.");
@@ -1639,16 +1742,18 @@ void TrainingPlotPanel::RenderChartWindows() {
 }
 
 void TrainingPlotPanel::RenderControls() {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     ImGui::Spacing();
 
-    // Which charts to show.
+    // Which charts to show; the parts wrap in a narrow dashboard.
+    ui::FlowRow row;
+    row.Next(ImGui::CalcTextSize("Charts").x);
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(c.muted, "Charts");
-    ImGui::SameLine(0.0f, 10.0f);
-    DashChip("Loss", &show_loss_plot_, c);
-    ImGui::SameLine();
-    DashChip("Accuracy", &show_accuracy_plot_, c);
+    ImGui::TextColored(c.text_dim, "Charts");
+    row.Next(ChipToggleWidth("Loss"));
+    ChipToggle("Loss", &show_loss_plot_);
+    row.Next(ChipToggleWidth("Accuracy"));
+    ChipToggle("Accuracy", &show_accuracy_plot_);
     if (!custom_metrics_.empty()) {
         bool has_sequence_metrics = false;
         bool has_non_sequence_metrics = false;
@@ -1663,11 +1768,11 @@ void TrainingPlotPanel::RenderControls() {
             }
         }
 
-        ImGui::SameLine();
         const char* label = has_sequence_metrics && !has_non_sequence_metrics
             ? "Sequence metrics"
             : "Custom metrics";
-        DashChip(label, &show_custom_metrics_, c);
+        row.Next(ChipToggleWidth(label));
+        ChipToggle(label, &show_custom_metrics_);
     }
 
     // Active view options, so a changed view is never a surprise.
@@ -1687,40 +1792,38 @@ void TrainingPlotPanel::RenderControls() {
                       " epochs";
     }
     if (!view_state.empty()) {
-        ImGui::SameLine(0.0f, 12.0f);
+        row.Next(ImGui::CalcTextSize(view_state.c_str()).x);
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(c.faint, "%s", view_state.c_str());
+        ImGui::TextColored(c.text_faint, "%s", view_state.c_str());
     }
 
-    // View menu and plot help on the right.
+    // View menu and plot help on the right (on the next line when they do not fit).
     const char* view_label = ICON_FA_SLIDERS " View";
     const float help_width = ImGui::CalcTextSize(ICON_FA_CIRCLE_INFO).x;
-    const float needed = DashButtonWidth(view_label) + ImGui::GetStyle().ItemSpacing.x + help_width;
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
-                                  ImGui::GetWindowContentRegionMax().x - needed));
-    if (DashButton(view_label, DashButtonKind::Secondary, c)) {
+    const float needed = ui::ButtonWidth(view_label, ui::ButtonSize::Small) + ImGui::GetStyle().ItemSpacing.x + help_width;
+    ui::SameLineRight(needed);
+    if (ui::SecondaryButton(view_label)) {
         ImGui::OpenPopup("##dash_view");
     }
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(c.muted, ICON_FA_CIRCLE_INFO);
+    ImGui::TextColored(c.text_dim, ICON_FA_CIRCLE_INFO);
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         ImGui::Text("Plot Controls:");
-        ImGui::BulletText("Scroll wheel: Zoom both axes");
-        ImGui::BulletText("Scroll on axis: Zoom that axis only");
+        ImGui::BulletText("Wheel: scrolls the dashboard");
+        ImGui::BulletText("Ctrl + wheel: zoom (on an axis: that axis only); the value axis with Auto scale off");
         ImGui::BulletText("Drag: Pan view");
         ImGui::BulletText("Right-drag: Zoom to a box");
         ImGui::BulletText("Right-click: Chart menu (axes, legend, fit)");
-        ImGui::BulletText("Chart window button: open the chart in its own window");
+        ImGui::BulletText("Chart window button: open the chart in its own window (the wheel zooms there)");
         ImGui::BulletText("Double-click: Fit data");
         ImGui::BulletText("Disable Auto Scale or Follow Current for manual control");
         ImGui::EndTooltip();
     }
 
     if (ImGui::BeginPopup("##dash_view")) {
-        ImGui::TextColored(c.muted, "Axes");
+        ImGui::TextColored(c.text_dim, "Axes");
         ImGui::Checkbox("Auto scale", &auto_scale_);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("When enabled, axes adapt to the live training data.\nDisable to manually zoom/pan.");
@@ -1729,11 +1832,8 @@ void TrainingPlotPanel::RenderControls() {
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Keep the epoch axis scrolled to the latest batch/epoch.");
         }
-        ImGui::SetNextItemWidth(160.0f);
-        ImGui::SliderInt("Epoch window", &visible_epoch_window_, 3, 50);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Number of epochs visible while following live training.");
-        }
+        EpochsField("Epoch window", "##view_epochs", &visible_epoch_window_, 3, 50,
+                    "Epochs shown while following live training");
         ImGui::Checkbox("Log loss axis", &log_loss_scale_);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip(
@@ -1741,17 +1841,16 @@ void TrainingPlotPanel::RenderControls() {
                 "smaller later losses. Metric values are unchanged.");
         }
         ImGui::Spacing();
-        ImGui::TextColored(c.muted, "Curves");
+        ImGui::TextColored(c.text_dim, "Curves");
         ImGui::Checkbox("Smooth curves", &show_smoothed_curves_);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Display-only moving average overlay. Raw curves are unchanged.");
         }
         if (show_smoothed_curves_) {
-            ImGui::SetNextItemWidth(160.0f);
-            ImGui::SliderInt("Smooth window", &smoothing_window_, 2, 50);
+            EpochsField("Smooth window", "##view_smooth", &smoothing_window_, 2, 50, "Points in the moving average");
         }
         ImGui::Spacing();
-        ImGui::TextColored(c.muted, "Open in a window");
+        ImGui::TextColored(c.text_dim, "Open in a window");
         ImGui::MenuItem(ICON_FA_WINDOW_RESTORE " Loss chart", nullptr, &loss_window_open_);
         ImGui::MenuItem(ICON_FA_WINDOW_RESTORE " Accuracy chart", nullptr, &accuracy_window_open_);
         if (!custom_metrics_.empty()) {
@@ -1763,212 +1862,53 @@ void TrainingPlotPanel::RenderControls() {
 }
 
 void TrainingPlotPanel::RenderCurveSummary() {
-    const DashColors c = CurrentDashColors();
-
-    auto slope_last = [](const MetricSeries& series, size_t window) -> double {
-        const size_t count = std::min(series.epochs.size(), series.values.size());
-        if (count < 2) return 0.0;
-
-        const size_t start = count > window ? count - window : 0;
-        const double dx = series.epochs[count - 1] - series.epochs[start];
-        if (dx <= 0.0) return 0.0;
-        return (series.values[count - 1] - series.values[start]) / dx;
-    };
-
-    auto volatility_last = [](const MetricSeries& series, size_t window) -> double {
-        const size_t count = std::min(series.epochs.size(), series.values.size());
-        if (count < 3) return 0.0;
-
-        const size_t start = count > window ? count - window : 1;
-        double total_delta = 0.0;
-        size_t deltas = 0;
-        for (size_t i = start; i < count; ++i) {
-            total_delta += std::abs(series.values[i] - series.values[i - 1]);
-            ++deltas;
+    const ui::Tokens& c = ui::CurrentTokens();
+    namespace td = training_dashboard;
+    const td::Insights insights = td::BuildInsights(facts_);
+    const auto tone = [&](td::Tone t) {
+        switch (t) {
+        case td::Tone::Good: return c.success;
+        case td::Tone::Bad: return c.caution;
+        case td::Tone::Error: return c.error;
+        case td::Tone::Faint: return c.text_dim;  // as on the cards
+        case td::Tone::Plain: break;
         }
-        return deltas > 0 ? total_delta / static_cast<double>(deltas) : 0.0;
+        return c.text;
     };
 
-    auto best_index = [](const MetricSeries& series, bool lower_is_better) -> int {
-        const size_t count = std::min(series.epochs.size(), series.values.size());
-        if (count == 0) return -1;
-
-        size_t best = 0;
-        for (size_t i = 1; i < count; ++i) {
-            if ((lower_is_better && series.values[i] < series.values[best]) ||
-                (!lower_is_better && series.values[i] > series.values[best])) {
-                best = i;
-            }
-        }
-        return static_cast<int>(best);
-    };
-
-    auto closest_value = [](const MetricSeries& series, double epoch) -> double {
-        const size_t count = std::min(series.epochs.size(), series.values.size());
-        if (count == 0) return 0.0;
-
-        size_t best = 0;
-        double best_distance = std::abs(series.epochs[0] - epoch);
-        for (size_t i = 1; i < count; ++i) {
-            const double distance = std::abs(series.epochs[i] - epoch);
-            if (distance < best_distance) {
-                best = i;
-                best_distance = distance;
-            }
-        }
-        return series.values[best];
-    };
-
-    auto trend_label = [](double slope, bool lower_is_better) -> const char* {
-        const double threshold = lower_is_better ? 0.002 : 0.05;
-        if (std::abs(slope) < threshold) return "flat";
-        const bool improving = lower_is_better ? slope < 0.0 : slope > 0.0;
-        return improving ? "improving" : "worsening";
-    };
-
-    const double train_loss_slope = slope_last(train_loss_, 120);
-    const double val_loss_slope = slope_last(val_loss_, 5);
-    const double train_acc_slope = slope_last(train_accuracy_, 120);
-    const double val_acc_slope = slope_last(val_accuracy_, 5);
-    const double val_loss_volatility = volatility_last(val_loss_, 5);
-
-    const int best_val_loss_idx = best_index(val_loss_, true);
-    const int best_val_acc_idx = best_index(val_accuracy_, false);
-
-    double rough_epoch = -1.0;
-    if (best_val_loss_idx >= 0) {
-        int rising_streak = 0;
-        for (size_t i = static_cast<size_t>(best_val_loss_idx) + 1;
-             i < val_loss_.values.size();
-             ++i) {
-            if (val_loss_.values[i] > val_loss_.values[i - 1]) {
-                ++rising_streak;
-                if (rising_streak >= 2) {
-                    rough_epoch = val_loss_.epochs[i - 1];
-                    break;
-                }
-            } else {
-                rising_streak = 0;
-            }
-        }
+    ui::BeginCard("##dash_insights");
+    // The title, then the suggestion on the same line when it fits.
+    ui::CardTitle("How the run is going", "");
+    if (!insights.rows.empty()) {
+        const float pill_width = ImGui::CalcTextSize(insights.suggestion.c_str()).x + 30.0f;
+        ImGui::SameLine();
+        if (ImGui::GetContentRegionAvail().x < pill_width) ImGui::NewLine();
+        ui::Chip(insights.suggestion.c_str(), tone(insights.suggestion_tone));
     }
-
-    const bool has_validation = !val_loss_.values.empty() || !val_accuracy_.values.empty();
-    const bool val_loss_worsening = val_loss_slope > 0.0;
-    const bool val_acc_worsening = val_acc_slope < 0.0;
-    const bool gap_large = !val_loss_.values.empty() && !train_loss_.values.empty() &&
-        (val_loss_.values.back() - closest_value(train_loss_, val_loss_.epochs.back())) > 0.25;
-
-    const char* recommendation = "continue";
-    ImVec4 recommendation_color = c.success;
-    if (has_validation && (gap_large || val_loss_worsening || val_acc_worsening || rough_epoch >= 0.0)) {
-        recommendation = "inspect validation";
-        recommendation_color = c.warning;
-    }
-    if (has_validation && rough_epoch >= 0.0 && val_loss_volatility > 0.02) {
-        recommendation = "consider early stop";
-        recommendation_color = c.caution;
-    }
-
     ImGui::Spacing();
-    if (!BeginDashCard("##dash_insights", c)) {
-        EndDashCard();
+    if (insights.rows.empty()) {
+        ImGui::TextColored(c.text_faint, "The first epoch is running.");
+        ui::EndCard();
         return;
     }
-    DashCardTitle("Insights", "how the curves are behaving", c);
-    {
-        const std::string pill = std::string("Suggested: ") + recommendation;
-        const float pill_width = ImGui::CalcTextSize(pill.c_str()).x + 30.0f;
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
-                                      ImGui::GetWindowContentRegionMax().x - pill_width));
-        DashPill(pill.c_str(), recommendation_color);
-    }
-    ImGui::Spacing();
-
-    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
-    if (ImGui::BeginTable("##curve_summary", 2,
-                          ImGuiTableFlags_SizingStretchProp |
-                              ImGuiTableFlags_BordersInnerH)) {
-        ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+    // Labels as wide as the widest; the values wrap in the rest.
+    float label_width = 0.0f;
+    for (const auto& row : insights.rows) label_width = std::max(label_width, ImGui::CalcTextSize(row.label.c_str()).x);
+    if (ImGui::BeginTable("##curve_summary", 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, label_width + 12.0f);
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-        const auto row = [&](const char* label) {
+        for (const auto& row : insights.rows) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextColored(c.muted, "%s", label);
+            ImGui::TextColored(c.text_dim, "%s", row.label.c_str());
             ImGui::TableNextColumn();
-        };
-
-        row("Train curve");
-        ImGui::Text("loss %s, accuracy %s",
-            trend_label(train_loss_slope, true),
-            trend_label(train_acc_slope, false));
-
-        row("Validation curve");
-        if (!val_loss_.values.empty() || !val_accuracy_.values.empty()) {
-            ImGui::Text("loss %s, accuracy %s",
-                trend_label(val_loss_slope, true),
-                trend_label(val_acc_slope, false));
-        } else {
-            ImGui::TextColored(c.faint, "waiting for validation points");
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(tone(row.tone), "%s", row.value.c_str());
+            ImGui::PopTextWrapPos();
         }
-
-        row("Best validation");
-        if (best_val_loss_idx >= 0) {
-            ImGui::Text("loss %.4f at epoch %.2f",
-                val_loss_.values[best_val_loss_idx],
-                val_loss_.epochs[best_val_loss_idx]);
-            if (best_val_acc_idx >= 0) {
-                ImGui::Text("accuracy %.2f%% at epoch %.2f",
-                    val_accuracy_.values[best_val_acc_idx],
-                    val_accuracy_.epochs[best_val_acc_idx]);
-            }
-        } else {
-            ImGui::TextColored(c.faint, "no validation data yet");
-        }
-
-        row("Rough point");
-        ImGui::PushTextWrapPos(0.0f);
-        if (rough_epoch >= 0.0) {
-            ImGui::TextColored(c.caution,
-                "validation loss starts rising around epoch %.2f", rough_epoch);
-        } else if (val_loss_.values.size() >= 3) {
-            ImGui::TextColored(c.success, "no sustained validation rise detected");
-        } else {
-            ImGui::TextColored(c.faint, "need more validation points");
-        }
-        ImGui::PopTextWrapPos();
-
-        row("Generalization gap");
-        if (!val_loss_.values.empty() && !train_loss_.values.empty()) {
-            const double epoch = val_loss_.epochs.back();
-            const double train_near_val = closest_value(train_loss_, epoch);
-            const double gap = val_loss_.values.back() - train_near_val;
-            ImGui::Text("val_loss - train_loss = %.4f", gap);
-            ImGui::SameLine(0.0f, 10.0f);
-            if (gap > 0.25) {
-                ImGui::TextColored(c.caution, "possible overfit");
-            } else {
-                ImGui::TextColored(c.success, "controlled");
-            }
-        } else {
-            ImGui::TextColored(c.faint, "waiting for train/validation loss");
-        }
-
-        row("Validation roughness");
-        if (val_loss_.values.size() >= 3) {
-            ImGui::Text("recent avg delta %.4f", val_loss_volatility);
-        } else {
-            ImGui::TextColored(c.faint, "need more validation points");
-        }
-
-        row("Suggested action");
-        ImGui::TextColored(recommendation_color, "%s", recommendation);
-
         ImGui::EndTable();
     }
-    ImGui::PopStyleColor();
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::RenderSequenceMetricsSummary() {
@@ -2002,16 +1942,12 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
         return;
     }
 
-    const DashColors c = CurrentDashColors();
-    ImGui::Spacing();
-    if (!BeginDashCard("##dash_sequence", c)) {
-        EndDashCard();
-        return;
-    }
-    DashCardTitle("Sequence Metrics", "latest values", c);
+    const ui::Tokens& c = ui::CurrentTokens();
+    ui::BeginCard("##dash_sequence");
+    ui::CardTitle("Sequence Metrics", "latest values");
     ImGui::Spacing();
 
-    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
+    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, ui::WithAlpha(c.border, 0.6f));
     ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, ImVec4(0, 0, 0, 0));
     if (ImGui::BeginTable("##sequence_metrics", 3,
                           ImGuiTableFlags_SizingStretchProp |
@@ -2019,7 +1955,7 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
         ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 1.3f);
         ImGui::TableSetupColumn("Train", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("Val", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_Text, c.muted);
+        ImGui::PushStyleColor(ImGuiCol_Text, c.text_dim);
         ImGui::TableHeadersRow();
         ImGui::PopStyleColor();
 
@@ -2028,7 +1964,7 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
             if (has_value) {
                 ImGui::Text("%.2f%%", value);
             } else {
-                ImGui::TextColored(c.faint, "no data");
+                ImGui::TextColored(c.text_faint, "no data");
             }
         };
 
@@ -2048,37 +1984,16 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
         ImGui::EndTable();
     }
     ImGui::PopStyleColor(2);
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::RenderActiveTaskSummary() {
 #ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
-    auto tasks = AsyncTaskManager::Instance().GetActiveTasks();
-    if (tasks.empty()) {
-        return;
+    std::vector<training_dashboard::EngineTask> tasks;
+    for (const auto& task : AsyncTaskManager::Instance().GetActiveTasks()) {
+        tasks.push_back({task.name, task.progress, task.status_message});
     }
-
-    ImGui::Spacing();
-    ImGui::TextDisabled("Active engine tasks:");
-    int rendered = 0;
-    for (const auto& task : tasks) {
-        if (rendered >= 3) {
-            ImGui::TextDisabled("+ %d more task(s)",
-                                static_cast<int>(tasks.size()) - rendered);
-            break;
-        }
-
-        ImGui::BulletText("%s", task.name.c_str());
-        ImGui::SameLine(220);
-        ImGui::ProgressBar(task.progress, ImVec2(160, 0));
-        ImGui::SameLine();
-        if (!task.status_message.empty()) {
-            ImGui::TextDisabled("%s", task.status_message.c_str());
-        } else {
-            ImGui::TextDisabled("running");
-        }
-        ++rendered;
-    }
+    DetailGroup("Engine tasks", training_dashboard::TaskRows(tasks));
 #endif
 }
 
@@ -2086,7 +2001,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
     if (materialization_events_.empty() && materialization_notice_.empty()) {
         return;
     }
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     const auto now = std::chrono::steady_clock::now();
     const bool has_actions = static_cast<bool>(materialization_action_callback_);
     if (has_actions && materialization_cache_entries_ < 0 &&
@@ -2124,33 +2039,28 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         state_color = c.warning;
     } else if (!complete) {
         state = "Stopped";
-        state_color = c.muted;
+        state_color = c.text_dim;
     }
 
-    ImGui::Spacing();
-    if (!BeginDashCard("##dash_dataprep", c)) {
-        EndDashCard();
-        return;
-    }
+    ui::BeginCard("##dash_dataprep");
 
     // Header: title, state, actions.
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(c.text, "Data preparation");
     ImGui::SameLine(0.0f, 10.0f);
-    DashPill(state, state_color);
+    ui::Chip(state, state_color);
     if (has_actions) {
         const char* rebuild_label = materialization_rebuild_pending_
             ? ICON_FA_ARROWS_ROTATE " Rebuild on next run###dash_rebuild"
             : "Rebuild on next run###dash_rebuild";
         const char* actions_label = "Actions " ICON_FA_CHEVRON_DOWN "###dash_prep_actions";
-        const float width = DashButtonWidth("Rebuild on next run") + 26.0f +
-                            DashButtonWidth("Actions ") + 16.0f +
-                            ImGui::GetStyle().ItemSpacing.x;
+        const float width = ChipToggleWidth(rebuild_label) +
+                            ui::ButtonWidth(actions_label, ui::ButtonSize::Small) + ImGui::GetStyle().ItemSpacing.x;
         ImGui::SameLine();
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
                                       ImGui::GetWindowContentRegionMax().x - width));
         bool pending = materialization_rebuild_pending_;
-        if (DashChip(rebuild_label, &pending, c)) {
+        if (ChipToggle(rebuild_label, &pending)) {
             materialization_rebuild_pending_ = pending;
             materialization_action_callback_(pending ? "rebuild" : "cancel_rebuild");
         }
@@ -2160,7 +2070,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                                   : "The next Train rebuilds the prepared data instead of reusing it.");
         }
         ImGui::SameLine();
-        if (DashButton(actions_label, DashButtonKind::Secondary, c)) {
+        if (ui::SecondaryButton(actions_label)) {
             ImGui::OpenPopup("##dash_prep_actions_menu");
         }
         if (ImGui::BeginPopup("##dash_prep_actions_menu")) {
@@ -2219,12 +2129,12 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                        std::to_string(materialization_cache_column_count_) + " columns";
         }
         if (!summary.empty()) {
-            ImGui::TextColored(c.muted, "%s", summary.c_str());
+            ImGui::TextColored(c.text_dim, "%s", summary.c_str());
         }
     }
     if (latest && !preparing && !latest->message.empty()) {
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(c.muted, "%s", latest->message.c_str());
+        ImGui::TextColored(c.text_dim, "%s", latest->message.c_str());
         ImGui::PopTextWrapPos();
     }
     if (!materialization_rebuild_reason_.empty()) {
@@ -2239,7 +2149,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         ImGui::PopTextWrapPos();
     }
     if (preparing && latest) {
-        DashProgress(latest->progress, c.accent, c);
+        ui::ProgressLine(latest->progress, c.accent);
         ImGui::PushTextWrapPos(0.0f);
         ImGui::Text("%s", latest->message.c_str());
         ImGui::PopTextWrapPos();
@@ -2248,7 +2158,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
     // Steps.
     if (!materialization_events_.empty()) {
         ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
+        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, ui::WithAlpha(c.border, 0.6f));
         if (ImGui::BeginTable("##dash_prep_steps", 3,
                               ImGuiTableFlags_SizingStretchProp |
                                   ImGuiTableFlags_BordersInnerH)) {
@@ -2308,7 +2218,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                 }
                 if (!detail.empty()) {
                     ImGui::PushTextWrapPos(0.0f);
-                    ImGui::TextColored(c.faint, "%s", detail.c_str());
+                    ImGui::TextColored(c.text_faint, "%s", detail.c_str());
                     ImGui::PopTextWrapPos();
                 }
                 ImGui::TableNextColumn();
@@ -2318,12 +2228,12 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                 const double seconds =
                     std::chrono::duration<double>(end_time - event.started_at).count();
                 if (running && event.progress > 0.0f && event.progress < 1.0f) {
-                    ImGui::TextColored(c.faint, "%.0f%%", event.progress * 100.0f);
+                    ImGui::TextColored(c.text_faint, "%.0f%%", event.progress * 100.0f);
                 } else if (seconds >= 0.05) {
-                    ImGui::TextColored(c.faint, "%s",
+                    ImGui::TextColored(c.text_faint, "%s",
                                        FormatTrainingDuration(seconds).c_str());
                 } else {
-                    ImGui::TextColored(c.faint, "%s", running ? "..." : "<0.1s");
+                    ImGui::TextColored(c.text_faint, "%s", running ? "..." : "<0.1s");
                 }
                 ImGui::PopID();
             }
@@ -2332,10 +2242,10 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         ImGui::PopStyleColor();
     }
 
-    // Cache usage and the Details disclosure.
+    // Cache usage.
     ImGui::Spacing();
     if (materialization_cache_entries_ >= 0) {
-        ImGui::TextColored(c.muted, "Prepared-data cache");
+        ImGui::TextColored(c.text_dim, "Prepared-data cache");
         ImGui::SameLine();
         std::string usage = std::to_string(materialization_cache_entries_) + " dataset" +
                             (materialization_cache_entries_ == 1 ? "" : "s") + " \xC2\xB7 " +
@@ -2346,105 +2256,18 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         ImGui::TextUnformatted(usage.c_str());
         if (materialization_pruned_entries_ > 0) {
             ImGui::SameLine();
-            ImGui::TextColored(c.faint, "(removed %d older, %s)",
+            ImGui::TextColored(c.text_faint, "(removed %d older, %s)",
                                materialization_pruned_entries_,
                                FormatTraceBytes(materialization_pruned_bytes_).c_str());
         }
-        ImGui::SameLine();
-    }
-    {
-        const char* label = materialization_details_open_ ? "Hide details" : "Details";
-        const float width = ImGui::CalcTextSize(label).x;
-        if (materialization_cache_entries_ < 0) {
-            ImGui::NewLine();
-            ImGui::SameLine();
-        }
-        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
-                                      ImGui::GetWindowContentRegionMax().x - width));
-        ImGui::TextColored(c.accent_text, "%s", label);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        }
-        if (ImGui::IsItemClicked()) {
-            materialization_details_open_ = !materialization_details_open_;
-        }
     }
     if (!materialization_clear_message_.empty()) {
-        ImGui::TextColored(c.faint, "%s", materialization_clear_message_.c_str());
+        ImGui::TextColored(c.text_faint, "%s", materialization_clear_message_.c_str());
     }
-
-    if (materialization_details_open_) {
-        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
-        if (ImGui::BeginTable("##dash_prep_details", 2,
-                              ImGuiTableFlags_SizingStretchProp |
-                                  ImGuiTableFlags_BordersInnerH)) {
-            ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 170.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            const auto row = [&](const char* label, const std::string& value) {
-                if (value.empty()) return;
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(c.muted, "%s", label);
-                ImGui::TableNextColumn();
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextUnformatted(value.c_str());
-                ImGui::PopTextWrapPos();
-            };
-            if (!status.empty()) {
-                row("Status", std::string(MaterializationStatusDisplayName(status)) +
-                                  " (" + status + ")");
-            }
-            if (latest && !latest->node_name.empty()) row("Node", latest->node_name);
-            row("Output dataset", materialization_output_dataset_);
-            if (materialization_operators_applied_ > 0) {
-                row("Operators applied", std::to_string(materialization_operators_applied_));
-            }
-            row("Cache key", materialization_cache_key_);
-            row("Prepared data file", materialization_cache_artifact_path_);
-            row("Manifest", materialization_cache_manifest_path_);
-            row("Cache folder", materialization_cache_directory_);
-            if (latest) {
-                if (latest->estimated_memory_bytes > 0) {
-                    row("Estimated memory", FormatTraceBytes(latest->estimated_memory_bytes));
-                }
-                if (latest->available_memory_bytes > 0) {
-                    row("Available RAM / safe budget",
-                        FormatTraceBytes(latest->available_memory_bytes) + " / " +
-                            FormatTraceBytes(latest->safe_memory_budget_bytes));
-                }
-                if (latest->process_memory_detected) {
-                    row("Process resident / growth",
-                        FormatTraceBytes(latest->process_resident_memory_bytes) + " / +" +
-                            FormatTraceBytes(latest->process_resident_growth_bytes));
-                    if (latest->process_private_memory_bytes > 0) {
-                        row(latest->process_private_memory_name.empty()
-                                ? "Process private memory"
-                                : ("Process " + latest->process_private_memory_name).c_str(),
-                            FormatTraceBytes(latest->process_private_memory_bytes));
-                    }
-                    row("Memory note",
-                        "Process RAM; ArrayFire device memory is reported separately.");
-                }
-                row("Memory risk", latest->memory_risk_level);
-                if (!latest->status.empty() && latest->status != "running") {
-                    row("Decision status", latest->status);
-                }
-                if (latest->total_items > 0) {
-                    row("Work", std::to_string(latest->processed_items) + " / " +
-                                    std::to_string(latest->total_items));
-                }
-            }
-            row("Rebuild reason", materialization_rebuild_reason_);
-            if (materialization_cache_limit_bytes_ > 0) {
-                row("Cache limit",
-                    FormatTraceBytes(materialization_cache_limit_bytes_) +
-                        "; least recently used prepared data is removed first");
-            }
-            ImGui::EndTable();
-        }
-        ImGui::PopStyleColor();
+    if (!PreparationRows().empty()) {
+        ImGui::TextColored(c.text_faint, "The file, cache key and memory figures are under Run details.");
     }
-    EndDashCard();
+    ui::EndCard();
 
     // Clear confirmation.
     if (materialization_clear_confirm_) {
@@ -2456,7 +2279,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushTextWrapPos(430.0f);
         if (materialization_cache_entries_ >= 0) {
-            ImGui::TextColored(c.muted,
+            ImGui::TextColored(c.text_dim,
                                "Removes %d prepared dataset%s (%s) from this project's cache "
                                "folder. They are rebuilt the next time a graph needs them. "
                                "Your datasets and graphs are not touched.",
@@ -2464,22 +2287,22 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                                materialization_cache_entries_ == 1 ? "" : "s",
                                FormatTraceBytes(materialization_cache_bytes_).c_str());
         } else {
-            ImGui::TextColored(c.muted,
+            ImGui::TextColored(c.text_dim,
                                "Removes every prepared dataset from this project's cache "
                                "folder. They are rebuilt the next time a graph needs them. "
                                "Your datasets and graphs are not touched.");
         }
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
-        const float buttons = DashButtonWidth("Cancel") + DashButtonWidth("Clear cache") +
+        const float buttons = ui::ButtonWidth("Cancel", ui::ButtonSize::Small) + ui::ButtonWidth("Clear cache", ui::ButtonSize::Small) +
                               ImGui::GetStyle().ItemSpacing.x;
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
                                       ImGui::GetWindowContentRegionMax().x - buttons));
-        if (DashButton("Cancel", DashButtonKind::Secondary, c)) {
+        if (ui::SecondaryButton("Cancel")) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (DashButton("Clear cache", DashButtonKind::Danger, c)) {
+        if (ui::DangerButton("Clear cache")) {
             materialization_clear_message_ = "Clearing prepared-data cache...";
             if (materialization_action_callback_) {
                 materialization_action_callback_("clear");
@@ -2490,763 +2313,492 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
     }
 }
 
-void TrainingPlotPanel::RenderTrainingWarningSummary() {
-#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
-    // LatestTrace copies the whole trace (events, timings) and may read the
-    // saved one from disk; it ran every frame with data_mutex_ held
-    // (TOFIX134 P0 item 8). UI thread only.
-    static TrainingTraceSummary cached_trace;
-    static std::chrono::steady_clock::time_point trace_read_at{};
-    const auto now = std::chrono::steady_clock::now();
-    if (now - trace_read_at > std::chrono::milliseconds(500)) {
-        cached_trace = TrainingTraceCollector::LatestTrace();
-        trace_read_at = now;
+std::vector<training_dashboard::DetailRow> TrainingPlotPanel::PreparationRows() const {
+    std::vector<training_dashboard::DetailRow> rows;
+    if (materialization_events_.empty() && materialization_notice_.empty()) return rows;
+    const MaterializationProgress* latest =
+        materialization_events_.empty() ? nullptr : &materialization_events_.back();
+    const auto row = [&rows](const std::string& key, const std::string& value) {
+        if (!value.empty()) rows.push_back({key, value});
+    };
+    if (!materialization_status_.empty()) {
+        row("Status", std::string(MaterializationStatusDisplayName(materialization_status_)) + " (" +
+                          materialization_status_ + ")");
     }
-    const auto& trace = cached_trace;
-    if (!trace.available && trace.run_id.empty()) {
-        return;
+    if (latest) row("Node", latest->node_name);
+    row("Output dataset", materialization_output_dataset_);
+    if (materialization_operators_applied_ > 0) {
+        row("Operators applied", std::to_string(materialization_operators_applied_));
     }
-
-    const TrainingTraceEvent* transfer = FindLatestPinMemoryTransferEvent(trace);
-    const bool has_execution_truth =
-        !trace.requested_backend.empty() ||
-        !trace.effective_backend.empty() ||
-        !trace.placement_fingerprint.empty();
-    if (!transfer && trace.warnings.empty() &&
-        !HasResidencyVerdict(trace) && !has_execution_truth) {
-        return;
-    }
-
-    ImGui::Spacing();
-    bool truth_open = false;
-    if (has_execution_truth || !trace.residency_verdict.empty() || transfer) {
-        std::string header = "Execution Truth";
-        std::string summary = trace.effective_backend;
-        if (!trace.residency_verdict.empty()) {
-            summary += (summary.empty() ? "" : ", ") + trace.residency_verdict;
+    row("Cache key", materialization_cache_key_);
+    row("Prepared data file", materialization_cache_artifact_path_);
+    row("Manifest", materialization_cache_manifest_path_);
+    row("Cache folder", materialization_cache_directory_);
+    if (latest) {
+        if (latest->estimated_memory_bytes > 0) row("Estimated memory", FormatTraceBytes(latest->estimated_memory_bytes));
+        if (latest->available_memory_bytes > 0) {
+            row("Available RAM / safe budget", FormatTraceBytes(latest->available_memory_bytes) + " / " +
+                                                   FormatTraceBytes(latest->safe_memory_budget_bytes));
         }
-        if (!summary.empty()) {
-            header += "  (" + summary + ")";
+        if (latest->process_memory_detected) {
+            row("Process resident / growth", FormatTraceBytes(latest->process_resident_memory_bytes) + " / +" +
+                                                 FormatTraceBytes(latest->process_resident_growth_bytes));
+            if (latest->process_private_memory_bytes > 0) {
+                row(latest->process_private_memory_name.empty() ? std::string("Process private memory")
+                                                                : "Process " + latest->process_private_memory_name,
+                    FormatTraceBytes(latest->process_private_memory_bytes));
+            }
+            row("Memory note", "Process RAM; ArrayFire device memory is reported separately.");
         }
-        header += "###training_execution_truth_section";
-        truth_open = ImGui::CollapsingHeader(header.c_str());
-    }
-    if (truth_open && (has_execution_truth || !trace.residency_verdict.empty())) {
-        if (ImGui::BeginTable(
-                "##training_execution_truth",
-                2,
-                ImGuiTableFlags_SizingStretchProp |
-                    ImGuiTableFlags_BordersInnerH |
-                    ImGuiTableFlags_RowBg)) {
-            ImGui::TableSetupColumn(
-                "Field", ImGuiTableColumnFlags_WidthFixed, 155.0f);
-            ImGui::TableSetupColumn(
-                "Value", ImGuiTableColumnFlags_WidthStretch);
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("Residency");
-            ImGui::TableNextColumn();
-            ImGui::TextColored(
-                ResidencyVerdictColor(trace.residency_verdict),
-                "%s",
-                ResidencyVerdictDisplayName(trace.residency_verdict));
-            if (!trace.residency_verdict.empty() &&
-                trace.residency_verdict != "unavailable") {
-                RenderExecutionTruthRow("Verdict code",
-                                        trace.residency_verdict);
-            }
-
-            RenderExecutionTruthRow("Requested backend",
-                                    trace.requested_backend);
-            RenderExecutionTruthRow(
-                "Requested qualification",
-                FormatRouteQualification(
-                    trace.requested_qualification_evidence_available,
-                    trace.requested_route_qualified,
-                    trace.requested_qualification_matrix_id,
-                    trace.requested_qualification_message));
-
-            std::string effective = trace.effective_backend;
-            if (!trace.effective_device_name.empty()) {
-                effective += " | " + trace.effective_device_name;
-            }
-            if (!trace.effective_backend.empty()) {
-                effective += " | device " +
-                    std::to_string(trace.effective_device_id);
-            }
-            RenderExecutionTruthRow("Effective backend", effective);
-            RenderExecutionTruthRow(
-                "Effective qualification",
-                FormatRouteQualification(
-                    trace.effective_qualification_evidence_available,
-                    trace.effective_route_qualified,
-                    trace.effective_qualification_matrix_id,
-                    trace.effective_qualification_message));
-            std::string identity = trace.identity_confidence;
-            if (!trace.physical_fingerprint.empty()) {
-                if (!identity.empty()) {
-                    identity += " | ";
-                }
-                identity += trace.physical_fingerprint;
-            }
-            RenderExecutionTruthRow("Physical identity", identity);
-            RenderExecutionTruthRow(
-                "Execution preflight",
-                trace.execution_validated
-                    ? "Validated"
-                    : (trace.preflight_stage.empty()
-                           ? "Not recorded"
-                           : "Not validated | " + trace.preflight_stage));
-            if (trace.selection_fallback_applied) {
-                RenderExecutionTruthRow(
-                    "Selection fallback",
-                    "Applied to ArrayFire CPU");
-            }
-            RenderExecutionTruthRow(
-                "Execution policy",
-                RecordedExecutionPolicyDisplayName(trace.execution_policy));
-
-            std::string placement = trace.placement_fingerprint;
-            if (!placement.empty()) {
-                placement += " | " +
-                    std::to_string(trace.placement_entry_count) +
-                    " entries";
-            }
-            RenderExecutionTruthRow("Placement", placement);
-            RenderExecutionTruthRow(
-                "Host boundaries",
-                std::to_string(trace.declared_output_boundary_count));
-            RenderExecutionTruthRow(
-                "Transfers",
-                std::to_string(trace.transfer_event_count) + " events | " +
-                    FormatTraceBytes(trace.transfer_known_bytes));
-            RenderExecutionTruthRow(
-                "Transfer reasons",
-                trace.transfer_summary.empty()
-                    ? "None recorded"
-                    : trace.transfer_summary);
-            RenderExecutionTruthRow(
-                "Synchronizations",
-                std::to_string(trace.synchronization_event_count) +
-                    " events | " +
-                    FormatTraceBytes(trace.synchronization_known_bytes));
-            RenderExecutionTruthRow(
-                "Sync reasons",
-                trace.synchronization_summary.empty()
-                    ? "None recorded"
-                    : trace.synchronization_summary);
-            ImGui::EndTable();
-        }
-
-        if (!trace.placement_summary.empty() &&
-            ImGui::TreeNodeEx(
-                "Placement stages",
-                ImGuiTreeNodeFlags_SpanAvailWidth)) {
-            ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
-            ImGui::TextWrapped("%s", trace.placement_summary.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::TreePop();
+        row("Memory risk", latest->memory_risk_level);
+        if (latest->status != "running") row("Decision status", latest->status);
+        if (latest->total_items > 0) {
+            row("Work", std::to_string(latest->processed_items) + " / " + std::to_string(latest->total_items));
         }
     }
-
-    if (truth_open && transfer) {
-        ImGui::SeparatorText("Transfer Detail");
-        const ImVec4 color = transfer->status == "warning"
-            ? cyxwiz::ui::CurrentTokens().warning
-            : cyxwiz::ui::CurrentTokens().success;
-        ImGui::TextColored(color, "Pin-memory transfer");
-        if (ImGui::BeginTable(
-                "##pin_memory_transfer_detail",
-                2,
-                ImGuiTableFlags_SizingStretchProp |
-                    ImGuiTableFlags_BordersInnerH)) {
-            ImGui::TableSetupColumn(
-                "Field", ImGuiTableColumnFlags_WidthFixed, 155.0f);
-            ImGui::TableSetupColumn(
-                "Value", ImGuiTableColumnFlags_WidthStretch);
-            RenderExecutionTruthRow("Mode", transfer->transfer_mode);
-            RenderExecutionTruthRow("Reason", transfer->transfer_reason);
-            RenderExecutionTruthRow("Backend", transfer->transfer_backend);
-            RenderExecutionTruthRow(
-                "Batch size",
-                std::to_string(transfer->transfer_batch_size));
-            ImGui::EndTable();
-        }
+    row("Rebuild reason", materialization_rebuild_reason_);
+    if (materialization_cache_limit_bytes_ > 0) {
+        row("Cache limit", FormatTraceBytes(materialization_cache_limit_bytes_) +
+                               "; least recently used prepared data is removed first");
     }
-
-    bool rendered_warning_header = false;
-    if (!trace.warnings.empty()) {
-        const int start =
-            std::max(0, static_cast<int>(trace.warnings.size()) - 3);
-        for (int i = start; i < static_cast<int>(trace.warnings.size()); ++i) {
-            const auto& warning = trace.warnings[i];
-            if (transfer && IsPinMemoryTransferWarning(warning)) {
-                continue;
-            }
-            if (!rendered_warning_header) {
-                ImGui::SeparatorText("Warnings");
-                rendered_warning_header = true;
-            }
-            ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
-                               "%s", ClassifyTrainingWarning(warning));
-            ImGui::SameLine(155.0f);
-            ImGui::TextWrapped("%s", warning.c_str());
-        }
-    }
-#endif
+    return rows;
 }
 
 void TrainingPlotPanel::RenderRunComparisonTable() {
-    ImGui::Separator();
-    if (!ImGui::CollapsingHeader("Run Comparison",
-                                 ImGuiTreeNodeFlags_DefaultOpen)) {
-        return;
-    }
-
-    if (run_comparison_records_.empty()) {
-        ImGui::TextDisabled(
-            "No completed training runs recorded in this session.");
-        ImGui::TextDisabled(
-            "Completed graph training runs will appear here for comparison.");
-        if (active_checkpoint_loaded_) {
-            ImGui::TextDisabled(
-                "The loaded checkpoint is active for testing, but loading is "
-                "not a new training run and is not inserted here.");
+    namespace td = training_dashboard;
+    const ui::Tokens& c = ui::CurrentTokens();
+    const td::RunsTable runs = td::BuildRunsTable(run_comparison_records_, active_checkpoint_loaded_);
+    const auto tone = [&c](td::Tone t) {
+        switch (t) {
+        case td::Tone::Good: return c.success;
+        case td::Tone::Bad: return c.caution;
+        case td::Tone::Error: return c.error;
+        case td::Tone::Faint: return c.text_faint;
+        case td::Tone::Plain: break;
         }
-        return;
-    }
+        return c.text;
+    };
 
-    const DashColors c = CurrentDashColors();
-    if (DashButton("Export Run CSV", DashButtonKind::Secondary, c) && save_path_callback_) {
-        // The Engine's save dialog (project exports folder); it wrote
-        // training_run_comparison.csv into the working directory unasked.
-        const auto path = save_path_callback_("Export Run CSV", "training_run_comparison.csv");
-        if (path) {
-            std::string error;
-            if (WriteTrainingRunComparisonCsv(*path, run_comparison_records_, &error)) {
-                run_export_note_ = "Saved " + *path;
-                run_export_failed_ = false;
-            } else {
-                run_export_note_ = "Could not save the runs: " + error;
-                run_export_failed_ = true;
-                RecordPanelEvent("TrainingPlotPanel.ExportRunComparisonFailed", error);
-            }
-        }
+    ui::BeginCard("##dash_runs");
+    // The title, then the card's actions at the right (they wrap when narrow).
+    ImGui::AlignTextToFramePadding();
+    ui::CardTitle("Runs", "this session, best test accuracy first");
+    ui::Tooltip("Ranked by test accuracy, then validation accuracy and loss, then time.");
+    const bool has_runs = !runs.rows.empty();
+    const char* columns_label = runs_all_columns_ ? "Key columns###runs_columns" : "All columns###runs_columns";
+    const char* export_label = "Export " ICON_FA_CHEVRON_DOWN "###runs_export";
+    const char* clear_label = "Clear runs...";
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float actions_width = ui::ButtonWidth(columns_label, ui::ButtonSize::Small) +
+                                ui::ButtonWidth(export_label, ui::ButtonSize::Small) +
+                                ui::ButtonWidth(clear_label, ui::ButtonSize::Small) + spacing * 2.0f;
+    ui::SameLineRight(actions_width);
+    ui::FlowRow buttons;
+    buttons.Next(ui::ButtonWidth(columns_label, ui::ButtonSize::Small));
+    if (ui::SecondaryButton(columns_label, has_runs, "No run has ended in this session yet.")) {
+        runs_all_columns_ = !runs_all_columns_;
     }
-    ImGui::SameLine();
-    if (DashButton("Clear Runs", DashButtonKind::Danger, c)) {
+    buttons.Next(ui::ButtonWidth(export_label, ui::ButtonSize::Small));
+    if (ui::SecondaryButton(export_label)) ImGui::OpenPopup("##runs_export_menu");
+    if (ImGui::BeginPopup("##runs_export_menu")) {
+        if (ImGui::MenuItem("Metrics (CSV)...")) {
+            pending_export_ = PendingExport::Metrics;
+            pending_note_at_ = ExportNoteAt::Runs;
+        }
+        ui::Tooltip("The loss, accuracy and metric points of the run on the charts. Asks where to save.");
+        if (ImGui::MenuItem("Runs (CSV)...", nullptr, false, has_runs)) {
+            pending_export_ = PendingExport::Runs;
+            pending_note_at_ = ExportNoteAt::Runs;
+        }
+        ui::Tooltip(has_runs ? "Every run in this table, all columns. Asks where to save."
+                             : "No run has ended in this session yet.");
+        ImGui::EndPopup();
+    }
+    buttons.Next(ui::ButtonWidth(clear_label, ui::ButtonSize::Small));
+    if (ui::DangerButton(clear_label, has_runs, "No run has ended in this session yet.")) open_clear_runs_ = true;
+    if (open_clear_runs_) {
+        ImGui::OpenPopup("Clear the runs?");
+        open_clear_runs_ = false;
+    }
+    const std::string clear_message = "This removes " + std::to_string(runs.rows.size()) +
+                                      (runs.rows.size() == 1 ? " run" : " runs") +
+                                      " from the table. Export them first to keep them.";
+    if (ui::ConfirmDialog("Clear the runs?", clear_message.c_str(), "Clear runs", true,
+                          {"The charts and the trained model stay."}) == ui::DialogResult::Primary) {
         run_comparison_records_.clear();
+        runs_all_columns_ = false;
+        if (export_note_at_ == ExportNoteAt::Runs) export_note_.clear();
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled(
-        "Sorted by test accuracy, then validation metrics, then elapsed time.");
-    ImGui::TextDisabled(
-        "Partition Match is relative to the top-ranked run; different manifests "
-        "are not directly comparable.");
-    if (!run_export_note_.empty()) {
-        const auto& tokens = cyxwiz::ui::CurrentTokens();
+
+    if (!has_runs) {
+        ImGui::TextColored(c.text_faint, "%s", runs.empty.c_str());
+    } else {
+        // Its own height: up to five rows, then the rows scroll inside; the
+        // Run column and the header stay while it scrolls sideways.
+        const size_t shown_columns = runs_all_columns_ ? runs.columns.size() : td::RunsTable::kKeyColumns;
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float row_height = ImGui::GetTextLineHeight() + style.CellPadding.y * 2.0f;
+        const float height = row_height * static_cast<float>(1 + std::min<size_t>(runs.rows.size(), 5)) +
+                             style.ScrollbarSize + style.CellPadding.y * 2.0f;
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, c.bg_window);
+        // ImGui draws a line under the frozen header row whatever the flags.
+        ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, c.bg_window);
+        // Room between the columns; each is as wide as its longest value.
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(10.0f, style.CellPadding.y));
+        if (ImGui::BeginTable("##dash_runs_table", static_cast<int>(shown_columns),
+                              ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
+                                  ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_PadOuterX,
+                              ImVec2(0.0f, height))) {
+            ImGui::TableSetupScrollFreeze(1, 1);
+            for (size_t i = 0; i < shown_columns; ++i) ImGui::TableSetupColumn(runs.columns[i].c_str());
+            // ImGui's header row, so each column is as wide as its name.
+            ImGui::PushStyleColor(ImGuiCol_Text, c.text_dim);
+            ImGui::TableHeadersRow();
+            ImGui::PopStyleColor();
+            for (size_t r = 0; r < runs.rows.size(); ++r) {
+                ImGui::TableNextRow();
+                for (size_t i = 0; i < shown_columns; ++i) {
+                    const td::RunCell& cell = runs.rows[r][i];
+                    ImGui::TableSetColumnIndex(static_cast<int>(i));
+                    ImGui::TextColored(tone(cell.tone), "%s", cell.text.c_str());
+                    if (!cell.tooltip.empty()) ui::Tooltip(cell.tooltip.c_str());
+                }
+            }
+            ImGui::EndTable();
+        }
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(2);
+        const std::string& note = runs_all_columns_ ? runs.all_note : runs.key_note;
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(run_export_failed_ ? tokens.error : tokens.success, "%s", run_export_note_.c_str());
+        ImGui::TextColored(c.text_faint, "%s", note.c_str());
         ImGui::PopTextWrapPos();
     }
-    if (active_checkpoint_loaded_) {
-        ImGui::TextDisabled(
-            "A checkpoint loaded for testing is shown under Active model state; "
-            "it is not counted as a new run.");
+    if (!runs.loaded_note.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(c.text_faint, "%s", runs.loaded_note.c_str());
+        ImGui::PopTextWrapPos();
     }
-
-    if (ImGui::BeginTable(
-            "TrainingRunComparisonTable",
-            27,
-            ImGuiTableFlags_Borders |
-                ImGuiTableFlags_RowBg |
-                ImGuiTableFlags_Resizable |
-                ImGuiTableFlags_ScrollX)) {
-        ImGui::TableSetupColumn("Run");
-        ImGui::TableSetupColumn("Status");
-        ImGui::TableSetupColumn("Dataset");
-        ImGui::TableSetupColumn("Domain");
-        ImGui::TableSetupColumn("Seq");
-        ImGui::TableSetupColumn("Split");
-        ImGui::TableSetupColumn("Samples");
-        ImGui::TableSetupColumn("Role Sources");
-        ImGui::TableSetupColumn("Role Origins");
-        ImGui::TableSetupColumn("Role Labels");
-        ImGui::TableSetupColumn("Partition ID");
-        ImGui::TableSetupColumn("Partition Match");
-        ImGui::TableSetupColumn("Role Checks");
-        ImGui::TableSetupColumn("Model");
-        ImGui::TableSetupColumn("Architecture");
-        ImGui::TableSetupColumn("Epochs");
-        ImGui::TableSetupColumn("Batch");
-        ImGui::TableSetupColumn("LR");
-        ImGui::TableSetupColumn("Best Val Loss");
-        ImGui::TableSetupColumn("Best Val Acc");
-        ImGui::TableSetupColumn("Best Epoch");
-        ImGui::TableSetupColumn("Test Loss");
-        ImGui::TableSetupColumn("Test Acc");
-        ImGui::TableSetupColumn("Elapsed");
-        ImGui::TableSetupColumn("Best Ckpt");
-        ImGui::TableSetupColumn("Patience");
-        ImGui::TableSetupColumn("Checkpoint");
-        ImGui::TableHeadersRow();
-
-        const auto& partition_reference = run_comparison_records_.front();
-        for (const auto& record : run_comparison_records_) {
-            ImGui::TableNextRow();
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.run_id.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.run_status.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.dataset_name.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.preprocessing_domain.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.sequence_batch_enabled ? "yes" : "no");
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%.0f/%.0f/%.0f%%",
-                record.train_ratio * 100.0f,
-                record.val_ratio * 100.0f,
-                record.test_ratio * 100.0f);
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%zu/%zu/%zu",
-                record.train_sample_count,
-                record.val_sample_count,
-                record.test_sample_count);
-
-            const std::string role_sources = record.train_source_name + " / " +
-                record.dev_source_name + " / " + record.test_source_name;
-            const std::string role_origins = record.train_origin + " / " +
-                record.dev_origin + " / " + record.test_origin;
-            const std::string role_labels = record.train_label_column + " / " +
-                record.dev_label_column + " / " + record.test_label_column;
-            const std::string partition_display =
-                record.partition_manifest_fingerprint.empty()
-                    ? std::string("-")
-                    : record.partition_manifest_fingerprint.substr(0, 8);
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(role_sources.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(role_origins.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(role_labels.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(partition_display.c_str());
-            if (!record.partition_manifest_fingerprint.empty() &&
-                ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s",
-                                  record.partition_manifest_fingerprint.c_str());
-            }
-
-            const auto partition_compatibility =
-                CompareTrainingRunPartitions(partition_reference, record);
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(
-                TrainingRunPartitionCompatibilityLabel(partition_compatibility));
-            if (partition_compatibility ==
-                    TrainingRunPartitionCompatibility::DifferentManifest &&
-                ImGui::IsItemHovered()) {
-                ImGui::SetTooltip(
-                    "Not directly comparable: this run used a different "
-                    "partition manifest than the top-ranked run.");
-            }
-
-            ImGui::TableNextColumn();
-            const std::string role_checks =
-                "Dev " + record.dev_schema_compatibility + "/" +
-                record.dev_leakage_status + " | Test " +
-                record.test_schema_compatibility + "/" +
-                record.test_leakage_status;
-            ImGui::TextUnformatted(role_checks.c_str());
-            if (ImGui::IsItemHovered() &&
-                (!record.dev_partition_status_reason.empty() ||
-                 !record.test_partition_status_reason.empty())) {
-                ImGui::SetTooltip(
-                    "Dev: %s\nTest: %s",
-                    record.dev_partition_status_reason.empty()
-                        ? "no additional detail"
-                        : record.dev_partition_status_reason.c_str(),
-                    record.test_partition_status_reason.empty()
-                        ? "no additional detail"
-                        : record.test_partition_status_reason.c_str());
-            }
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.model_family.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.architecture_summary.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%d", record.epochs);
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%d", record.batch_size);
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%.6f", record.learning_rate);
-
-            ImGui::TableNextColumn();
-            if (record.has_validation_metrics) {
-                ImGui::Text("%.4f", record.best_val_loss);
-            } else {
-                ImGui::TextDisabled("-");
-            }
-
-            ImGui::TableNextColumn();
-            if (record.has_validation_metrics) {
-                ImGui::Text("%.2f%%", record.best_val_accuracy * 100.0f);
-            } else {
-                ImGui::TextDisabled("-");
-            }
-
-            ImGui::TableNextColumn();
-            if (record.has_validation_metrics) {
-                ImGui::Text("loss %d / acc %d",
-                    record.best_val_loss_epoch,
-                    record.best_val_accuracy_epoch);
-            } else {
-                ImGui::TextDisabled("-");
-            }
-
-            ImGui::TableNextColumn();
-            if (record.has_test_metrics) {
-                ImGui::Text("%.4f", record.final_test_loss);
-            } else {
-                ImGui::TextDisabled("-");
-            }
-
-            ImGui::TableNextColumn();
-            if (record.has_test_metrics) {
-                ImGui::Text("%.2f%%", record.final_test_accuracy * 100.0f);
-            } else {
-                ImGui::TextDisabled("-");
-            }
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%.1fs", record.elapsed_seconds);
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(
-                record.save_best_checkpoint ? "yes" : "no");
-
-            ImGui::TableNextColumn();
-            if (record.early_stopping_patience > 0) {
-                ImGui::Text("%d", record.early_stopping_patience);
-            } else {
-                ImGui::TextDisabled("-");
-            }
-
-            ImGui::TableNextColumn();
-            if (!record.checkpoint_used.empty()) {
-                ImGui::TextUnformatted(record.checkpoint_used.c_str());
-            } else {
-                ImGui::TextDisabled("-");
-            }
-        }
-
-        ImGui::EndTable();
+    if (export_note_at_ == ExportNoteAt::Runs && !export_note_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(export_failed_ ? c.error : c.success, "%s", export_note_.c_str());
+        ImGui::PopTextWrapPos();
     }
+    ui::EndCard();
+}
+
+void TrainingPlotPanel::ClearMissingValues() {
+    missing_columns_.clear();
+    missing_values_total_rows_ = -1;
+    missing_values_supplied_role_.clear();
+}
+
+// Under a run refused for missing values: the same card as the "Cannot start
+// training" report, its steps added by the main window; Train again once
+// every group has its step (mockup board 2).
+void TrainingPlotPanel::RenderMissingValuesFix(const std::vector<MissingColumn>& columns, int64_t total_rows,
+                                               const std::string& input_name) {
+    namespace mv = missing_values_fix;
+    mv::Input in = mv::MakeInput(columns, total_rows, input_name, missing_values_supplied_role_);
+    in.number_fill = missing_values_fill_;
+    if (missing_values_actions_.state) missing_values_actions_.state(in);
+    const mv::Card card = mv::BuildCard(in);
+    const bool can_act = static_cast<bool>(missing_values_actions_.add);
+    ImGui::PushID("missing_values_fix");
+    for (const bool label : {false, true}) {
+        const mv::Group& g = label ? card.label : card.features;
+        mv::Group shown = g;
+        if (!can_act) shown.can_fill = shown.can_drop = false;  // no canvas to add the steps to
+        shown.can_leave_out.clear();  // the column's role is set from the report or Data Studio
+        const auto events = ui::MissingValuesGroup(label ? "label" : "features", shown, label, missing_values_fill_);
+        if (events.fill && can_act) missing_values_actions_.add(false, g.fill_steps, in);
+        if (events.drop && can_act) missing_values_actions_.add(label, g.drop_steps, in);
+        if (events.undo && missing_values_actions_.undo) missing_values_actions_.undo(label);
+    }
+    const ui::Tokens& c = ui::CurrentTokens();
+    if (missing_values_actions_.show_input) {
+        if (ui::LinkButton("Show on canvas")) missing_values_actions_.show_input();
+    }
+    if (card.resolved && missing_values_actions_.train_again) {
+        ImGui::SameLine();
+        if (ui::PrimaryButton("Train again")) missing_values_actions_.train_again();
+    } else if (!card.resolved) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(c.text_faint, "%s",
+                           "The same steps as before training. After one is added, Train again is offered here; "
+                           "the next run checks every batch the same way.");
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::PopID();
+}
+
+training_dashboard::HeaderFacts TrainingPlotPanel::HeaderFactsNow() const {
+    training_dashboard::HeaderFacts h;
+    h.preparing = is_preparing_;
+    h.preparation_failed = preparation_failed_;
+    h.preparation_message = preparation_status_message_;
+    h.preparation_error = preparation_error_message_;
+    h.preparation_progress = preparation_progress_;
+    h.terminal_status = terminal_status_;
+    h.terminal_reason = terminal_reason_;
+    h.missing_columns = missing_columns_;
+    h.dataset = run_dataset_;
+    h.train_rows = run_train_rows_;
+    h.validation_rows = run_validation_rows_;
+    h.test_rows = run_test_rows_;
+    h.samples_per_batch = samples_per_batch_;
+    h.batches_per_update = batches_per_update_;
+    h.metric_interval = metric_reporting_interval_;
+    h.last_batch_loss = current_batch_loss_;
+    h.active_model_provenance = active_model_provenance_;
+    h.checkpoint_loaded = active_checkpoint_loaded_;
+    h.checkpoint_path = checkpoint_used_;
+    h.checkpoint_epoch = checkpoint_epoch_;
+    h.checkpoint_step = checkpoint_step_;
+    h.has_checkpoint_validation = has_checkpoint_validation_metrics_;
+    h.checkpoint_val_loss = checkpoint_val_loss_;
+    h.checkpoint_val_accuracy = checkpoint_val_accuracy_;
+    // A regression run reports MAE / RMSE and no accuracy.
+    for (const auto& metric : custom_metrics_) {
+        if (IsRegressionMetricName(metric.name) && !metric.values.empty()) h.classification = false;
+    }
+    h.has_test = has_test_metrics_;
+    h.test_loss = test_loss_;
+    h.test_accuracy = test_accuracy_;
+    h.test_mae = test_mae_;
+    return h;
 }
 
 void TrainingPlotPanel::RenderTrainingStatus() {
-    const DashColors c = CurrentDashColors();
+    namespace td = training_dashboard;
+    const ui::Tokens& c = ui::CurrentTokens();
+    td::HeaderFacts facts = HeaderFactsNow();
+    std::vector<td::DetailRow> where_rows;
+    std::vector<std::string> warnings;
 #ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     auto& tm = TrainingManager::Instance();
     const bool training_active = tm.IsTrainingActive();
-    const bool training_paused = tm.IsPaused();
+    facts.paused = tm.IsPaused();
+    if (training_active) facts.waiting_for_gpu = tm.WaitingForGpu();
+    const TrainingTraceSummary& trace = LatestTraceCached();
+    facts.route = TraceRoute(trace);
+    for (const auto& task : AsyncTaskManager::Instance().GetActiveTasks()) {
+        facts.tasks.push_back({task.name, task.progress, task.status_message});
+    }
 #else
     const bool training_active = false;
-    const bool training_paused = false;
 #endif
-    const bool finished = !is_training_ && total_training_time_ > 0;
-    const bool early_stopped = terminal_status_ == "early_stopped";
-    const bool cancelled = terminal_status_ == "cancelled" ||
-                           terminal_status_ == "stopped";
-    const bool failed = terminal_status_ == "failed";
+    const td::Header header = td::BuildHeader(facts_, facts);
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
+    // The trace is the last run's: shown for a run that trains or ended, not
+    // while idle, preparing, waiting or with a loaded checkpoint.
+    switch (header.state) {
+    case td::RunState::Training:
+    case td::RunState::Paused:
+    case td::RunState::EarlyStopped:
+    case td::RunState::Stopped:
+    case td::RunState::Failed:
+    case td::RunState::Completed:
+        where_rows = TraceRows(trace);
+        warnings = TraceWarnings(trace);
+        break;
+    case td::RunState::Idle:
+    case td::RunState::WaitingForGpu:
+    case td::RunState::PreparationFailed:
+    case td::RunState::Preparing:
+    case td::RunState::ModelLoaded: break;
+    }
+#endif
 
-    const char* status = "Idle";
-    ImVec4 status_color = c.muted;
-    if (is_training_) {
-        status = training_paused ? "Paused" : "Training";
-        status_color = training_paused ? c.warning : c.success;
-    } else if (preparation_failed_) {
-        status = "Preparation failed";
-        status_color = c.error;
-    } else if (is_preparing_) {
-        status = "Preparing";
-        status_color = c.info;
-    } else if (total_training_time_ > 0) {
-        if (early_stopped) {
-            status = "Early stopped";
-            status_color = c.warning;
-        } else if (cancelled) {
-            status = "Cancelled";
-            status_color = c.caution;
-        } else if (failed) {
-            status = "Failed";
-            status_color = c.error;
-        } else {
-            status = "Completed";
-            status_color = c.info;
+    ImVec4 state_colour = c.text_dim;
+    switch (header.state) {
+    case td::RunState::WaitingForGpu:
+    case td::RunState::Stopped: state_colour = c.caution; break;
+    case td::RunState::Training:
+    case td::RunState::ModelLoaded: state_colour = c.success; break;
+    case td::RunState::Paused:
+    case td::RunState::EarlyStopped: state_colour = c.warning; break;
+    case td::RunState::PreparationFailed:
+    case td::RunState::Failed: state_colour = c.error; break;
+    case td::RunState::Preparing:
+    case td::RunState::Completed: state_colour = c.info; break;
+    case td::RunState::Idle: break;
+    }
+    const auto tone = [&](td::Tone t) {
+        switch (t) {
+        case td::Tone::Good: return c.success;
+        case td::Tone::Bad: return c.caution;
+        case td::Tone::Error: return c.error;
+        case td::Tone::Faint: return c.text_dim;
+        case td::Tone::Plain: break;
         }
-    } else if (active_checkpoint_loaded_) {
-        status = "Model loaded";
-        status_color = c.success;
-    }
+        return c.text;
+    };
+    const auto wrapped = [](const ImVec4& colour, const std::string& text) {
+        if (text.empty()) return;
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(colour, "%s", text.c_str());
+        ImGui::PopTextWrapPos();
+    };
 
-    if (!BeginDashCard("##dash_header", c)) {
-        EndDashCard();
-        return;
-    }
+    ui::BeginCard("##dash_header");
 
-    // Row 1: status, epoch and the run actions on the right.
-    const float row_top = ImGui::GetCursorPosY();
-    ImGui::SetCursorPosY(row_top + 1.0f);
-    DashPill(status, status_color);
-    ImGui::SameLine(0.0f, 12.0f);
-    ImGui::SetCursorPosY(row_top + 4.0f);
-    if (preparation_failed_ || is_preparing_) {
-        ImGui::TextColored(c.muted, "Getting the data and model ready");
-    } else if (total_epochs_ > 0) {
-        if (finished) {
-            ImGui::Text("Executed epochs %d / %d", last_executed_epoch_, total_epochs_);
-            if (current_epoch_ > last_executed_epoch_) {
-                ImGui::SameLine(0.0f, 8.0f);
-                ImGui::TextColored(c.muted, "stopped during epoch %d", current_epoch_);
-            }
-        } else {
-            const int display_epoch = std::max(1, current_epoch_);
-            const int remaining_epochs = std::max(0, total_epochs_ - display_epoch);
-            ImGui::Text("Epoch %d / %d", display_epoch, total_epochs_);
-            ImGui::SameLine(0.0f, 8.0f);
-            ImGui::TextColored(c.muted, "%d remaining", remaining_epochs);
-        }
-    } else if (is_training_) {
-        ImGui::Text("Epoch %d / ?", std::max(1, current_epoch_));
-    } else if (!active_checkpoint_loaded_) {
-        ImGui::TextColored(c.muted, "No training run yet");
+    // Row 1: the state, then the run's actions at the right; each part
+    // moves to the next line when the slot is narrow (B4-2).
+    ui::FlowRow row;
+    row.Next(0.0f);
+    ui::Chip(header.pill.c_str(), state_colour);
+    if (!header.status.empty()) {
+        row.Next(ImGui::CalcTextSize(header.status.c_str()).x);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(c.text, "%s", header.status.c_str());
+        ui::Tooltip(header.status_tooltip.c_str());
     }
-
-    const char* pause_label = training_paused ? ICON_FA_PLAY " Continue" : ICON_FA_PAUSE " Pause";
-    const char* stop_label = ICON_FA_STOP " Early stop";
-    const char* actions_label = "Actions " ICON_FA_CHEVRON_DOWN;
+    const char* pause_label = facts.paused ? ICON_FA_PLAY " Resume" : ICON_FA_PAUSE " Pause";
+    const char* stop_label = ICON_FA_STOP " Stop";
+    const char* more_label = "More " ICON_FA_CHEVRON_DOWN;
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    float actions_width = DashButtonWidth(actions_label);
+    float actions_width = ui::ButtonWidth(more_label, ui::ButtonSize::Small);
     if (training_active) {
-        actions_width += DashButtonWidth(pause_label) + DashButtonWidth(stop_label) + spacing * 2.0f;
+        actions_width += ui::ButtonWidth(pause_label, ui::ButtonSize::Small) +
+                         ui::ButtonWidth(stop_label, ui::ButtonSize::Small) + spacing * 2.0f;
     }
-    ImGui::SameLine();
-    const float right_edge = ImGui::GetWindowContentRegionMax().x;
-    ImGui::SetCursorPos(ImVec2(std::max(ImGui::GetCursorPosX(), right_edge - actions_width),
-                               row_top));
+    ui::SameLineRight(actions_width);
+    ui::FlowRow buttons;
 #ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     if (training_active) {
-        if (DashButton(pause_label, DashButtonKind::Secondary, c)) {
-            if (training_paused) {
+        buttons.Next(ui::ButtonWidth(pause_label, ui::ButtonSize::Small));
+        if (ui::SecondaryButton(pause_label)) {
+            if (facts.paused) {
                 tm.ResumeTraining();
             } else {
                 tm.PauseTraining();
             }
         }
-        ImGui::SameLine();
-        if (DashButton(stop_label, DashButtonKind::Danger, c)) {
-            tm.StopTraining();
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Stops training at the next batch boundary and keeps the current model state.");
-        }
-        ImGui::SameLine();
+        buttons.Next(ui::ButtonWidth(stop_label, ui::ButtonSize::Small));
+        if (ui::DangerButton(stop_label)) tm.StopTraining();
+        ui::Tooltip("Stops training at the next batch boundary and keeps the current model state.");
     }
 #endif
-    if (DashButton(actions_label, DashButtonKind::Secondary, c)) {
-        ImGui::OpenPopup("##dash_actions");
-    }
+    buttons.Next(ui::ButtonWidth(more_label, ui::ButtonSize::Small));
+    if (ui::SecondaryButton(more_label)) ImGui::OpenPopup("##dash_actions");
     if (ImGui::BeginPopup("##dash_actions")) {
-        if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Export metrics (CSV)")) {
-            ExportToCSVLocked("training_metrics.csv");
+        if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Export metrics (CSV)...")) {
+            pending_export_ = PendingExport::Metrics;
+            pending_note_at_ = ExportNoteAt::Header;
         }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Writes training_metrics.csv in the working folder.");
+        ui::Tooltip("The loss, accuracy and metric points of this run. Asks where to save.");
+        if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Export runs (CSV)...", nullptr, false,
+                            !run_comparison_records_.empty())) {
+            pending_export_ = PendingExport::Runs;
+            pending_note_at_ = ExportNoteAt::Header;
         }
+        ui::Tooltip(run_comparison_records_.empty() ? "No run has ended in this session yet."
+                                                    : "Every run in the Runs table, all columns. Asks where to save.");
         ImGui::Separator();
         ImGui::PushStyleColor(ImGuiCol_Text, c.error);
-        const bool clear = ImGui::MenuItem(ICON_FA_TRASH " Clear all");
+        if (ImGui::MenuItem(ICON_FA_TRASH " Clear all...")) open_clear_all_ = true;
         ImGui::PopStyleColor();
-        if (clear) {
-            ClearLocked();
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Clears the charts and metrics of this run from the dashboard.");
-        }
+        ui::Tooltip("Clears this run's charts, cards and metrics from the dashboard. Asks first.");
         ImGui::EndPopup();
     }
+    if (open_clear_all_) {
+        ImGui::OpenPopup("Clear the dashboard?");
+        open_clear_all_ = false;
+    }
+    if (ui::ConfirmDialog("Clear the dashboard?",
+                          "This clears the run's charts, cards and metrics from the dashboard.", "Clear all", true,
+                          {"The Runs table keeps its rows.", "The trained model and its checkpoint stay."}) ==
+        ui::DialogResult::Primary) {
+        ClearLocked();
+        export_note_.clear();
+        facts_ = DashboardFacts();  // the cards below draw this frame
+    }
+    if (export_note_at_ == ExportNoteAt::Header) wrapped(export_failed_ ? c.error : c.success, export_note_);
 
     // Row 2: progress.
-    if (preparation_failed_) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(c.error, "%s",
-                           preparation_error_message_.empty()
-                               ? "Training preparation failed."
-                               : preparation_error_message_.c_str());
-        ImGui::PopTextWrapPos();
-    } else if (is_preparing_) {
-        DashProgress(preparation_progress_, c.info, c);
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(c.muted, "%s",
-                           preparation_status_message_.empty()
-                               ? "Preparing training..."
-                               : preparation_status_message_.c_str());
-        ImGui::PopTextWrapPos();
-    } else if (total_epochs_ > 0) {
-        // During training, count the finished part of the epoch in progress
-        // (epoch counter moves to the new epoch at its first batch).
-        const float progress = is_training_ && total_batches_ > 0
-            ? static_cast<float>(TrainingFractionComplete(
-                  current_epoch_, current_batch_, total_batches_, total_epochs_))
-            : static_cast<float>(current_epoch_) / std::max(1, total_epochs_);
-        DashProgress(progress, finished ? status_color : c.accent, c);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%.0f%% of all epochs", progress * 100.0f);
-        }
+    if (header.show_progress) {
+        const bool ended = header.state == td::RunState::Completed || header.state == td::RunState::EarlyStopped ||
+                           header.state == td::RunState::Stopped || header.state == td::RunState::Failed;
+        const ImVec4 bar = header.state == td::RunState::Preparing ? c.info : (ended ? state_colour : c.accent);
+        ui::ProgressLine(static_cast<float>(header.progress), bar);
+        ui::Tooltip(header.progress_tooltip.c_str());
+    }
+    wrapped(c.text_dim, header.progress_text);
+
+    // Where it ran, on what data, and the trace's warnings.
+    wrapped(c.text_dim, header.where);
+    ui::Tooltip(header.where_tooltip.c_str());
+    wrapped(c.text_dim, header.data);
+    for (const std::string& warning : warnings) {
+        // A missing-values refusal has its card under the outcome: the
+        // task's copy of the raw message is not repeated (Run details keep it).
+        if (header.missing_values && warning.find("the data has missing values") != std::string::npos) continue;
+        wrapped(c.caution, std::string(ICON_FA_TRIANGLE_EXCLAMATION " ") + warning);
     }
 
-    // Why the run ended.
-    if (finished) {
-        ImGui::PushTextWrapPos(0.0f);
-        if (early_stopped) {
-            ImGui::TextColored(c.warning, "Stop reason: early stopping triggered.");
-        } else if (cancelled) {
-            ImGui::TextColored(c.caution, "Stop reason: training was cancelled.");
-        } else if (failed) {
-            ImGui::TextColored(c.error, "Stop reason: training failed.");
-        } else {
-            ImGui::TextColored(c.success, "Stop reason: training reached its terminal epoch.");
-        }
-        if (!terminal_reason_.empty()) {
-            ImGui::TextColored(c.muted, "%s", terminal_reason_.c_str());
-        }
-        ImGui::PopTextWrapPos();
-    }
+    // While it trains: the latest batches. After: how it ended, the active
+    // model and the held-out test.
+    LineWithTail(header.now, c.text, header.now_detail, c.text_dim);
+    wrapped(tone(header.outcome_tone), header.outcome);
+    if (header.missing_values) RenderMissingValuesFix(facts.missing_columns, missing_values_total_rows_, facts.dataset);
+    LineWithTail(header.active_model, c.text, header.active_model_detail, c.text_dim);
+    LineWithTail(header.test, c.text, header.test_detail, c.text_dim);
 
-    // Batch-level progress within the current epoch (live feedback during training)
-    if (is_training_ && total_batches_ > 0) {
-        const float batch_progress = static_cast<float>(current_batch_) /
-                                     std::max(1, total_batches_);
+    // Run details: the codes, paths and figures behind the lines above.
+    const std::vector<td::DetailRow> preparation_rows = PreparationRows();
+    if (!header.run_rows.empty() || !where_rows.empty() || !preparation_rows.empty()) {
+        std::string what;
+        const auto part = [&what](const char* p) {
+            if (what.find(p) == std::string::npos) what += (what.empty() ? "" : ", ") + std::string(p);
+        };
+        for (const auto& r : header.run_rows) {
+            if (r.key == "Stop code") part("stop code");
+            if (r.key == "Checkpoint" || r.key == "Path") part("checkpoint");
+            if (r.key == "Batches" || r.key == "Last batch loss") part("batches");
+            if (r.key.rfind("Engine task", 0) == 0) part("engine tasks");
+        }
+        if (!where_rows.empty()) part("where it ran");
+        if (!preparation_rows.empty()) part("data preparation");
         ImGui::Spacing();
-        ImGui::TextColored(c.muted, "Batch");
+        ImGui::SetNextItemOpen(run_details_open_);
+        run_details_open_ = ImGui::TreeNodeEx("Run details##dash_run_details",
+                                              ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanLabelWidth);
         ImGui::SameLine();
-        ImGui::Text("%d / %d", current_batch_, total_batches_);
-        ImGui::SameLine(0.0f, 12.0f);
-        DashProgress(batch_progress, c.accent, c, 160.0f, 5.0f);
-        ImGui::SameLine(0.0f, 16.0f);
-        ImGui::TextColored(c.muted, "Running loss");
-        ImGui::SameLine();
-        ImGui::Text("%.4f", current_batch_loss_);
-
-        std::string detail;
-        char part[96];
-        if (samples_per_batch_ > 0) {
-            std::snprintf(part, sizeof(part), "%d sample%s each", samples_per_batch_,
-                          samples_per_batch_ == 1 ? "" : "s");
-            detail = part;
-            if (batches_per_update_ > 1) {
-                std::snprintf(part, sizeof(part), "update every %d batches", batches_per_update_);
-                detail += std::string(" \xC2\xB7 ") + part;
-            }
-        }
-        if (metric_reporting_interval_ > 0) {
-            std::snprintf(part, sizeof(part), "metrics every %d batches", metric_reporting_interval_);
-        } else {
-            std::snprintf(part, sizeof(part), "metrics at first/final batch");
-        }
-        detail += (detail.empty() ? "" : " \xC2\xB7 ") + std::string(part);
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(c.faint, "%s", detail.c_str());
-        ImGui::PopTextWrapPos();
-    }
-
-    // The model the Engine holds now (after a run or a loaded checkpoint).
-    if (!is_training_ &&
-        (!active_model_provenance_.empty() || !checkpoint_used_.empty())) {
-        ImGui::Spacing();
-        ImGui::TextColored(c.muted, "Active model");
-        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
-        if (ImGui::BeginTable("##dash_active_model", 2,
-                              ImGuiTableFlags_SizingStretchProp |
-                                  ImGuiTableFlags_BordersInnerH)) {
-            ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 150.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            const auto row = [&](const char* label) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(c.muted, "%s", label);
-                ImGui::TableNextColumn();
+        wrapped(c.text_faint, what);
+        if (run_details_open_) {
+            struct Group {
+                const char* title;
+                const std::vector<td::DetailRow>* rows;
             };
-            const bool restored_checkpoint = checkpoint_epoch_ > 0 &&
-                !checkpoint_used_.empty();
-            row("State");
-            ImGui::TextColored(
-                c.success, "%s",
-                active_checkpoint_loaded_
-                    ? "Checkpoint loaded for testing"
-                    : (restored_checkpoint
-                        ? "Best validation checkpoint restored"
-                        : "Final state from executed run"));
-            if (!active_model_provenance_.empty()) {
-                row("Provenance");
-                ImGui::TextWrapped("%s", active_model_provenance_.c_str());
+            std::vector<Group> groups;
+            if (!header.run_rows.empty()) groups.push_back({"The run", &header.run_rows});
+            if (!where_rows.empty()) groups.push_back({"Where it ran", &where_rows});
+            if (!preparation_rows.empty()) groups.push_back({"Data", &preparation_rows});
+            // Side by side when the window is wide, one under the other otherwise.
+            const int columns = ImGui::GetContentRegionAvail().x >= 900.0f ? static_cast<int>(groups.size()) : 1;
+            if (columns > 1 && ImGui::BeginTable("##dash_run_details_groups", columns,
+                                                 ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings)) {
+                for (const Group& g : groups) {
+                    ImGui::TableNextColumn();
+                    DetailGroup(g.title, *g.rows);
+                }
+                ImGui::EndTable();
+            } else {
+                for (const Group& g : groups) DetailGroup(g.title, *g.rows);
             }
-            if (checkpoint_epoch_ > 0) {
-                row("Checkpoint epoch");
-                ImGui::Text("%d", checkpoint_epoch_);
-            }
-            if (checkpoint_epoch_ > 0 && has_checkpoint_validation_metrics_) {
-                row("Checkpoint validation");
-                ImGui::Text("loss %.4f, accuracy %.2f%%",
-                            checkpoint_val_loss_,
-                            checkpoint_val_accuracy_ * 100.0f);
-            }
-            if (checkpoint_step_ > 0) {
-                row("Checkpoint step");
-                ImGui::Text("%d", checkpoint_step_);
-            }
-            if (!checkpoint_used_.empty()) {
-                row("Path");
-                ImGui::TextWrapped("%s", checkpoint_used_.c_str());
-            }
-            ImGui::EndTable();
         }
-        ImGui::PopStyleColor();
     }
 
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::RenderStatistics() {
-    const DashColors c = CurrentDashColors();
-    ImGui::Spacing();
-    if (!BeginDashCard("##dash_stats", c)) {
-        EndDashCard();
-        return;
-    }
-    DashCardTitle("Statistics", "mean of the last 10 points; min and max of the run", c);
+    const ui::Tokens& c = ui::CurrentTokens();
+    ui::BeginCard("##dash_stats");
+    ui::CardTitle("Statistics", "mean of the last 10 points; min and max of the run");
     ImGui::Spacing();
 
-    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
+    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, ui::WithAlpha(c.border, 0.6f));
     ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, ImVec4(0, 0, 0, 0));
     if (ImGui::BeginTable("##dash_stats_table", 4,
                           ImGuiTableFlags_SizingStretchProp |
@@ -3255,7 +2807,7 @@ void TrainingPlotPanel::RenderStatistics() {
         ImGui::TableSetupColumn("Mean", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("Min", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("Max", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_Text, c.muted);
+        ImGui::PushStyleColor(ImGuiCol_Text, c.text_dim);
         ImGui::TableHeadersRow();
         ImGui::PopStyleColor();
 
@@ -3285,7 +2837,7 @@ void TrainingPlotPanel::RenderStatistics() {
         ImGui::EndTable();
     }
     ImGui::PopStyleColor(2);
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::TrimDataIfNeeded(MetricSeries& series) {
@@ -3370,12 +2922,6 @@ TrainingPlotPanel::ValueRange TrainingPlotPanel::CalculateVisibleRange(
     return range;
 }
 
-std::vector<double> TrainingPlotPanel::CalculateMovingAverage(
-    const std::vector<double>& values,
-    int window) const {
-    return series::MovingAverage(values, window);
-}
-
 namespace {
 // Enough for a full-screen chart; min/max per bucket keeps spikes.
 constexpr size_t kDrawnPoints = 4000;
@@ -3417,21 +2963,6 @@ const TrainingPlotPanel::DrawnCache& TrainingPlotPanel::Drawn() {
     drawn_.smoothing = smoothing_window_;
     drawn_.smoothed = show_smoothed_curves_;
     return drawn_;
-}
-
-bool TrainingPlotPanel::HasData() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    ++sampled_read_events_;
-    if (sampled_read_events_ == 1 || sampled_read_events_ % 60 == 0) {
-        RecordPanelEvent("TrainingPlotPanel.ReadHasData",
-                         "points=" + std::to_string(train_loss_.values.size()));
-    }
-    return !train_loss_.values.empty();
-}
-
-bool TrainingPlotPanel::IsTraining() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    return is_training_;
 }
 
 TrainingStatusSnapshot TrainingPlotPanel::GetStatusSnapshot() const {
@@ -3504,41 +3035,6 @@ double TrainingPlotPanel::CalculateMin(const std::vector<double>& values) const 
 double TrainingPlotPanel::CalculateMax(const std::vector<double>& values) const {
     if (values.empty()) return 0.0;
     return *std::max_element(values.begin(), values.end());
-}
-
-int TrainingPlotPanel::GetCurrentEpoch() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    if (train_loss_.epochs.empty()) return 0;
-    return static_cast<int>(train_loss_.epochs.back());
-}
-
-double TrainingPlotPanel::GetCurrentTrainLoss() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    if (train_loss_.values.empty()) return 0.0;
-    return train_loss_.values.back();
-}
-
-double TrainingPlotPanel::GetCurrentValLoss() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    if (val_loss_.values.empty()) return -1.0;
-    return val_loss_.values.back();
-}
-
-double TrainingPlotPanel::GetCurrentTrainAccuracy() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    if (train_accuracy_.values.empty()) return -1.0;
-    return train_accuracy_.values.back();
-}
-
-double TrainingPlotPanel::GetCurrentValAccuracy() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    if (val_accuracy_.values.empty()) return -1.0;
-    return val_accuracy_.values.back();
-}
-
-size_t TrainingPlotPanel::GetDataPointCount() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    return train_loss_.values.size();
 }
 
 } // namespace cyxwiz

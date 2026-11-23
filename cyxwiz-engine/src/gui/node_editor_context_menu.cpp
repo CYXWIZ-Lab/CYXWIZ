@@ -6,6 +6,7 @@
 #include "node_editor.h"
 #include "../core/node_palette.h"
 #include "icons.h"
+#include "ui_buttons.h"
 #include "properties.h"
 #include "../core/node_metadata.h"
 #include "../core/node_metadata_registry.h"
@@ -13,9 +14,12 @@
 #include "../core/extension_node_registry.h"
 #include <imgui.h>
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 namespace gui {
+
+namespace ui = cyxwiz::ui;
 
 void NodeEditor::ConfigureNode(int node_id) {
     MLNode* node = FindNodeById(node_id);
@@ -67,7 +71,7 @@ void NodeEditor::ShowSingleNodeContextMenu() {
 
     // Rename
     if (ImGui::MenuItem(ICON_FA_PEN " Rename...")) {
-        // TODO: Implement rename dialog
+        BeginRename(RenameTarget::Node, right_clicked_node_id_, node->name);
         ImGui::CloseCurrentPopup();
     }
 
@@ -123,6 +127,53 @@ void NodeEditor::ShowSingleNodeContextMenu() {
             ImGui::CloseCurrentPopup();
         }
     }
+}
+
+void NodeEditor::BeginRename(RenameTarget target, int id, const std::string& current) {
+    rename_target_ = target;
+    rename_id_ = id;
+    std::snprintf(rename_buffer_, sizeof(rename_buffer_), "%s", current.c_str());
+}
+
+void NodeEditor::ShowRenamePopup() {
+    if (rename_target_ == RenameTarget::None) return;
+    const char* title = rename_target_ == RenameTarget::Node ? "Rename node" : "Rename group";
+    if (!ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    bool open = true;
+    if (!ImGui::BeginPopupModal(title, &open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (!open) rename_target_ = RenameTarget::None;
+        return;
+    }
+    if (rename_target_ == RenameTarget::Group) {
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 26.0f);
+        ImGui::TextDisabled("The Studio Debugger's layer list names its sections after the groups.");
+        ImGui::PopTextWrapPos();
+    }
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 24.0f);
+    const bool entered = ImGui::InputText("##rename", rename_buffer_, sizeof(rename_buffer_),
+                                          ImGuiInputTextFlags_EnterReturnsTrue);
+    const std::string name = rename_buffer_;
+    const bool has_name = name.find_first_not_of(" 	") != std::string::npos;
+    ImGui::Spacing();
+    const bool save = ui::PrimaryButton("Save", has_name, "Type a name", ui::ButtonSize::Small) || (entered && has_name);
+    ImGui::SameLine();
+    const bool cancel = ui::SecondaryButton("Cancel");
+    if (save) {
+        SaveUndoState();
+        if (rename_target_ == RenameTarget::Node) {
+            if (MLNode* node = FindNodeById(rename_id_)) node->name = name;
+        } else {
+            for (auto& group : groups_)
+                if (group.id == rename_id_) group.name = name;
+        }
+    }
+    if (save || cancel || !open) {
+        rename_target_ = RenameTarget::None;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 void NodeEditor::ShowNodeDescriptionEditPopup() {
@@ -337,6 +388,12 @@ void NodeEditor::ShowContextMenu() {
                 AutoLayoutSelection();
                 ImGui::CloseCurrentPopup();
             }
+            ImGui::EndMenu();
+        }
+
+        ImGui::Separator();
+        if (ImGui::BeginMenu(ICON_FA_SNOWFLAKE " Freeze", HasLayersWithWeights())) {
+            RenderFreezeMenuItems();
             ImGui::EndMenu();
         }
 

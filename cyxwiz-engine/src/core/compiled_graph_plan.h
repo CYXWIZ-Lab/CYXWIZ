@@ -21,9 +21,9 @@ struct CompiledGraphNode {
     gui::NodeType type;
     int node_id = -1;
     std::string name;
-    std::map<std::string, std::string> parameters;
-    std::vector<int> input_pin_ids;
-    std::vector<int> output_pin_ids;
+    std::map<std::string, std::string> parameters{};
+    std::vector<int> input_pin_ids{};
+    std::vector<int> output_pin_ids{};
 };
 
 struct CompiledGraphEdge {

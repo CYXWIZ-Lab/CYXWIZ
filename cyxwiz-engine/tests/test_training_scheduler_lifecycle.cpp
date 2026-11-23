@@ -475,6 +475,25 @@ void TestGraphLearningRateScheduleAndRecipe(
     }
     Check(metrics.grad_norm > 0.0f, "grad_clip_norm should record the gradient norm");
 
+    {
+        // lr_schedule one_cycle: torch 2.10 OneCycleLR(max_lr=float32(0.08), total_steps=8, pct_start=0.25,
+        // cycle_momentum=False), the rate after each optimizer.step() + scheduler.step(). The eighth is past the
+        // cycle's last value (step 7) and no update uses it; torch extrapolates the cosine there.
+        auto cycle_config = MakeConfig(work_dir / "one-cycle-graph-checkpoints");
+        cycle_config.lr_schedule = "one_cycle";
+        cycle_config.warmup_ratio = 0.25f;
+        cyxwiz::TrainingExecutor cycle(cycle_config, dataset, "label");
+        const auto cycled = Run(cycle, 4);
+        const double expected[] = {0.07999999821186066,  0.07464103591895575, 0.060000078658893695,
+                                   0.04000015910592675,  0.02000023955295981, 0.005359282292897761,
+                                   3.199999928474426e-07, 0.005359282292897765};
+        Check(cycled.optimizer_step_count == 8 && cycled.learning_rate_history.size() == 8,
+              "one_cycle should advance after every optimizer update");
+        for (int n = 0; n < 8 && n < static_cast<int>(cycled.learning_rate_history.size()); ++n)
+            CheckNear(cycled.learning_rate_history[static_cast<size_t>(n)], expected[n], 1e-9,
+                      "one_cycle rate after update " + std::to_string(n + 1));
+    }
+
     // Scheduler unit values, export/import.
     cyxwiz::SGDOptimizer sgd(0.1);
     cyxwiz::WarmupDecayLR schedule(&sgd, 0.1, 10, 110, "cosine", 0.1);

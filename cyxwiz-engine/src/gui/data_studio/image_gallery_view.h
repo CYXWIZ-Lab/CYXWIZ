@@ -8,6 +8,7 @@
 #include "../../core/image_gallery_presentation.h"
 #include "../../core/image_pipeline_preview.h"
 #include "../image_thumbnails.h"
+#include "../ui_widgets.h"
 #include "image_viewer_view.h"
 
 #include <cstdint>
@@ -80,6 +81,8 @@ private:
     uint64_t pipeline_task_ = 0;
     ImagePipelinePreview pipeline_;
     std::vector<uint32_t> pipeline_textures_;  // decoded, fixed..., draws...
+    // The same order: a picture's further channel tiles (empty for grey and RGB).
+    std::vector<std::vector<ui::SheetTile>> pipeline_sheets_;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };
 

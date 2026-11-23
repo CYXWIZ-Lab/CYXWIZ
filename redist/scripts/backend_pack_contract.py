@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Strict schema-1 contracts for signed CyxWiz backend-pack metadata."""
+"""Strict contracts for signed CyxWiz backend-pack and plugin-pack metadata.
+
+Schema 1 (base and ArrayFire backend packs) is frozen. Schema 2 manifests carry
+only plugin packs: an Engine plugin with its own runtime, delivered and verified
+like a backend pack but never part of the ArrayFire runtime set.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,7 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA_VERSION = 1
+PLUGIN_MANIFEST_SCHEMA_VERSION = 2
 SIGNATURE_ALGORITHM = "ed25519"
 BACKENDS = ("cpu", "cuda", "opencl", "oneapi")
 PACK_KINDS = ("base", "backend_pack")
@@ -31,7 +37,7 @@ _PLATFORMS = ("win64", "linux64", "macos")
 
 
 class ContractError(ValueError):
-    """Raised when release metadata violates the frozen schema-1 contract."""
+    """Raised when release metadata violates the pack contract."""
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -161,11 +167,13 @@ def _validate_signatures(value: Any) -> None:
             raise ContractError(f"{field}.value must be unpadded base64url Ed25519")
 
 
-def _validate_envelope(document: Any, kind: str) -> Mapping[str, Any]:
+def _validate_envelope(
+    document: Any, kind: str, schema_version: int = SCHEMA_VERSION
+) -> Mapping[str, Any]:
     envelope = _object(document, "document")
     _exact_keys(envelope, "document", {"schema_version", "kind", "signed", "signatures"})
-    if envelope["schema_version"] != SCHEMA_VERSION:
-        raise ContractError(f"schema_version must be {SCHEMA_VERSION}")
+    if envelope["schema_version"] != schema_version:
+        raise ContractError(f"schema_version must be {schema_version}")
     if envelope["kind"] != kind:
         raise ContractError(f"kind must be {kind}")
     _validate_signatures(envelope["signatures"])
@@ -197,7 +205,56 @@ def _validate_components(value: Any) -> set[str]:
     return paths
 
 
+def _validate_release(value: Any) -> None:
+    release = _object(value, "signed.cyxwiz_release")
+    _exact_keys(release, "signed.cyxwiz_release", {"minimum", "maximum"})
+    _version(release["minimum"], "signed.cyxwiz_release.minimum")
+    _version(release["maximum"], "signed.cyxwiz_release.maximum")
+
+
+def _validate_conflicts(value: Any, pack_id: str) -> None:
+    conflicts = _list(value, "signed.conflicts")
+    conflict_ids = [_identifier(item, "signed.conflicts[]") for item in conflicts]
+    if len(conflict_ids) != len(set(conflict_ids)) or pack_id in conflict_ids:
+        raise ContractError("signed.conflicts must be unique and exclude this pack")
+
+
+def _validate_payload(signed: Mapping[str, Any]) -> None:
+    component_paths = _validate_components(signed["components"])
+    licenses = _list(signed["licenses"], "signed.licenses")
+    if not licenses:
+        raise ContractError("signed.licenses must not be empty")
+    for index, raw in enumerate(licenses):
+        field = f"signed.licenses[{index}]"
+        license_entry = _object(raw, field)
+        _exact_keys(license_entry, field, {"component", "path"})
+        _identifier(license_entry["component"], f"{field}.component")
+        path = _relative_path(license_entry["path"], f"{field}.path")
+        if path not in component_paths:
+            raise ContractError(f"{field}.path is not a packaged component")
+
+    archive = _object(signed["archive"], "signed.archive")
+    _exact_keys(archive, "signed.archive", {"file_name", "size", "sha256"})
+    file_name = _relative_path(archive["file_name"], "signed.archive.file_name")
+    if "/" in file_name:
+        raise ContractError("signed.archive.file_name must not contain directories")
+    _integer(archive["size"], "signed.archive.size", minimum=1)
+    _sha256(archive["sha256"], "signed.archive.sha256")
+
+
+def _validate_target(signed: Mapping[str, Any]) -> None:
+    if signed["platform"] not in _PLATFORMS:
+        raise ContractError(f"signed.platform must be one of {_PLATFORMS}")
+    if signed["architecture"] not in _ARCHITECTURES:
+        raise ContractError(f"signed.architecture must be one of {_ARCHITECTURES}")
+
+
 def validate_pack_manifest(document: Any) -> None:
+    """Validate a signed manifest of either schema (base/backend 1, plugin 2)."""
+    envelope = _object(document, "document")
+    if envelope.get("schema_version") == PLUGIN_MANIFEST_SCHEMA_VERSION:
+        validate_plugin_pack_manifest(document)
+        return
     signed = _validate_envelope(document, "cyxwiz-backend-pack-manifest")
     required = {
         "pack_id", "pack_kind", "backend", "package_version", "platform",
@@ -216,17 +273,10 @@ def validate_pack_manifest(document: Any) -> None:
     if (pack_kind == "base") != (backend == "cpu"):
         raise ContractError("the base pack must be CPU and CPU must not be optional")
     _version(signed["package_version"], "signed.package_version")
-    if signed["platform"] not in _PLATFORMS:
-        raise ContractError(f"signed.platform must be one of {_PLATFORMS}")
-    if signed["architecture"] not in _ARCHITECTURES:
-        raise ContractError(f"signed.architecture must be one of {_ARCHITECTURES}")
+    _validate_target(signed)
     _identifier(signed["runtime_set_id"], "signed.runtime_set_id")
     _utc(signed["generated_utc"], "signed.generated_utc")
-
-    release = _object(signed["cyxwiz_release"], "signed.cyxwiz_release")
-    _exact_keys(release, "signed.cyxwiz_release", {"minimum", "maximum"})
-    _version(release["minimum"], "signed.cyxwiz_release.minimum")
-    _version(release["maximum"], "signed.cyxwiz_release.maximum")
+    _validate_release(signed["cyxwiz_release"])
 
     arrayfire = _object(signed["arrayfire"], "signed.arrayfire")
     _exact_keys(arrayfire, "signed.arrayfire", {"version", "abi"})
@@ -242,10 +292,7 @@ def validate_pack_manifest(document: Any) -> None:
         if companion == pack_id:
             raise ContractError("a pack cannot require itself as its base")
 
-    conflicts = _list(signed["conflicts"], "signed.conflicts")
-    conflict_ids = [_identifier(item, "signed.conflicts[]") for item in conflicts]
-    if len(conflict_ids) != len(set(conflict_ids)) or pack_id in conflict_ids:
-        raise ContractError("signed.conflicts must be unique and exclude this pack")
+    _validate_conflicts(signed["conflicts"], pack_id)
 
     compatibility = _object(signed["compatibility"], "signed.compatibility")
     _exact_keys(
@@ -291,26 +338,42 @@ def validate_pack_manifest(document: Any) -> None:
     if compatibility["support_status"] not in SUPPORT_STATES:
         raise ContractError(f"unsupported support_status for {pack_id}")
 
-    component_paths = _validate_components(signed["components"])
-    licenses = _list(signed["licenses"], "signed.licenses")
-    if not licenses:
-        raise ContractError("signed.licenses must not be empty")
-    for index, raw in enumerate(licenses):
-        field = f"signed.licenses[{index}]"
-        license_entry = _object(raw, field)
-        _exact_keys(license_entry, field, {"component", "path"})
-        _identifier(license_entry["component"], f"{field}.component")
-        path = _relative_path(license_entry["path"], f"{field}.path")
-        if path not in component_paths:
-            raise ContractError(f"{field}.path is not a packaged component")
+    _validate_payload(signed)
 
-    archive = _object(signed["archive"], "signed.archive")
-    _exact_keys(archive, "signed.archive", {"file_name", "size", "sha256"})
-    file_name = _relative_path(archive["file_name"], "signed.archive.file_name")
-    if "/" in file_name:
-        raise ContractError("signed.archive.file_name must not contain directories")
-    _integer(archive["size"], "signed.archive.size", minimum=1)
-    _sha256(archive["sha256"], "signed.archive.sha256")
+
+def validate_plugin_pack_manifest(document: Any) -> None:
+    """Validate a schema-2 plugin-pack manifest.
+
+    A plugin pack needs the base it was built against (its shared libraries come
+    from that base) but no ArrayFire runtime set, device or route qualification.
+    """
+    signed = _validate_envelope(
+        document, "cyxwiz-backend-pack-manifest", PLUGIN_MANIFEST_SCHEMA_VERSION
+    )
+    _exact_keys(
+        signed,
+        "signed",
+        {
+            "pack_id", "pack_kind", "plugin_id", "package_version", "platform",
+            "architecture", "cyxwiz_release", "companion_base_id", "conflicts",
+            "support_status", "components", "licenses", "archive", "generated_utc",
+        },
+    )
+    pack_id = _identifier(signed["pack_id"], "signed.pack_id")
+    if signed["pack_kind"] != "plugin_pack":
+        raise ContractError("a schema-2 manifest must be a plugin_pack")
+    _identifier(signed["plugin_id"], "signed.plugin_id")
+    _version(signed["package_version"], "signed.package_version")
+    _validate_target(signed)
+    _utc(signed["generated_utc"], "signed.generated_utc")
+    _validate_release(signed["cyxwiz_release"])
+    companion = _identifier(signed["companion_base_id"], "signed.companion_base_id")
+    if companion == pack_id:
+        raise ContractError("a pack cannot require itself as its base")
+    _validate_conflicts(signed["conflicts"], pack_id)
+    if signed["support_status"] not in SUPPORT_STATES:
+        raise ContractError(f"unsupported support_status for {pack_id}")
+    _validate_payload(signed)
 
 
 def validate_catalog(document: Any) -> None:
@@ -412,6 +475,51 @@ def validate_active_runtime(document: Any) -> None:
             raise ContractError(f"duplicate active backend: {backend}")
         seen.add(backend)
         _identifier(entry["pack_id"], f"{field}.pack_id")
+
+
+def manifest_support_status(signed: Mapping[str, Any]) -> str:
+    """The signed support status: top level for plugin packs, else in compatibility."""
+    if signed["pack_kind"] == "plugin_pack":
+        return signed["support_status"]
+    return signed["compatibility"]["support_status"]
+
+
+def validate_active_plugins(document: Any) -> None:
+    """Validate runtime/active-plugins.json (local state, schema 1).
+
+    Kept apart from active-runtime.json so plugin activation never changes the
+    ArrayFire runtime identity, its generation or the route evidence tied to it.
+    """
+    state = _object(document, "document")
+    _exact_keys(state, "document", {"schema_version", "base_pack_id", "plugins"})
+    if state["schema_version"] != SCHEMA_VERSION:
+        raise ContractError(f"schema_version must be {SCHEMA_VERSION}")
+    _identifier(state["base_pack_id"], "base_pack_id")
+    plugins = _list(state["plugins"], "plugins")
+    seen: set[str] = set()
+    for index, raw in enumerate(plugins):
+        field = f"plugins[{index}]"
+        entry = _object(raw, field)
+        _exact_keys(entry, field, {"plugin_id", "pack_id"})
+        plugin_id = _identifier(entry["plugin_id"], f"{field}.plugin_id")
+        if plugin_id in seen:
+            raise ContractError(f"duplicate active plugin: {plugin_id}")
+        seen.add(plugin_id)
+        _identifier(entry["pack_id"], f"{field}.pack_id")
+
+
+def validate_plugin_composition(base_document: Any, plugin_document: Any) -> None:
+    """Reject a plugin pack built for another base or platform."""
+    validate_pack_manifest(base_document)
+    validate_plugin_pack_manifest(plugin_document)
+    base = _object(base_document["signed"], "base.signed")
+    plugin = _object(plugin_document["signed"], "plugin.signed")
+    if base["pack_kind"] != "base":
+        raise ContractError("plugin composition base document is not a base pack")
+    if plugin["companion_base_id"] != base["pack_id"]:
+        raise ContractError("plugin pack requires a different companion base")
+    if plugin["platform"] != base["platform"] or plugin["architecture"] != base["architecture"]:
+        raise ContractError("plugin pack and base target different platforms")
 
 
 def validate_runtime_composition(base_document: Any, pack_document: Any) -> None:

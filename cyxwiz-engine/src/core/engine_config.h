@@ -4,6 +4,7 @@
 #include <string>
 #include <mutex>
 #include <filesystem>
+#include <map>
 #include <vector>
 
 namespace cyxwiz::core {
@@ -27,8 +28,160 @@ struct AppearanceConfig {
     float code_font_scale = 1.3f;  // code text: 1.0/1.3/1.6/2.0 = 14/16/20/24 px
     bool sidebar_left = false;     // tool sidebar on the left
     std::string custom_theme_file; // saved Theme Editor theme applied over the preset
+    int node_icon_pack = 0;        // the canvas's node icons: gui::IconPack index (0 = Font Awesome)
 
     bool operator==(const AppearanceConfig&) const = default;
+};
+
+// The Nodes panel's Favourites and Recent (Engine-wide, every project). Node
+// types are saved as their NodeType numbers, as graphs save them.
+struct NodesPanelConfig {
+    std::vector<int> favourites;
+    std::vector<int> recent;  // newest first
+    bool show_recent = true;
+    int recent_count = 8;     // 1..kNodesPanelMaxRecent
+    // The groups open in the panel (their names), kept as you fold them; a
+    // first run opens these two.
+    std::vector<std::string> open_groups = {"I/O", "Training"};
+    // Preferences > Nodes panel: the view a session starts in (the panel's
+    // grid / list switch changes it for the session).
+    bool list_view = false;
+
+    bool operator==(const NodesPanelConfig&) const = default;
+};
+inline constexpr int kNodesPanelMaxRecent = 20;
+
+// Preferences > Search, Hyperparameter Search (TOFIX178 T4): how a new search starts.
+// The panel follows them; values are clamped when set.
+struct HyperparamSearchDefaults {
+    std::string strategy = "random";     // "grid", "random" or "bayesian"
+    int trials = 20;                     // 1..kSearchMaxTrials (Random, Bayesian)
+    double hours = 1.0;                  // kSearchMinHours..kSearchMaxHours
+    std::string objective = "val_loss";  // "val_loss", "val_accuracy" or "val_mae"
+
+    bool operator==(const HyperparamSearchDefaults&) const = default;
+};
+inline constexpr int kSearchMaxTrials = 1000;
+inline constexpr double kSearchMinHours = 0.05;
+inline constexpr double kSearchMaxHours = 168.0;
+
+// Preferences > Search, Neural Architecture Search (TOFIX178 T4): how its
+// search starts and how many of the best it trains. Clamped when set.
+struct ArchitectureSearchDefaults {
+    int versions = 20;          // per round, 2..kArchitectureSearchMaxVersions
+    int rounds = 10;            // 1..kArchitectureSearchMaxRounds
+    int kept = 2;               // kept unchanged each round, 0..versions - 1
+    int changed_percent = 30;   // changed each round, 0..100
+    int mixed_percent = 50;     // made from two each round, 0..100
+    int train_best = 3;         // 1..kArchitectureSearchMaxTrain
+
+    bool operator==(const ArchitectureSearchDefaults&) const = default;
+};
+inline constexpr int kArchitectureSearchMaxVersions = 200;
+inline constexpr int kArchitectureSearchMaxRounds = 200;
+inline constexpr int kArchitectureSearchMaxTrain = 10;
+
+// Preferences > Studio Debugger (TOFIX178 6.1c): the user's defaults for
+// layer capture and the layer views. Each run's capture control starts from
+// them. Values are clamped when read.
+enum class LayerCaptureWhen { Off, LocalDebug, Training };  // Training: also Local Debug runs
+enum class FeatureMapColour { Heat, Grayscale };
+// Feature maps' order: largest mean first, highest peak first, or by number.
+enum class ChannelSort { Strongest, Peak, Number };
+// Where it looks (TOFIX178 6.3b-c): the method, and what saliency shows.
+enum class WhereItLooksMethod { Occlusion, Saliency };
+enum class SaliencyShow { Size, TimesInput };  // gradient size, gradient x input
+// Top images (6.4): the channels shown first (the first the layer offers when
+// it has no such choice) and how a channel's map becomes one number.
+enum class TopImagesChannels { HeadVotes, Clicked, Strongest };
+enum class TopImagesRank { Maximum, Mean };
+// Embedding (6.4b): the projection and what colours the points.
+enum class EmbeddingMethod { Pca, Tsne, Umap };
+enum class EmbeddingColour { TrueClass, PredictedClass };
+// Unit weights (6.4c): largest weight norm first, or by number.
+enum class UnitWeightsOrder { Norm, Number };
+
+inline constexpr int kLayerCaptureBatchSamples = 8;
+
+struct StudioDebuggerConfig {
+    LayerCaptureWhen capture_when = LayerCaptureWhen::Off;
+    int capture_every_epochs = 5;  // and after the last epoch
+    bool capture_activations = true;
+    bool capture_parameters = true;
+    bool capture_gradients = true;
+    bool capture_batch = false;  // a batch of kLayerCaptureBatchSamples from the picked sample on
+    FeatureMapColour feature_map_colour = FeatureMapColour::Heat;
+    ChannelSort channel_sort = ChannelSort::Strongest;
+    WhereItLooksMethod where_it_looks_method = WhereItLooksMethod::Occlusion;
+    SaliencyShow saliency_show = SaliencyShow::Size;
+    TopImagesChannels top_images_channels = TopImagesChannels::HeadVotes;
+    TopImagesRank top_images_rank = TopImagesRank::Maximum;
+    EmbeddingMethod embedding_method = EmbeddingMethod::Pca;
+    EmbeddingColour embedding_colour = EmbeddingColour::TrueClass;
+    UnitWeightsOrder unit_weights_order = UnitWeightsOrder::Norm;
+    int keep_capture_runs = 10;  // runs whose captures stay on disk
+
+    bool operator==(const StudioDebuggerConfig&) const = default;
+};
+
+// The user's defaults for training choices (Preferences > Training).
+// How the Studio starts (Preferences > Studio); the menus change them for
+// the session
+struct StudioConfig {
+    bool auto_save_at_start = false;  // File > Auto Save on when the Engine starts
+    bool minimap = true;              // the canvas minimap
+    bool operator==(const StudioConfig&) const = default;
+};
+
+// How the Training Dashboard's charts start (Preferences > Training); the
+// dashboard's View options change them for the session
+struct TrainingDashboardConfig {
+    static constexpr int kMinEpochWindow = 3;
+    static constexpr int kMaxEpochWindow = 50;
+    static constexpr int kMinSmoothWindow = 2;
+    static constexpr int kMaxSmoothWindow = 50;
+    bool auto_scale = true;
+    bool follow_current_epoch = false;
+    int epoch_window = 30;  // epochs shown while following
+    bool log_loss_axis = false;
+    bool smooth = false;
+    int smooth_window = 5;  // points in the moving average
+    bool operator==(const TrainingDashboardConfig&) const = default;
+};
+
+struct TrainingDefaultsConfig {
+    // What a new BatchNorm node does with its running statistics when it is
+    // frozen: keep them (true) or keep updating them.
+    bool frozen_batchnorm_keeps_statistics = true;
+    bool operator==(const TrainingDefaultsConfig&) const = default;
+};
+
+// The user's defaults for Tools > Utilities (Preferences > General, or "Save
+// as my default" in the window); the shipped values are only the start.
+struct UtilitiesConfig {
+    std::string tab = "calculator";       // utilities_view::TabId
+    int digits = 10;                       // significant digits shown, 1 .. 17
+    bool degrees = false;                  // the Calculator's angle unit
+    std::string unit_category = "length";
+    std::string hash_algorithm = "sha256";
+    int json_indent = 2;
+    bool regex_ignore_case = false;
+    bool regex_multiline = false;
+
+    bool operator==(const UtilitiesConfig&) const = default;
+};
+
+// The user's defaults for Tools > Monitoring and Tools > Diagnostics
+// (Preferences > General, or "Save as my default" in the Monitor window).
+struct MonitorConfig {
+    std::string tab = "system";      // monitor_view::TabId
+    double interval_seconds = 1.0;   // between readings, 0.25 .. 60
+    double keep_seconds = 900.0;     // history kept: 300, 900 or 3600
+    bool log_frame_rate = false;     // one log line when the Engine slows or speeds its frames
+    bool log_python_commands = false;  // every command sent to Python, with its duration
+    bool frame_overlay = false;      // the frame time overlay
+
+    bool operator==(const MonitorConfig&) const = default;
 };
 
 /**
@@ -49,6 +202,41 @@ struct AppearanceConfig {
  *   auto& config = EngineConfig::Instance();
  *   std::string central = config.GetCentralServerAddress();
  */
+// How the Policy Playback panel's Stress test starts (Preferences > Simulation)
+struct PolicyStressDefaults {
+    int kind = 0;       // rl::StressKind: 0 Rough, 1 Slopes, 2 Steps, 3 Obstacles, 4 Kicks
+    int levels = 5;     // 2 to 21
+    int episodes = 10;  // a level, 1 to 100
+};
+
+// What each Python session starts with, and the Python console's history
+// (Preferences > Python)
+struct PythonStartConfig {
+    static constexpr int kMinCommandsKept = 100;
+    static constexpr int kMaxCommandsKept = 10000;
+    std::vector<std::string> startup_scripts;  // run in this order in each new session
+    bool import_numpy = true;         // import numpy as np
+    bool import_pycyxwiz = true;      // import pycyxwiz and its short names (cyx, svd, zeros...)
+    int console_commands_kept = 500;  // commands, each with its output
+    bool operator==(const PythonStartConfig&) const = default;
+};
+
+// The Script Editor's settings (Preferences > Script Editor)
+struct EditorConfig {
+    int tab_size = 4;  // 2, 4 or 8
+    bool show_whitespace = true;
+    bool syntax_colours = true;
+    bool minimap = true;
+    bool word_wrap = false;
+    bool auto_indent = true;
+    // Line endings of a new file: 0 as the system (CRLF on Windows), 1 LF,
+    // 2 CRLF. A file keeps the line endings it has.
+    int new_file_line_endings = 0;
+    bool trim_trailing_whitespace = false;
+    bool final_newline = true;
+    bool operator==(const EditorConfig&) const = default;
+};
+
 class EngineConfig {
 public:
     static EngineConfig& Instance();
@@ -73,9 +261,38 @@ public:
 
     // ===== Server Addresses =====
 
+    // The one server address (TOFIX168, `servers.cyxwiz`): https://HOST is a
+    // front door with TLS, http://HOST:PORT one without, a bare HOST the
+    // three services on their own ports. When set it decides central, the
+    // gateway and sign-in below; the per-service keys apply only when it is
+    // empty (development).
+    std::string GetServerAddress() const;
+    void SetServerAddress(const std::string& address);
+
+    // The server's private CA (a PEM file, a test server's ca.crt), for an
+    // https:// server whose certificate no public authority signed; empty
+    // means the system's trusted roots. Saved with the server address and
+    // applied to every connection at once (cyxwiz-protocol SetServerCaFile).
+    std::string GetServerCaFile() const;
+    void SetServerCaFile(const std::string& path);
+
+    // The per-service keys as saved, for Preferences > Servers; the getters
+    // below give the addresses in effect. An empty gateway follows central.
+    struct SeparateAddresses {
+        std::string central;
+        std::string gateway;
+        std::string auth_api;
+    };
+    SeparateAddresses GetSeparateAddresses() const;
+
     // Central Server (gRPC orchestrator)
     std::string GetCentralServerAddress() const;
     void SetCentralServerAddress(const std::string& address);
+
+    // CyxCloud gateway (gRPC: datasets, uploads, access tokens). Empty in the
+    // config means "the central server's host, port 50060" (TOFIX164).
+    std::string GetCloudGatewayAddress() const;
+    void SetCloudGatewayAddress(const std::string& address);
 
     // Auth API Server (JWT login)
     std::string GetAuthApiUrl() const;
@@ -88,24 +305,6 @@ public:
     // Default P2P port (used when server node doesn't specify port)
     int GetDefaultP2PPort() const;
     void SetDefaultP2PPort(int port);
-
-    // ===== Feature Flags =====
-
-    // Whether to use secure (TLS) connections
-    bool UseSecureConnection() const;
-    void SetUseSecureConnection(bool secure);
-
-    // Auto-connect to central server on startup
-    bool AutoConnectOnStartup() const;
-    void SetAutoConnectOnStartup(bool auto_connect);
-
-    // ===== Timeouts (in seconds) =====
-
-    int GetConnectionTimeout() const;
-    void SetConnectionTimeout(int seconds);
-
-    int GetRequestTimeout() const;
-    void SetRequestTimeout(int seconds);
 
     // ===== Python Settings =====
 
@@ -138,6 +337,10 @@ public:
     std::vector<std::string> GetDefaultVenvPackages() const;
     void SetDefaultVenvPackages(const std::vector<std::string>& packages);
 
+    // Each Python session's start and the console's history (Preferences > Python)
+    PythonStartConfig GetPythonStart() const;
+    void SetPythonStart(const PythonStartConfig& start);
+
     // ===== Local Debug =====
 
     // Strict mode: if true, StartTrainingFromGraph refuses to start
@@ -146,6 +349,16 @@ public:
     // in the compile popup but lets training proceed.
     bool RequireDebugBeforeTrain() const;
     void SetRequireDebugBeforeTrain(bool require);
+
+    StudioDebuggerConfig GetStudioDebugger() const;
+    void SetStudioDebugger(const StudioDebuggerConfig& studio_debugger);
+
+    TrainingDefaultsConfig GetTrainingDefaults() const;
+    StudioConfig GetStudio() const;
+    void SetStudio(const StudioConfig& studio);
+    TrainingDashboardConfig GetTrainingDashboard() const;
+    void SetTrainingDashboard(const TrainingDashboardConfig& dashboard);
+    void SetTrainingDefaults(const TrainingDefaultsConfig& training_defaults);
 
     // ===== Runtime Observability =====
 
@@ -157,6 +370,12 @@ public:
     // default; Preferences > General turns it off (Info and above only).
     bool RecordDebugLogs() const;
     void SetRecordDebugLogs(bool record);
+    // Every window may have a window of its own on the desktop (owner
+    // 2026-11-18, TOFIX129 A8b). Off: only the big windows (Training
+    // Dashboard, Data Studio, Script Editor, Console, ...) may leave the main
+    // window. Preferences > General.
+    bool EveryWindowMayLeave() const;
+    void SetEveryWindowMayLeave(bool every);
 
     // ===== Data =====
 
@@ -165,18 +384,87 @@ public:
     uint64_t DataBudgetBytes() const;
     void SetDataBudgetBytes(uint64_t bytes);
 
+    // ===== Simulation (graph runs, Preferences > Simulation) =====
+
+    static constexpr int kMinSimulationRateHz = 1;
+    static constexpr int kMaxSimulationRateHz = 1000;
+    static constexpr int kDefaultSimulationRateHz = 60;
+    // Ticks a second of the next graph run, kept within 1..1000.
+    int SimulationRateHz() const;
+    void SetSimulationRateHz(int hz);
+    // Show the Simulation Monitor when a graph run starts. On by default.
+    bool OpenSimulationMonitorOnRun() const;
+    void SetOpenSimulationMonitorOnRun(bool open);
+
+    // Plugins' own settings (PluginContext::GetSetting / SetSetting), by
+    // plugin id then key. False when the plugin never set the key.
+    bool PluginSetting(const std::string& plugin_id, const std::string& key, std::string& value) const;
+    void SetPluginSetting(const std::string& plugin_id, const std::string& key, const std::string& value);
+
+    // Policy playback of a trained RL policy (Preferences > Simulation): the
+    // Policy Playback panel starts from these.
+    // Best actions (true, the default) or sampled as in training.
+    bool PolicyPlaybackBestActions() const;
+    void SetPolicyPlaybackBestActions(bool best);
+    // 0 real time (the default), 1 four times faster, 2 as fast as possible
+    int PolicyPlaybackSpeed() const;
+    void SetPolicyPlaybackSpeed(int speed);
+    // Play the policy when a PPO run finishes. Off by default.
+    bool PlayPolicyAfterTraining() const;
+    void SetPlayPolicyAfterTraining(bool play);
+    // The Stress test's disturbance, levels and episodes (clamped to their ranges)
+    PolicyStressDefaults PolicyStressTestDefaults() const;
+    void SetPolicyStressTestDefaults(PolicyStressDefaults defaults);
+    // Watching a PPO run while it trains (the RL Training Dashboard): 0 off
+    // (the default), 1 live preview, 2 raw training copy; the preview takes the
+    // networks every N updates (20 by default, 1 to 1000)
+    int WatchTrainingMode() const;
+    int WatchTrainingEvery() const;
+    void SetWatchTraining(int mode, int every_updates);
+
     // ===== Appearance (Engine-wide) =====
 
     AppearanceConfig GetAppearance() const;
     void SetAppearance(const AppearanceConfig& appearance);
 
-    // ===== Recent Projects =====
+    // ===== Nodes panel (Engine-wide) =====
 
-    // Get list of recent projects (up to 10)
-    std::vector<std::string> GetRecentProjects() const;
+    NodesPanelConfig GetNodesPanel() const;
+    void SetNodesPanel(const NodesPanelConfig& nodes_panel);
 
-    // Add a project to recent projects list
-    void AddRecentProject(const std::string& project_path);
+    // ===== Hyperparameter Search (Engine-wide) =====
+
+    HyperparamSearchDefaults GetSearchDefaults() const;
+    void SetSearchDefaults(const HyperparamSearchDefaults& defaults);
+    ArchitectureSearchDefaults GetArchitectureSearchDefaults() const;
+    void SetArchitectureSearchDefaults(const ArchitectureSearchDefaults& defaults);
+
+    UtilitiesConfig GetUtilities() const;
+    void SetUtilities(const UtilitiesConfig& utilities);
+
+    MonitorConfig GetMonitor() const;
+    void SetMonitor(const MonitorConfig& monitor);
+
+    // ===== Script Editor (Preferences > Script Editor, TOFIX129 B9-7, B9-8) =====
+    // Engine-wide (every project); the Script Editor's View menu edits the same values.
+    EditorConfig GetEditor() const;
+    void SetEditor(const EditorConfig& editor);
+
+    // ===== General (Preferences > General, TOFIX129 B9) =====
+
+    // When the Engine starts: the start page, or the last project (its
+    // scripts and the graph that was open come back with it)
+    bool StartWithLastProject() const;
+    void SetStartWithLastProject(bool last_project);
+    // How many recent projects File > Open Recent and the start page keep
+    static constexpr int kMinRecentProjects = 1;
+    static constexpr int kMaxRecentProjects = 50;
+    static constexpr int kDefaultRecentProjects = 10;
+    int RecentProjectsKept() const;
+    void SetRecentProjectsKept(int kept);
+    // Closing asks every time, not only when something would be lost
+    bool AskBeforeClosingAlways() const;
+    void SetAskBeforeClosingAlways(bool always);
 
     // Check if configuration has been modified
     bool IsModified() const { return modified_; }
@@ -194,40 +482,63 @@ private:
     // Set default values
     void SetDefaults();
 
+    // Effective addresses; callers hold mutex_
+    std::string CentralLocked() const;
+    std::string GatewayLocked() const;
+    std::string AuthApiLocked() const;
+
     mutable std::mutex mutex_;
     std::filesystem::path config_path_;
     bool modified_ = false;
 
     // Server addresses
+    std::string server_address_;  // servers.cyxwiz; empty = the keys below
+    std::string server_ca_file_;  // servers.ca_file; empty = the system's roots
     std::string central_server_address_;
+    std::string cloud_gateway_address_;  // as configured; empty = derived
     std::string auth_api_url_;
     std::string default_deployment_address_;
     int default_p2p_port_ = 50052;
-
-    // Feature flags
-    bool use_secure_connection_ = false;
-    bool auto_connect_on_startup_ = false;
-
-    // Timeouts
-    int connection_timeout_ = 10;  // seconds
-    int request_timeout_ = 30;     // seconds
 
     // Python settings
     std::string system_python_path_;  // System Python interpreter path (auto-detected or user-configured)
     std::string detected_python_path_;  // session only, not serialized
     bool auto_create_venv_ = true;    // Auto-create venv for new projects
     std::vector<std::string> default_venv_packages_;  // Default packages to install in new venvs
+    PythonStartConfig python_start_;
 
     // Local Debug settings
     bool require_debug_before_train_ = false;
+    StudioDebuggerConfig studio_debugger_;
+    TrainingDefaultsConfig training_defaults_;
+    StudioConfig studio_;
+    TrainingDashboardConfig training_dashboard_;
 
     std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
     bool record_debug_logs_ = true;
+    bool every_window_may_leave_ = false;
     uint64_t data_budget_bytes_ = 0;
+    int simulation_rate_hz_ = kDefaultSimulationRateHz;
+    bool policy_playback_best_ = true;
+    int policy_playback_speed_ = 0;
+    bool play_policy_after_training_ = false;
+    PolicyStressDefaults policy_stress_defaults_;
+    int watch_training_mode_ = 0;
+    int watch_training_every_ = 20;
+    bool open_simulation_monitor_on_run_ = true;
+    std::map<std::string, std::map<std::string, std::string>> plugin_settings_;
     AppearanceConfig appearance_;
+    NodesPanelConfig nodes_panel_;
+    HyperparamSearchDefaults search_defaults_;
+    ArchitectureSearchDefaults architecture_search_defaults_;
+    UtilitiesConfig utilities_;
+    MonitorConfig monitor_;
 
-    // Recent projects
-    std::vector<std::string> recent_projects_;  // Recent project paths (max 10)
+    EditorConfig editor_;
+    // Preferences > General
+    bool start_with_last_project_ = false;
+    int recent_projects_kept_ = kDefaultRecentProjects;
+    bool ask_before_closing_always_ = false;
 };
 
 } // namespace cyxwiz::core

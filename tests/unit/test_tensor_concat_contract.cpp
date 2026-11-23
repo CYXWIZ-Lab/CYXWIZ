@@ -2,6 +2,7 @@
 
 #include "tensor_index_helpers.h"
 #include "algorithms/arrayfire_backend_utils.h"
+#include "../../cyxwiz-engine/src/core/gcc_diagnostics.h"
 
 #include <cyxwiz/device.h>
 #include <cyxwiz/tensor.h>
@@ -212,8 +213,11 @@ void CheckResidentStack(const std::vector<size_t>& shape, size_t axis) {
     }
     REQUIRE(g_concat_host_sync_count == 0);
 
+    // libstdc++'s vector growth: GCC -Warray-bounds false positive (TOFIX187).
+    CYXWIZ_GCC_IGNORE_BEGIN("-Warray-bounds")
     std::vector<size_t> output_shape = shape;
     output_shape.insert(output_shape.begin() + static_cast<ptrdiff_t>(axis), 2);
+    CYXWIZ_GCC_IGNORE_END
     REQUIRE(output.Shape() == output_shape);
     const auto output_strides = RowMajorStrides(output_shape);
     const auto input_strides = RowMajorStrides(shape);
@@ -401,8 +405,11 @@ TEST_CASE("Tensor rank-five concat runs on the device",
             if (from_second) c[static_cast<size_t>(axis)] -= extent;
             REQUIRE(cat_values[i] == static_cast<float>(tensor_test::Ravel(c, shape)) + (from_second ? 1000.0f : 0.0f));
         }
+        // libstdc++'s vector growth: GCC -Warray-bounds false positive (TOFIX187).
+        CYXWIZ_GCC_IGNORE_BEGIN("-Warray-bounds")
         std::vector<size_t> stack_shape = shape4;
         stack_shape.insert(stack_shape.begin() + axis, 2);
+        CYXWIZ_GCC_IGNORE_END
         REQUIRE(stack.Shape() == stack_shape);
         const float* stack_values = stack.ReadData<float>();
         for (size_t i = 0; i < stack.NumElements(); ++i) {

@@ -75,7 +75,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build a validated CyxWiz redistribution package."
     )
-    parser.add_argument("profile", choices=("minimal", "full", "base", "pack"))
+    parser.add_argument("profile", choices=("minimal", "full", "base", "pack", "plugin"))
     parser.add_argument("--version", help="CyxWiz version; inferred when omitted")
     parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--resources-dir", type=Path)
@@ -119,6 +119,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--base-pack-id",
         help="Companion base identity required by the pack profile",
+    )
+    parser.add_argument(
+        "--plugin-dir",
+        type=Path,
+        help="Built plugin folder (plugin.json, its library folder, assets/) for the plugin profile",
+    )
+    parser.add_argument(
+        "--third-party-license",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="Plugin profile: a third-party notice packaged as THIRD_PARTY_LICENSES/NAME/; "
+        "PATH is relative to --plugin-dir; repeat for each notice",
     )
     parser.add_argument(
         "--signing-key-id",
@@ -537,6 +550,53 @@ def copy_build_payload(
     copy_file(require_file(paths.root / "KNOWN_ISSUES.md", "CyxWiz KNOWN_ISSUES.md"), stage / "KNOWN_ISSUES.md")
     copy_vcpkg_notices(paths, stage, system)
     install_plugin_sdk(paths, stage / "sdk")
+    copy_examples(paths.root, stage)
+
+
+# What users get under examples/: the starter graphs and their data, the
+# scripts and guides. The repository's test folders stay out.
+SHIPPED_EXAMPLES = ("README.md", "c_api", "cyx", "cyxgraph", "data", "datasets", "guides", "python",
+                    "python_nodes", "training", "utilities")
+
+
+def example_files(root: Path) -> list[Path]:
+    """The files under examples/ to ship, relative to the source root.
+
+    In a git checkout only the tracked files ship, so a model, a run's output
+    or anything else saved into the examples on the packaging machine stays
+    out; a checkout git cannot read fails rather than shipping them. Without
+    git (a source archive) every file ships, except caches.
+    """
+    examples = require_directory(root / "examples", "examples (starter graphs and their sample data)")
+    require_directory(examples / "cyxgraph", "examples/cyxgraph (the start page's starter graphs)")
+    wanted = [Path("examples") / name for name in SHIPPED_EXAMPLES]
+
+    def shipped(relative: Path) -> bool:
+        return (any(relative == w or w in relative.parents for w in wanted) and relative.name != ".gitignore"
+                and "__pycache__" not in relative.parts and relative.suffix != ".pyc")
+
+    if (root / ".git").exists():
+        try:
+            listed = subprocess.run(
+                ["git", "-C", str(root), "ls-files", "-z", "--", "examples"],
+                check=True, capture_output=True,
+            ).stdout.decode("utf-8")
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise PackageError(f"git could not list the tracked examples in {root}: {error}") from error
+        tracked = [Path(item) for item in listed.split("\0") if item]
+        return [item for item in tracked if shipped(item) and (root / item).is_file()]
+    found = []
+    for path in sorted(examples.rglob("*")):
+        relative = path.relative_to(root)
+        if path.is_file() and shipped(relative):
+            found.append(relative)
+    return found
+
+
+def copy_examples(root: Path, stage: Path) -> None:
+    """examples/ beside the Engine: the start page finds its starter graphs there."""
+    for relative in example_files(root):
+        copy_file(root / relative, stage / relative)
 
 
 def cmake_build_root(build: Path) -> Path:
@@ -938,6 +998,8 @@ def classify_source(relative_path: Path) -> str:
         return "python-tools"
     if value.startswith("sdk/"):
         return "cyxwiz-plugin-sdk"
+    if value.startswith("examples/"):
+        return "cyxwiz-examples"
     if value in ("README.md", "LICENSE", "KNOWN_ISSUES.md", "start_cyxwiz.bat", "cyxwiz"):
         return "cyxwiz-package"
     return "cyxwiz-build"
@@ -1092,6 +1154,64 @@ def compatibility_contract(backend: str) -> dict[str, object]:
     }
 
 
+def payload_documents(
+    stage: Path, archive: Path, components: Sequence[Component] | None = None
+) -> tuple[list[dict[str, object]], list[dict[str, str]], dict[str, object]]:
+    components = list(components) if components is not None else inventory(stage)
+    component_documents = [
+        {
+            "path": component.path,
+            "size": component.size,
+            "sha256": component.sha256,
+            "source": component.source,
+            "executable": Path(component.path).suffix.lower()
+            in (".exe", ".dll", ".pyd", ".so", ".dylib"),
+        }
+        for component in components
+    ]
+    licenses = [
+        {"component": component.source, "path": component.path}
+        for component in components
+        if component.path.startswith("THIRD_PARTY_LICENSES/")
+        or component.path in ("LICENSE", "sdk/LICENSE", "sdk/NOTICE")
+    ]
+    archive_document = {
+        "file_name": archive.name,
+        "size": archive.stat().st_size,
+        "sha256": sha256_file(archive),
+    }
+    return component_documents, licenses, archive_document
+
+
+def write_manifest_documents(
+    archive: Path,
+    signed: dict[str, object],
+    schema_version: int,
+    signing_key_id: str,
+    signature: str | None,
+) -> tuple[Path, Path]:
+    signed_path = archive.with_suffix(archive.suffix + ".signed.json")
+    signed_path.write_bytes(canonical_json_bytes(signed))
+    manifest = {
+        "schema_version": schema_version,
+        "kind": "cyxwiz-backend-pack-manifest",
+        "signed": signed,
+        "signatures": [],
+    }
+    if signature is not None:
+        manifest["signatures"] = [
+            {
+                "key_id": signing_key_id,
+                "algorithm": "ed25519",
+                "value": signature,
+            }
+        ]
+        validate_pack_manifest(manifest)
+    manifest_path = archive.with_suffix(archive.suffix + ".manifest.json")
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return manifest_path, signed_path
+
+
 def write_pack_contract(
     stage: Path,
     archive: Path,
@@ -1110,24 +1230,7 @@ def write_pack_contract(
     signature: str | None,
     timestamp: str,
 ) -> tuple[Path, Path]:
-    components = inventory(stage)
-    component_documents = [
-        {
-            "path": component.path,
-            "size": component.size,
-            "sha256": component.sha256,
-            "source": component.source,
-            "executable": Path(component.path).suffix.lower()
-            in (".exe", ".dll", ".pyd", ".so", ".dylib"),
-        }
-        for component in components
-    ]
-    licenses = [
-        {"component": component.source, "path": component.path}
-        for component in components
-        if component.path.startswith("THIRD_PARTY_LICENSES/")
-        or component.path in ("LICENSE", "sdk/LICENSE", "sdk/NOTICE")
-    ]
+    component_documents, licenses, archive_document = payload_documents(stage, archive)
     signed = {
         "pack_id": pack_id,
         "pack_kind": pack_kind,
@@ -1143,33 +1246,10 @@ def write_pack_contract(
         "compatibility": compatibility_contract(backend),
         "components": component_documents,
         "licenses": licenses,
-        "archive": {
-            "file_name": archive.name,
-            "size": archive.stat().st_size,
-            "sha256": sha256_file(archive),
-        },
+        "archive": archive_document,
         "generated_utc": timestamp,
     }
-    signed_path = archive.with_suffix(archive.suffix + ".signed.json")
-    signed_path.write_bytes(canonical_json_bytes(signed))
-    manifest = {
-        "schema_version": 1,
-        "kind": "cyxwiz-backend-pack-manifest",
-        "signed": signed,
-        "signatures": [],
-    }
-    if signature is not None:
-        manifest["signatures"] = [
-            {
-                "key_id": signing_key_id,
-                "algorithm": "ed25519",
-                "value": signature,
-            }
-        ]
-        validate_pack_manifest(manifest)
-    manifest_path = archive.with_suffix(archive.suffix + ".manifest.json")
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    return manifest_path, signed_path
+    return write_manifest_documents(archive, signed, 1, signing_key_id, signature)
 
 
 def create_archive(stage: Path, output_root: Path, package_name: str, system: str) -> Path:
@@ -1357,6 +1437,144 @@ def build_split_artifact(
     return stage, archive
 
 
+def _license_source(name: str) -> str:
+    source = re.sub(r"[^a-z0-9._-]+", "-", name.lower()).strip("-")
+    if not source:
+        raise PackageError(f"Third-party license name {name!r} is not usable")
+    return source
+
+
+def build_plugin_pack(
+    args: argparse.Namespace,
+    paths: PackagePaths,
+    platform_name: str,
+    architecture: str,
+    artifact_suffix: str,
+    lib_suffix: str,
+    system: str,
+    version: str,
+) -> tuple[Path, Path | None]:
+    """Package one built Engine plugin as a schema-2 plugin pack.
+
+    The pack folder is the plugin folder the Engine loads: plugin.json, the
+    plugin library and the shared libraries beside it, assets/, LICENSE and the
+    named third-party notices. Libraries the CPU base already ships (same file
+    name in the build output) are left out: the plugin uses the base's copies.
+    """
+    if system != "windows":
+        raise PackageError(f"Plugin packs are not yet qualified on {system}")
+    if args.backend:
+        raise PackageError("The plugin profile does not accept --backend")
+    if args.plugin_dir is None:
+        raise PackageError("The plugin profile requires --plugin-dir")
+    plugin_dir = args.plugin_dir.resolve()
+    require_directory(plugin_dir, "plugin folder")
+    manifest_path = require_file(plugin_dir / "plugin.json", "plugin.json")
+    try:
+        plugin_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        plugin_id = plugin_manifest["id"]
+        plugin_version = plugin_manifest["version"]
+        library_relative = plugin_manifest["platforms"]["windows"]["library"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise PackageError(f"plugin.json lacks id, version or the Windows library: {error}") from error
+    if not isinstance(plugin_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", plugin_id):
+        raise PackageError(f"plugin id {plugin_id!r} is not a canonical identifier")
+    validate_release_version(str(plugin_version), "plugin")
+    library = plugin_dir / library_relative
+    require_file(library, "plugin library")
+    pack_version = validate_release_version(args.pack_version, "pack")
+    companion_base_id = args.base_pack_id or (
+        f"cyxwiz-base-{version}-{pack_version}-{artifact_suffix}"
+    )
+    validate_release_version(companion_base_id, "base pack")
+    short_name = plugin_id.rsplit(".", 1)[-1]
+    pack_id = f"cyxwiz-plugin-{short_name}-{plugin_version}-{pack_version}-{artifact_suffix}"
+    timestamp = generated_utc(args.generated_utc)
+
+    stage = paths.output_root / "staging" / pack_id
+    safe_clean(stage, paths.output_root)
+    copy_file(manifest_path, stage / "plugin.json")
+    base_libraries = {
+        item.name.lower() for item in paths.build.glob(f"*{lib_suffix}") if item.is_file()
+    }
+    library_folder = library.parent
+    dropped: list[str] = []
+    for item in sorted(library_folder.iterdir()):
+        if not item.is_file() or item.suffix.lower() != lib_suffix:
+            continue
+        if item.name.lower() in base_libraries and item != library:
+            dropped.append(item.name)
+            continue
+        copy_file(item, stage / library_folder.relative_to(plugin_dir) / item.name)
+    if (plugin_dir / "assets").is_dir():
+        copy_tree(plugin_dir / "assets", stage / "assets")
+    copy_file(require_file(paths.root / "LICENSE", "CyxWiz LICENSE"), stage / "LICENSE")
+    license_sources: dict[str, str] = {}
+    for entry in args.third_party_license:
+        name, separator, relative = entry.partition("=")
+        if not separator or not name or not relative:
+            raise PackageError(f"--third-party-license must be NAME=PATH, got {entry!r}")
+        # NAME is a folder of the pack and PATH a file of the plugin: neither leaves its place
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
+            raise PackageError(f"--third-party-license NAME must be letters, digits, '.', '_' or '-': {name!r}")
+        notice = require_file(plugin_dir / relative, f"{name} notice").resolve()
+        if not notice.is_relative_to(plugin_dir):
+            raise PackageError(f"--third-party-license {name}: {relative} is outside --plugin-dir")
+        destination = Path("THIRD_PARTY_LICENSES") / name / notice.name
+        copy_file(notice, stage / destination)
+        license_sources[destination.as_posix()] = _license_source(name)
+
+    library_stage_relative = (library_folder.relative_to(plugin_dir)).as_posix()
+    components = []
+    for component in inventory(stage):
+        if component.path in license_sources:
+            source = license_sources[component.path]
+        elif component.path == "LICENSE":
+            source = "cyxwiz-package"
+        elif (
+            component.path.startswith(library_stage_relative + "/")
+            and component.path != Path(library_relative).as_posix()
+        ):
+            source = "plugin-runtime"
+        else:
+            source = "cyxwiz-plugin"
+        components.append(Component(component.path, component.size, component.sha256, source))
+    if dropped:
+        print(f"[OK] Left to the CPU base: {', '.join(dropped)}")
+    # Missing notices fail packaging (BACKEND_PACK_CONTRACT.md): a pack with a
+    # third-party runtime, or third-party assets, names their notices
+    has_runtime = any(component.source == "plugin-runtime" for component in components)
+    if has_runtime and not license_sources:
+        raise PackageError(
+            "The plugin ships third-party runtime libraries but no notice: pass "
+            "--third-party-license NAME=PATH for each (see BACKEND_PACK_CONTRACT.md, Plugin Packs)"
+        )
+
+    if args.stage_only:
+        return stage, None
+    archive = create_deterministic_zip(stage, paths.output_root / f"{pack_id}.zip")
+    component_documents, licenses, archive_document = payload_documents(stage, archive, components)
+    signed = {
+        "pack_id": pack_id,
+        "pack_kind": "plugin_pack",
+        "plugin_id": plugin_id,
+        "package_version": pack_version,
+        "platform": platform_name,
+        "architecture": architecture,
+        "cyxwiz_release": {"minimum": version, "maximum": version},
+        "companion_base_id": companion_base_id,
+        "conflicts": [],
+        # Promoted to supported by the signed release workflow, like backend packs.
+        "support_status": "diagnostic",
+        "components": component_documents,
+        "licenses": licenses,
+        "archive": archive_document,
+        "generated_utc": timestamp,
+    }
+    write_manifest_documents(archive, signed, 2, args.signing_key_id, args.signature)
+    return stage, archive
+
+
 def build_package(args: argparse.Namespace, script: Path | None = None) -> tuple[Path, Path | None]:
     script = script or Path(__file__)
     paths = default_paths(script, args)
@@ -1366,6 +1584,11 @@ def build_package(args: argparse.Namespace, script: Path | None = None) -> tuple
     lib_suffix = target.library_suffix
     system = target.system
     version = validate_release_version(args.version or infer_cyxwiz_version(paths.root), "CyxWiz")
+    if args.profile == "plugin":
+        return build_plugin_pack(
+            args, paths, platform_name, target.architecture, target.artifact_suffix,
+            lib_suffix, system, version,
+        )
     if args.profile in ("base", "pack"):
         return build_split_artifact(
             args,
@@ -1486,7 +1709,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"[OK] Staged package: {stage}")
     if archive:
         print(f"[OK] Archive: {archive} ({archive.stat().st_size} bytes)")
-        if args.profile in ("base", "pack"):
+        if args.profile in ("base", "pack", "plugin"):
             print(f"[OK] Signature input: {archive.with_suffix(archive.suffix + '.signed.json')}")
             print(f"[OK] Manifest: {archive.with_suffix(archive.suffix + '.manifest.json')}")
             if not args.signature:

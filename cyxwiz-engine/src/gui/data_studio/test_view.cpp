@@ -15,6 +15,10 @@
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
+#include "../model_images.h"
+#include "../../core/test_predictions_metrics.h"
+
+#include <arrow/compute/api.h>
 
 #include <cyxwiz/data_transform.h>
 
@@ -27,6 +31,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 
 namespace cyxwiz {
 
@@ -141,11 +146,6 @@ std::optional<double> TestView::LatestScore() const {
     return results_.regression_mode ? static_cast<double>(results_.test_mae) : static_cast<double>(results_.test_accuracy);
 }
 
-void TestView::ShowKept(const std::string& path) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    LoadKept(path);
-}
-
 void TestView::LoadKept(const std::string& path) {
     source_ = Source::Kept;
     dirty_ = true;
@@ -204,6 +204,7 @@ void TestView::Rebuild() {
     dirty_ = false;
     ++shown_version_;
     curves_key_.clear();
+    keep_message_.clear();  // it spoke of the results before these
     if (!m) {
         view_ = test_report::View{};
         rows_ = nullptr;
@@ -262,8 +263,11 @@ void TestView::Render() {
         if (classification) {
             section("Confusion matrix###matrix", [&] { RenderMatrix(); });
             section("Classes###classes", [&] { RenderClasses(); });
+            if (!m->metric_learning_mode) section("Errors###errors", [&] { RenderErrors(*m); });
             if (!m->metric_learning_mode) section("Curves###curves", [&] { RenderCurves(*m); });
             if (curves) section("Threshold###threshold", [&] { RenderThreshold(*m); });
+            if (!m->metric_learning_mode && m->probability_classes >= 2)
+                section("Calibration###calibration", [&] { RenderCalibration(*m); });
             section("Predictions###predictions", [&] { RenderPredictions(*m); });
         } else if (m->regression_mode) {
             section("Plots###plots", [&] { RenderRegressionPlots(*m); });
@@ -690,6 +694,10 @@ void TestView::RenderCurves(const TestingMetrics& m) {
 // The figures at a threshold, read off the class's ROC (no pass over the rows).
 void TestView::RenderThreshold(const TestingMetrics& m) {
     const ui::Tokens& t = ui::CurrentTokens();
+    if (m.per_class_metrics.size() > 2) RenderConfidenceFloor(m);
+    Wrapped(t.text_dim, m.per_class_metrics.size() > 2
+                            ? "One class against the rest: that class is predicted when its score reaches the threshold."
+                            : "A yes / no model says yes when its probability reaches the threshold. 0.5 is a habit, not a rule.");
     RenderPositiveClass(m);
     if (!EnsureCurves(m)) {
         Wrapped(t.caution, curves_error_);
@@ -711,6 +719,40 @@ void TestView::RenderThreshold(const TestingMetrics& m) {
     const double best = test_report::BestF1Threshold(curves_.roc, curves_.positives, curves_.negatives);
     if (ui::SecondaryButton("Best F1", std::isfinite(best), "No threshold gives a positive", ui::ButtonSize::Small))
         threshold_ = best;
+    // Pick by a recall target, or by the cost of each error.
+    ImGui::SameLine();
+    Label("Recall at least");
+    ui::NumberFieldOptions target;
+    target.min = 0.0;
+    target.max = 1.0;
+    target.step = 0.05;
+    target.format = "%.2f";
+    target.width = 60.0f;
+    target.hint = "The share of the positives to find";
+    ui::NumberField("##recall_target", &recall_target_, target);
+    ImGui::SameLine();
+    const double for_recall = test_report::ThresholdForRecall(curves_.roc, curves_.positives, curves_.negatives, recall_target_);
+    if (ui::SecondaryButton("Use##recall", std::isfinite(for_recall), "No threshold reaches that recall", ui::ButtonSize::Small))
+        threshold_ = for_recall;
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Cost of each error...", true, nullptr, ui::ButtonSize::Small)) ImGui::OpenPopup("##threshold_cost");
+    if (ImGui::BeginPopup("##threshold_cost")) {
+        ui::NumberFieldOptions cost;
+        cost.min = 0.0;
+        cost.max = 1e9;
+        cost.format = "%g";
+        cost.width = 90.0f;
+        ui::FieldLabel(("A false alarm (" + rest + " called " + positive + ")").c_str());
+        ui::NumberField("##cost_fp", &cost_fp_, cost);
+        ui::FieldLabel(("A miss (" + positive + " not found)").c_str());
+        ui::NumberField("##cost_fn", &cost_fn_, cost);
+        const double cheapest = test_report::LowestCostThreshold(curves_.roc, curves_.positives, curves_.negatives, cost_fp_, cost_fn_);
+        if (ui::PrimaryButton("Use the lowest cost", std::isfinite(cheapest), "No threshold")) {
+            threshold_ = cheapest;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
     const test_report::ThresholdFigures f = test_report::AtThreshold(curves_.roc, curves_.positives, curves_.negatives, threshold_);
     if (!f.ok) {
         Wrapped(t.text_dim, "The test needs samples of " + positive + " and of " + rest + ".");
@@ -751,6 +793,164 @@ void TestView::RenderThreshold(const TestingMetrics& m) {
                                 positive + " missed, of " + FormatCompiledCount(f.tp + f.fp + f.tn + f.fn) + ".");
         ImGui::EndTable();
     }
+    if (two && keep_decision && source_ == Source::Latest) {
+        if (ui::SecondaryButton(("Keep " + Fixed(threshold_, 3) + " with the model").c_str())) {
+            ModelDecision part;
+            part.has_threshold = true;
+            part.threshold = threshold_;
+            part.positive = positive_ >= 0 ? positive_ : 1;
+            keep_message_ = keep_decision(part, true, false);
+            keep_failed_ = !keep_message_.empty();
+            if (keep_message_.empty()) keep_message_ = "Kept: Test, a checkpoint and an export now use " + Fixed(threshold_, 3) + ".";
+        }
+    }
+    RenderKeptDecision(m);
+    // Precision, recall and F1 by threshold, the threshold in use marked.
+    const auto sweep = test_report::SweepThresholds(curves_.roc, curves_.positives, curves_.negatives);
+    if (sweep.thresholds.size() >= 2 &&
+        ImPlot::BeginPlot("##threshold_sweep", ImVec2(-1, 240.0f), ImPlotFlags_NoMenus)) {
+        ImPlot::SetupAxes("threshold", "", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_None);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.05, ImPlotCond_Always);
+        const int n = static_cast<int>(sweep.thresholds.size());
+        ImPlot::SetNextLineStyle(t.series[0], 2.0f);
+        ImPlot::PlotStairs("precision", sweep.thresholds.data(), sweep.precision.data(), n);
+        ImPlot::SetNextLineStyle(t.series[1], 2.0f);
+        ImPlot::PlotStairs("recall", sweep.thresholds.data(), sweep.recall.data(), n);
+        ImPlot::SetNextLineStyle(t.series[2], 2.0f);
+        ImPlot::PlotStairs("F1", sweep.thresholds.data(), sweep.f1.data(), n);
+        ImPlot::SetNextLineStyle(t.text_dim, 1.0f);
+        ImPlot::PlotInfLines("threshold", &threshold_, 1);
+        ImPlot::EndPlot();
+    }
+}
+
+void TestView::RenderConfidenceFloor(const TestingMetrics& m) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ui::BeginCard("confidence_floor");
+    ImGui::TextColored(t.text_bright, "Confidence floor");
+    Wrapped(t.text_dim, "A model with several classes gets a confidence floor: below it a row is left for a person.");
+    ui::NumberFieldOptions options;
+    options.min = 0.0;
+    options.max = 0.99;
+    options.step = 0.05;
+    options.format = "%.2f";
+    options.width = 60.0f;
+    options.hint = "Answer only when the top probability is at least this";
+    Label("Floor");
+    ui::NumberField("##floor", &floor_, options);
+    const auto at = test_report::AtConfidenceFloor(m, floor_);
+    char line[200];
+    std::snprintf(line, sizeof(line), "At %.2f: %.1f %% of the rows answered (%d of %d), %.2f %% of those right.", floor_,
+                  at.answered_share * 100.0, at.answered, at.total, at.accuracy * 100.0);
+    Wrapped(t.text, line);
+    const auto curve = test_report::ConfidenceFloorCurve(m);
+    std::vector<double> floors, answered, accuracy;
+    for (const auto& c : curve) {
+        floors.push_back(c.floor);
+        answered.push_back(c.answered_share);
+        accuracy.push_back(c.answered ? c.accuracy : NAN);
+    }
+    if (ImPlot::BeginPlot("##floor_curve", ImVec2(-1, 180.0f), ImPlotFlags_NoMenus)) {
+        ImPlot::SetupAxes("floor", "", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_None);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.05, ImPlotCond_Always);
+        ImPlot::SetupLegend(ImPlotLocation_SouthWest);  // both lines sit near the top
+        ImPlot::SetNextLineStyle(t.series[0], 2.0f);
+        ImPlot::PlotLine("rows answered", floors.data(), answered.data(), static_cast<int>(floors.size()));
+        ImPlot::SetNextLineStyle(t.series[2], 2.0f);
+        ImPlot::PlotLine("right among them", floors.data(), accuracy.data(), static_cast<int>(floors.size()));
+        ImPlot::SetNextLineStyle(t.text_dim, 1.0f);
+        ImPlot::PlotInfLines("floor", &floor_, 1);
+        ImPlot::EndPlot();
+    }
+    ui::EndCard();
+}
+
+void TestView::RenderCalibration(const TestingMetrics& m) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const bool yes_no = m.probability_classes == 2;
+    if (yes_no) {
+        static const char* const kMethods[] = {"Platt", "Isotonic", "Temperature"};
+        Label("Method");
+        ui::SegmentedControl("##calibration_method", kMethods, 3, &calibration_method_);
+    }
+    const auto method = !yes_no || calibration_method_ == 2 ? test_report::CalibrationMethod::Temperature
+                        : calibration_method_ == 0          ? test_report::CalibrationMethod::Platt
+                                                            : test_report::CalibrationMethod::Isotonic;
+    const int positive = positive_ >= 0 ? positive_ : 1;
+    const std::string key = std::to_string(shown_version_) + "/" + std::to_string(static_cast<int>(method)) + "/" +
+                            std::to_string(positive);
+    if (key != calibration_key_) {
+        calibration_key_ = key;
+        calibration_ = test_report::Calibrate(m, method, positive);
+    }
+    if (!calibration_.ok) {
+        Wrapped(t.text_dim, calibration_.error);
+        return;
+    }
+    if (!calibration_.headline.empty()) Wrapped(t.text, calibration_.headline);
+    Wrapped(t.text_dim, calibration_.detail);
+    ImGui::Spacing();
+    static const char* const kViews[] = {"Before", "After"};
+    ui::SegmentedControl("##calibration_view", kViews, 2, &calibration_view_);
+    const Reliability& r = calibration_view_ == 0 ? calibration_.before : calibration_.after;
+    std::vector<double> centres, accuracy, diagonal = {0.0, 1.0};
+    for (const auto& bin : r.bins) {
+        centres.push_back((bin.low + bin.high) / 2.0);
+        accuracy.push_back(bin.count ? bin.accuracy : 0.0);
+    }
+    if (ImPlot::BeginPlot("##reliability", ImVec2(-1, 260.0f), ImPlotFlags_NoMenus | ImPlotFlags_NoLegend)) {
+        ImPlot::SetupAxes(yes_no ? "the model's probability" : "the model's confidence",
+                          yes_no ? "share that is it" : "share right", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+        ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, 1.0, ImPlotCond_Always);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.05, ImPlotCond_Always);
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[0], 0.75f));
+        ImPlot::PlotBars("accuracy", centres.data(), accuracy.data(), static_cast<int>(centres.size()), 0.08);
+        ImPlot::SetNextLineStyle(t.text_dim, 1.0f);
+        ImPlot::PlotLine("perfect", diagonal.data(), diagonal.data(), 2);
+        for (const auto& bin : r.bins) {
+            if (bin.count == 0) continue;
+            ImPlot::Annotation((bin.low + bin.high) / 2.0, bin.accuracy, t.text_dim, ImVec2(0, -8), true, "%d", bin.count);
+        }
+        ImPlot::EndPlot();
+    }
+    Wrapped(t.text_faint, "Bars: the share right of the rows in each probability band (their counts above); the "
+                          "line is perfect calibration. Several classes: temperature scaling. Yes / no: Platt (a "
+                          "logistic fit) or isotonic. Fitted on the even test rows and shown on the odd ones.");
+    if (keep_decision && source_ == Source::Latest) {
+        const char* label = calibration_.method == test_report::CalibrationMethod::Temperature ? "Keep the temperature with the model"
+                            : calibration_.method == test_report::CalibrationMethod::Platt    ? "Keep Platt's sigmoid with the model"
+                                                                                               : "Keep the isotonic fit with the model";
+        // A test that already used a kept calibration measured calibrated
+        // probabilities: fitting on them again would stack two fits.
+        const bool can_keep = !m.decision_calibrated;
+        if (ui::SecondaryButton(label, can_keep,
+                                "This test already used the kept calibration: Forget it and run Test again to fit a new one.")) {
+            ModelDecision part;
+            part.positive = positive;
+            if (calibration_.method == test_report::CalibrationMethod::Temperature) {
+                part.calibration = ModelDecision::Calibration::Temperature;
+                part.temperature = calibration_.temperature;
+            } else if (calibration_.method == test_report::CalibrationMethod::Platt) {
+                part.calibration = ModelDecision::Calibration::Platt;
+                part.platt_a = calibration_.platt.a;
+                part.platt_b = calibration_.platt.b;
+            } else {
+                part.calibration = ModelDecision::Calibration::Isotonic;
+                part.isotonic_x = calibration_.isotonic.x;
+                part.isotonic_y = calibration_.isotonic.y;
+            }
+            const auto before = kept_decision ? kept_decision() : std::nullopt;
+            const bool had_threshold = before && before->has_threshold;
+            keep_message_ = keep_decision(part, false, true);
+            keep_failed_ = !keep_message_.empty();
+            if (keep_message_.empty())
+                keep_message_ = std::string("Kept: the next Test, a checkpoint and an export use it.") +
+                                (had_threshold ? " The threshold kept before was picked on the uncalibrated scores, so it "
+                                                 "is forgotten: pick it again after the next Test."
+                                               : "");
+        }
+    }
+    RenderKeptDecision(m);
 }
 
 void TestView::RenderPredictions(const TestingMetrics& m) {
@@ -1000,6 +1200,149 @@ void TestView::Export(bool json) {
     std::string error;
     note_failed_ = !(json ? WriteTestResultsJson(*m, *path, &error) : WriteTestResultsCsv(*m, *path, &error));
     note_ = note_failed_ ? "Could not export: " + error : "Saved " + *path;
+}
+
+// ---- Errors (TOFIX129 D11) ----------------------------------------------------
+
+TestView::~TestView() { ReleaseThumbnails(); }
+
+void TestView::ReleaseThumbnails() {
+    for (auto& [sample, texture] : thumbnails_) model_images::ReleaseTexture(texture);
+    thumbnails_.clear();
+}
+
+void TestView::RenderErrors(const TestingMetrics& m) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (thumbnails_version_ != shown_version_) {
+        ReleaseThumbnails();
+        thumbnails_version_ = shown_version_;
+        errors_pair_ = -1;
+        errors_message_.clear();
+    }
+    Wrapped(t.text, test_report::ErrorsHeadline(m, view_));
+    if (view_.mistakes.empty()) return;
+
+    std::map<int, const TestingMetrics::KeptInput*> kept;
+    for (const auto& input : m.kept_inputs) kept[input.sample] = &input;
+    const int first = view_.mistakes.front();
+    const bool can_explain = explain_sample && kept.count(first) && source_ == Source::Latest;
+    if (ui::SecondaryButton("Explain the first in the Model window", can_explain,
+                            source_ != Source::Latest ? "Explain shows the latest test's rows with the model in use."
+                                                      : "The test did not keep this row's input."))
+        explain_sample(first);
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Save the wrong rows as a table")) {
+        std::shared_ptr<arrow::Table> rows = PredictionsTableFromMetrics(m);
+        if (rows) {
+            arrow::Int64Builder indices;
+            for (int i : view_.mistakes) (void)indices.Append(i);
+            std::shared_ptr<arrow::Array> take;
+            (void)indices.Finish(&take);
+            auto taken = arrow::compute::Take(rows, take);
+            if (taken.ok()) {
+                const auto table = taken->table();
+                DataRegistry::Instance().RegisterArrowTable(table, "test_wrong_rows");
+                errors_message_ = "Saved " + FormatCompiledCount(table->num_rows()) +
+                                  " wrong rows as the session table 'test_wrong_rows' (Data Studio lists it).";
+            } else {
+                errors_message_ = "Could not take the wrong rows: " + taken.status().ToString();
+            }
+        } else {
+            errors_message_ = "This run kept no rows to save.";
+        }
+    }
+    if (!errors_message_.empty()) Wrapped(t.text_dim, errors_message_);
+
+    // Mistakes by pair.
+    ImGui::Spacing();
+    ImGui::TextColored(t.text_dim, "Mistakes by pair");
+    const auto pairs = test_report::MistakePairs(m);
+    const std::string all = std::to_string(view_.mistakes.size());
+    if (ui::FilterChip("##pair_all", "All", all.c_str(), errors_pair_ < 0)) errors_pair_ = -1;
+    for (size_t p = 0; p < pairs.size() && p < 12; ++p) {
+        const std::string label = test_report::ClassName(m, pairs[p].truth) + " \xE2\x86\x92 " +
+                                  test_report::ClassName(m, pairs[p].predicted);
+        const std::string count = std::to_string(pairs[p].count);
+        const float width = ui::FilterChipWidth(label.c_str(), count.c_str());
+        ImGui::SameLine();
+        if (ImGui::GetContentRegionAvail().x < width) ImGui::NewLine();
+        ImGui::PushID(static_cast<int>(p));
+        if (ui::FilterChip("##pair", label.c_str(), count.c_str(), errors_pair_ == static_cast<int>(p)))
+            errors_pair_ = errors_pair_ == static_cast<int>(p) ? -1 : static_cast<int>(p);
+        ImGui::PopID();
+    }
+
+    // The most confident mistakes (of the pair), with their inputs.
+    ImGui::Spacing();
+    const std::vector<size_t>& shape = m.kept_input_shape;
+    const bool images = shape.size() == 3;
+    const float card = images ? 150.0f : 220.0f;
+    const int columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / (card + 12.0f)));
+    int shown = 0;
+    if (ImGui::BeginTable("##worst_errors", columns, ImGuiTableFlags_SizingFixedFit)) {
+        for (int i : view_.mistakes) {
+            if (shown >= 24) break;
+            const size_t s = static_cast<size_t>(i);
+            if (errors_pair_ >= 0 && static_cast<size_t>(errors_pair_) < pairs.size() &&
+                (m.ground_truth[s] != pairs[errors_pair_].truth || m.predictions[s] != pairs[errors_pair_].predicted))
+                continue;
+            ++shown;
+            ImGui::TableNextColumn();
+            ImGui::PushID(i);
+            const auto input = kept.find(i);
+            if (images && input != kept.end()) {
+                unsigned int& texture = thumbnails_[i];
+                if (!texture)
+                    texture = model_images::Upload(model_images::InputPicture(input->second->values, shape[0], shape[1],
+                                                                              shape[2], static_cast<int>(card)));
+                if (texture) ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(texture)), ImVec2(card, card));
+            } else if (input != kept.end()) {
+                std::string values;
+                for (size_t v = 0; v < input->second->values.size() && v < 6; ++v) {
+                    char text[24];
+                    std::snprintf(text, sizeof(text), "%s%.3g", v ? ", " : "", input->second->values[v]);
+                    values += text;
+                }
+                if (input->second->values.size() > 6) values += ", ...";
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + card);
+                ImGui::TextColored(t.text_dim, "%s", values.c_str());
+                ImGui::PopTextWrapPos();
+            }
+            const std::string row = s < m.row_ids.size() ? "row " + std::to_string(m.row_ids[s]) : "sample " + std::to_string(i);
+            ImGui::TextUnformatted(row.c_str());
+            ImGui::TextColored(t.caution, "%s, read as %s",
+                               WithArticle(test_report::ClassName(m, m.ground_truth[s])).c_str(),
+                               test_report::ClassName(m, m.predictions[s]).c_str());
+            ImGui::TextColored(t.text_dim, "%.1f %% sure", (s < m.confidences.size() ? m.confidences[s] : 0.0f) * 100.0f);
+            if (explain_sample && input != kept.end() && source_ == Source::Latest && ui::LinkButton("Explain"))
+                explain_sample(i);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    Wrapped(t.text_faint, "The most confident mistakes" +
+                              std::string(view_.mistakes.size() > 24 ? " (24 shown; Predictions lists them all)" : "") +
+                              ". A table model shows a row's first values instead of an image.");
+}
+
+void TestView::RenderKeptDecision(const TestingMetrics& m) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (!m.decision_applied.empty()) Wrapped(t.text_dim, "This test used the model's kept " + m.decision_applied + ".");
+    if (kept_decision && source_ == Source::Latest) {
+        const auto kept = kept_decision();
+        if (kept && !kept->Empty()) {
+            std::vector<std::string> names;
+            for (size_t c = 0; c < m.per_class_metrics.size(); ++c) names.push_back(test_report::ClassName(m, static_cast<int>(c)));
+            Wrapped(t.text, "Kept with the model: " + DescribeModelDecision(*kept, names) + ".");
+            ImGui::SameLine();
+            if (keep_decision && ui::LinkButton("Forget")) {
+                keep_message_ = keep_decision(ModelDecision{}, false, false);
+                keep_failed_ = !keep_message_.empty();
+                if (keep_message_.empty()) keep_message_ = "Forgotten: the next Test uses the model's own scores.";
+            }
+        }
+    }
+    if (!keep_message_.empty()) Wrapped(keep_failed_ ? t.warning : t.text_dim, keep_message_);
 }
 
 }  // namespace cyxwiz

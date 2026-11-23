@@ -4,7 +4,6 @@
 #include "dense_activation_configuration_policy.h"
 #include "pipeline_runtime_capabilities.h"
 #include "cyxwiz/gpu_execution_modes.h"
-#include "cyxwiz/neural_provider.h"
 
 #include <string>
 #include <algorithm>
@@ -67,14 +66,13 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::LayerNorm: return "LayerNorm";
         case gui::NodeType::GroupNorm: return "GroupNorm";
         case gui::NodeType::InstanceNorm: return "InstanceNorm";
+        case gui::NodeType::SqueezeExcitation: return "SqueezeExcitation";
         case gui::NodeType::MultiHeadAttention: return "MultiHeadAttention";
         case gui::NodeType::CrossAttention: return "CrossAttention";
         case gui::NodeType::LinearAttention: return "LinearAttention";
         case gui::NodeType::ConvTranspose2D: return "ConvTranspose2D";
         case gui::NodeType::Upsample: return "Upsample";
         case gui::NodeType::PixelShuffle: return "PixelShuffle";
-        case gui::NodeType::PolicyNetwork: return "PolicyNetwork";
-        case gui::NodeType::ValueNetwork: return "ValueNetwork";
         case gui::NodeType::Embedding: return "Embedding";
         case gui::NodeType::TransformerEncoder: return "TransformerEncoder";
         case gui::NodeType::PositionalEncoding: return "PositionalEncoding";
@@ -91,6 +89,9 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::GELU: return "GELU";
         case gui::NodeType::Swish: return "Swish";
         case gui::NodeType::Mish: return "Mish";
+        case gui::NodeType::Hardswish: return "Hardswish";
+        case gui::NodeType::Hardsigmoid: return "Hardsigmoid";
+        case gui::NodeType::ReLU6: return "ReLU6";
         case gui::NodeType::Sigmoid: return "Sigmoid";
         case gui::NodeType::Tanh: return "Tanh";
         case gui::NodeType::Softmax: return "Softmax";
@@ -156,6 +157,7 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
         case gui::NodeType::BatchNorm:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle:
@@ -174,6 +176,9 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:
+        case gui::NodeType::Hardswish:
+        case gui::NodeType::Hardsigmoid:
+        case gui::NodeType::ReLU6:
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Softmax:
@@ -333,65 +338,6 @@ inline BackendPlacementEntry BuildTimeDistributedSequenceWrapperPlacement(
     placement.suggested_action =
         "Connect an input whose [sequence, features] shape is known.";
     return placement;
-}
-
-// tofix68 placement wiring: consult the neural provider registry with the
-// EXACT tuple the run needs. Selection rewrites the decision fields
-// (expected backend, status, reason) and names the provider; refusal is
-// recorded in the explanation so the debugger shows the provider's verdict
-// instead of silence. The declared_execution_mode field is NOT touched —
-// it records the family's declared strategy, while provider selection is a
-// per-key decision (slice-4 semantics). No placement change when no
-// provider is registered (portable builds / no CUDA device).
-//
-// Device-keyed dispatch (tofix68 rule, 2026-09-23): request.target carries
-// the run's SELECTED device; only providers serving that device family are
-// consulted, so a CUDA provider is never selected for an OpenCL/oneAPI/CPU
-// run on a machine that happens to have a CUDA device. The placement label
-// is derived from the provider, never hard-coded.
-inline void ApplyNativeProviderPlacement(
-    BackendPlacementEntry& placement,
-    const cyxwiz::NeuralOpRequest& request) {
-    auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
-    const auto providers = registry.List();
-    if (providers.empty()) {
-        return;
-    }
-    const auto serving = registry.ListServing(request.target);
-    if (serving.empty()) {
-        std::string registered;
-        for (const auto& provider : providers) {
-            if (!registered.empty()) {
-                registered += ", ";
-            }
-            registered += std::string(provider->ProviderId()) + ": " +
-                          cyxwiz::NeuralDevicePlatformName(
-                              provider->Platform());
-        }
-        placement.explanation +=
-            std::string(" Native provider(s) registered (") + registered +
-            ") do not serve the run's target device (" +
-            cyxwiz::NeuralDevicePlatformName(request.target.platform) +
-            "); portable path retained.";
-        return;
-    }
-    if (const auto provider = registry.FindSupporting(request)) {
-        placement.expected_backend =
-            std::string("native provider ") + provider->ProviderId();
-        // A provider failure runs the layer's ArrayFire path instead.
-        placement.fallback_backend = "ArrayFire";
-        placement.status = BackendPlacementStatus::Gpu;
-        placement.reason_code = BackendPlacementReason::NativeProviderSelected;
-        placement.explanation +=
-            std::string(" Native provider selected for this exact "
-                        "contract: ") +
-            provider->Version() + ".";
-        return;
-    }
-    const auto capability = serving.front()->QueryCapability(request);
-    placement.explanation +=
-        std::string(" Native provider (") + serving.front()->ProviderId() +
-        ") declined this contract: " + capability.detail + ".";
 }
 
 inline bool IsArrayFireGraphRuntimeOp(gui::NodeType type) {

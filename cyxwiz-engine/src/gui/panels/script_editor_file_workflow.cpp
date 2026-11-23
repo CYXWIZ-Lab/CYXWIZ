@@ -21,6 +21,7 @@ void ScriptEditorPanel::NewFile() {
     tab->filepath = "";
     tab->is_new = true;
     tab->is_modified = false;
+    tab->format.eol = scriptfile::NewFileLineEnding(new_file_line_endings_);
 
     ConfigureEditor(tab->editor);
 
@@ -332,13 +333,15 @@ bool ScriptEditorPanel::IsActiveTabEditable() const {
     return tab && scriptfile::CanWriteTab(tab->is_loading, tab->load_failed, tab->is_large_file);
 }
 
-void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::string& framework_name) {
-    std::string target_filename = "generated_" + framework_name + ".py";
+void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::string& file_name) {
+    const std::string& target_filename = file_name;
 
     // Check if a tab with this filename already exists
     int existing_tab_index = -1;
     for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
-        if (tabs_[i]->filename == target_filename) {
+        // Only a generated tab not saved yet: a file the user opened or saved
+        // under the same name is theirs and is not replaced.
+        if (tabs_[i]->filename == target_filename && tabs_[i]->filepath.empty()) {
             existing_tab_index = i;
             break;
         }
@@ -352,7 +355,7 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
         active_tab_index_ = existing_tab_index;
         request_focus_ = true;
         ::gui::BringToFront(GetName());
-        spdlog::info("Updated existing {} code tab", framework_name);
+        spdlog::info("Updated the generated code tab {}", file_name);
     } else {
         // Create new tab with generated code
         auto tab = std::make_unique<EditorTab>();
@@ -361,6 +364,7 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
         tab->filepath = "";  // Not saved yet
         tab->is_new = true;
         tab->is_modified = true;  // Has content, mark as modified
+        tab->format.eol = scriptfile::NewFileLineEnding(new_file_line_endings_);
 
         ConfigureEditor(tab->editor);
         tab->editor.SetText(code);
@@ -370,7 +374,7 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
         request_focus_ = true;
         ::gui::BringToFront(GetName());
 
-        spdlog::info("Loaded generated {} code into new tab", framework_name);
+        spdlog::info("Loaded generated code into a new tab {}", file_name);
     }
 }
 
@@ -389,6 +393,7 @@ void ScriptEditorPanel::SaveFile() {
     }
 
     // Save to existing path
+    TidyBeforeSave(*tab, tab->filepath);
     std::string content = GetTabContentForPersistence(*tab, tab->filepath);
     std::string error;
     if (SaveFileContent(tab->filepath, content, tab->format, &error)) {
@@ -425,6 +430,7 @@ void ScriptEditorPanel::SaveFileAs() {
     // Keep the extension the user typed (x.py stays x.py; P0 item 2).
     path = scriptfile::SaveAsPath(path, tab->filename);
 
+    TidyBeforeSave(*tab, path);
     const std::string content = GetTabContentForPersistence(*tab, path);
     std::string error;
     if (SaveFileContent(path, content, tab->format, &error)) {

@@ -5,7 +5,7 @@ identity, a category, settings with types and limits, and the shape rule.
 Write the module as in [python-modules.md](python-modules.md), decorate it,
 bundle it, and the Engine lists it in the node palette.
 
-> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.4.0 and pycyxwiz 0.2.0.
 > The Python samples on this page run, in order, as one script
 > (`scripts/docs/check_extension_docs.py` runs them). To run them yourself
 > outside the Engine, first make pycyxwiz importable
@@ -486,7 +486,7 @@ against the manifest before Python is needed, with the same messages as
 **In the Engine's windows** a Python node shows as one: Properties reads
 *Python node · com.example.acts 1.0.0 · Activation* and shows the check
 from bundling next to its own **Check gradient**; Info lists the bundle,
-its approval and code hash; the Node Browser counts *nodes from 2 plugins
+its approval and code hash; the Nodes panel counts *nodes from 2 plugins
 and 1 Python bundle*; **Apps > Python node bundles** opens a bundle's
 nodes.
 

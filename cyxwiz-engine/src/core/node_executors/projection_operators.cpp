@@ -1,4 +1,5 @@
 #include "projection_operators.h"
+#include "../tsne_learning_rate.h"
 
 #include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
@@ -112,7 +113,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> ProjectionOperatorBase::Apply(const
 
 bool TSNEOperator::Configure(const std::map<std::string, std::string>& params, std::string& error) {
     perplexity_ = 30;
-    learning_rate_ = 200.0;
+    learning_rate_ = 0.0;
     iterations_ = 1000;
     if (!ConfigureBase(params, error)) return false;
     if (!ParseNumber(params, "perplexity", perplexity_, GetName(), error)) return false;
@@ -122,8 +123,8 @@ bool TSNEOperator::Configure(const std::map<std::string, std::string>& params, s
         error = GetName() + ": perplexity must be at least 1";
         return false;
     }
-    if (!(learning_rate_ > 0.0)) {
-        error = GetName() + ": learning_rate must be above 0";
+    if (!(learning_rate_ >= 0.0)) {
+        error = GetName() + ": learning_rate must be 0 (auto) or above";
         return false;
     }
     if (iterations_ < 250) {
@@ -142,7 +143,7 @@ arrow::Result<std::vector<std::vector<double>>> TSNEOperator::Embed(const std::v
     const auto& cancelled = GetCancellationQuery();
     tSNEResult r;
     try {
-        r = DimensionalityReduction::ComputetSNE(data, n_components_, perplexity_, learning_rate_, iterations_, [&](int iteration, double kl) {
+        r = DimensionalityReduction::ComputetSNE(data, n_components_, perplexity_, TsneLearningRate(learning_rate_, data.size()), iterations_, [&](int iteration, double kl) {
             char text[64];
             std::snprintf(text, sizeof(text), "iteration %d, KL %.3f", iteration, kl);
             Report(text, 0.1 + 0.85 * static_cast<double>(iteration) / static_cast<double>(iterations_));

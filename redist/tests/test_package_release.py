@@ -85,6 +85,16 @@ class PackageReleaseTests(unittest.TestCase):
         (resources / "resource.txt").write_text("resource", encoding="ascii")
         (self.root / "LICENSE").write_text("license", encoding="ascii")
         (self.root / "KNOWN_ISSUES.md").write_text("# Known issues", encoding="ascii")
+        examples = self.root / "examples"
+        (examples / "cyxgraph").mkdir(parents=True)
+        (examples / "datasets").mkdir()
+        (examples / "cyxgraph" / "mnist_mlp.cyxgraph").write_text("{}", encoding="ascii")
+        (examples / "datasets" / "digits_8x8.csv").write_text("a,b\n1,2\n", encoding="ascii")
+        (examples / "python" / "__pycache__").mkdir(parents=True)
+        (examples / "python" / "__pycache__" / "demo.cpython-312.pyc").write_bytes(b"cache")
+        (examples / "python_tests").mkdir()
+        (examples / "python_tests" / "test_parity.py").write_text("# a repository check", encoding="ascii")
+        (examples / "cyxgraph" / ".gitignore").write_text("generated/\n", encoding="ascii")
         notices = self.root / "build" / "vcpkg_installed" / "x64-windows" / "share" / "fmt"
         notices.mkdir(parents=True)
         (notices / "copyright").write_text("fmt license", encoding="ascii")
@@ -327,6 +337,14 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertFalse((stage / "python_tools" / "jedi" / "__pycache__").exists())
         self.assertFalse((stage / "python_tools" / ".unpacked").exists())
         self.assertIn("python-tools", {item.get("source") for item in manifest["components"]})
+        # The examples ship beside the Engine (the start page's starter
+        # graphs and their data), without caches.
+        self.assertTrue((stage / "examples" / "cyxgraph" / "mnist_mlp.cyxgraph").is_file())
+        self.assertTrue((stage / "examples" / "datasets" / "digits_8x8.csv").is_file())
+        self.assertFalse((stage / "examples" / "python" / "__pycache__").exists())
+        self.assertFalse((stage / "examples" / "python_tests").exists())
+        self.assertFalse((stage / "examples" / "cyxgraph" / ".gitignore").exists())
+        self.assertIn("cyxwiz-examples", {item.get("source") for item in manifest["components"]})
         # The known-issues list ships beside the LICENSE.
         self.assertTrue((stage / "KNOWN_ISSUES.md").is_file())
         sources = {item["path"]: item.get("source") for item in manifest["components"]}
@@ -336,6 +354,23 @@ class PackageReleaseTests(unittest.TestCase):
         (self.root / "KNOWN_ISSUES.md").unlink()
         with self.assertRaisesRegex(package_release.PackageError, "KNOWN_ISSUES"):
             package_release.build_package(self.args("minimal"), self.script)
+
+    def test_missing_starter_graphs_fail_closed(self) -> None:
+        shutil.rmtree(self.root / "examples" / "cyxgraph")
+        with self.assertRaisesRegex(package_release.PackageError, "starter graphs"):
+            package_release.build_package(self.args("minimal"), self.script)
+
+    def test_examples_ship_only_tracked_files_of_a_checkout(self) -> None:
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(["git", "-C", str(self.root), "add", "examples/cyxgraph/mnist_mlp.cyxgraph"], check=True)
+        (self.root / "examples" / "cyxgraph" / "model.cyxmodel").write_text("saved here", encoding="ascii")
+        files = package_release.example_files(self.root)
+        self.assertEqual([Path("examples/cyxgraph/mnist_mlp.cyxgraph")], files)
+
+    def test_examples_of_an_unreadable_checkout_fail_closed(self) -> None:
+        (self.root / ".git").mkdir()  # not a repository git can read
+        with self.assertRaisesRegex(package_release.PackageError, "tracked examples"):
+            package_release.example_files(self.root)
 
     def test_missing_python_tools_fail_closed(self) -> None:
         shutil.rmtree(self.root / "build" / "bin" / "Release" / "python_tools")
@@ -663,6 +698,89 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertEqual("backend_pack", manifest["signed"]["pack_kind"])
         self.assertEqual("opencl", manifest["signed"]["backend"])
         package_release.validate_pack_manifest(manifest)
+
+    def create_plugin(self) -> Path:
+        plugin = self.root / "plugins" / "simulation" / "mujoco"
+        (plugin / "bin").mkdir(parents=True)
+        (plugin / "assets").mkdir()
+        (plugin / "plugin.json").write_text(json.dumps({
+            "id": "com.cyxwiz.simulation.mujoco",
+            "version": "1.0.0",
+            "platforms": {"windows": {"library": "bin/mujoco_plugin.dll"}},
+        }), encoding="utf-8")
+        for name in ("mujoco_plugin.dll", "mujoco.dll", "fmt.dll"):
+            (plugin / "bin" / name).write_bytes(name.encode("ascii"))
+        (plugin / "bin" / "MUJOCO_LICENSE.txt").write_text("apache", encoding="ascii")
+        (plugin / "assets" / "cartpole.xml").write_text("<mujoco/>", encoding="ascii")
+        return plugin
+
+    @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
+    def test_plugin_pack_ships_the_plugin_without_base_libraries(self) -> None:
+        plugin = self.create_plugin()
+        args = self.artifact_args(
+            "plugin", "--plugin-dir", str(plugin),
+            "--base-pack-id", "cyxwiz-base-1.2.3-1-windows-x86_64",
+            "--third-party-license", "MuJoCo=bin/MUJOCO_LICENSE.txt",
+            "--generated-utc", "2026-11-06T12:00:00Z",
+            "--signing-key-id", "release-2026", "--signature", "A" * 86,
+        )
+
+        stage, archive = package_release.build_package(args, self.script)
+
+        self.assertTrue((stage / "bin" / "mujoco_plugin.dll").is_file())
+        self.assertTrue((stage / "bin" / "mujoco.dll").is_file())
+        # fmt.dll is in the base's build output: the plugin uses that copy.
+        self.assertFalse((stage / "bin" / "fmt.dll").exists())
+        self.assertFalse((stage / "bin" / "MUJOCO_LICENSE.txt").exists())
+        self.assertTrue((stage / "THIRD_PARTY_LICENSES" / "MuJoCo" / "MUJOCO_LICENSE.txt").is_file())
+        self.assertTrue((stage / "assets" / "cartpole.xml").is_file())
+        manifest = json.loads(archive.with_suffix(".zip.manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(2, manifest["schema_version"])
+        signed = manifest["signed"]
+        self.assertEqual("plugin_pack", signed["pack_kind"])
+        self.assertEqual("com.cyxwiz.simulation.mujoco", signed["plugin_id"])
+        self.assertEqual("cyxwiz-base-1.2.3-1-windows-x86_64", signed["companion_base_id"])
+        self.assertEqual("diagnostic", signed["support_status"])
+        sources = {item["path"]: item["source"] for item in signed["components"]}
+        self.assertEqual("plugin-runtime", sources["bin/mujoco.dll"])
+        self.assertEqual("cyxwiz-plugin", sources["bin/mujoco_plugin.dll"])
+        self.assertIn({"component": "mujoco", "path": "THIRD_PARTY_LICENSES/MuJoCo/MUJOCO_LICENSE.txt"},
+                      signed["licenses"])
+        package_release.validate_pack_manifest(manifest)
+
+    @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
+    def test_plugin_pack_requires_its_plugin_folder_and_notice(self) -> None:
+        with self.assertRaisesRegex(package_release.PackageError, "--plugin-dir"):
+            package_release.build_package(self.args("plugin"), self.script)
+        plugin = self.create_plugin()
+        with self.assertRaisesRegex(package_release.PackageError, "NAME=PATH"):
+            package_release.build_package(
+                self.args("plugin", "--plugin-dir", str(plugin), "--third-party-license", "MuJoCo"),
+                self.script)
+        with self.assertRaisesRegex(package_release.PackageError, "MuJoCo notice"):
+            package_release.build_package(
+                self.args("plugin", "--plugin-dir", str(plugin),
+                          "--third-party-license", "MuJoCo=bin/missing.txt"),
+                self.script)
+        # A notice NAME is a pack folder; its PATH stays inside the plugin
+        with self.assertRaisesRegex(package_release.PackageError, "NAME must be"):
+            package_release.build_package(
+                self.args("plugin", "--plugin-dir", str(plugin),
+                          "--third-party-license", "../escape=bin/MUJOCO_LICENSE.txt"),
+                self.script)
+        (self.root / "outside.txt").write_text("x", encoding="ascii")
+        with self.assertRaisesRegex(package_release.PackageError, "outside --plugin-dir"):
+            package_release.build_package(
+                self.args("plugin", "--plugin-dir", str(plugin),
+                          "--third-party-license", "Outside=../../../outside.txt"),
+                self.script)
+        # Third-party runtime libraries (mujoco.dll) need a notice
+        with self.assertRaisesRegex(package_release.PackageError, "no notice"):
+            package_release.build_package(
+                self.artifact_args("plugin", "--plugin-dir", str(plugin),
+                                   "--base-pack-id", "cyxwiz-base-1.2.3-1-windows-x86_64",
+                                   "--stage-only"),
+                self.script)
 
     def cuda_pack_args(self):
         notices = self.root / "nvidia-notices"

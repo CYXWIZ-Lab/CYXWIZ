@@ -263,11 +263,50 @@ void MissingView::RenderColumn(const ExploreContext& context) {
         message_error_ = message_.rfind("Added", 0) != 0;
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip) && blocker.empty())
-        ImGui::SetTooltip("Adds a Keep rows step after %s: %s is not empty%s.", context.shown.c_str(), column_.c_str(),
-                          texts.empty() ? "" : " and is not one of the texts marked as missing");
+        ImGui::SetTooltip("%s", ev::StepTip("Keep rows", "the rows where " + column_ + " is not empty" +
+                                                              (texts.empty() ? "" : " and is not one of the texts marked as missing")).c_str());
     ImGui::SameLine();
     if (ui::LinkButton("Open in Query", static_cast<bool>(on_open_query)))
         on_open_query(ev::MissingRowsSql(context.shown, column_, texts));
+    // Fill in Prepare (TOFIX129 D7a G2): a Fill Missing Values step on this
+    // column. Numbers take a statistic or a constant; other columns the mode
+    // or a constant. The step learns the statistic from the Train rows.
+    {
+        const bool numeric = c->numeric;
+        static const char* kNumeric[] = {"mean", "median", "mode", "constant"};
+        static const char* kOther[] = {"mode", "constant"};
+        const char* const* strategies = numeric ? kNumeric : kOther;
+        const int count = numeric ? 4 : 2;
+        if (fill_strategy_ >= count) fill_strategy_ = 0;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text_dim, "Fill with");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::CalcTextSize("constant").x + ImGui::GetFrameHeight() + 20.0f);
+        if (ImGui::BeginCombo("##fill_strategy", strategies[fill_strategy_])) {
+            for (int i = 0; i < count; ++i)
+                if (ImGui::Selectable(strategies[i], i == fill_strategy_)) fill_strategy_ = i;
+            ImGui::EndCombo();
+        }
+        const bool constant = std::string(strategies[fill_strategy_]) == "constant";
+        if (constant) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(120.0f);
+            ImGui::InputText("##fill_value", fill_value_, sizeof(fill_value_));
+        }
+        const std::string fill_blocker = !on_fill ? "Prepare is not available" : blocker;
+        const std::string fill_reason = fill_blocker.empty() && constant && fill_value_[0] == '\0' ? "Type the value to fill with" : fill_blocker;
+        ExploreNextButton("Fill in Prepare");
+        if (ui::SecondaryButton("Fill in Prepare", fill_reason.empty(), fill_reason.c_str())) {
+            message_ = on_fill(column_, strategies[fill_strategy_], constant ? fill_value_ : "");
+            message_error_ = message_.rfind("Added", 0) != 0;
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip) && fill_reason.empty()) {
+            const std::string with = constant ? std::string(" with ") + fill_value_
+                                              : " with the " + std::string(strategies[fill_strategy_]) + " of its Train rows";
+            ImGui::SetTooltip("%s\nIt fills the empty cells of %s%s; texts marked as missing are values to it (drop those rows, or make them empty first).",
+                              ev::StepTip("Fill Missing Values", column_ + " with its empty cells filled").c_str(), column_.c_str(), with.c_str());
+        }
+    }
     if (!message_.empty()) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(message_error_ ? t.error : t.success, "%s", message_.c_str());

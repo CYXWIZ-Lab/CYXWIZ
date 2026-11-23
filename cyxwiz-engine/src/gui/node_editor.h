@@ -1,10 +1,14 @@
 #pragma once
 
+#include "starter_graphs.h"
+
 #include <vector>
 #include <string>
 #include <map>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
+#include "../core/rl_device_presentation.h"
 #include <memory>
 #include <optional>
 #include <functional>
@@ -20,7 +24,10 @@ struct ImNodesEditorContext;
 
 // Forward declarations
 // Forward declare ScriptingEngine in global scripting namespace
+#include "../core/code_export.h"
 #include "../core/graph_model.h"
+#include "../core/graph_simulation_session.h"
+#include "../core/simulation_commands.h"
 #include "../core/studio_toolbar_presentation.h"
 #include "../core/operator_figures.h"
 #include "../core/pipeline_node_run_facts.h"
@@ -29,9 +36,8 @@ namespace scripting { class ScriptingEngine; }
 
 namespace cyxwiz {
 class ScriptEditorPanel;
-class GraphExecutor;
-class RLTrainingExecutor;
 class TrainingDashboardPanel;
+class PolicyPlaybackPanel;
 class PipelineExecutor;
 class PipelineExecutionTracker;
 struct TaskInfo;
@@ -40,7 +46,13 @@ namespace guided { struct CheckNode; }
 
 namespace cyxwiz {
 class LiveGraphCompile;
+struct RLTrainingConfiguration;
 }  // namespace cyxwiz
+namespace cyxwiz::rl {
+class RLTrainingRun;
+class TrainingWatch;
+struct TrainedPolicy;
+}
 
 namespace cyxwiz::dashboard {
 class DashboardWindow;
@@ -65,6 +77,25 @@ enum class IconPack {
     Phosphor        // Phosphor Icons - flexible icon family with multiple weights
 };
 
+// The canvas icon of a node type in an icon pack (the Studio's Icon pack choice).
+// The pack in use is an appearance setting (appearance_settings NodeIconPack).
+const char* NodeIconFor(IconPack pack, NodeType type);
+// The codepoints NodeIconFor uses from a pack, as ImGui glyph ranges (pairs, 0
+// at the end). The font atlas keeps only these from the extra packs instead
+// of their whole ranges (thousands of icons at every size).
+std::vector<ImWchar> NodeIconGlyphRanges(IconPack pack);
+// The font a pack's node icons are drawn with. Each extra pack is a font of its
+// own: merged into the interface font, its codepoints collided with Font
+// Awesome's (the first glyph at a codepoint wins). Font Awesome and a pack whose
+// font did not load give nullptr: draw with the current font.
+void RegisterNodeIconFont(IconPack pack, ImFont* font);
+ImFont* NodeIconFont(IconPack pack);
+// Forget every pack font (the font atlas is about to be cleared).
+void ClearNodeIconFonts();
+// The font file of an extra pack in resources/fonts ("" for Font Awesome, which
+// is merged into the interface fonts).
+const char* NodeIconFontFile(IconPack pack);
+
 struct DataBoundaryMigrationResult {
     bool success = false;
     int nodes_migrated = 0;
@@ -74,30 +105,6 @@ struct DataBoundaryMigrationResult {
 };
 
 // Graph snapshot for undo/redo
-struct GraphSnapshot {
-    std::vector<SubgraphData> subgraphs;
-    std::map<int, ImVec2> positions;
-    std::vector<MLNode> nodes;
-    std::vector<NodeLink> links;
-    int next_node_id;
-    int next_pin_id;
-    int next_link_id;
-};
-
-// Clipboard data for copy/paste
-struct ClipboardData {
-    std::vector<MLNode> nodes;
-    std::vector<NodeLink> links;  // Internal links only
-    bool valid = false;
-};
-
-// Supported code generation frameworks
-enum class CodeFramework {
-    PyTorch,
-    TensorFlow,
-    Keras,
-    PyCyxWiz
-};
 
 // Execution modes for the unified canvas (Unified Canvas Phase 2)
 enum class ExecutionMode {
@@ -205,6 +212,18 @@ struct CanvasAnnotation {
         , is_minimized(false) {}
 };
 
+struct GraphSnapshot {
+    std::vector<SubgraphData> subgraphs;
+    std::map<int, ImVec2> positions;
+    std::vector<MLNode> nodes;
+    std::vector<NodeLink> links;
+    int next_node_id;
+    int next_pin_id;
+    int next_link_id;
+    std::vector<CanvasAnnotation> annotations;  // notes undo with the graph
+    int next_annotation_id = 1;
+};
+
 // Canvas Frame - visual organization box (drag from Node Browser)
 struct CanvasFrame {
     int id;
@@ -221,6 +240,17 @@ struct CanvasFrame {
         , position(0, 0)
         , size(300, 200)
         , color(0.3f, 0.5f, 0.7f, 0.8f) {}  // Default blue
+};
+
+// Clipboard data for copy/paste: the nodes, the links between them, where
+// they sat (pasted with the same layout) and, for a frame's Copy / Cut, the
+// frame around them.
+struct ClipboardData {
+    std::vector<MLNode> nodes;
+    std::vector<NodeLink> links;  // Internal links only
+    std::map<int, ImVec2> positions;  // grid positions by node id
+    std::optional<CanvasFrame> frame;
+    bool valid = false;
 };
 
 // Validation warning severity levels
@@ -260,6 +290,10 @@ enum class NodeExecutionState {
 
 class NodeEditor {
 public:
+    // The window's id. Its title ("CyxWiz Studio · mnist_mlp •") follows the
+    // graph; everything that finds, docks or focuses the window uses this.
+    static constexpr const char* kWindowId = "###CyxWiz Studio";
+
     NodeEditor();
     ~NodeEditor();
 
@@ -287,6 +321,8 @@ public:
         require_debug_before_train_ = require_debug;
     }
     void SetOpenDebuggerCallback(std::function<void()> callback) { open_debugger_callback_ = std::move(callback); }
+    // Shows the Nodes panel (the empty canvas's "Open the Nodes panel").
+    void SetOpenNodesPanelCallback(std::function<void()> callback) { open_nodes_panel_callback_ = std::move(callback); }
 
     // Visibility control for sidebar integration
     bool* GetVisiblePtr() { return &show_window_; }
@@ -295,10 +331,8 @@ public:
     void SetShowMinimap(bool show) { show_minimap_ = show; }
     bool GetShowMinimap() const { return show_minimap_; }
     bool* GetShowMinimapPtr() { return &show_minimap_; }
-
-    // Icon pack selection (for node icons)
-    void SetIconPack(IconPack pack) { icon_pack_ = pack; }
-    IconPack GetIconPack() const { return icon_pack_; }
+    // Policy Playback's window, for View > Panels (it says how to get a policy when none plays)
+    bool* GetPolicyPlaybackVisiblePtr();
 
     // Access to graph data for compilation
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
@@ -328,6 +362,8 @@ public:
     void SetWordVectorFeed(WordVectorFeed feed) { word_vector_feed_ = std::move(feed); }
     const WordVectorFeed& GetWordVectorFeed() const { return word_vector_feed_; }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
+    // The canvas groups (the Studio Debugger names layer sections by them).
+    const std::vector<NodeGroup>& GetGroups() const { return groups_; }
     // Grid-space node positions from the last frame the canvas drew (empty
     // until it has drawn once).
     const std::map<int, ImVec2>& GetCachedNodePositions() const { return cached_node_positions_; }
@@ -343,15 +379,30 @@ public:
     // File > Save: writes the graph to its file, asking for one the first time.
     // An empty graph is nothing to save and returns true.
     bool SaveCurrentGraph();
+    // The canvas holds changes not written to its file (an empty canvas never does)
+    bool HasUnsavedGraph() const { return unsaved_ && !nodes_.empty(); }
+    // "mnist_mlp.cyxgraph", or "Untitled graph" before its first save
+    std::string GraphDisplayName() const;
     std::string GetNodeTypeDisplayName(NodeType type) const { return GetNodeTypeName(type); }
 
-    // Thread-safe scalar simulation bridge used by Properties.
-    bool IsGraphSimulationRunning() const { return is_simulating_.load(); }
-    bool TryGetSimulationScalar(int pin_id, float& value) const;
-    float GetSimulationTime() const;
-    bool SetSimulationNodeParameter(int node_id,
-                                    const std::string& key,
-                                    const std::string& value);
+    // The graph simulation run: Properties reads Scope history and sends
+    // live edits through it.
+    cyxwiz::GraphSimulationSession& GetSimulationSession() { return simulation_session_; }
+    bool IsGraphSimulationRunning() const { return simulation_session_.IsActive(); }
+    // The graph has nodes a graph run steps (built-in signal nodes, or plugin
+    // nodes their plugin runs in a simulation).
+    bool HasSimulationNodes() const;
+    // The graph's Signal Scopes, in canvas order.
+    std::vector<const MLNode*> GetSignalScopes() const;
+    // The open graph's name: its file name without the extension, or "Untitled".
+    std::string GetGraphStem() const;
+    // The run's commands for the toolbar, the Simulation menu and the
+    // Simulation Monitor, and the one place they are carried out.
+    cyxwiz::simulation::Commands GetSimulationCommands() const;
+    void RunSimulationCommand(cyxwiz::simulation::Command command);
+    // Called when a graph run has started (MainWindow shows the Simulation
+    // Monitor when Preferences says so).
+    void SetSimulationStartedCallback(std::function<void()> callback) { simulation_started_callback_ = std::move(callback); }
 
     // Training callback - set by MainWindow to trigger training from node graph
     using TrainCallback = std::function<void(const std::vector<MLNode>&, const std::vector<NodeLink>&)>;
@@ -386,8 +437,9 @@ public:
     using ExplainNodeCallback = std::function<void(int)>;
     void SetExplainNodeCallback(ExplainNodeCallback callback) { explain_node_callback_ = std::move(callback); }
 
-    // A node newly selected on the canvas (the Info panel shows it).
-    using NodeSelectedCallback = std::function<void(const MLNode&)>;
+    // A node newly selected on the canvas (the Info panel shows it), or
+    // nullptr when the node last sent is gone (deleted, undone, another graph).
+    using NodeSelectedCallback = std::function<void(const MLNode*)>;
     void SetNodeSelectedCallback(NodeSelectedCallback callback) { node_selected_callback_ = std::move(callback); }
 
     // The table node `node_id` holds from the canvas runs when it and every step
@@ -418,6 +470,16 @@ public:
 
     // Training state control
     void SetTrainingActive(bool active) { is_training_ = active; }
+
+    // Freezing layers (fine-tuning; node_editor_freeze.cpp). The commands of
+    // the Freeze menu: "selected", "unselected", "loaded" (every layer the
+    // Data Loader's weights file fills), "but_head", "but_last" (asks how
+    // many), "unfreeze_all".
+    void RunFreezeCommand(const std::string& command);
+    // The user's saved defaults (Preferences) for a node just added from the
+    // palette or a pattern; not for a node loaded, pasted or duplicated.
+    void ApplyUserNodeDefaults(MLNode& node) const;
+    bool HasLayersWithWeights() const;
     bool IsTrainingActive() const { return is_training_; }
 
     // Unified Canvas Phase 2: Execution mode control
@@ -485,10 +547,17 @@ public:
 
     // Dynamic pins: rebuild a node's pins from plugin-provided data.
     // Called when a trigger parameter changes on a supports_dynamic_pins node.
-    void ResolveDynamicPins(int node_id);
+    // record_undo false: an automatic check (a graph just opened, a model
+    // looked for again), not an edit the user can undo
+    void ResolveDynamicPins(int node_id, bool record_undo = true);
 
     // Pattern insertion - add multiple nodes and links from a pattern template
+    // (fresh ids, so a pattern never shares an id with the canvas).
     void InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    // Replace the graph with an edited copy of it (Neural Architecture
+    // Search): unchanged nodes keep their id, place and group; new or retyped
+    // nodes are built for their type and placed between their neighbours.
+    void ReplaceWithEditedGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
 
     // ID getters for pattern library to generate unique IDs
     int GetNextNodeId() const { return next_node_id_; }
@@ -506,10 +575,15 @@ public:
     // name (a starter or template opened from the Engine's own files must not
     // be overwritten).
     void DetachFromFile();
+    // An example opened to work on: DetachFromFile, and each Data Input's
+    // relative data path (examples/datasets/..., found from the example's
+    // folder) points at the file it found, so the copy still finds its data
+    // after Save As anywhere (project-relative inside the open project).
+    void DetachFromExample();
     // The generated code for a framework, synchronously and without the
     // script editor (headless export: cyxwiz-engine --export-code; TOFIX112
     // export harness). Empty with a log line when the graph cannot be sorted.
-    std::string GenerateCodeText(CodeFramework framework);
+    std::string GenerateCodeText(cyxwiz::CodeFramework framework);
 
     // Load pattern template format as graph (converts string IDs to int, resolves parameters)
     bool LoadPatternAsGraph(const nlohmann::json& j);
@@ -581,6 +655,10 @@ public:
     // `name` is the extension type id.
     void AddNodeFromMenu(NodeType type, const std::string& name);
     void AddDataInputFromAsset(const std::string& path);
+    // Cloud browser "Use for Training" (TOFIX164): a Data Input on a file in
+    // CyxCloud, with its dialog open on the Source tab.
+    void AddDataInputFromCloud(const std::string& dataset_id, const std::string& dataset_name,
+                               const std::string& file_id, const std::string& file_name, uint64_t size_bytes);
     // Data > Import Dataset: a new Data Input node with its dialog open (data
     // enters the Engine only through Data Input nodes).
     void AddDataInputAndConfigure();
@@ -649,6 +727,9 @@ public:
     void SetNodePinState(int node_id, NodePinState state);
     void SetAllNodesPinState(NodePinState state);
     void ClearValidationState();
+    // Counts ClearValidationState calls: the live compile colours the pins
+    // again when they were cleared and its latest compile is of this graph.
+    uint64_t ValidationClears() const { return validation_clears_; }
     NodePinState GetNodePinState(int node_id) const;
     bool HasValidationState() const { return !node_pin_state_.empty(); }
 
@@ -716,6 +797,10 @@ public:
     // The node the last RequestStepAfter / RequestBranchAfter added (-1: none
     // yet); Data Studio's Prepare picks it once it is on the canvas.
     int LastAddedStep() const { return last_added_step_; }
+    // Step inserts, replacements or moves still waiting for the next canvas frame.
+    bool HasPendingStepRequests() const {
+        return !pending_steps_after_.empty() || !pending_replacements_.empty() || !pending_step_moves_.empty();
+    }
     int ReplacedBy(int old_id) const {
         const auto it = replaced_by_.find(old_id);
         return it == replaced_by_.end() ? -1 : it->second;
@@ -744,6 +829,16 @@ public:
                             std::string name = {}) {
         PendingStepAfter request{step_id, type, false, std::move(name), {}, std::move(parameters)};
         request.branch = true;
+        pending_steps_after_.push_back(std::move(request));
+    }
+    // As RequestStepAfter (`branch` false) or RequestBranchAfter, and the
+    // result of `second_id` into the new node's second input (Linear Solve's
+    // b, Linear Projection's Matrix; Tools > Linear Algebra, TOFIX129 D9).
+    void RequestNodeAfter(int step_id, NodeType type, std::map<std::string, std::string> parameters, std::string name, bool branch,
+                          int second_id) {
+        PendingStepAfter request{step_id, type, false, std::move(name), {}, std::move(parameters)};
+        request.branch = branch;
+        request.second_source = second_id;
         pending_steps_after_.push_back(std::move(request));
     }
     // A guided step's checks as Check nodes right after it, in order (TOFIX148
@@ -793,6 +888,11 @@ private:
     size_t saved_fingerprint_ = 0;
     int fingerprint_baseline_frames_ = 2;  // take the baseline once a load settles
     double fingerprint_checked_at_ = -1.0;
+    // The unsaved check runs only when something may have changed the graph.
+    static bool UserInputEnded();
+    bool unsaved_check_due_ = true;
+    uint64_t unsaved_seen_revision_ = 0;
+    uint64_t unsaved_seen_generation_ = 0;
     bool unsaved_ = false;
     uint64_t graph_generation_ = 0;
     bool clear_confirm_requested_ = false;
@@ -803,13 +903,56 @@ private:
     // The strip along the canvas bottom: the counts, the selection and what
     // the canvas is doing (graph locked, the mode); TOFIX178 UI-1.
     void RenderCanvasFooter();
+    void FreezeSelectedNodes(bool freeze);
+    void FreezeAllButLastLayers(size_t keep);
+    void FreezeLayersLoadedFromFile();
+    void UnfreezeAllLayers();
+    void ApplyFreeze(const std::function<size_t(std::vector<MLNode>&)>& action, const std::string& what,
+                     const std::string& nothing);
+    void RenderFreezeMenuItems();
+    void RenderFreezePopups();
+    std::string FrozenTotalsText() const;
+    bool freeze_last_popup_ = false;
+    int freeze_keep_layers_ = 1;
+    std::string freeze_message_;
     static constexpr float kCanvasFooterHeight = 26.0f;
-    int toolbar_fold_level_ = -1;  // the bar's last form, logged when it changes
+    int toolbar_fold_level_ = -1;  // the bar's last fold, logged when it changes
+    void CarryDockFromOldName();
+    bool dock_carried_ = false;
+    void DrawStudioDialogs();
+    // An empty canvas says how to start (TOFIX129 A3-3).
+    void RenderEmptyCanvas();
+    std::function<void()> open_nodes_panel_callback_;
+    std::vector<StarterGraph> starter_graphs_;  // found once, on the first empty canvas
+    // An example picked on the empty canvas, opened at the start of the next
+    // frame: opening it while the canvas draws put nodes ImNodes had not seen
+    // in front of the minimap, which crashed the Engine.
+    std::string pending_example_path_;
+    bool starter_graphs_found_ = false;
+    void InsertFlatten();
+    // Save and Save As from the Studio on an empty canvas say why nothing was written.
+    bool save_refusal_pending_ = false;
+    // The bar's menus (TOFIX129 A3): drawn from the bar, or as sections of
+    // More when they fold into it.
+    void DrawEditItems(int selected);
+    void DrawViewItems();
+    void DrawCodeItems();
+    void DrawStepItems(bool compile, bool debug);
+    void DrawFrameworkItems();
+    // Zoom by one step around the canvas centre, so the view stays where it is.
+    void ZoomAroundCentre(int direction);
+    void SetModeFromBar(int mode);  // the mode chosen on the bar or in More
+    // The line under the bar after Generate or Save as .py (A3-4).
+    std::string code_result_;
+    bool code_result_ok_ = false;
     void HandleInteractions();
     void ShowContextMenu();
     void ConfigureNode(int node_id);
     void ShowSingleNodeContextMenu();  // Node-specific context menu
     void ShowNodeDescriptionEditPopup();  // KNIME-style node description editor
+    // Names a node or a canvas group (the node menu's Rename..., a group
+    // header's double-click or Rename...).
+    void ShowRenamePopup();
 
     // Helper functions
     unsigned int GetNodeColor(NodeType type);
@@ -853,12 +996,20 @@ private:
                        const std::string& source_description);
     void ShowSaveDialog();
     void ShowLoadDialog();
-    void ExportCodeToFile();
-    void ShowExportDialog();
+    // The Studio's Save / Save As (bar, graph menu, Ctrl+S): on an empty canvas
+    // they say why nothing was written (File > Save saves the project quietly).
+    void SaveFromStudio();
+    void SaveAsFromStudio();
+    // Writes a copy of the graph file where the user picks; the open file stays.
+    void ExportGraphCopy();
 
-    // Code generation
-    void GeneratePythonCode();
-    void GenerateCodeForFramework(CodeFramework framework);
+    // Code generation (the bar's Code menu): into a Script Editor tab, or a
+    // .py file the user picks; either way the line under the bar says what
+    // was written where.
+    void GenerateCodeIntoEditor();
+    void SaveCodeAsPython();
+    // Why the graph cannot be turned into code now; empty when it can.
+    std::string CodeProblem();
     bool ValidateGraph(std::string& error_message);
 
     // Unified Canvas Phase 4.2: Helper for node type names
@@ -877,6 +1028,14 @@ private:
 
     // Undo/Redo system
     void SaveUndoState();
+    GraphSnapshot CaptureSnapshot() const;
+    void PushUndoSnapshot(GraphSnapshot snapshot);
+    // A loaded graph starts its own history: undo never brings back the graph
+    // that was on the canvas before, under the new graph's file name.
+    void ForgetUndoHistory() {
+        undo_stack_.clear();
+        redo_stack_.clear();
+    }
     void Undo();
     void Redo();
     bool CanUndo() const { return !undo_stack_.empty(); }
@@ -889,10 +1048,20 @@ private:
     void CopySelection();
     void CutSelection();
     void PasteClipboard();
+    // These nodes (and the links between them) to the clipboard; false when
+    // they cannot be copied (a subgraph).
+    bool CopyNodes(const std::vector<int>& node_ids);
+    // A frame with the nodes inside it; Cut also removes them.
+    void CopyFrame(int frame_id);
+    void CutFrame(int frame_id);
+    std::vector<int> NodesInsideFrame(const CanvasFrame& frame) const;
     void DuplicateSelection();
 
-    // Helper for finding empty position
-    ImVec2 FindEmptyPosition();
+    // The free spot nearest the middle of the view for something of `size`
+    // (grid units); the default is a node's box with its labels and pins.
+    static constexpr ImVec2 kNodeFootprint{140.0f, 110.0f};
+    static constexpr ImVec2 kNoteSize{200.0f, 100.0f};
+    ImVec2 FindEmptyPosition(ImVec2 size = kNodeFootprint);
 
     // Keyboard shortcuts
     void HandleKeyboardShortcuts();
@@ -901,13 +1070,20 @@ private:
     // Pans (and for FrameNodes zooms, at most to 100%) so grid-space points
     // sit in the middle of the canvas at the current zoom.
     void CenterViewOn(ImVec2 grid_point);
+    // Centres the view on a box (grid space) that is not fully on screen: a node
+    // or note placed in a free spot off the visible area stays in sight.
+    void RevealIfOffScreen(ImVec2 grid_min, ImVec2 size);
     void FrameNodes(const std::vector<int>& node_ids);
 
     // Search functionality
     void ShowSearchBar();
     void UpdateSearchResults();
     void NavigateToMatch(int direction);  // +1 = next, -1 = previous
-    void HighlightMatchingNodes();
+    void OpenFindBar();
+    void CloseFindBar();
+    bool search_focus_requested_ = false;  // the find field takes the keyboard next frame
+    // The grid point under a screen point (from the canvas origin, its panning and the zoom).
+    ImVec2 GridAt(ImVec2 screen) const;
 
     // Node add search (top-right search box for quick node creation)
     void ShowNodeAddSearch();
@@ -931,11 +1107,17 @@ private:
     // Frame management
     void AddFrameAt(const ImVec2& canvas_position);
     void DeleteFrame(int frame_id);
+    // The mouse is over a node (ImNodes' hover at the end of the previous
+    // frame): frames and group headers drawn under the nodes leave its
+    // clicks to the node.
+    bool MouseOverNode() const { return node_hovered_last_frame_; }
     const std::vector<CanvasFrame>& GetFrames() const { return frames_; }
 
     // Annotation rendering and interaction
     void RenderAnnotations();
     void RenderAnnotationEditPopup();
+    void RenderNoteMenu();          // right-click on a note: Edit, Minimise, Delete
+    void DeleteNote(int note_id);   // undoable
     void HandleAnnotationInteraction();
     void ShowAnnotationContextMenu(int annotation_id);
     void ShowAnnotationEditPopup();
@@ -958,38 +1140,6 @@ private:
     bool SetSubgraphPreparationRecipe(int node_id, bool recipe);
     bool IsSubgraphMember(int node_id) const;
 
-    // Framework-specific generators
-    std::string GeneratePyTorchCode(const std::vector<int>& sorted_ids);
-    // PyTorch export of the optimizer node's training recipe (tofix112).
-    const MLNode* FindExportOptimizerNode() const;
-    const MLNode* FindExportSchedulerNode() const;
-    std::string PyTorchOptimizerSetup() const;
-    std::string PyTorchPenaltyLines() const;
-    std::string PyTorchStepLines() const;
-    std::string GenerateTensorFlowCode(const std::vector<int>& sorted_ids);
-    std::string GenerateKerasCode(const std::vector<int>& sorted_ids);
-    std::string GeneratePyCyxWizCode(const std::vector<int>& sorted_ids);
-    std::optional<std::string> FindDenseActivationConfigurationError(
-        const std::vector<int>& sorted_ids) const;
-    std::optional<std::string> FindUnsupportedSequentialLayerError(
-        const std::vector<int>& sorted_ids) const;
-
-    // RL-specific code generation
-    bool IsRLGraph(const std::vector<int>& sorted_ids) const;
-    std::string GenerateRLPyTorchCode(const std::vector<int>& sorted_ids) const;
-    std::string GenerateRLPyCyxWizCode(const std::vector<int>& sorted_ids) const;
-
-    // Framework-specific layer conversion
-    std::string NodeTypeToPythonLayer(const MLNode& node);
-    // Output width of the layer feeding `node` (embedding dim, recurrent
-    // hidden size - doubled when bidirectional - or dense units); empty when
-    // it cannot be read from the graph (TOFIX112 export harness).
-    std::string InferredInputWidth(const MLNode& node) const;
-    std::string NodeTypeToTensorFlowLayer(const MLNode& node, int layer_idx);
-    std::string NodeTypeToKerasLayer(const MLNode& node);
-    std::string NodeTypeToPyCyxWizLayer(const MLNode& node);
-
-    std::vector<int> TopologicalSort();
     const MLNode* FindNodeById(int node_id) const;
     MLNode* FindNodeById(int node_id);  // Non-const version
 
@@ -1012,12 +1162,13 @@ private:
 
     // Pin state (node_id → NodePinState). Set by Compile/Train, cleared on graph change.
     std::unordered_map<int, NodePinState> node_pin_state_;
+    uint64_t validation_clears_ = 0;
 
     // UI state
     bool show_context_menu_;
     int context_menu_node_id_;  // -1 if clicking on canvas
     int selected_node_id_;  // Currently selected node for properties panel (-1 = none)
-    CodeFramework selected_framework_;  // Current code generation framework
+    cyxwiz::CodeFramework selected_framework_;  // Current code generation framework
     ExecutionMode execution_mode_;      // Unified Canvas Phase 2: Current execution mode
 
     // ImNodes editor context
@@ -1037,6 +1188,9 @@ private:
     std::function<void()> open_debugger_callback_;
 
     // Deferred node addition (to avoid modifying nodes_ while ImNodes is rendering)
+    // A queued node's position meaning "the free spot nearest the middle of
+    // the view", found when it is created (FindEmptyPosition).
+    static constexpr ImVec2 kPlaceInFreeSpot{-99999.0f, -99999.0f};
     struct PendingNode {
         PendingNode(
             NodeType type_value,
@@ -1080,7 +1234,10 @@ private:
     // Explain selected node in Studio Debugger.
     ExplainNodeCallback explain_node_callback_;
     NodeSelectedCallback node_selected_callback_;
-    int info_node_id_ = -1;  // the node last sent to node_selected_callback_
+    int info_node_id_ = -1;   // the selection last seen
+    int info_shown_id_ = -1;  // the node last sent to node_selected_callback_
+    NodeType info_shown_type_ = NodeType::Dense;  // and its type: a loaded graph reuses ids
+    std::string info_shown_extension_;
 
     // Deferred focus request so sidebar actions never touch ImNodes outside
     // the live editor render scope.
@@ -1093,6 +1250,10 @@ private:
     // reports no hovered node in the press frame (the press activates an
     // item), so a double-click is matched against this one.
     int node_under_press_ = -1;
+    // The graph as a left press on the canvas found it: an undo step when the
+    // press moved nodes (a node, a selection, a frame with its nodes).
+    std::optional<GraphSnapshot> press_snapshot_;
+    uint64_t press_snapshot_generation_ = 0;
     struct PendingSubgraphRequest {
         int subgraph_id = -1;
         SubgraphRequest request = SubgraphRequest::Expand;
@@ -1118,7 +1279,10 @@ private:
         std::map<std::string, std::string> parameters;  // over the node's defaults
         bool branch = false;  // RequestBranchAfter: a new reader, the step's links stay
         bool open_dialog = false;  // open the new node's dialog once it is added
+        int second_source = -1;    // the node whose result goes into the new node's second input
     };
+    // The link from `request.second_source`'s result into `step`'s second input (none when unset).
+    void LinkSecondInput(const PendingStepAfter& request, const MLNode& step);
     std::vector<PendingStepAfter> pending_steps_after_;
     static constexpr int kRemoveStep = -2;
     struct PendingStepMove {
@@ -1158,11 +1322,6 @@ private:
     float zoom_ = 1.0f;
     ImVec2 canvas_size_ = ImVec2(800.0f, 600.0f);  // the node canvas, read each frame
     ImVec2 canvas_origin_ = ImVec2(0.0f, 0.0f);    // its top-left corner on the screen
-    static constexpr float ZOOM_MIN = 0.25f;  // low enough for Fit to show a large graph whole
-    static constexpr float ZOOM_MAX = 2.0f;
-
-    // Icon pack selection (for node icons)
-    IconPack icon_pack_ = IconPack::FontAwesome;  // Default to FontAwesome
 
     // Minimap state
     bool show_minimap_ = true;
@@ -1186,6 +1345,11 @@ private:
     std::vector<int> selected_node_ids_;  // Multi-selection support
     ImVec2 paste_offset_ = ImVec2(50.0f, 50.0f);  // Offset for pasted nodes
 
+    // Adds nodes and the links between them under new node, pin and link ids
+    // (positions keyed by the old node id); returns old id -> new id.
+    std::map<int, int> AddWithFreshIds(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links,
+                                       const std::map<int, ImVec2>& positions);
+
     // Deferred position setting (for nodes created outside render context)
     std::map<int, ImVec2> pending_positions_;  // node_id -> position
     int pending_positions_frames_ = 0;  // Number of frames to keep applying positions (needed for ImNodes)
@@ -1193,11 +1357,10 @@ private:
     // Cached node positions (updated each frame inside BeginNodeEditor/EndNodeEditor scope)
     // Used by FindEmptyPosition() which may be called outside the editor scope
     std::map<int, ImVec2> cached_node_positions_;
-
-    // Save as Pattern dialog state
-    bool show_save_pattern_dialog_ = false;
-    char save_pattern_name_[256] = "";
-    char save_pattern_description_[1024] = "";
+    // The nodes ImNodes drew this frame (filled with the cache inside the
+    // editor scope; Undo / Redo also write the cache, for nodes ImNodes has
+    // not seen yet). The minimap asks ImNodes only about these.
+    std::unordered_set<int> placed_this_frame_;
 
     // Auto-insert Flatten dialog state
     bool show_auto_insert_flatten_dialog_ = false;
@@ -1236,9 +1399,6 @@ private:
     std::map<int, std::vector<int>> recipe_step_ids_;
     void RollUpRecipeExecutionStates();
 
-    // Empty graph warning popup state
-    bool show_empty_graph_warning_ = false;
-
     // Search state (Ctrl+F for existing nodes)
     SearchState search_state_;
 
@@ -1260,15 +1420,28 @@ private:
     std::vector<NodeGroup> groups_;
     int next_group_id_ = 1;
 
-    // Create group dialog state
-    bool show_create_group_dialog_ = false;
-    char create_group_name_[256] = "";
     float create_group_color_[4] = {0.2f, 0.5f, 0.8f, 0.3f};
+    bool group_right_clicked_ = false;  // Prevents canvas menu when a group header is right-clicked
+    bool node_hovered_last_frame_ = false;
+
+    // Rename popup: a node or a group, by id
+    enum class RenameTarget { None, Node, Group };
+    RenameTarget rename_target_ = RenameTarget::None;
+    int rename_id_ = -1;
+    char rename_buffer_[256] = "";
+    void BeginRename(RenameTarget target, int id, const std::string& current);
 
     // Canvas annotations (KNIME-style sticky notes)
     std::vector<CanvasAnnotation> annotations_;
     int next_annotation_id_ = 1;
     int selected_annotation_id_ = -1;
+    int hovered_note_id_ = -1;   // the note under the mouse this frame (RenderAnnotations)
+    int note_menu_id_ = -1;      // the note a right-click opened the note menu on
+    bool open_note_menu_ = false;
+    // A note's move is one undo step: the graph as it was when the title
+    // was pressed, pushed on release if the note moved.
+    std::optional<GraphSnapshot> note_press_snapshot_;
+    ImVec2 note_press_position_{0.0f, 0.0f};
     int dragging_annotation_id_ = -1;
     ImVec2 annotation_drag_offset_ = ImVec2(0, 0);
     bool editing_annotation_ = false;
@@ -1311,18 +1484,16 @@ private:
     std::vector<SubgraphData> subgraphs_;
 
     // ===== Graph Simulation State =====
-    std::unique_ptr<cyxwiz::GraphExecutor> graph_executor_;
-    std::thread sim_thread_;
-    std::atomic<bool> is_simulating_{false};
-    std::atomic<bool> sim_stop_requested_{false};
-    float sim_rate_hz_ = 60.0f;  // Simulation tick rate
+    cyxwiz::GraphSimulationSession simulation_session_;
+    // The plugins whose nodes the current run evaluates: stopping one of
+    // them stops the run first.
+    std::set<std::string> simulation_plugins_;
+    std::function<void()> simulation_started_callback_;
 
     void OnRunSimulation();
     void OnStopSimulation();
-    bool HasSimulationNodes() const;  // Check if graph contains signal/plant nodes
 
     // ===== RL Training State =====
-    std::unique_ptr<cyxwiz::RLTrainingExecutor> rl_executor_;
     std::shared_ptr<cyxwiz::TrainingDashboardPanel> rl_dashboard_;
 
     // Plot nodes (TOFIX134 P2): the result lane and one Plot window per
@@ -1362,7 +1533,28 @@ private:
     std::vector<PendingDashboardWidget> pending_dashboard_widgets_;
     void ApplyPendingDashboardWidgets();
     void RenderDashboardWindows();
-    std::atomic<bool> rl_script_running_{false};  // cleared on the script's worker thread
+    // The Engine's PPO run of an RL graph (TOFIX195 S4.3), started by Train
+    std::unique_ptr<cyxwiz::rl::RLTrainingRun> rl_run_;
+    // Watching the run while it trains (TOFIX212 P5): the dashboard's choice.
+    // Declared after rl_run_, so it stops before the run goes.
+    std::unique_ptr<cyxwiz::rl::TrainingWatch> rl_watch_;
+    int rl_watch_mode_ = 0;
+    int rl_watch_every_ = 20;
+    bool rl_run_reported_ = true;  // its end is on the dashboard
+    std::string rl_status_ = "PPO starting";  // the toolbar's line while it runs
+    cyxwiz::rl_device::RunDevice rl_run_device_;  // the run's device, once its preflight is done
+    std::string rl_compute_path_;                  // how the run computes, as its updates report it
+    std::string rl_device_suffix_;   // " · CPU" once the run's device is known
+    std::string rl_device_tooltip_;  // its full route, on hover
+    bool rl_device_shown_ = false;
+    void PollRLTraining();
+    // The trained policy (TOFIX195 S5): of the last run, or loaded from a
+    // .cyxmodel (rl_policy_file_: its file name; empty for the run's)
+    std::shared_ptr<cyxwiz::rl::TrainedPolicy> rl_policy_;
+    std::string rl_policy_file_;
+    bool rl_policy_from_run_ = false;  // the policy is the last run's (not an earlier run's or a file's)
+    std::string rl_policy_message_;  // the last Save / Load outcome, for Properties
+    std::unique_ptr<cyxwiz::PolicyPlaybackPanel> rl_playback_;
 
     // ===== Unified Canvas Phase 2: Data Pipeline Execution =====
     uint64_t pipeline_task_id_ = 0;
@@ -1405,19 +1597,31 @@ private:
     int currently_executing_node_id_ = -1;                     // Node currently being executed
     float execution_pulse_time_ = 0.0f;                        // Animation time for pulsing effect
 
-    // Scripting engine for Python-based RL training
+    // Scripting engine: RL metrics scripts report (pycyxwiz.rl_update_metric)
     scripting::ScriptingEngine* scripting_engine_ = nullptr;
 public:
     void SetScriptingEngine(scripting::ScriptingEngine* engine) { scripting_engine_ = engine; }
-private:
-    bool HasRLNodes() const;
-    void OnStartRLTraining();
-    void OnStopRLTraining();
-    void ExportPolicyONNX(const std::string& output_path);
-    bool export_onnx_dialog_open_ = false;
 
-    // Phase 4.7: Performance metrics
-    float last_eval_time_ms_ = 0.0f;
+    // Train on an RL graph: the Engine's PPO on a worker, metrics on the RL
+    // Training Dashboard. False with the reason while one runs.
+    bool StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfiguration> config, std::string& error);
+    bool IsRLTrainingActive() const;
+    // Train > RL Training Dashboard: shows the dashboard (with no run it says how to start one)
+    void ShowRLDashboard();
+    void StopRLTraining();
+
+    // The trained RL policy (TOFIX195 S5): play it, save it, load one.
+    bool HasRLPolicy() const { return rl_policy_ != nullptr; }
+    std::string RLPolicyLine() const;
+    const std::string& RLPolicyMessage() const { return rl_policy_message_; }
+    bool PlayRLPolicy(std::string& error);
+    // Asks where (a file dialog). False with an empty error when cancelled.
+    bool SaveRLPolicy(std::string& error);
+    // Loads a saved policy to play (Open Model File).
+    bool LoadRLPolicy(const std::string& path, std::string& error);
+    // A file dialog, then the policy, which must fit the open graph
+    // (the PPO node's Load policy...).
+    bool ChooseRLPolicyForGraph(std::string& error);
 };
 
 } // namespace gui

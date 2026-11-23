@@ -23,12 +23,12 @@ namespace fs = std::filesystem;
 namespace gui {
 void DataInputDialog::Apply() {
     if (!node_) return;
-    if (IsHdf5Source()) {
-        apply_status_message_ = "HDF5 source inspection is available; Data Input loading is not enabled";
-        apply_success_ = false;
+    // A CyxCloud file: the choice is saved on the node; nothing is read here
+    // (a node trains from the cloud; the sample read comes with 4b.2).
+    if (CloudSourceChosen()) {
+        ApplyCloudSource();
         return;
     }
-
     // An image folder's class names: saved with the node; a loaded dataset
     // takes them at once (its index is rebuilt) without loading the images again.
     if (file_category_ == FileCategory::Image) {
@@ -192,10 +192,6 @@ void DataInputDialog::Apply() {
             node_->parameters["sheet_idx"] = std::to_string(sheet_idx_);
             node_->parameters["sheet_range"] = sheet_range_;
         }
-        // HDF5 specific
-        if (detected_type_ == 6) {
-            node_->parameters["hdf5_dataset"] = hdf5_dataset_;
-        }
         // JSON specific
         if (detected_type_ == 3) {
             node_->parameters["json_lines"] = json_lines_ ? "true" : "false";
@@ -254,6 +250,12 @@ void DataInputDialog::Apply() {
         apply_in_progress_ = false;
         has_changes_ = false;
         spdlog::warn("DataInputDialog: Image category with single file - need folder instead");
+        return;
+    }
+
+    // HDF5 loads through its own worker: read, audit, stage, then commit.
+    if (IsHdf5Source()) {
+        BeginHdf5Apply();
         return;
     }
 

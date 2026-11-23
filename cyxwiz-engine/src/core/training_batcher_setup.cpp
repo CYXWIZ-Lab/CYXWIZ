@@ -79,17 +79,6 @@ std::string TrimAscii(const std::string& value) {
     return begin < end ? std::string(begin, end) : std::string{};
 }
 
-bool IsBalancedClassWeightRequest(const TrainingConfiguration& config) {
-    if (config.loss_type != gui::NodeType::CrossEntropyLoss) {
-        return false;
-    }
-    auto it = config.loss_params.find("class_weight");
-    if (it == config.loss_params.end()) {
-        return false;
-    }
-    return LowerAscii(TrimAscii(it->second)) == "balanced";
-}
-
 bool RequiresClassIndexTargets(const TrainingConfiguration& config) {
     // The Pair / Triplet Dataset Builder groups rows by their class id.
     if (config.metric_sampling != MetricSampling::None) return true;
@@ -100,57 +89,35 @@ bool RequiresClassIndexTargets(const TrainingConfiguration& config) {
     const auto weights = config.loss_params.find("class_weights");
     const bool has_weights = weights != config.loss_params.end() &&
                              !TrimAscii(weights->second).empty();
-    return has_weights || config.loss_params.contains("ignore_index");
+    // Balanced weights are resolved only after the batchers exist, so the
+    // request itself picks class-index targets: a weighted loss over them is
+    // PyTorch's weighted mean (sum w_y l / sum w_y), over one-hot rows it is a
+    // plain mean.
+    return has_weights || IsBalancedClassWeightRequest(config) || config.loss_params.contains("ignore_index");
 }
 
-std::vector<int64_t> TrainRowsFromPartition(
-    const std::shared_ptr<arrow::Table>& table,
-    const std::string& partition_column) {
-    std::vector<int64_t> rows;
-    if (!table || partition_column.empty()) {
-        return rows;
+// The target form and normalization of one role's batcher: the split's train,
+// validation and test batchers and a supplied Validation / Test table all come
+// through here, so every role reads labels the way Train does (TOFIX223 0.5:
+// supplied roles once tested is_time_series instead of the continuous target,
+// so a regression graph's supplied roles got one-hot class labels).
+template <typename BatcherT>
+void ApplyRoleTargetTransform(const TrainingConfiguration& config, const std::string& label_column,
+                              BatcherT& batcher) {
+    const bool continuous_target = UsesContinuousTargetMetrics(config);
+    if (continuous_target) batcher.SetRegressionTargetWidth(RegressionTargetWidth(config), label_column);
+    if (config.preprocessing.has_normalization) {
+        batcher.SetNormalization(config.preprocessing.norm_mean, config.preprocessing.norm_std);
     }
-
-    auto column = table->GetColumnByName(partition_column);
-    if (!column || column->num_chunks() == 0) {
-        return rows;
+    if (continuous_target || UsesScalarBinaryTargets(config.loss_type)) {
+        batcher.SetScalarLabelMode(true);
+    } else if (RequiresClassIndexTargets(config)) {
+        batcher.SetClassIndexLabelMode(true);
+    } else if (config.preprocessing.has_onehot) {
+        batcher.SetOneHotEncoding(config.preprocessing.num_classes);
+    } else {
+        batcher.SetOneHotEncoding(config.output_size);
     }
-    for (int c = 0; c < column->num_chunks(); ++c) {
-        if (column->chunk(c)->type_id() != arrow::Type::INT8) {
-            return {};
-        }
-    }
-
-    int64_t offset = 0;
-    for (int c = 0; c < column->num_chunks(); ++c) {
-        auto chunk = column->chunk(c);
-        const int64_t length = chunk->length();
-        auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
-        const int8_t* data = arr->raw_values();
-        for (int64_t i = 0; i < length; ++i) {
-            if (data[i] == 0) {
-                rows.push_back(offset + i);
-            }
-        }
-        offset += length;
-    }
-    return rows;
-}
-
-std::vector<int64_t> TrainRowsFromRatio(const std::shared_ptr<arrow::Table>& table,
-                                        float train_ratio) {
-    std::vector<int64_t> rows;
-    if (!table) {
-        return rows;
-    }
-    const float safe_ratio = std::clamp(train_ratio, 0.0f, 1.0f);
-    const int64_t train_count =
-        static_cast<int64_t>(table->num_rows() * safe_ratio);
-    rows.reserve(static_cast<size_t>(std::max<int64_t>(0, train_count)));
-    for (int64_t i = 0; i < train_count && i < table->num_rows(); ++i) {
-        rows.push_back(i);
-    }
-    return rows;
 }
 
 std::string FormatFloatVector(const std::vector<float>& values) {
@@ -169,12 +136,16 @@ std::string FormatFloatVector(const std::vector<float>& values) {
 // 0 (their two-way rule), so that slice is the Test holdout and the Test
 // slice is empty: the caller swaps the two.
 // The shared split rule (split_partitioning.h, TOFIX178 S0-g1) marks each
-// row's partition: a stratified split, or any Data Split that shuffles (a
+// row's partition for every Data Split: a stratified one, one that shuffles (a
 // seeded shuffle over its three shares, like scikit-learn's
-// train_test_split). Without a Data Split, or for time series, the rows keep
-// the contiguous two-way slices.
+// train_test_split), and one that does not (contiguous slices in row order,
+// with the rule's largest-remainder counts). Without a Data Split, or for time
+// series, the rows keep the contiguous two-way slices. An unshuffled Data
+// Split once took the batchers' floor slicing instead, so 53 rows at
+// 0.7 / 0.15 / 0.15 split 37 / 7 / 9 there and 37 / 8 / 8 when a pipeline run
+// had marked them (TOFIX228 1.6, the level 3 oracle).
 bool UsesSharedSplitRule(const TrainingConfiguration& config) {
-    return !config.is_time_series && (config.stratified || (config.has_data_split && config.shuffle));
+    return !config.is_time_series && (config.stratified || config.has_data_split);
 }
 
 bool HoldoutIsTestOnly(const TrainingConfiguration& config) {
@@ -200,149 +171,56 @@ TrainingInputSizeResolution ResolveTabularTrainingInputSize(
     }
     const int label_index = ResolveLabelColumnIndex(schema, label_column);
     if (label_index >= 0) {
-        return {CountNumericBatchFeatureColumns(schema, label_index), false, true};
+        return {CountNumericBatchFeatureColumns(schema, label_index, {}, config.excluded_feature_columns), false, true};
     }
-    return {CountNumericBatchFeatureColumns(schema), false, false};
+    return {CountNumericBatchFeatureColumns(schema, -1, {}, config.excluded_feature_columns), false, false};
 }
 
-bool TryApplyBalancedClassWeightsFromArrowTable(
-    TrainingConfiguration& config,
-    const std::shared_ptr<arrow::Table>& table,
-    const std::string& label_column,
-    const std::string& partition_column,
-    const std::string& context) {
+bool IsBalancedClassWeightRequest(const TrainingConfiguration& config) {
+    if (config.loss_type != gui::NodeType::CrossEntropyLoss) return false;
+    const auto it = config.loss_params.find("class_weight");
+    return it != config.loss_params.end() && LowerAscii(TrimAscii(it->second)) == "balanced";
+}
 
-    if (!IsBalancedClassWeightRequest(config)) {
-        return false;
-    }
-    if (config.is_time_series) {
-        spdlog::warn("{}: class_weight=balanced is not available for "
-                     "time-series/regression training; using unweighted loss",
-                     context);
-        return false;
-    }
-    if (!table) {
-        spdlog::warn("{}: class_weight=balanced requested but Arrow table is "
-                     "null; using unweighted loss", context);
-        return false;
-    }
-    if (label_column.empty()) {
-        spdlog::warn("{}: class_weight=balanced requested but label column is "
-                     "empty; using unweighted loss", context);
-        return false;
-    }
+void ResolveBalancedClassWeights(TrainingConfiguration& config, const IBatcher* train) {
+    if (!IsBalancedClassWeightRequest(config)) return;
+    const auto refuse = [](const std::string& why) {
+        throw std::runtime_error("class_weight=balanced cannot be computed: " + why +
+                                 ". Set the loss's class weight to none, or give manual weights.");
+    };
+    if (config.is_time_series) refuse("time-series windows have no class counts");
+    const auto counts = train ? train->TrainClassCounts() : std::nullopt;
+    if (!counts) refuse("this training data cannot count the classes of its Train part");
 
-    std::shared_ptr<arrow::Table> effective_table = table;
-    std::string effective_partition = partition_column;
-    if (effective_partition.empty() && table && table->schema()->GetFieldIndex(kSplitPartitionColumn) >= 0) {
-        effective_partition = kSplitPartitionColumn;  // marked by the pipeline run
-    }
-    if (effective_partition.empty() && UsesSharedSplitRule(config)) {
-        auto partitioned = AddSplitPartitionColumn(
-            table,
-            SplitPartitionOptions{
-                label_column,
-                config.train_ratio,
-                config.val_ratio,
-                config.test_ratio,
-                config.shuffle,
-                static_cast<uint32_t>(std::max(0, config.split_seed)),
-                config.stratified,
-                context + " class weights"});
-        if (partitioned.ok()) {
-            effective_table = partitioned.ValueOrDie();
-            effective_partition = kSplitPartitionColumn;
-        } else {
-            spdlog::warn("{}: stratified class-weight split could not be "
-                         "prepared ({}); using ratio-based train slice",
-                         context, partitioned.status().ToString());
-        }
-    }
-
-    auto labels_result = ReadNumericLabelColumn(effective_table, label_column);
-    if (!labels_result.ok()) {
-        spdlog::warn("{}: class_weight=balanced requested but labels could "
-                     "not be read ({}); using unweighted loss",
-                     context, labels_result.status().ToString());
-        return false;
-    }
-    const auto& labels = labels_result.ValueOrDie();
-
-    std::vector<int64_t> train_rows = !effective_partition.empty()
-        ? TrainRowsFromPartition(effective_table, effective_partition)
-        : TrainRowsFromRatio(effective_table, config.train_ratio);
-    if (train_rows.empty()) {
-        spdlog::warn("{}: class_weight=balanced requested but the train split "
-                     "has no rows; using unweighted loss", context);
-        return false;
-    }
-
-    std::map<int64_t, size_t> counts;
-    for (int64_t row : train_rows) {
-        if (row < 0 || static_cast<size_t>(row) >= labels.size()) {
-            continue;
-        }
-        const int64_t label = labels[static_cast<size_t>(row)];
-        if (label >= 0) {
-            ++counts[label];
-        }
-    }
-
-    if (counts.size() < 2) {
-        spdlog::warn("{}: class_weight=balanced requested but the train split "
-                     "has fewer than two non-negative classes; using "
-                     "unweighted loss", context);
-        return false;
-    }
-
-    size_t class_count = config.output_size > 0
-        ? static_cast<size_t>(config.output_size)
-        : config.preprocessing.num_classes;
-    if (class_count == 0) {
-        class_count = static_cast<size_t>(counts.rbegin()->first + 1);
-    }
-    if (class_count == 0) {
-        return false;
-    }
-
-    std::vector<float> weights(class_count, 0.0f);
+    size_t class_count = config.output_size > 0 ? static_cast<size_t>(config.output_size)
+                                                : config.preprocessing.num_classes;
+    if (class_count == 0) class_count = counts->size();
+    if (counts->size() > class_count)
+        refuse("the Train part has class " + std::to_string(counts->size() - 1) + ", outside the model's " +
+               std::to_string(class_count) + " outputs");
     size_t total = 0;
-    for (const auto& [label, count] : counts) {
-        if (label < 0 || static_cast<size_t>(label) >= class_count) {
-            spdlog::warn("{}: class_weight=balanced found label {} outside "
-                         "class range 0..{}; using unweighted loss",
-                         context, label, class_count - 1);
-            return false;
-        }
-        total += count;
-    }
-
+    std::string missing;
+    size_t missing_count = 0;
     for (size_t cls = 0; cls < class_count; ++cls) {
-        auto it = counts.find(static_cast<int64_t>(cls));
-        if (it == counts.end() || it->second == 0) {
-            spdlog::warn("{}: class_weight=balanced cannot compute a weight "
-                         "for missing train class {}; using unweighted loss",
-                         context, cls);
-            return false;
-        }
-        weights[cls] = static_cast<float>(total) /
-            static_cast<float>(class_count * it->second);
+        const size_t rows = cls < counts->size() ? (*counts)[cls] : 0;
+        total += rows;
+        if (rows == 0 && missing_count++ < 5) missing += (missing.empty() ? "" : ", ") + std::to_string(cls);
     }
+    if (missing_count > 0)
+        refuse("the Train part has no rows of class " + missing + (missing_count > 5 ? " and others" : "") +
+               ", so its weight would be infinite");
 
+    std::vector<float> weights(class_count);
+    std::string distribution;
+    for (size_t cls = 0; cls < class_count; ++cls) {
+        weights[cls] = static_cast<float>(static_cast<double>(total) /
+                                          (static_cast<double>(class_count) * static_cast<double>((*counts)[cls])));
+        distribution += (cls ? ", " : "") + std::to_string(cls) + ":" + std::to_string((*counts)[cls]);
+    }
     config.loss_params["class_weight"] = "manual";
     config.loss_params["class_weights"] = FormatFloatVector(weights);
-
-    std::ostringstream dist;
-    bool first = true;
-    for (const auto& [label, count] : counts) {
-        if (!first) dist << ", ";
-        dist << label << ":" << count;
-        first = false;
-    }
-    spdlog::info("{}: computed balanced CrossEntropy class weights from "
-                 "train split counts [{}] -> {}",
-                 context, dist.str(), config.loss_params["class_weights"]);
-    return true;
+    spdlog::info("TrainingExecutor: balanced CrossEntropy class weights from the Train part's counts [{}] -> {}",
+                 distribution, config.loss_params["class_weights"]);
 }
 
 std::shared_ptr<ArrowDataset> WithEncodedLabels(const std::shared_ptr<ArrowDataset>& dataset,
@@ -457,51 +335,17 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
         partition_col, /*partition_value=*/2, num_workers,
         BatcherPhase::Test, effective_val_ratio,
         static_cast<uint32_t>(config.dataloader_seed));
-
-    if (continuous_target) {
-        const size_t target_width =
-            config.target.width > 0
-                ? config.target.width
-                : (config.is_time_series
-                       ? config.time_series_target_width
-                       : std::max<size_t>(1, config.output_size));
-        result.arrow_train->SetRegressionTargetWidth(
-            target_width, effective_label);
-        result.arrow_val->SetRegressionTargetWidth(
-            target_width, effective_label);
-        result.arrow_test->SetRegressionTargetWidth(
-            target_width, effective_label);
-    }
+    // The Data Input's roles keep ID, Group, Weight and Ignore columns out of
+    // the features (TOFIX129 D7a G1), in every split alike.
+    result.arrow_train->ExcludeFeatureColumns(config.excluded_feature_columns);
+    result.arrow_val->ExcludeFeatureColumns(config.excluded_feature_columns);
+    result.arrow_test->ExcludeFeatureColumns(config.excluded_feature_columns);
 
     if (config.drop_last) {
         result.arrow_train->SetDropLast(true);
     }
-    if (config.preprocessing.has_normalization) {
-        result.arrow_train->SetNormalization(config.preprocessing.norm_mean,
-                                             config.preprocessing.norm_std);
-        result.arrow_val->SetNormalization(config.preprocessing.norm_mean,
-                                           config.preprocessing.norm_std);
-        result.arrow_test->SetNormalization(config.preprocessing.norm_mean,
-                                            config.preprocessing.norm_std);
-    }
-
-    if (continuous_target || UsesScalarBinaryTargets(config.loss_type)) {
-        result.arrow_train->SetScalarLabelMode(true);
-        result.arrow_val->SetScalarLabelMode(true);
-        result.arrow_test->SetScalarLabelMode(true);
-    } else if (RequiresClassIndexTargets(config)) {
-        result.arrow_train->SetClassIndexLabelMode(true);
-        result.arrow_val->SetClassIndexLabelMode(true);
-        result.arrow_test->SetClassIndexLabelMode(true);
-    } else if (config.preprocessing.has_onehot) {
-        result.arrow_train->SetOneHotEncoding(config.preprocessing.num_classes);
-        result.arrow_val->SetOneHotEncoding(config.preprocessing.num_classes);
-        result.arrow_test->SetOneHotEncoding(config.preprocessing.num_classes);
-    } else {
-        result.arrow_train->SetOneHotEncoding(config.output_size);
-        result.arrow_val->SetOneHotEncoding(config.output_size);
-        result.arrow_test->SetOneHotEncoding(config.output_size);
-    }
+    for (auto* batcher : {result.arrow_train.get(), result.arrow_val.get(), result.arrow_test.get()})
+        ApplyRoleTargetTransform(config, effective_label, *batcher);
 
     // A stratified or time-series split marks each row's partition instead.
     if (partition_col.empty() && HoldoutIsTestOnly(config)) std::swap(result.arrow_val, result.arrow_test);
@@ -588,6 +432,9 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
         partition_col, /*partition_value=*/2, num_workers,
         BatcherPhase::Test, effective_val_ratio,
         static_cast<uint32_t>(config.dataloader_seed), vocabulary);
+    result.parquet_train->ExcludeFeatureColumns(config.excluded_feature_columns);
+    result.parquet_val->ExcludeFeatureColumns(config.excluded_feature_columns);
+    result.parquet_test->ExcludeFeatureColumns(config.excluded_feature_columns);
 
     // A row-level split (TOFIX154), by the in-memory path's rules: its
     // contiguous slices, or with a stratified Data Split each class's share
@@ -602,7 +449,7 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
             : std::array<double, 3>{config.train_ratio, effective_val_ratio, 0.0};
         {
             std::string split_error;
-            auto split = BuildParquetRowSplit(*dataset, stratify, shares, shared_rule && config.shuffle,
+            auto split = BuildParquetRowSplit(*dataset, stratify, shares, config.shuffle, shared_rule,
                                               static_cast<uint32_t>(std::max(0, config.split_seed)), split_error);
             if (!split) throw std::runtime_error("Parquet split: " + split_error);
             spdlog::info("TrainingExecutor: Parquet row split{} train={} val={} test={} ({} in memory)",
@@ -618,50 +465,11 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
         result.parquet_train->SetClassBalancing(config.balance_mode, config.balance_target,
                                                 static_cast<uint32_t>(std::max(0, config.balance_seed)));
 
-    if (continuous_target) {
-        const size_t target_width =
-            config.target.width > 0
-                ? config.target.width
-                : (config.is_time_series
-                       ? config.time_series_target_width
-                       : std::max<size_t>(1, config.output_size));
-        result.parquet_train->SetRegressionTargetWidth(
-            target_width, effective_label);
-        result.parquet_val->SetRegressionTargetWidth(
-            target_width, effective_label);
-        result.parquet_test->SetRegressionTargetWidth(
-            target_width, effective_label);
-    }
-
     if (config.drop_last) {
         result.parquet_train->SetDropLast(true);
     }
-    if (config.preprocessing.has_normalization) {
-        result.parquet_train->SetNormalization(config.preprocessing.norm_mean,
-                                               config.preprocessing.norm_std);
-        result.parquet_val->SetNormalization(config.preprocessing.norm_mean,
-                                             config.preprocessing.norm_std);
-        result.parquet_test->SetNormalization(config.preprocessing.norm_mean,
-                                              config.preprocessing.norm_std);
-    }
-
-    if (continuous_target || UsesScalarBinaryTargets(config.loss_type)) {
-        result.parquet_train->SetScalarLabelMode(true);
-        result.parquet_val->SetScalarLabelMode(true);
-        result.parquet_test->SetScalarLabelMode(true);
-    } else if (RequiresClassIndexTargets(config)) {
-        result.parquet_train->SetClassIndexLabelMode(true);
-        result.parquet_val->SetClassIndexLabelMode(true);
-        result.parquet_test->SetClassIndexLabelMode(true);
-    } else if (config.preprocessing.has_onehot) {
-        result.parquet_train->SetOneHotEncoding(config.preprocessing.num_classes);
-        result.parquet_val->SetOneHotEncoding(config.preprocessing.num_classes);
-        result.parquet_test->SetOneHotEncoding(config.preprocessing.num_classes);
-    } else {
-        result.parquet_train->SetOneHotEncoding(config.output_size);
-        result.parquet_val->SetOneHotEncoding(config.output_size);
-        result.parquet_test->SetOneHotEncoding(config.output_size);
-    }
+    for (auto* batcher : {result.parquet_train.get(), result.parquet_val.get(), result.parquet_test.get()})
+        ApplyRoleTargetTransform(config, effective_label, *batcher);
 
     // A stratified split gives every share its rows; a time series has its partitions.
     if (partition_col.empty() && !(config.stratified && !continuous_target) && !UsesSharedSplitRule(config) &&
@@ -792,19 +600,23 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
     const int num_workers = ClampNumWorkersToPlatform(config.num_workers);
     const auto make_arrow_role = [&](const std::shared_ptr<ArrowDataset>& dataset,
                                      const std::string& label_column) {
-        return std::make_unique<ArrowDatasetBatcher>(
+        auto batcher = std::make_unique<ArrowDatasetBatcher>(
             vocabulary ? WithEncodedLabels(dataset, label_column, *vocabulary) : dataset,
             label_column, batch_size, false, 1.0f, true, "", 0,
             num_workers, BatcherPhase::Train, 0.0f,
             static_cast<uint32_t>(config.dataloader_seed));
+        batcher->ExcludeFeatureColumns(config.excluded_feature_columns);
+        return batcher;
     };
     const auto make_parquet_role = [&, batch_size](
         const std::shared_ptr<ParquetBackedDataset>& dataset,
         const std::string& label_column) {
-        return std::make_unique<ParquetArrowBatcher>(
+        auto batcher = std::make_unique<ParquetArrowBatcher>(
             dataset, label_column, batch_size, false, 1.0f, true, "", 0,
             num_workers, BatcherPhase::Train, 0.0f,
             static_cast<uint32_t>(config.dataloader_seed), vocabulary);
+        batcher->ExcludeFeatureColumns(config.excluded_feature_columns);
+        return batcher;
     };
 
     if (external_dev && datasets.dev_arrow) {
@@ -830,33 +642,21 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
         result.batchers.test = result.batchers.parquet_test.get();
     }
 
-    const auto apply_role_transforms = [&](IBatcher* batcher) {
-        if (!batcher) return;
-        if (config.preprocessing.has_normalization) {
-            batcher->SetNormalization(config.preprocessing.norm_mean,
-                                      config.preprocessing.norm_std);
-        }
-        if (config.is_time_series || UsesScalarBinaryTargets(config.loss_type)) {
-            if (auto* arrow_batcher =
-                    dynamic_cast<ArrowDatasetBatcher*>(batcher)) {
-                arrow_batcher->SetScalarLabelMode(true);
-            } else if (auto* parquet_batcher =
-                           dynamic_cast<ParquetArrowBatcher*>(batcher)) {
-                parquet_batcher->SetScalarLabelMode(true);
-            }
-        } else if (RequiresClassIndexTargets(config)) {
-            batcher->SetClassIndexLabelMode(true);
-        } else if (config.preprocessing.has_onehot) {
-            batcher->SetOneHotEncoding(config.preprocessing.num_classes);
-        } else {
-            batcher->SetOneHotEncoding(config.output_size);
-        }
+    // A supplied table gets the same target form as Train. A role joined to
+    // the Training table is a slice of the split, transformed with Train's
+    // label already: transforming it again with the role's own label column
+    // looked for targets that table does not have.
+    const auto apply_role_transforms = [&](const std::unique_ptr<ArrowDatasetBatcher>& arrow,
+                                           const std::unique_ptr<ParquetArrowBatcher>& parquet,
+                                           const std::string& label_column) {
+        if (arrow) ApplyRoleTargetTransform(config, label_column, *arrow);
+        else if (parquet) ApplyRoleTargetTransform(config, label_column, *parquet);
     };
-    if (partitions.dev.IsSupplied()) {
-        apply_role_transforms(result.batchers.val);
+    if (external_dev && result.batchers.val) {
+        apply_role_transforms(result.batchers.arrow_val, result.batchers.parquet_val, partitions.dev.label_column);
     }
-    if (partitions.test.IsSupplied()) {
-        apply_role_transforms(result.batchers.test);
+    if (external_test && result.batchers.test) {
+        apply_role_transforms(result.batchers.arrow_test, result.batchers.parquet_test, partitions.test.label_column);
     }
 
     result.batchers.num_train_samples = result.batchers.train

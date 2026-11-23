@@ -1,5 +1,6 @@
 #include "text_tokenizer_operator.h"
 #include "../materialization_memory_guard.h"
+#include "../gcc_diagnostics.h"
 #include <cyxwiz/tokenizer.h>
 #include <arrow/api.h>
 #include <arrow/util/key_value_metadata.h>
@@ -50,6 +51,8 @@ arrow::Status TextTokenizerOperator::ValidateWindowInput(const std::shared_ptr<a
     return arrow::Status::OK();
 }
 
+// Arrow's builders inlined here: GCC -Warray-bounds false positive (TOFIX187).
+CYXWIZ_GCC_IGNORE_BEGIN("-Warray-bounds")
 arrow::Result<std::shared_ptr<arrow::Table>> TextTokenizerOperator::BuildTokenWindows(
     const std::shared_ptr<arrow::Table>& input, const std::vector<std::string>& texts, Tokenizer& tokenizer,
     const std::vector<std::string>* targets) {
@@ -199,4 +202,5 @@ arrow::Result<std::shared_ptr<arrow::Table>> TextTokenizerOperator::BuildTokenWi
     last_vocab_size_=tokenizer.GetVocabulary().Size();
     return arrow::Table::Make(arrow::schema(fields,metadata),arrays,emitted);
 }
+CYXWIZ_GCC_IGNORE_END
 } // namespace cyxwiz

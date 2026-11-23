@@ -5,6 +5,7 @@
 #include "../../core/data_explore.h"
 #include "../../core/file_dialogs.h"
 #include "../../core/session_query_service.h"
+#include "../../core/explore_presentation.h"
 #include "../../core/stats_presentation.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
@@ -254,8 +255,7 @@ void RegressionView::RenderFit(const stats::RegressionAnswer& a) {
             message_error_ = false;
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Adds a %s Regression node with these columns after the data in use: its fitted values and model stay in the graph",
-                              a.request.polynomial ? "Polynomial" : "Linear");
+            ImGui::SetTooltip("%s", explore_view::BranchTip(a.request.polynomial ? "Polynomial Regression" : "Linear Regression").c_str());
         ImGui::SameLine();
     }
     if (ui::SecondaryButton("Export CSV...")) Export(a);

@@ -110,26 +110,6 @@ bool WindowManager::LaunchExecutable(
     return LaunchProcess(executable.string(), process_arguments);
 }
 
-void WindowManager::SwitchProject(const std::string& new_project_path) {
-    // TODO: This will be implemented in the Application class
-    // For now, just launch a new window and let the user close the current one
-    spdlog::info("WindowManager::SwitchProject - launching new window with project: {}", new_project_path);
-    spdlog::warn("WindowManager::SwitchProject - automatic close not implemented, please close this window manually");
-
-    LaunchWindow(new_project_path);
-}
-
-std::vector<std::string> WindowManager::GetRunningProjects() {
-    // TODO: Implement process enumeration to find other engine instances
-    // This requires platform-specific code:
-    // - Windows: EnumProcesses + GetModuleFileNameEx
-    // - Linux: Parse /proc/*/cmdline
-    // - macOS: Use ps command or sysctl
-
-    spdlog::warn("WindowManager::GetRunningProjects - not yet implemented");
-    return {};
-}
-
 std::string WindowManager::GetExecutablePath() {
 #ifdef _WIN32
     // Windows: Use GetModuleFileNameA

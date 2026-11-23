@@ -35,6 +35,10 @@ public:
         const std::string& graph_json,
         const std::string& input_path)>;
     void SetOpenGraphCallback(OpenGraphCallback callback) { open_graph_callback_ = std::move(callback); }
+    // A trained RL policy's file (TOFIX195 S5): loads and plays it; false with
+    // the reason when it cannot.
+    using PlayPolicyCallback = std::function<bool(const std::string& input_path, std::string& error)>;
+    void SetPlayPolicyCallback(PlayPolicyCallback callback) { play_policy_callback_ = std::move(callback); }
 
 private:
     // One read of a file on a worker: a probe, or the graph's extraction. The
@@ -66,6 +70,7 @@ private:
     std::vector<std::pair<std::thread, std::shared_ptr<Job>>> workers_;
 
     OpenGraphCallback open_graph_callback_;
+    PlayPolicyCallback play_policy_callback_;
 };
 
 } // namespace cyxwiz

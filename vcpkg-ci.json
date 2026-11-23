@@ -39,6 +39,9 @@
       "default-features": true
     },
     "duckdb",
+    "libsndfile",
+    "fftw3",
+    "highs",
     {
       "name": "arrow",
       "features": ["parquet", "csv", "json"]

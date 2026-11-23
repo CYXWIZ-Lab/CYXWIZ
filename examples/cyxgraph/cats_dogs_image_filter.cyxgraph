@@ -1,0 +1,548 @@
+{
+  "classical_tree_table_contract_version": 2,
+  "data_boundary_version": 2,
+  "data_validator_contract_version": 2,
+  "evaluation_table_contract_version": 2,
+  "execution_mode": 0,
+  "framework": 0,
+  "version": "2.1",
+  "workflow_description": "Cats vs dogs with a hand-typed 3 x 3 kernel in front of a small CNN (Image Filter)",
+  "nodes": [
+    {
+      "category": 0,
+      "description": "cat_dog/",
+      "id": 1,
+      "name": "Cats_Dogs Data",
+      "parameters": {
+        "archive_member": "",
+        "audio_filename_col": "",
+        "audio_label_col": "",
+        "audio_labels_csv": "",
+        "audio_layout": "0",
+        "configured": "false",
+        "data_loaded": "false",
+        "dataset_name": "cat_dog",
+        "decimal_point": ".",
+        "delimiter": ",",
+        "file_category": "image",
+        "file_path": "",
+        "file_type": "auto",
+        "folder_path": "",
+        "force_disk_backed": "false",
+        "has_header": "true",
+        "image_layout": "1",
+        "label_column": "",
+        "labels_csv": "",
+        "max_rows": "0",
+        "missing_value_tokens": "na",
+        "quote_char": "\"",
+        "skip_rows": "0",
+        "source_type": "file"
+      },
+      "pos_x": 0.0,
+      "pos_y": 300.0,
+      "type": 157
+    },
+    {
+      "id": 2,
+      "type": 106,
+      "name": "Split 80/10/10",
+      "description": "",
+      "parameters": {
+        "train_ratio": "0.8",
+        "val_ratio": "0.1",
+        "test_ratio": "0.1",
+        "stratified": "true",
+        "seed": "42"
+      },
+      "pos_x": 220.0,
+      "pos_y": 300.0,
+      "category": 21
+    },
+    {
+      "id": 3,
+      "type": 104,
+      "name": "Data Loader",
+      "description": "",
+      "parameters": {
+        "batch_size": "64",
+        "epochs": "8",
+        "shuffle": "true",
+        "seed": "42",
+        "drop_last": "false",
+        "validation_freq": "1",
+        "save_best_checkpoint": "true",
+        "early_stopping_patience": "0",
+        "num_workers": "0",
+        "model_seed": "42"
+      },
+      "pos_x": 440.0,
+      "pos_y": 300.0,
+      "category": 21
+    },
+    {
+      "id": 4,
+      "type": 110,
+      "name": "Resize 64",
+      "description": "",
+      "parameters": {
+        "width": "64",
+        "height": "64",
+        "mode": "exact"
+      },
+      "pos_x": 660.0,
+      "pos_y": 300.0,
+      "category": 20
+    },
+    {
+      "id": 5,
+      "type": 376,
+      "name": "Image Filter (typed sharpen)",
+      "description": "",
+      "parameters": {
+        "preset": "custom",
+        "direction": "n",
+        "kernel": "-1 -1 -1; -1 9 -1; -1 -1 -1",
+        "normalize": "false",
+        "border": "reflect_101",
+        "output": "clip"
+      },
+      "pos_x": 880.0,
+      "pos_y": 300.0,
+      "category": 20
+    },
+    {
+      "id": 6,
+      "type": 113,
+      "name": "Horizontal Flip",
+      "description": "",
+      "parameters": {
+        "probability": "0.5"
+      },
+      "pos_x": 1100.0,
+      "pos_y": 300.0
+    },
+    {
+      "id": 7,
+      "type": 108,
+      "name": "Normalize (ImageNet)",
+      "description": "",
+      "parameters": {
+        "statistics": "imagenet"
+      },
+      "pos_x": 1320.0,
+      "pos_y": 300.0,
+      "category": 20
+    },
+    {
+      "id": 8,
+      "type": 2,
+      "name": "Conv 16",
+      "description": "",
+      "parameters": {
+        "filters": "16",
+        "kernel_size": "3",
+        "stride": "1",
+        "padding": "same"
+      },
+      "pos_x": 1540.0,
+      "pos_y": 300.0,
+      "category": 6
+    },
+    {
+      "id": 9,
+      "type": 10,
+      "name": "BN 16",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 1760.0,
+      "pos_y": 300.0,
+      "category": 9
+    },
+    {
+      "id": 10,
+      "type": 29,
+      "name": "ReLU 16",
+      "description": "",
+      "parameters": {},
+      "pos_x": 1980.0,
+      "pos_y": 300.0,
+      "category": 7
+    },
+    {
+      "id": 11,
+      "type": 2,
+      "name": "Conv 32",
+      "description": "",
+      "parameters": {
+        "filters": "32",
+        "kernel_size": "3",
+        "stride": "2",
+        "padding": "same"
+      },
+      "pos_x": 2200.0,
+      "pos_y": 300.0,
+      "category": 6
+    },
+    {
+      "id": 12,
+      "type": 10,
+      "name": "BN 32",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 2420.0,
+      "pos_y": 300.0,
+      "category": 9
+    },
+    {
+      "id": 13,
+      "type": 29,
+      "name": "ReLU 32",
+      "description": "",
+      "parameters": {},
+      "pos_x": 2640.0,
+      "pos_y": 300.0,
+      "category": 7
+    },
+    {
+      "id": 14,
+      "type": 2,
+      "name": "Conv 64",
+      "description": "",
+      "parameters": {
+        "filters": "64",
+        "kernel_size": "3",
+        "stride": "2",
+        "padding": "same"
+      },
+      "pos_x": 2860.0,
+      "pos_y": 300.0,
+      "category": 6
+    },
+    {
+      "id": 15,
+      "type": 10,
+      "name": "BN 64",
+      "description": "",
+      "parameters": {
+        "eps": "0.00001",
+        "momentum": "0.1"
+      },
+      "pos_x": 3080.0,
+      "pos_y": 300.0,
+      "category": 9
+    },
+    {
+      "id": 16,
+      "type": 29,
+      "name": "ReLU 64",
+      "description": "",
+      "parameters": {},
+      "pos_x": 3300.0,
+      "pos_y": 300.0,
+      "category": 7
+    },
+    {
+      "id": 17,
+      "type": 8,
+      "name": "Global Avg Pool",
+      "description": "",
+      "parameters": {},
+      "pos_x": 3520.0,
+      "pos_y": 300.0
+    },
+    {
+      "id": 18,
+      "type": 0,
+      "name": "Dense 1",
+      "description": "",
+      "parameters": {
+        "units": "1"
+      },
+      "pos_x": 3740.0,
+      "pos_y": 300.0,
+      "category": 6
+    },
+    {
+      "id": 19,
+      "type": 75,
+      "name": "BCE with Logits",
+      "description": "",
+      "parameters": {
+        "reduction": "mean",
+        "pos_weight": "1.0",
+        "label_smoothing": "0.0"
+      },
+      "pos_x": 3960.0,
+      "pos_y": 300.0
+    },
+    {
+      "id": 20,
+      "type": 82,
+      "name": "AdamW",
+      "description": "",
+      "parameters": {
+        "learning_rate": "0.002",
+        "beta1": "0.9",
+        "beta2": "0.999",
+        "epsilon": "1e-8",
+        "weight_decay": "0.05",
+        "lr_schedule": "warmup_cosine",
+        "warmup_ratio": "0.05",
+        "min_lr_ratio": "0.01",
+        "grad_clip_norm": "0"
+      },
+      "pos_x": 4180.0,
+      "pos_y": 300.0
+    },
+    {
+      "id": 21,
+      "type": 71,
+      "name": "Output",
+      "description": "",
+      "parameters": {
+        "num_classes": "2"
+      },
+      "pos_x": 4400.0,
+      "pos_y": 300.0,
+      "category": 15
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "from_node": 1,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 2,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 2,
+      "from_node": 2,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 3,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 3,
+      "from_node": 3,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 4,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 4,
+      "from_node": 4,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 5,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 5,
+      "from_node": 5,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 6,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 6,
+      "from_node": 6,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 7,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 7,
+      "from_node": 7,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 8,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 8,
+      "from_node": 8,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 9,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 9,
+      "from_node": 9,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 10,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 10,
+      "from_node": 10,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 11,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 11,
+      "from_node": 11,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 12,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 12,
+      "from_node": 12,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 13,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 13,
+      "from_node": 13,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 14,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 14,
+      "from_node": 14,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 15,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 15,
+      "from_node": 15,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 16,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 16,
+      "from_node": 16,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 17,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 17,
+      "from_node": 17,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 18,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 18,
+      "from_node": 18,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 19,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 19,
+      "from_node": 19,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 20,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 20,
+      "from_node": 20,
+      "from_pin": 0,
+      "from_pin_index": 0,
+      "to_node": 21,
+      "to_pin": 0,
+      "to_pin_index": 0,
+      "link_type": 0
+    },
+    {
+      "id": 21,
+      "from_node": 3,
+      "from_pin": 0,
+      "from_pin_index": 1,
+      "to_node": 19,
+      "to_pin": 0,
+      "to_pin_index": 1,
+      "link_type": 0
+    }
+  ],
+  "annotations": [],
+  "groups": [
+    {
+      "id": 1,
+      "name": "Data and the fixed filter",
+      "description": "Data Input - Split - Loader; Resize 64 and the Image Filter are done once when the images are prepared; Flip and Normalize per batch",
+      "node_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "collapsed": false,
+      "padding": 20.0
+    }
+  ]
+}

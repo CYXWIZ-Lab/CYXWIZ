@@ -1,4 +1,5 @@
 #include "plot_graph.h"
+#include "cyxwiz/portable_random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -132,7 +133,7 @@ std::vector<Point2> ForceLayout(int n, const std::vector<Edge>& edges, unsigned 
     std::vector<Point2> p(static_cast<size_t>(std::max(0, n)));
     if (n <= 0) return p;
     std::mt19937 rng(seed);
-    std::uniform_real_distribution<double> u(0.0, 1.0);
+    const auto u = [low = 0.0, high = 1.0](auto& r) { return cyxwiz::portable::Uniform(r, low, high); };
     for (auto& q : p) q = {u(rng), u(rng)};
     if (n == 1) {
         p[0] = {0.5, 0.5};

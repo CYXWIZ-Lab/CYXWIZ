@@ -1,6 +1,7 @@
 #include "job_executor.h"
 #include "node_client.h"
 #include "node_job_timing.h"
+#include "node_job_route.h"
 #include "node_data_dir.h"
 #include "core/training_resume_checkpoint.h"
 #include "core/training_progress_estimate.h"
@@ -635,6 +636,16 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
     }
     request.epochs_override = config.epochs();
     request.batch_size_override = config.batch_size();
+
+    // Train on the route admission checked: this thread starts on ArrayFire's
+    // default backend, not the one the daemon activated (see NodeJobRoute).
+    if (const auto route = NodeJobRoute()) {
+        const auto activation = cyxwiz::Device(route->type, route->device_id).ActivateExact(false);
+        if (!activation.success) {
+            refuse(cyxwiz::TrainingFailureKind::DeviceError,
+                   "the node's compute route could not be activated: " + activation.message);
+        }
+    }
 
     // Resume checkpoints (TOFIX118 P4e-3): every epoch end, and inside
     // language-model epochs every N optimizer steps (the job's

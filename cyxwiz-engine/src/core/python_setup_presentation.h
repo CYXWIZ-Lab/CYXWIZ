@@ -15,7 +15,7 @@ struct Candidate {
     bool pip = false;
     bool usable = false;   // meets this Engine's requirements
     std::string reason;    // why not, when not usable
-    std::string home;      // sys.prefix
+    std::string home{};    // sys.prefix
 };
 
 struct ScanResult {

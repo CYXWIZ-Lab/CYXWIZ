@@ -25,7 +25,6 @@ namespace cyxwiz {
 
 namespace {
 
-constexpr size_t kMaxEntries = 500;
 constexpr size_t kMaxFieldBytes = 256 * 1024;
 constexpr size_t kMaxHistory = 100;
 constexpr const char *kInputLabel = "##repl_input";
@@ -426,8 +425,9 @@ void PythonReplSession::RenderContent() {
       mono ? mono->FontSize : ImGui::GetTextLineHeight();
   const ImGuiStyle &style = ImGui::GetStyle();
   const std::string current(input_buffer_.data());
+  // Two lines when empty (the output keeps the room), growing to eight.
   const int lines = std::clamp(
-      1 + static_cast<int>(std::count(current.begin(), current.end(), '\n')), 3, 8);
+      1 + static_cast<int>(std::count(current.begin(), current.end(), '\n')), 2, 8);
   const float pad_y = 10.0f;
   const float avail = ImGui::GetContentRegionAvail().y;
   const float min_input = mono_line * 2.0f + pad_y * 2.0f;
@@ -1028,10 +1028,6 @@ void PythonReplSession::RenderInput() {
     focus_input_ = true;
   }
 
-  // Border last, so it sits over the widget. Neutral only (owner, 2026-09-27:
-  // no focus highlight on the input).
-  dl->AddRect(box_min, box_max, ImGui::GetColorU32(kBorder), 8.0f);
-
   // Hints row.
   // Hints wrap onto more rows in a narrow panel instead of running off it.
   ImGui::SetCursorScreenPos(ImVec2(box_min.x, box_max.y + 7.0f));
@@ -1333,8 +1329,11 @@ void PythonReplSession::Submit() {
 
 PythonReplSession::Entry &PythonReplSession::AddEntry(Entry entry) {
   entries_.push_back(std::move(entry));
-  if (entries_.size() > kMaxEntries) {
-    const int drop = static_cast<int>(entries_.size() - kMaxEntries);
+  // Preferences > Python > Commands kept
+  const size_t kept = static_cast<size_t>(
+      cyxwiz::core::EngineConfig::Instance().GetPythonStart().console_commands_kept);
+  if (entries_.size() > kept) {
+    const int drop = static_cast<int>(entries_.size() - kept);
     entries_.erase(entries_.begin(), entries_.begin() + drop);
     running_entry_ = running_entry_ >= drop ? running_entry_ - drop : -1;
     selected_entry_ = selected_entry_ >= drop ? selected_entry_ - drop : -1;

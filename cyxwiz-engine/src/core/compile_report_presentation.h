@@ -7,6 +7,8 @@
 // same words and the wording is tested.
 
 #include "graph_compiler.h"
+#include "missing_values_presentation.h"
+#include "model_memory_estimate.h"
 
 #include <cstdint>
 #include <string>
@@ -65,6 +67,8 @@ struct ConfigFacts {
     // Learnable parameters summed from the layers (the AS COMPILED cards'
     // counts); -1 while not counted.
     long long parameters = -1;
+    // A training step's memory, from the same build (not available while not counted).
+    ModelMemoryEstimate memory;
 };
 
 struct Input {
@@ -76,6 +80,9 @@ struct Input {
     std::vector<BackendPlacementEntry> placements;
     bool has_config = false;
     ConfigFacts config;
+    // Training refused missing values in these inputs (Train, then any
+    // supplied Validation / Test): the report shows their cards and fixes.
+    std::vector<missing_values_fix::Card> missing_values;
 };
 
 struct Chip {
@@ -135,6 +142,12 @@ struct Report {
     std::vector<Tile> tiles;
     std::vector<ConfigGroup> config;
     bool offer_train = false;
+    // Missing values: the cards, in the Findings tab before the findings;
+    // "Fix and train" while any is open, "Train" once every one is fixed.
+    std::vector<missing_values_fix::Card> missing_values;
+    size_t missing_value_groups = 0;  // their groups, counted in the Findings tab
+    bool offer_fix_and_train = false;
+    std::string fix_and_train_blocked;  // why "Fix and train" cannot fix them all (empty when it can)
     std::string copy_text;
 };
 

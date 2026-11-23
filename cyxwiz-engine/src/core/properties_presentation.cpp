@@ -278,6 +278,17 @@ View Build(const Inputs& in) {
         if (v.groups.empty()) v.settings_note = "Configure this node from its dialog.";
     }
 
+    // The steps inside a composite layer, sized from the node's compiled input.
+    {
+        std::vector<size_t> input_sample;
+        if (in.compiled && in.compiled->config) {
+            for (const auto& layer : in.compiled->config->layers) {
+                if (layer.node_id == node.id) input_sample = layer.input_shape;
+            }
+        }
+        v.inside = BuildLayerInside(node.type, node.parameters, input_sample);
+    }
+
     // Attach truths to rows; the rest is listed read-only.
     std::vector<const Truth*> matched;
     for (auto& group : v.groups) {

@@ -8,6 +8,7 @@
 // so what is sequential by nature (loess, smoothing recursions, the Kalman
 // filter) runs on the host; what has a vector form runs on the device.
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -52,5 +53,33 @@ double NormalPpf(double q);
 // Variance of the finite values (population) and the strength
 // 1 - var(residual) / var(residual + component) (Hyndman), 0 when negative.
 double Strength(const std::vector<double>& residual, const std::vector<double>& component);
+
+// A stop asked through TimeSeriesStop: the fits call ThrowIfStopped between
+// their passes; the outermost public fit of the thread turns Stopped into a
+// result with error_message "Cancelled." (an inner fit lets it through, so
+// the outer one does not carry on with a fallback).
+struct Stopped {};
+std::vector<std::function<bool()>>& StopQueries();
+bool StopRequested();
+inline void ThrowIfStopped() {
+    if (StopRequested()) throw Stopped{};
+}
+int& GuardDepth();
+
+template <class R, class F>
+R UnlessStopped(F&& fit) {
+    struct Depth {
+        Depth() { ++GuardDepth(); }
+        ~Depth() { --GuardDepth(); }
+    } depth;
+    try {
+        return fit();
+    } catch (const Stopped&) {
+        if (GuardDepth() > 1) throw;
+        R r;
+        r.error_message = "Cancelled.";
+        return r;
+    }
+}
 
 }  // namespace cyxwiz::series_detail

@@ -37,11 +37,28 @@ int FirstInput(int node_id, const std::vector<gui::NodeLink>& links) {
 
 bool Runnable(const gui::MLNode& n, std::string* why) {
     // A Data Input with no file cannot be read (the run would fail with a
-    // validation code): say what to do instead.
+    // validation code): say what to do instead. A folder (images, sounds) is
+    // no table the data run can read: a loaded image folder is read through
+    // its list of images (the lane's loaded check comes first), so before
+    // it loads the plot says to load it.
     if (n.type == gui::NodeType::DataInput) {
-        auto it = n.parameters.find("file_path");
-        if (it == n.parameters.end() || it->second.empty()) {
-            *why = n.name + " has no data yet: open it, choose a file and Apply.";
+        const auto param = [&n](const char* key) {
+            auto it = n.parameters.find(key);
+            return it == n.parameters.end() ? std::string() : it->second;
+        };
+        const std::string file = param("file_path");
+        const std::string folder = param("folder_path");
+        if (file.empty() && folder.empty()) {
+            *why = n.name + " has no data yet: open it, choose a file or folder and Apply.";
+            return false;
+        }
+        if (file.empty()) {
+            const std::string category = param("file_category");
+            *why = category == "image"
+                       ? n.name + " is an image folder: open it and Apply, and the plot reads its list of images "
+                                  "(file, class, size)."
+                       : n.name + " is a folder of " + (category == "audio" ? std::string("sounds") : std::string("files")) +
+                             ": plots read tables, and a folder has none to plot.";
             return false;
         }
     }

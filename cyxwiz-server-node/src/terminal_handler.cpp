@@ -1,4 +1,5 @@
 #include "terminal_handler.h"
+#include "core/grpc_listen.h"
 #include <spdlog/spdlog.h>
 #include <chrono>
 
@@ -468,7 +469,7 @@ bool TerminalHandler::Start() {
         service_ = std::make_unique<TerminalServiceImpl>();
 
         grpc::ServerBuilder builder;
-        builder.AddListeningPort(listen_address_, grpc::InsecureServerCredentials());
+        cyxwiz::servernode::core::ListenExclusively(builder, listen_address_, grpc::InsecureServerCredentials());
         builder.RegisterService(service_.get());
 
         server_ = builder.BuildAndStart();

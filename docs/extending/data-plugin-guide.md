@@ -14,7 +14,7 @@ coefficient of variation of numeric columns. You try it ready-built, build
 it yourself, follow what the Engine calls in which order, read its code,
 and then write your own format.
 
-> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.4.0 and pycyxwiz 0.2.0.
 > Read the [quickstart](plugin-quickstart.md) first for the SDK folder, the
 > compiler and the check tool; this guide uses its shell variables (`$sdk`,
 > `$cyxwiz`).
@@ -99,7 +99,7 @@ plugin adds:
 
 ```
 D:\work\data_formats\build\data_formats
-  plugin com.cyxwiz.examples.data-formats 1.0.0 (API 1.3.0)
+  plugin com.cyxwiz.examples.data-formats 1.0.0 (API 1.4.0)
   ok   dataset format ARFF (Weka) (.arff)
   ok   analytic Coefficient of variation (Distribution)
 cyxwiz-plugin-check: all plugins pass
@@ -207,7 +207,7 @@ reads them by hand, so you see every byte.
     "id": "com.cyxwiz.examples.data-formats",
     "name": "Example Data Formats",
     "version": "1.0.0",
-    "api_version": "1.3.0",
+    "api_version": "1.4.0",
     "capabilities": ["ProvidesData", "ProvidesAnalytics"],
     "permissions": ["DataRegistry"],
     "platforms": {
@@ -220,7 +220,7 @@ reads them by hand, so you see every byte.
 
 | Field | Why |
 |---|---|
-| `api_version` `1.3.0` | Formats and analytics took this shape in 1.3. A plugin declaring 1.2 loads, but the Engine does not ask it for them (*IDataProvider: built for plugin API 1.2.0; it needs 1.3.0 or newer*) |
+| `api_version` `1.4.0` | The SDK's plugin API. Formats and analytics took this shape in 1.3. A plugin declaring 1.2 loads, but the Engine does not ask it for them (*IDataProvider: built for plugin API 1.2.0; it needs 1.3.0 or newer*) |
 | `permissions` `DataRegistry` | Without it the Engine does not register formats or analytics. The user sees it as *Dataset Access* on the card |
 | `version` | Part of the cache key of every file read through you (section 4) |
 

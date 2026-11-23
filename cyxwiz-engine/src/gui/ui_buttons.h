@@ -35,9 +35,10 @@ bool DangerButton(const char* label, bool enabled = true,
 // widget identity stable while the count text changes.
 bool ToggleChip(const char* id, const char* label, const char* count, bool on,
                 unsigned int accent_rgba, bool emphasise = false);
-// Pill-shaped action (quick commands): monospace-friendly label, bordered.
-bool ChipButton(const char* label);
-float ChipButtonWidth(const char* label);
+// Pill-shaped action (quick commands, recent items). `swatch` (an ImU32,
+// 0 = none) draws a small colour square before the label.
+bool ChipButton(const char* label, unsigned int swatch = 0);
+float ChipButtonWidth(const char* label, bool swatch = false);
 
 // Segmented choice (one of several options side by side). Returns true when
 // the selection changed; `selected` is updated.
@@ -73,6 +74,11 @@ float FilterChipWidth(const char* label, const char* count);
 // accent line under the chosen one; no fill. Returns true when clicked.
 bool JobTab(const char* id, const char* label, const char* caption, bool chosen);
 float JobTabWidth(const char* label, const char* caption);
+
+// A tab of a run switcher (the Training Dashboard's): a dot, the label and a
+// faint second part on one line; the shown run raised, with the accent line
+// under it. Returns true when clicked.
+bool RunTab(const char* id, const char* label, const char* sub, const ImVec4& dot, bool active);
 
 // Width a button will take, for sizing fixed table columns.
 float ButtonWidth(const char* label, ButtonSize size);

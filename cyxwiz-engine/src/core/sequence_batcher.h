@@ -1,6 +1,8 @@
 #pragma once
 
 #include "dataset_batcher.h"
+#include "batch_uploads.h"
+#include "cyxwiz/portable_random.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -18,7 +20,7 @@ struct SequenceSample {
     std::vector<int64_t> tag_ids;
     // Causal LM only, optional: one entry per target (word_ids.size() - 1);
     // 0 excludes that target from the loss (prompt tokens in supervised windows).
-    std::vector<uint8_t> target_mask;
+    std::vector<uint8_t> target_mask{};
 };
 
 struct SequenceBatcherConfig {
@@ -116,23 +118,21 @@ public:
         current_index_ += actual_size;
 
         SequenceBatch batch;
-        batch.word_ids = Tensor({actual_size, sequence_length_},
-                                word_data.data(), DataType::Int64);
+        const std::vector<size_t> shape = {actual_size, sequence_length_};
+        batch.word_ids = HostBatchTensor("SequenceBatcher", "word ids", shape, word_data.data(), DataType::Int64);
         if (has_pos) {
-            batch.pos_ids = Tensor({actual_size, sequence_length_},
-                                   pos_data.data(), DataType::Int64);
+            batch.pos_ids = HostBatchTensor("SequenceBatcher", "pos ids", shape, pos_data.data(), DataType::Int64);
         }
         if (config_.create_attention_mask) {
-            batch.attention_mask = Tensor({actual_size, sequence_length_},
-                                          mask_data.data(), DataType::Int64);
+            batch.attention_mask =
+                HostBatchTensor("SequenceBatcher", "attention mask", shape, mask_data.data(), DataType::Int64);
         }
         if (has_tags) {
-            batch.tag_ids = Tensor({actual_size, sequence_length_},
-                                   tag_data.data(), DataType::Int64);
+            batch.tag_ids = HostBatchTensor("SequenceBatcher", "tag ids", shape, tag_data.data(), DataType::Int64);
         }
         if (config_.create_causal_lm_targets) {
-            batch.target_ids = Tensor({actual_size, sequence_length_},
-                                      target_data.data(), DataType::Int64);
+            batch.target_ids =
+                HostBatchTensor("SequenceBatcher", "target ids", shape, target_data.data(), DataType::Int64);
         }
         batch.size = actual_size;
         batch.sequence_length = sequence_length_;
@@ -159,13 +159,13 @@ public:
         }
         if (split_mode_) {
             if (current_phase_ == BatcherPhase::Train && config_.shuffle) {
-                std::shuffle(active_indices.begin(), active_indices.end(), rng_);
+                cyxwiz::portable::Shuffle(active_indices.begin(), active_indices.end(), rng_);
             }
             return;
         }
 
         if (config_.shuffle) {
-            std::shuffle(active_indices.begin(), active_indices.end(), rng_);
+            cyxwiz::portable::Shuffle(active_indices.begin(), active_indices.end(), rng_);
         }
     }
 

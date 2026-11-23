@@ -1,17 +1,18 @@
 #include "node_editor.h"
+#include "../core/studio_toolbar_presentation.h"
 #include "subgraph_presentation.h"
 #include "properties.h"
 #include <imgui.h>
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <set>
 
 namespace gui {
 
-void NodeEditor::SaveUndoState() {
-    // Create snapshot of current state
+GraphSnapshot NodeEditor::CaptureSnapshot() const {
     GraphSnapshot snapshot;
     snapshot.nodes = nodes_;
     snapshot.subgraphs = subgraphs_;
@@ -21,9 +22,15 @@ void NodeEditor::SaveUndoState() {
     snapshot.next_node_id = next_node_id_;
     snapshot.next_pin_id = next_pin_id_;
     snapshot.next_link_id = next_link_id_;
+    snapshot.annotations = annotations_;
+    snapshot.next_annotation_id = next_annotation_id_;
+    return snapshot;
+}
 
-    // Push to undo stack
-    undo_stack_.push_back(snapshot);
+void NodeEditor::SaveUndoState() { PushUndoSnapshot(CaptureSnapshot()); }
+
+void NodeEditor::PushUndoSnapshot(GraphSnapshot snapshot) {
+    undo_stack_.push_back(std::move(snapshot));
 
     // Limit stack size
     if (undo_stack_.size() > MAX_UNDO_LEVELS) {
@@ -44,16 +51,7 @@ void NodeEditor::Undo() {
     }
 
     // Save current state to redo stack
-    GraphSnapshot current;
-    current.nodes = nodes_;
-    current.subgraphs = subgraphs_;
-    current.positions = cached_node_positions_;
-    for (const auto& [id, pos] : pending_positions_) current.positions[id] = pos;
-    current.links = links_;
-    current.next_node_id = next_node_id_;
-    current.next_pin_id = next_pin_id_;
-    current.next_link_id = next_link_id_;
-    redo_stack_.push_back(current);
+    redo_stack_.push_back(CaptureSnapshot());
 
     // Restore previous state from undo stack
     GraphSnapshot previous = undo_stack_.back();
@@ -76,6 +74,11 @@ void NodeEditor::Undo() {
     next_node_id_ = previous.next_node_id;
     next_pin_id_ = previous.next_pin_id;
     next_link_id_ = previous.next_link_id;
+    annotations_ = previous.annotations;
+    next_annotation_id_ = previous.next_annotation_id;
+    selected_annotation_id_ = -1;
+    dragging_annotation_id_ = -1;
+    editing_annotation_ = false;
 
     // Rebuild pin lookup after restoring state
     RebuildPinLookup();
@@ -98,16 +101,7 @@ void NodeEditor::Redo() {
     }
 
     // Save current state to undo stack
-    GraphSnapshot current;
-    current.nodes = nodes_;
-    current.subgraphs = subgraphs_;
-    current.positions = cached_node_positions_;
-    for (const auto& [id, pos] : pending_positions_) current.positions[id] = pos;
-    current.links = links_;
-    current.next_node_id = next_node_id_;
-    current.next_pin_id = next_pin_id_;
-    current.next_link_id = next_link_id_;
-    undo_stack_.push_back(current);
+    undo_stack_.push_back(CaptureSnapshot());
 
     // Restore next state from redo stack
     GraphSnapshot next = redo_stack_.back();
@@ -130,6 +124,11 @@ void NodeEditor::Redo() {
     next_node_id_ = next.next_node_id;
     next_pin_id_ = next.next_pin_id;
     next_link_id_ = next.next_link_id;
+    annotations_ = next.annotations;
+    next_annotation_id_ = next.next_annotation_id;
+    selected_annotation_id_ = -1;
+    dragging_annotation_id_ = -1;
+    editing_annotation_ = false;
 
     // Rebuild pin lookup after restoring state
     RebuildPinLookup();
@@ -193,67 +192,64 @@ void NodeEditor::DeleteSelected() {
     spdlog::info("Deleted {} selected nodes", num_selected);
 }
 
-ImVec2 NodeEditor::FindEmptyPosition() {
-    // Find a position that doesn't overlap with existing nodes
-    // Start at a reasonable default position and search for empty space
+ImVec2 NodeEditor::FindEmptyPosition(ImVec2 size) {
+    // The free spot nearest the middle of the view (owner 2026-11-14: a node
+    // added from the menu, the Asset Browser or the Nodes panel, and a new
+    // note, landed on the view centre over whatever was there). Nodes, nodes
+    // still waiting for their place, and notes count as taken.
+    const float kWidth = size.x;  // what is placed (grid units)
+    const float kHeight = size.y;
+    constexpr float kGap = 30.0f;
+    const ImVec2 view_centre = canvas_size_.x > 0.0f && canvas_size_.y > 0.0f
+        ? GridAt(ImVec2(canvas_origin_.x + canvas_size_.x * 0.5f, canvas_origin_.y + canvas_size_.y * 0.5f))
+        : ImVec2(400.0f - ImNodes::EditorContextGetPanning().x, 300.0f - ImNodes::EditorContextGetPanning().y);
+    const ImVec2 preferred(view_centre.x - kWidth * 0.5f, view_centre.y - kHeight * 0.5f);
 
-    const float NODE_WIDTH = 200.0f;
-    const float NODE_HEIGHT = 120.0f;
-    const float SPACING = 50.0f;
-
-    // Get current view panning to place node in visible area
-    ImVec2 panning = ImNodes::EditorContextGetPanning();
-
-    // Start position - relative to current view
-    float start_x = -panning.x + 100.0f;
-    float start_y = -panning.y + 100.0f;
-
-    // If no nodes exist, return a simple position
-    if (nodes_.empty()) {
-        return ImVec2(start_x, start_y);
-    }
-
-    // Collect all existing node positions
-    std::vector<ImVec2> node_positions;
+    struct Rect { float x0, y0, x1, y1; };
+    std::vector<Rect> taken;
     for (const auto& node : nodes_) {
         if (detail::IsExpandedSubgraph(node.id, subgraphs_)) continue;
-        auto it = cached_node_positions_.find(node.id);
-        ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-        node_positions.push_back(pos);
+        const auto at = cached_node_positions_.find(node.id);
+        const auto waiting = pending_positions_.find(node.id);
+        if (at == cached_node_positions_.end() && waiting == pending_positions_.end()) continue;
+        const ImVec2 pos = waiting != pending_positions_.end() ? waiting->second : at->second;
+        taken.push_back({pos.x, pos.y, pos.x + kNodeFootprint.x, pos.y + kNodeFootprint.y});
     }
+    for (const auto& note : annotations_)
+        taken.push_back({note.position.x, note.position.y, note.position.x + note.size.x, note.position.y + note.size.y});
+    const auto free_at = [&taken, kWidth, kHeight](const ImVec2& p) {
+        for (const Rect& r : taken)
+            if (p.x < r.x1 + kGap && p.x + kWidth + kGap > r.x0 && p.y < r.y1 + kGap && p.y + kHeight + kGap > r.y0)
+                return false;
+        return true;
+    };
+    if (free_at(preferred)) return preferred;
 
-    // Search for empty position using grid search
-    for (int row = 0; row < 20; ++row) {
-        for (int col = 0; col < 20; ++col) {
-            float test_x = start_x + col * (NODE_WIDTH + SPACING);
-            float test_y = start_y + row * (NODE_HEIGHT + SPACING);
-
-            bool overlaps = false;
-            for (const auto& pos : node_positions) {
-                // Check if rectangles overlap
-                if (test_x < pos.x + NODE_WIDTH + SPACING &&
-                    test_x + NODE_WIDTH + SPACING > pos.x &&
-                    test_y < pos.y + NODE_HEIGHT + SPACING &&
-                    test_y + NODE_HEIGHT + SPACING > pos.y) {
-                    overlaps = true;
-                    break;
+    // Rings of candidate spots around the preferred one, nearest first.
+    const float step_x = kWidth + kGap, step_y = kHeight + kGap;
+    for (int ring = 1; ring <= 40; ++ring) {
+        bool found = false;
+        ImVec2 best;
+        float best_distance = 0.0f;
+        for (int dy = -ring; dy <= ring; ++dy) {
+            for (int dx = -ring; dx <= ring; ++dx) {
+                if (std::abs(dx) != ring && std::abs(dy) != ring) continue;  // the ring only
+                const ImVec2 p(preferred.x + static_cast<float>(dx) * step_x, preferred.y + static_cast<float>(dy) * step_y);
+                if (!free_at(p)) continue;
+                const float distance = (p.x - preferred.x) * (p.x - preferred.x) + (p.y - preferred.y) * (p.y - preferred.y);
+                if (!found || distance < best_distance) {
+                    found = true;
+                    best = p;
+                    best_distance = distance;
                 }
             }
-
-            if (!overlaps) {
-                return ImVec2(test_x, test_y);
-            }
         }
+        if (found) return best;
     }
-
-    // Fallback: place below the lowest node
-    float max_y = 0.0f;
-    for (const auto& pos : node_positions) {
-        if (pos.y > max_y) {
-            max_y = pos.y;
-        }
-    }
-    return ImVec2(start_x, max_y + NODE_HEIGHT + SPACING);
+    // A canvas full in every direction: below everything.
+    float bottom = preferred.y;
+    for (const Rect& r : taken) bottom = std::max(bottom, r.y1);
+    return ImVec2(preferred.x, bottom + kGap);
 }
 
 void NodeEditor::CopySelection() {
@@ -267,26 +263,34 @@ void NodeEditor::CopySelection() {
 
     std::vector<int> selected_ids(num_selected);
     ImNodes::GetSelectedNodes(selected_ids.data());
+    CopyNodes(selected_ids);
+}
 
+bool NodeEditor::CopyNodes(const std::vector<int>& selected_ids) {
+    clipboard_.valid = false;
     for (int id : selected_ids) {
         if (IsSubgraphNode(id) || IsSubgraphMember(id)) {
             spdlog::warn("Subgraph copy/cut/duplicate is not supported yet; save and load the complete graph instead.");
-            return;
+            return false;
         }
     }
 
     // Build set for quick lookup
     std::set<int> selected_set(selected_ids.begin(), selected_ids.end());
 
-    // Copy selected nodes
+    // Copy the nodes and where they sit
     clipboard_.nodes.clear();
     clipboard_.links.clear();
+    clipboard_.positions.clear();
+    clipboard_.frame.reset();
 
     for (int node_id : selected_ids) {
         auto it = std::find_if(nodes_.begin(), nodes_.end(),
             [node_id](const MLNode& node) { return node.id == node_id; });
         if (it != nodes_.end()) {
             clipboard_.nodes.push_back(*it);
+            const auto pos = cached_node_positions_.find(node_id);
+            if (pos != cached_node_positions_.end()) clipboard_.positions[node_id] = pos->second;
         }
     }
 
@@ -300,6 +304,38 @@ void NodeEditor::CopySelection() {
     clipboard_.valid = true;
     spdlog::info("Copied {} nodes and {} internal links to clipboard",
                  clipboard_.nodes.size(), clipboard_.links.size());
+    return true;
+}
+
+std::vector<int> NodeEditor::NodesInsideFrame(const CanvasFrame& frame) const {
+    std::vector<int> inside;
+    for (const auto& node : nodes_) {
+        const auto pos = cached_node_positions_.find(node.id);
+        if (pos == cached_node_positions_.end()) continue;
+        if (pos->second.x >= frame.position.x && pos->second.x <= frame.position.x + frame.size.x &&
+            pos->second.y >= frame.position.y && pos->second.y <= frame.position.y + frame.size.y)
+            inside.push_back(node.id);
+    }
+    return inside;
+}
+
+void NodeEditor::CopyFrame(int frame_id) {
+    const auto frame = std::find_if(frames_.begin(), frames_.end(),
+                                    [frame_id](const CanvasFrame& f) { return f.id == frame_id; });
+    if (frame == frames_.end()) return;
+    if (!CopyNodes(NodesInsideFrame(*frame))) return;
+    clipboard_.frame = *frame;
+    clipboard_.frame->is_selected = false;
+    spdlog::info("Copied frame '{}' with {} nodes", frame->title, clipboard_.nodes.size());
+}
+
+void NodeEditor::CutFrame(int frame_id) {
+    CopyFrame(frame_id);
+    if (!clipboard_.valid || !clipboard_.frame) return;
+    SaveUndoState();
+    for (const auto& node : clipboard_.nodes) DeleteNode(node.id);
+    DeleteFrame(frame_id);
+    ClearSelection();
 }
 
 void NodeEditor::CutSelection() {
@@ -327,62 +363,49 @@ void NodeEditor::CutSelection() {
 }
 
 void NodeEditor::PasteClipboard() {
-    if (!clipboard_.valid || clipboard_.nodes.empty()) {
+    if (!clipboard_.valid || (clipboard_.nodes.empty() && !clipboard_.frame)) {
         spdlog::debug("Nothing to paste");
         return;
     }
 
     SaveUndoState();
 
-    // Map from old node IDs to new node IDs
-    std::map<int, int> node_id_map;
-    // Map from old pin IDs to new pin IDs
-    std::map<int, int> pin_id_map;
-
     // Clear selection before pasting
     ImNodes::ClearNodeSelection();
 
-    // Create new nodes with new IDs
-    for (const auto& old_node : clipboard_.nodes) {
-        MLNode new_node = old_node;
-        int old_id = new_node.id;
-        new_node.id = next_node_id_++;
-
-        // Assign new pin IDs
-        for (auto& pin : new_node.inputs) {
-            int old_pin_id = pin.id;
-            pin.id = next_pin_id_++;
-            pin_id_map[old_pin_id] = pin.id;
-        }
-        for (auto& pin : new_node.outputs) {
-            int old_pin_id = pin.id;
-            pin.id = next_pin_id_++;
-            pin_id_map[old_pin_id] = pin.id;
-        }
-
-        node_id_map[old_id] = new_node.id;
-        nodes_.push_back(new_node);
-
-        // For pasted nodes, we need to set position after they're added
-        // ImNodes requires the node to exist first, so we'll set it in the next frame
-        // For now, use a simple offset from screen center
-        const ImVec2 new_pos(paste_offset_.x + nodes_.size() * 10.0f,
-                             paste_offset_.y + nodes_.size() * 10.0f);
-
-        ImNodes::SetNodeGridSpacePos(new_node.id, new_pos);
-        ImNodes::SelectNode(new_node.id);
+    // The copied layout's top-left (the frame's, when one was copied) lands
+    // at the paste offset; everything keeps its place relative to it.
+    ImVec2 origin(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+    for (const auto& [id, pos] : clipboard_.positions) {
+        origin.x = std::min(origin.x, pos.x);
+        origin.y = std::min(origin.y, pos.y);
+    }
+    if (clipboard_.frame) {
+        origin.x = std::min(origin.x, clipboard_.frame->position.x);
+        origin.y = std::min(origin.y, clipboard_.frame->position.y);
+    }
+    if (origin.x == std::numeric_limits<float>::max()) origin = ImVec2(0.0f, 0.0f);
+    if (clipboard_.frame) {
+        CanvasFrame frame = *clipboard_.frame;
+        frame.id = next_frame_id_++;
+        frame.position = ImVec2(paste_offset_.x + frame.position.x - origin.x,
+                                paste_offset_.y + frame.position.y - origin.y);
+        frames_.push_back(frame);
     }
 
-    // Recreate internal links with new IDs
-    for (const auto& old_link : clipboard_.links) {
-        NodeLink new_link;
-        new_link.id = next_link_id_++;
-        new_link.from_node = node_id_map[old_link.from_node];
-        new_link.to_node = node_id_map[old_link.to_node];
-        new_link.from_pin = pin_id_map[old_link.from_pin];
-        new_link.to_pin = pin_id_map[old_link.to_pin];
-
-        links_.push_back(new_link);
+    // New ids for the nodes, their pins and the links between them.
+    std::map<int, ImVec2> positions;
+    for (size_t i = 0; i < clipboard_.nodes.size(); ++i) {
+        const int old_id = clipboard_.nodes[i].id;
+        const auto copied_at = clipboard_.positions.find(old_id);
+        const float step = static_cast<float>(nodes_.size() + i) * 10.0f;
+        positions[old_id] = copied_at != clipboard_.positions.end()
+            ? ImVec2(paste_offset_.x + copied_at->second.x - origin.x, paste_offset_.y + copied_at->second.y - origin.y)
+            : ImVec2(paste_offset_.x + step, paste_offset_.y + step);
+    }
+    for (const auto& [old_id, new_id] : AddWithFreshIds(clipboard_.nodes, clipboard_.links, positions)) {
+        ImNodes::SetNodeGridSpacePos(new_id, positions[old_id]);
+        ImNodes::SelectNode(new_id);
     }
 
     // Increase paste offset for next paste
@@ -394,16 +417,17 @@ void NodeEditor::PasteClipboard() {
         paste_offset_ = ImVec2(50.0f, 50.0f);
     }
 
-    // Rebuild pin lookup after pasting nodes
-    RebuildPinLookup();
-
     spdlog::info("Pasted {} nodes and {} links",
                  clipboard_.nodes.size(), clipboard_.links.size());
 }
 
+// Copies the selection beside itself through the clipboard, then puts back
+// what the user had copied: Duplicate is not Copy.
 void NodeEditor::DuplicateSelection() {
+    const auto kept = clipboard_;
     CopySelection();
-    PasteClipboard();
+    if (clipboard_.valid) PasteClipboard();
+    clipboard_ = kept;
 }
 
 // ===== Keyboard Shortcuts =====
@@ -413,6 +437,8 @@ void NodeEditor::HandleKeyboardShortcuts() {
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
         return;
     }
+    // A text field on a node has the keys: Ctrl+A, M, F ... are its typing.
+    if (ImGui::GetIO().WantTextInput) return;
 
     const bool ctrl = ImGui::GetIO().KeyCtrl;
     const bool shift = ImGui::GetIO().KeyShift;
@@ -456,9 +482,7 @@ void NodeEditor::HandleKeyboardShortcuts() {
     // Escape - Close search bar, context menu, or clear selection
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         if (search_state_.search_visible) {
-            search_state_.search_visible = false;
-            search_state_.matching_node_ids.clear();
-            search_state_.current_match_index = -1;
+            CloseFindBar();
         } else if (show_context_menu_) {
             show_context_menu_ = false;
         } else {
@@ -466,17 +490,10 @@ void NodeEditor::HandleKeyboardShortcuts() {
         }
     }
 
-    // Ctrl+F - Toggle search bar
+    // Ctrl+F - Open the find bar (or close it); it takes the keyboard
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_F)) {
-        search_state_.search_visible = !search_state_.search_visible;
-        if (search_state_.search_visible) {
-            // Focus the search input when opened
-            ImGui::SetKeyboardFocusHere();
-        } else {
-            // Clear search when closed
-            search_state_.matching_node_ids.clear();
-            search_state_.current_match_index = -1;
-        }
+        if (search_state_.search_visible) CloseFindBar();
+        else OpenFindBar();
     }
 
     // F3 - Navigate to next search match
@@ -501,16 +518,24 @@ void NodeEditor::HandleKeyboardShortcuts() {
     // Ctrl+S - Save the graph to its file (a name is asked the first time);
     // Ctrl+Shift+S - Save As a new file (the open one stays as it was).
     if (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        SaveCurrentGraph();
+        SaveFromStudio();
     }
     if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        ShowSaveDialog();
+        SaveAsFromStudio();
     }
 
     // Ctrl+Shift+U - Create subgraph from selection (Ctrl+Shift+S is Save As)
     if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_U) && selected_node_ids_.size() >= 2) {
         CreateSubgraphFromSelection("");
     }
+
+    // + and - zoom one step around the canvas centre (as View's - / +)
+    if (!ctrl && (ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd)) &&
+        cyxwiz::studio_toolbar::ZoomIn(zoom_).enabled)
+        ZoomAroundCentre(1);
+    if (!ctrl && (ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract)) &&
+        cyxwiz::studio_toolbar::ZoomOut(zoom_).enabled)
+        ZoomAroundCentre(-1);
 
     // M - Toggle minimap
     if (ImGui::IsKeyPressed(ImGuiKey_M) && !ctrl) {
@@ -534,6 +559,15 @@ void NodeEditor::CenterViewOn(ImVec2 grid_point) {
                                               canvas_size_.y * 0.5f - grid_point.y * zoom_));
 }
 
+void NodeEditor::RevealIfOffScreen(ImVec2 grid_min, ImVec2 size) {
+    if (canvas_size_.x <= 0.0f || canvas_size_.y <= 0.0f) return;
+    const ImVec2 view_min = GridAt(canvas_origin_);
+    const ImVec2 view_max = GridAt(ImVec2(canvas_origin_.x + canvas_size_.x, canvas_origin_.y + canvas_size_.y));
+    const bool inside = grid_min.x >= view_min.x && grid_min.y >= view_min.y &&
+                        grid_min.x + size.x <= view_max.x && grid_min.y + size.y <= view_max.y;
+    if (!inside) CenterViewOn(ImVec2(grid_min.x + size.x * 0.5f, grid_min.y + size.y * 0.5f));
+}
+
 void NodeEditor::FrameNodes(const std::vector<int>& node_ids) {
     if (node_ids.empty()) {
         return;
@@ -555,7 +589,7 @@ void NodeEditor::FrameNodes(const std::vector<int>& node_ids) {
     constexpr float kMargin = 48.0f;
     const float fit_x = (canvas_size_.x - 2.0f * kMargin) / std::max(1.0f, max_x - min_x);
     const float fit_y = (canvas_size_.y - 2.0f * kMargin) / std::max(1.0f, max_y - min_y);
-    zoom_ = std::clamp(std::min({fit_x, fit_y, 1.0f}), ZOOM_MIN, ZOOM_MAX);
+    zoom_ = std::clamp(std::min({fit_x, fit_y, 1.0f}), cyxwiz::studio_toolbar::kZoomMin, cyxwiz::studio_toolbar::kZoomMax);
     CenterViewOn(ImVec2((min_x + max_x) * 0.5f, (min_y + max_y) * 0.5f));
 }
 

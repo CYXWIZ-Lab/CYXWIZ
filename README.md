@@ -4,7 +4,7 @@ CyxWiz is a native C++20, visual-first environment for building, inspecting, and
 
 > **Project status:** active pre-release development. Local graph editing, data workflows, training, testing, scripting, and several inference paths are implemented and exercised by the test suite. Device-placement truth, exact checkpoint resume, and end-to-end distributed execution still require production hardening. Do not treat the current tree as a production-ready distributed training service.
 
-CyxWiz is source-available under the [CYXWIZ Commercial Source and Evaluation License](LICENSE), not an open-source licence.
+CyxWiz is free and open-source software under the [GNU Affero General Public License v3.0 or later](LICENSE), with a commercial licence available.
 
 ## Contents
 
@@ -307,4 +307,8 @@ Keep changes scoped, preserve component boundaries (extend the shared backend in
 
 Copyright (c) 2026 CYXWIZ COMPUTER SYSTEMS L.L.C - S.P.C.
 
-Use is governed by the [CYXWIZ Commercial Source and Evaluation License](LICENSE). Production, commercial, hosted-service, redistribution, and competitive use require separate written authorisation.
+CyxWiz Engine and the CyxWiz Server Node are licensed under the [GNU Affero General Public License, version 3 or later](LICENSE), with the scope and additional permissions in [LICENSE-ADDITIONAL-PERMISSIONS.md](LICENSE-ADDITIONAL-PERMISSIONS.md): plugins built on the Plugin SDK may use any licence, and the Plugin SDK itself is Apache-2.0.
+
+You may use, study, modify and share CyxWiz. If you distribute a modified version, or let users interact with one over a network, you must publish its complete source under the same licence. To build on CyxWiz without that obligation, see the [commercial licence](LICENSE-COMMERCIAL.md).
+
+"CyxWiz" and the CyxWiz logo are trademarks of CYXWIZ COMPUTER SYSTEMS L.L.C - S.P.C; a modified version must use another name.

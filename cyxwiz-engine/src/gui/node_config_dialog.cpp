@@ -193,53 +193,6 @@ const char* MethodNameFromType(int tokenizer_type) {
     }
 }
 
-std::vector<std::string> TokenizePreviewText(const std::string& text,
-                                             int tokenizer_type,
-                                             bool lowercase) {
-    std::string normalized = text;
-    if (lowercase) {
-        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
-                       [](unsigned char c) {
-                           return static_cast<char>(std::tolower(c));
-                       });
-    }
-
-    std::vector<std::string> tokens;
-    if (tokenizer_type == 2) {
-        for (char c : normalized) {
-            if (!std::isspace(static_cast<unsigned char>(c))) {
-                tokens.emplace_back(1, c);
-            }
-        }
-        return tokens;
-    }
-
-    if (tokenizer_type == 0) {
-        std::istringstream iss(normalized);
-        std::string token;
-        while (iss >> token) tokens.push_back(token);
-        return tokens;
-    }
-
-    std::string current;
-    for (char c : normalized) {
-        const auto uc = static_cast<unsigned char>(c);
-        if (std::isalnum(uc) || c == '_') {
-            current.push_back(c);
-        } else {
-            if (!current.empty()) {
-                tokens.push_back(current);
-                current.clear();
-            }
-            if (!std::isspace(uc)) {
-                tokens.emplace_back(1, c);
-            }
-        }
-    }
-    if (!current.empty()) tokens.push_back(current);
-    return tokens;
-}
-
 std::vector<std::string> SplitCsvLineSimple(const std::string& line) {
     std::vector<std::string> fields;
     std::string field;

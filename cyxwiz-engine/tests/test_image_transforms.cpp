@@ -6,7 +6,7 @@
 // applies the same op with the same settings on the ArrayFire device and must
 // match on every ArrayFire backend (CYXWIZ_TEST_ARRAYFIRE_BACKEND). Then: the random draws (ranges, train-only, reproducible per seed),
 // the shape rule and its refusals, and a whole plan with Normalize.
-#include "computation_truth/test_device_selection.h"
+#include "oracle/oracle_test.h"
 
 #include <cyxwiz/image_augmentation.h>
 
@@ -696,7 +696,7 @@ std::filesystem::path FixturePath(const char* argv0) {
 
 int main(int, char** argv) {
     // CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu: the same ArrayFire code on each backend.
-    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested device");
+    Check(cyxwiz::test::BeginOracleTest("test_image_transforms"), "requested device");
     CheckFixtures(FixturePath(argv[0]));
     CheckMixFixtures(FixturePath(argv[0]));
     CheckDraws();

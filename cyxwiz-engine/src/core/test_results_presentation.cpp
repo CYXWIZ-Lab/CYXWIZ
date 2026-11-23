@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <map>
 
 namespace cyxwiz::test_report {
 
@@ -317,6 +318,34 @@ std::vector<ClassRow> SortClasses(std::vector<ClassRow> rows, ClassSort by, bool
         return ascending ? key(a) < key(b) : key(b) < key(a);
     });
     return rows;
+}
+
+std::vector<MistakePair> MistakePairs(const TestingMetrics& m) {
+    std::map<std::pair<int, int>, int> counts;
+    const size_t samples = std::min(m.predictions.size(), m.ground_truth.size());
+    for (size_t i = 0; i < samples; ++i)
+        if (m.predictions[i] != m.ground_truth[i]) ++counts[{m.ground_truth[i], m.predictions[i]}];
+    std::vector<MistakePair> pairs;
+    for (const auto& [key, count] : counts) pairs.push_back({key.first, key.second, count});
+    std::stable_sort(pairs.begin(), pairs.end(), [](const MistakePair& a, const MistakePair& b) { return a.count > b.count; });
+    return pairs;
+}
+
+std::string ErrorsHeadline(const TestingMetrics& m, const View& v) {
+    const size_t samples = std::min(m.predictions.size(), m.ground_truth.size());
+    if (samples == 0) return "No predictions were kept for this run.";
+    const size_t wrong = v.mistakes.size();
+    if (wrong == 0) return "None of the " + Count(static_cast<long long>(samples)) + " test rows is wrong.";
+    char right[32];
+    std::snprintf(right, sizeof(right), "%.2f %%", 100.0 * static_cast<double>(samples - wrong) / static_cast<double>(samples));
+    std::string text = Count(static_cast<long long>(wrong)) + " of the " + Count(static_cast<long long>(samples)) +
+                       " test rows " + (wrong == 1 ? "is" : "are") + " wrong (" + right + " right).";
+    const auto pairs = MistakePairs(m);
+    if (!pairs.empty() && pairs.front().count > 1)
+        text += " The commonest mistake is " + WithArticle(ClassName(m, pairs.front().truth)) + " read as " +
+                ClassName(m, pairs.front().predicted) + " (" + std::to_string(pairs.front().count) + " rows).";
+    text += " Most confident first: these are the ones the model is sure of and wrong about.";
+    return text;
 }
 
 }  // namespace cyxwiz::test_report

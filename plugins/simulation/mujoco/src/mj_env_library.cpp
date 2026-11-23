@@ -1,7 +1,9 @@
 #include "mj_env_library.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
+#include <map>
 #include <spdlog/spdlog.h>
 
 namespace fs = std::filesystem;
@@ -21,7 +23,7 @@ void MjEnvLibrary::PopulateBuiltins() {
 
         {"reacher", "Reacher 2D", "reacher.xml",
          "Move a 2-joint arm to reach a target position in 2D space.",
-         "Classic Control", 11, 2, 200, -3.75f},
+         "Classic Control", 10, 2, 50, -3.75f},
 
         // ===== Locomotion =====
         {"hopper", "Hopper", "hopper.xml",
@@ -30,7 +32,7 @@ void MjEnvLibrary::PopulateBuiltins() {
 
         {"walker2d", "Walker 2D", "walker2d.xml",
          "Make a planar bipedal robot walk forward without falling.",
-         "Locomotion", 17, 6, 1000, 4800.0f},
+         "Locomotion", 17, 6, 1000, 0.0f},
 
         {"half_cheetah", "Half Cheetah", "half_cheetah.xml",
          "Make a 2D cheetah-like robot run forward as fast as possible.",
@@ -39,7 +41,7 @@ void MjEnvLibrary::PopulateBuiltins() {
         // ===== Manipulation =====
         {"pusher", "Pusher", "pusher.xml",
          "Use a 3-joint arm to push an object to a target location.",
-         "Manipulation", 23, 7, 200, 0.0f},
+         "Manipulation", 23, 7, 100, 0.0f},
     };
 }
 
@@ -189,110 +191,164 @@ void MjEnvLibrary::PopulateMenagerie() {
         "Biomechanical", 80, 120);
 }
 
-const EnvInfo* MjEnvLibrary::FindById(const std::string& id) const {
-    for (const auto& e : envs_) {
-        if (e.id == id) return &e;
-    }
-    return nullptr;
-}
-
 std::string MjEnvLibrary::GetAssetPath(const EnvInfo& info) const {
     // Custom imported models: use absolute path directly
     if (!info.custom_asset_path.empty()) {
         return info.custom_asset_path;
     }
 
-    // Menagerie models: look in menagerie download dir
-    if (info.source == EnvSource::Menagerie) {
-        std::string model_dir = GetMenagerieModelDir(info);
-        fs::path scene = fs::path(model_dir) / info.scene_file;
-        if (fs::exists(scene)) return scene.string();
-        // Fallback: maybe it was extracted differently
-        return scene.string();
-    }
+    // Menagerie models: the project's copy first, then the shared download of the version found
+    if (info.source == EnvSource::Menagerie) return ResolveModelRef(RefFor(info), roots_).file.string();
 
-    // Builtin models: look in assets dir
-    if (!assets_dir_.empty()) {
-        fs::path p = fs::path(assets_dir_) / info.filename;
-        if (fs::exists(p)) return p.string();
-    }
-    // Fallback: try common locations relative to CWD
-    for (const auto& dir : {
-        "plugins/simulation/mujoco/assets",
-        "plugins/mujoco_simulation/assets",
-    }) {
-        fs::path p = fs::path(dir) / info.filename;
-        if (fs::exists(p)) return p.string();
-    }
+    // Builtin models: the plugin's assets dir
     if (assets_dir_.empty()) return info.filename;
     return (fs::path(assets_dir_) / info.filename).string();
 }
 
-bool MjEnvLibrary::IsModelAvailable(const EnvInfo& info) const {
-    if (info.source == EnvSource::Builtin) return true;
+namespace {
 
-    std::string model_dir = GetMenagerieModelDir(info);
-    fs::path scene = fs::path(model_dir) / info.scene_file;
-    return fs::exists(scene);
-}
-
-std::string MjEnvLibrary::GetMenagerieModelDir(const EnvInfo& info) const {
-    if (menagerie_dir_.empty()) {
-        // Default: ~/.cyxwiz/menagerie/
+fs::path CyxWizHome() {
 #ifdef _WIN32
-        const char* home = std::getenv("USERPROFILE");
+    const char* home = std::getenv("USERPROFILE");
 #else
-        const char* home = std::getenv("HOME");
+    const char* home = std::getenv("HOME");
 #endif
-        if (home) {
-            return (fs::path(home) / ".cyxwiz" / "menagerie" / info.repo_path).string();
-        }
-        return (fs::path("menagerie") / info.repo_path).string();
-    }
-    return (fs::path(menagerie_dir_) / info.repo_path).string();
+    return home ? fs::path(home) / ".cyxwiz" : fs::path(".cyxwiz");
 }
 
-void MjEnvLibrary::MarkDownloaded(const std::string& id) {
+}  // namespace
+
+std::string MjEnvLibrary::GetMenagerieRoot() { return (CyxWizHome() / "menagerie").string(); }
+
+std::string MjEnvLibrary::GetImportedRoot() { return (CyxWizHome() / "imported").string(); }
+
+MjModelRef MjEnvLibrary::RefFor(const EnvInfo& info) const {
+    MjModelRef ref;
+    switch (info.source) {
+        case EnvSource::Builtin:
+            ref.kind = MjRefKind::Builtin;
+            ref.file = info.filename;
+            return ref;
+        case EnvSource::Menagerie:
+            ref.kind = MjRefKind::Menagerie;
+            ref.robot = info.repo_path;
+            ref.file = info.scene_file;
+            ref.commit = info.commit;
+            return ref;
+        default:
+            return RefForFile(info.custom_asset_path, roots_);  // project: in it; imported elsewhere: its path
+    }
+}
+
+void MjEnvLibrary::SetNeeded(std::vector<MjModelRef> needed) {
+    needed_ = std::move(needed);
     for (auto& e : envs_) {
-        if (e.id == id) {
-            e.requires_download = false;
+        e.needed_commit.clear();
+        if (e.source != EnvSource::Menagerie) continue;
+        for (const auto& ref : needed_) {
+            if (ref.kind != MjRefKind::Menagerie || ref.robot != e.repo_path || ref.commit.empty()) continue;
+            if (ResolveModelRef(ref, roots_).where == MjModelWhere::Missing) {
+                e.needed_commit = ref.commit;
+                break;
+            }
+        }
+    }
+}
+
+void MjEnvLibrary::Rescan() {
+    std::error_code ec;
+    // The project's own models are listed again (another project may be open)
+    envs_.erase(std::remove_if(envs_.begin(), envs_.end(),
+                               [](const EnvInfo& e) { return e.source == EnvSource::Project; }),
+                envs_.end());
+    // Each shared download with its manifest: robot -> its newest version
+    struct Found {
+        std::string commit, date;
+        uint64_t bytes = 0;
+    };
+    std::map<std::string, Found> shared;
+    for (fs::directory_iterator it(roots_.menagerie, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_directory(ec)) continue;
+        const auto manifest = ReadModelManifest(it->path());
+        if (!manifest || manifest->source != "menagerie" || manifest->robot.empty()) continue;
+        auto& f = shared[manifest->robot];
+        if (f.commit.empty() || manifest->date > f.date) f = {manifest->commit, manifest->date, manifest->bytes};
+    }
+    for (auto& e : envs_) {
+        if (e.source != EnvSource::Menagerie) continue;
+        e.where = MjModelWhere::Missing;
+        e.commit.clear();
+        e.date.clear();
+        e.bytes = 0;
+        const fs::path copy = roots_.project.empty() ? fs::path() : ProjectModelsFolder(roots_.project) / e.repo_path;
+        const auto copy_manifest = copy.empty() ? std::nullopt : ReadModelManifest(copy);
+        if (copy_manifest && copy_manifest->robot == e.repo_path && fs::exists(copy / e.scene_file, ec)) {
+            e.where = MjModelWhere::ProjectCopy;
+            e.commit = copy_manifest->commit;
+            e.date = copy_manifest->date;
+            e.bytes = copy_manifest->bytes;
+        } else if (const auto it = shared.find(e.repo_path);
+                   it != shared.end() &&
+                   fs::exists(MenagerieFolder(roots_.menagerie, e.repo_path, it->second.commit) / e.scene_file, ec)) {
+            e.where = MjModelWhere::SharedDownload;
+            e.commit = it->second.commit;
+            e.date = it->second.date;
+            e.bytes = it->second.bytes;
+        } else if (fs::exists(roots_.menagerie / e.repo_path / e.scene_file, ec)) {
+            e.where = MjModelWhere::SharedDownload;  // downloaded before versions were kept
+        }
+        e.requires_download = e.where == MjModelWhere::Missing;
+    }
+    // The project's own models (a Menagerie copy shows on its robot's card)
+    if (!roots_.project.empty()) {
+        const fs::path models = ProjectModelsFolder(roots_.project);
+        for (fs::directory_iterator it(models, ec), end; !ec && it != end; it.increment(ec)) {
+            if (!it->is_directory(ec)) continue;
+            const auto manifest = ReadModelManifest(it->path());
+            if (manifest && manifest->source == "menagerie") continue;
+            AddImportedModel(it->path().string(), it->path().filename().string(),
+                             manifest && !manifest->url.empty() ? "Imported from " + manifest->url
+                                                                : "A model of this project",
+                             EnvSource::Project);
+        }
+    }
+    // Models imported outside any project, in earlier sessions
+    for (fs::directory_iterator it(GetImportedRoot(), ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->is_directory(ec))
+            AddImportedModel(it->path().string(), it->path().filename().string(), "Saved in " + it->path().string());
+    }
+    SetNeeded(needed_);
+}
+
+bool MjEnvLibrary::AddImportedModel(const std::string& dir, const std::string& name,
+                                    const std::string& description, EnvSource source) {
+    const std::string id = (source == EnvSource::Project ? "project_" : "imported_") + name;
+    for (const auto& e : envs_) {
+        if (e.id == id) return true;
+    }
+    std::error_code ec;
+    fs::path model;
+    for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->path().extension() != ".xml") continue;
+        if (it->path().filename() == "scene.xml") {
+            model = it->path();
             break;
         }
+        if (model.empty()) model = it->path();
     }
-}
+    if (model.empty()) return false;
 
-void MjEnvLibrary::ScanDownloadedModels() {
-    for (auto& e : envs_) {
-        if (e.source == EnvSource::Menagerie) {
-            e.requires_download = !IsModelAvailable(e);
-        }
-    }
-    int available = 0;
-    for (const auto& e : envs_) {
-        if (e.source == EnvSource::Menagerie && !e.requires_download) available++;
-    }
-    if (available > 0) {
-        spdlog::info("MjEnvLibrary: {} Menagerie models available locally", available);
-    }
-}
-
-std::vector<std::string> MjEnvLibrary::GetCategories() const {
-    std::vector<std::string> cats;
-    for (const auto& e : envs_) {
-        if (std::find(cats.begin(), cats.end(), e.category) == cats.end()) {
-            cats.push_back(e.category);
-        }
-    }
-    return cats;
-}
-
-void MjEnvLibrary::AddEnv(EnvInfo info) {
-    // Don't add duplicates
-    for (const auto& e : envs_) {
-        if (e.id == info.id) return;
-    }
-    spdlog::info("MjEnvLibrary: Added imported environment '{}'", info.name);
+    EnvInfo info;
+    info.id = id;
+    info.name = name;
+    info.filename = model.filename().string();
+    info.description = description;
+    info.category = source == EnvSource::Project ? "In this project" : "Imported";
+    info.source = source;
+    info.custom_asset_path = model.string();
     envs_.push_back(std::move(info));
+    spdlog::info("MjEnvLibrary: Added imported environment '{}'", name);
+    return true;
 }
 
 } // namespace cyxwiz::plugin::mujoco

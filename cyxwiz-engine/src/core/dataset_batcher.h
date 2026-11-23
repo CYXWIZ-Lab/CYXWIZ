@@ -5,6 +5,7 @@
 #include <cyxwiz/layers/linear_sparse_csr.h>
 #include <cyxwiz/tensor.h>
 #include <cstdint>
+#include <exception>
 #include <optional>
 #include <vector>
 #include <random>
@@ -220,7 +221,76 @@ public:
     // The caller should call Reset() afterwards to pick up the new phase's
     // epoch order. Image/audio batchers override this.
     virtual void SetPhase(BatcherPhase /*phase*/) {}
+
+    // The items with these numbers in the source data (rows of the dataset or
+    // of its index table, the numbers Data Studio and the Studio Debugger
+    // show), prepared the way validation sees them: fixed steps, Normalize and
+    // the label form, no random augmentation; whatever the phase (TOFIX178
+    // 6.0b, Local Debug's picked sample). nullopt: this batcher cannot reach
+    // items by number. A number outside the data throws.
+    virtual std::optional<Batch> GetSourceSamples(const std::vector<size_t>& /*indices*/) { return std::nullopt; }
+    // How many items the source holds (every part of the split), the numbers
+    // GetSourceSamples takes are below it; 0 when the batcher cannot tell.
+    virtual size_t SourceSampleCount() const { return 0; }
+    // The Data Split part an item falls in; nullopt when it is in none (left
+    // out, e.g. by a Quality node) or the batcher cannot tell.
+    virtual std::optional<BatcherPhase> SourceSamplePart(size_t /*index*/) const { return std::nullopt; }
+    // What the item is called in its source ("cat.10599.jpg"); empty when
+    // items have no name (table rows) or the batcher cannot tell.
+    virtual std::string SourceSampleName(size_t /*index*/) const { return {}; }
+    // The classes in label order, when the batcher knows them.
+    virtual std::vector<std::string> ClassNames() const { return {}; }
+    // How many items of each class the Train part holds (index = class id),
+    // before any class-balanced resampling; nullopt when this batcher cannot
+    // tell (it serves no Train part, or its labels are not classes).
+    // class_weight=balanced is computed from it (TOFIX223 0.16).
+    virtual std::optional<std::vector<size_t>> TrainClassCounts() const { return std::nullopt; }
 };
+
+// Adds one item of class `label` to per-class `counts`; false for a label
+// below 0, which is no class.
+inline bool CountClass(std::vector<size_t>& counts, int64_t label) {
+    if (label < 0) return false;
+    if (static_cast<size_t>(label) >= counts.size()) counts.resize(static_cast<size_t>(label) + 1, 0);
+    ++counts[static_cast<size_t>(label)];
+    return true;
+}
+
+// `count` items spread evenly over `total` items from `index` (Top images,
+// TOFIX178 6.3e): how many fit and the step between them (every step-th
+// item; 1 when they are consecutive).
+struct ItemSpread {
+    size_t count = 0;
+    size_t stride = 1;
+};
+inline ItemSpread SpreadItems(size_t total, size_t index, size_t count) {
+    if (index >= total || count == 0) return {0, 1};
+    const size_t available = total - index;
+    ItemSpread spread;
+    spread.count = std::min(count, available);
+    spread.stride = std::max<size_t>(1, available / spread.count);
+    return spread;
+}
+
+// Items index, index + stride, ... (count of them) by number as one batch
+// (GetSourceSamples), or the item at `index` alone when the data ends before
+// them; `taken` gets how many. nullopt: the batcher cannot reach items by
+// number. An `index` outside the data throws.
+inline std::optional<Batch> GetSourceSampleRange(IBatcher& batcher, size_t index, size_t count,
+                                                 size_t* taken = nullptr, size_t stride = 1) {
+    std::vector<size_t> indices;
+    for (size_t i = 0; i < (count > 0 ? count : 1); ++i) indices.push_back(index + i * std::max<size_t>(1, stride));
+    std::optional<Batch> batch;
+    try {
+        batch = batcher.GetSourceSamples(indices);
+    } catch (const std::exception&) {
+        if (indices.size() == 1) throw;
+        indices.resize(1);
+        batch = batcher.GetSourceSamples(indices);
+    }
+    if (taken) *taken = batch ? indices.size() : 0;
+    return batch;
+}
 
 /**
  * DatasetBatcher - Provides batched iteration over a dataset
@@ -472,6 +542,11 @@ public:
         uint32_t balance_seed = 42
     );
 
+    // Keeps these columns out of the feature tensor (TOFIX129 D7a G1: the
+    // Data Input's ID, Group, Weight, Ignore ... roles). Call before the first
+    // batch; names not in the schema are ignored; the label is never removed.
+    void ExcludeFeatureColumns(const std::vector<std::string>& names);
+
     // IBatcher interface
     Batch GetNextBatch() override;
     void Reset() override;
@@ -482,6 +557,12 @@ public:
     bool IsEpochComplete() const override;
     size_t GetNumBatches() const override;
     size_t GetNumSamples() const override { return indices_.size(); }
+    // Rows of the table by number, as validation sees them (TOFIX178 6.0b).
+    std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
+    size_t SourceSampleCount() const override;
+    // This batcher's part when the row is in it (it holds one part).
+    std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
+    std::optional<std::vector<size_t>> TrainClassCounts() const override;
 
     // Preprocessing (IBatcher)
     void SetNormalization(float mean, float std) override;
@@ -519,6 +600,13 @@ public:
         size_t width, const std::string& target_base = {});
 
 private:
+    Batch AssembleBatch(const int64_t* rows, size_t n);
+    // Throws when a feature or label column holds missing values (null, or
+    // NaN in a float column): training refuses them unless a step resolved
+    // them first (TOFIX223 0.3, owner decision D4). Checked once per batcher.
+    void RefuseMissingValues(const std::shared_ptr<arrow::Table>& table) const;
+    mutable bool missing_values_checked_ = false;
+
     std::shared_ptr<class ArrowDataset> dataset_;
     std::string label_column_;
     size_t batch_size_;

@@ -1,5 +1,6 @@
 #include "cyxwiz/layers/recurrent.h"
 #include "cyxwiz/neural_provider.h"
+#include "cyxwiz/neural_provider_dispatch.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_recurrent_utils.h"
 
@@ -50,27 +51,20 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
 // The native neural provider serves unidirectional batch-first LSTMs that
 // start from a zero state and need no inter-layer dropout.
 bool LSTMLayer::TryProviderForward(const Tensor& input, Tensor& output) {
-    if (!batch_first_ || provider_disabled_after_failure_ ||
-        (training_ && dropout_ > 0.0f && num_layers_ > 1)) {
+    if (provider_disabled_after_failure_ ||
+        !RecurrentLayerAsksProvider(batch_first_, training_, dropout_, static_cast<size_t>(num_layers_))) {
         return false;
     }
     const auto& input_shape = input.Shape();
-    NeuralOpRequest provider_request;
-    provider_request.target = CaptureCurrentNeuralDeviceTarget();
-    provider_request.op = NeuralOp::LstmForward;
-    provider_request.training = false;  // forward math is identical
-    provider_request.dtype = DataType::Float32;
-    provider_request.batch = input_shape[0];
-    provider_request.seq = input_shape[1];
-    provider_request.input = input_shape[2];
-    provider_request.hidden = static_cast<size_t>(hidden_size_);
-    provider_request.layers = static_cast<size_t>(num_layers_);
-    auto provider = NeuralProviderRegistry::Instance().FindSupporting(provider_request);
-    if (!provider) {
-        return false;
-    }
     const size_t hidden = static_cast<size_t>(hidden_size_);
     const size_t layers = static_cast<size_t>(num_layers_);
+    const NeuralOpRequest provider_request = RecurrentProviderRequest(
+        NeuralOp::LstmForward, CaptureCurrentNeuralDeviceTarget(),
+        {input_shape[0], input_shape[1], input_shape[2], hidden, layers});
+    // Training: a provider forward only where the backward is served too.
+    if (training_ && !RecurrentProviderServesBackward(provider_request)) {
+        return false;
+    }
     Tensor result(std::vector<size_t>{input_shape[0], input_shape[1], hidden});
     Tensor final_hidden(std::vector<size_t>{layers, input_shape[0], hidden});
     Tensor final_cell(std::vector<size_t>{layers, input_shape[0], hidden});
@@ -83,11 +77,9 @@ bool LSTMLayer::TryProviderForward(const Tensor& input, Tensor& output) {
         buffers.weights.push_back(&b_hh_[l]);
     }
     buffers.outputs = {&result, &final_hidden, &final_cell};
-    const auto status = provider->Execute(provider_request, buffers);
-    if (!status.ok) {
-        spdlog::warn("LSTMLayer::Forward: native provider failed (reason={}), "
-                     "running the ArrayFire recurrence: {}",
-                     BackendFallbackReasonName(status.reason), status.detail);
+    if (!DispatchNeuralProviderOp(provider_request, "LSTM", [&](INeuralNetworkProvider& provider) {
+            return provider.Execute(provider_request, buffers);
+        })) {
         return false;
     }
     provider_forward_used_ = true;

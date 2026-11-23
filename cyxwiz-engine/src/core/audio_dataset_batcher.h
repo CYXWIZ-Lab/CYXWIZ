@@ -7,7 +7,9 @@
 #include "formats/audio_dataset.h"
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <random>
+#include <string>
 #include <vector>
 
 namespace cyxwiz {
@@ -51,9 +53,25 @@ public:
     // IBatcher interface
     Batch GetNextBatch() override;
     void Reset() override;
+    // The next Train Reset orders the epoch from `seed` alone (the epoch's
+    // seed from the executor), so a resumed run replays its order (TOFIX228
+    // 1.6, ORA-28: the order followed how many Resets had run).
+    bool SetEpochShuffleSeed(uint64_t seed) override {
+        pending_epoch_seed_ = seed;
+        return true;
+    }
     bool IsEpochComplete() const override;
     size_t GetNumBatches() const override;
     size_t GetNumSamples() const override;
+    // Clips by number, as validation sees them: no augmentation (TOFIX178
+    // 6.0b, Local Debug's picked sample).
+    std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
+    size_t SourceSampleCount() const override;
+    // The part (of the three this batcher holds) the clip falls in.
+    std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
+    std::string SourceSampleName(size_t index) const override;
+    std::vector<std::string> ClassNames() const override;
+    std::optional<std::vector<size_t>> TrainClassCounts() const override;
 
     void SetNormalization(float mean, float std_dev) override;
     void SetOneHotEncoding(size_t num_classes) override;
@@ -64,13 +82,21 @@ public:
 
     // Audio-specific accessors
     int GetFeatureRows() const { return feature_rows_; }
+    // Why the clips could not be loaded (empty when they were), e.g. no
+    // audio decoder in this build; the refusal shows it (TOFIX223 0.12).
+    const std::string& LoadError() const { return load_error_; }
     int GetFeatureCols() const { return feature_cols_; }
     // The clips in a part (Train, Val or Test), whatever the current phase.
     size_t SamplesIn(BatcherPhase phase) const { return Part(phase).size(); }
     const std::vector<size_t>& Part(BatcherPhase phase) const;
 
 private:
+    // These clips as one batch: the features, per-clip z-score, Normalize and
+    // the label form; augmented when `augment`.
+    Batch AssembleBatch(const size_t* indices, size_t n, bool augment);
+
     std::shared_ptr<AudioDataset> dataset_;
+    std::string load_error_;
 
     int batch_size_;
     bool shuffle_;
@@ -100,6 +126,20 @@ private:
     size_t current_idx_ = 0;
 
     std::mt19937 rng_;
+    std::optional<uint64_t> pending_epoch_seed_;  // see SetEpochShuffleSeed
+    uint32_t augmentation_round_ = 0;  // training epochs begun (augmentation draws)
 };
+
+// The Data Split's settings for the training dataset's audio batcher.
+SampleSplitSettings AudioTrainingSplit(const TrainingConfiguration& config);
+// The audio batcher training reads for `entry` (TrainingManager, Local
+// Debug): the graph's feature node, `split`'s parts, drop-last, Normalize and
+// the label form.
+std::shared_ptr<AudioDatasetBatcher> MakeAudioTrainingBatcher(const DataRegistry::AudioDatasetEntry& entry,
+                                                              const TrainingConfiguration& config, int batch_size,
+                                                              const SampleSplitSettings& split);
+// The model input the batcher's features give: rows x cols flattened, the
+// [bins, frames] shape and, for a Conv1D, [frames, bins].
+void ApplyAudioInputShape(const AudioDatasetBatcher& batcher, TrainingConfiguration& config);
 
 } // namespace cyxwiz

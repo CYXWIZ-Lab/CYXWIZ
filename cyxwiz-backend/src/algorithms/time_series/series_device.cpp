@@ -3,9 +3,11 @@
 #endif
 
 #include "series_device.h"
+#include "cyxwiz/time_series.h"
 
 #include "../arrayfire_host_values.h"
 #include "cyxwiz/statistical_tests.h"
+#include "../device_fft.h"
 
 #include <algorithm>
 #include <cmath>
@@ -46,9 +48,9 @@ std::vector<double> Autocovariance(const std::vector<double>& x, int max_lag) {
     const dim_t size = PowerOfTwoAtLeast(2 * n);
     af::array padded = af::constant(0.0, size, ComputeType());
     padded(af::seq(0, static_cast<double>(n - 1))) = d;
-    const af::array spectrum = af::fft(padded);
+    const af::array spectrum = DeviceFft(padded);
     const af::array power = af::real(spectrum * af::conjg(spectrum)).as(ComplexType());
-    const af::array sums = af::real(af::ifftNorm(power, 1.0 / static_cast<double>(size)));
+    const af::array sums = af::real(DeviceIfftNorm(power, 1.0 / static_cast<double>(size)));
     std::vector<double> c = ToHost(sums(af::seq(0, static_cast<double>(max_lag))), "TimeSeries autocovariance");
     for (double& v : c) v /= static_cast<double>(n);
     return c;
@@ -58,7 +60,7 @@ void Periodogram(const std::vector<double>& x, std::vector<double>& power, std::
     const dim_t n = static_cast<dim_t>(x.size());
     af::array d = ToDevice(x);
     d = d - af::mean<double>(d);
-    const af::array spectrum = af::fft(d);
+    const af::array spectrum = DeviceFft(d);
     const dim_t half = n / 2;
     af::array p = af::real(spectrum * af::conjg(spectrum))(af::seq(0, static_cast<double>(half)));
     p = p / (static_cast<double>(n) * static_cast<double>(n));
@@ -158,4 +160,31 @@ double Strength(const std::vector<double>& residual, const std::vector<double>& 
     return std::max(0.0, 1.0 - var(r) / vs);
 }
 
+std::vector<std::function<bool()>>& StopQueries() {
+    thread_local std::vector<std::function<bool()>> queries;
+    return queries;
+}
+
+bool StopRequested() {
+    const auto& queries = StopQueries();
+    return !queries.empty() && queries.back() && queries.back()();
+}
+
+int& GuardDepth() {
+    thread_local int depth = 0;
+    return depth;
+}
+
 }  // namespace cyxwiz::series_detail
+
+namespace cyxwiz {
+
+TimeSeriesStop::TimeSeriesStop(std::function<bool()> stop) {
+    series_detail::StopQueries().push_back(std::move(stop));
+}
+
+TimeSeriesStop::~TimeSeriesStop() {
+    series_detail::StopQueries().pop_back();
+}
+
+}  // namespace cyxwiz

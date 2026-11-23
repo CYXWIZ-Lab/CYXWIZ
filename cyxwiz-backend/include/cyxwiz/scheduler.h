@@ -290,6 +290,8 @@ public:
     void Step(int epoch, float metric = 0.0f) override;
     double GetLR() const override { return current_lr_; }
     std::string GetName() const override { return "OneCycleLR"; }
+    // The cycle's rate at a step (0 = before the first update).
+    double RateAt(int step) const;
     void Reset() override;
     bool ExportState(SchedulerState& state, std::string& error) const override;
     bool ImportState(const SchedulerState& state, std::string& error) override;

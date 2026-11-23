@@ -3,6 +3,7 @@
 #include "../src/core/crash_run_recorder.h"
 #include "../src/core/debug_run_paths.h"
 #include "../src/core/training_manager.h"
+#include "../src/core/training_recipe.h"
 #include "../src/core/training_trace_collector.h"
 #include "../src/gui/panels/training_plot_panel.h"
 #include "route_qualification_test_fixture.h"
@@ -22,6 +23,14 @@
 #include <vector>
 
 namespace {
+
+// Train starts tables through an Arrow recipe (training_recipe.h).
+bool StartArrow(cyxwiz::TrainingManager& manager, cyxwiz::TrainingConfiguration config,
+                std::shared_ptr<cyxwiz::ArrowDataset> dataset, const std::string& label, int epochs, int batch_size,
+                std::weak_ptr<cyxwiz::TrainingPlotPanel> panel, std::function<void(bool)> callback = nullptr) {
+    return manager.StartTrainingRecipe(cyxwiz::ArrowTrainingRecipe(std::move(dataset), label), std::move(config),
+                                       epochs, batch_size, panel, std::move(callback));
+}
 std::string expected_backend;
 
 void Check(bool condition, const std::string& message) {
@@ -221,14 +230,14 @@ int main(int argc, char** argv) {
         while (!release_completion.load()) std::this_thread::yield();
     });
     auto restart_config = MakeConfig(work_dir / "restart_checkpoints");
-    Check(manager.StartTrainingArrow(restart_config, MakeDataset(), "label", 1, 2, {}),
+    Check(StartArrow(manager, restart_config, MakeDataset(), "label", 1, 2, {}),
           "restart fixture should start");
     const auto restart_task_id = manager.GetCurrentTaskId();
     const bool reached_completion = WaitFor([&] { return completion_entered.load(); }, std::chrono::seconds(60));
     const bool admission_closed = manager.IsTrainingActive();
     bool restart_rejected = false;
     if (reached_completion && admission_closed) {
-        restart_rejected = !manager.StartTrainingArrow(restart_config, MakeDataset(), "label", 1, 2, {});
+        restart_rejected = !StartArrow(manager, restart_config, MakeDataset(), "label", 1, 2, {});
     }
     release_completion.store(true);
     manager.WaitForTrainingStop();
@@ -260,7 +269,7 @@ int main(int argc, char** argv) {
 
     auto panel = std::make_shared<cyxwiz::TrainingPlotPanel>();
     auto config = MakeConfig(work_dir / "checkpoints");
-    const bool started = manager.StartTrainingArrow(
+    const bool started = StartArrow(manager, 
         config,
         MakeDataset(),
         "label",
@@ -341,7 +350,7 @@ int main(int argc, char** argv) {
     auto cancelled_config = MakeConfig(work_dir / "cancelled_checkpoints");
     cancelled_config.epochs = 1000;
     auto cancelled_panel = std::make_shared<cyxwiz::TrainingPlotPanel>();
-    const bool cancel_started = manager.StartTrainingArrow(
+    const bool cancel_started = StartArrow(manager, 
         cancelled_config,
         MakeDataset(),
         "label",
@@ -430,7 +439,7 @@ int main(int argc, char** argv) {
     early_stop_config.save_best_checkpoint = true;
     early_stop_config.early_stopping_patience = 1;
     auto early_stop_panel = std::make_shared<cyxwiz::TrainingPlotPanel>();
-    const bool early_stop_started = manager.StartTrainingArrow(
+    const bool early_stop_started = StartArrow(manager, 
         early_stop_config,
         MakeDataset(),
         "label",
@@ -543,7 +552,45 @@ int main(int argc, char** argv) {
               reloaded.model_device->device_id == owner.device_id,
           "checkpoint load publishes the actual weight owner for later testing");
     cyxwiz::Device::RecordProcessDevice(selected.type, selected.device_id);
+    // A kept decision (TOFIX129 D11) goes into the checkpoint and comes back with it.
+    {
+        cyxwiz::ModelDecision decision;
+        decision.calibration = cyxwiz::ModelDecision::Calibration::Temperature;
+        decision.temperature = 0.776;
+        Check(manager.SetActiveModelDecision(decision).empty(), "a decision is kept with the loaded model");
+        const auto again = manager.LoadCheckpointForEvaluation(early_stop_config, MakeDataset(), early_stop_metrics.checkpoint_used);
+        const auto info = manager.GetActiveModelInfo();
+        Check(again.success && info.evaluation_config && info.evaluation_config->decision.temperature == 0.776 &&
+                  info.evaluation_config->decision.calibration == cyxwiz::ModelDecision::Calibration::Temperature,
+              "the checkpoint brings the kept temperature back");
+        Check(manager.SetActiveModelDecision(cyxwiz::ModelDecision{}).empty(), "the decision is forgotten");
+        const auto forgotten = manager.LoadCheckpointForEvaluation(early_stop_config, MakeDataset(), early_stop_metrics.checkpoint_used);
+        Check(forgotten.success && manager.GetActiveModelInfo().evaluation_config->decision.Empty(),
+              "a forgotten decision stays forgotten after a reload");
+    }
     std::cout << "PASS: checkpoint device rejection preserves model; worker reload publishes owner\n";
+
+    // A learning rate range test (the Model window, TOFIX129 D11) runs through
+    // the manager but keeps the trained model in use and the Dashboard's runs.
+    {
+        const auto model_before = manager.GetActiveModel();
+        const uint64_t serial_before = manager.GetLastRangeTest().serial;
+        auto range_config = early_stop_config;
+        range_config.learning_rate_range.enabled = true;
+        range_config.learning_rate_range.start = 1e-4;
+        range_config.learning_rate_range.end = 1e-2;
+        range_config.learning_rate_range.steps = 6;
+        auto range_panel = std::make_shared<cyxwiz::TrainingPlotPanel>();
+        Check(StartArrow(manager, range_config, MakeDataset(), "label", 6, range_config.batch_size, range_panel),
+              "a range test starts through the manager");
+        const uint64_t range_task = manager.GetCurrentTaskId();
+        WaitForTerminalTask(manager, tasks, range_task, "range test");
+        const auto range = manager.GetLastRangeTest();
+        Check(range.serial == serial_before + 1 && range.points.size() == 6 && range.stop_reason == "All 6 steps ran.",
+              "the range test's curve is kept: " + std::to_string(range.points.size()) + " steps (" + range.stop_reason + ")");
+        Check(manager.GetActiveModel() == model_before, "a range test keeps the trained model in use");
+        std::cout << "PASS: a range test keeps the trained model and reports its curve\n";
+    }
 
 
     manager.ClearTrainedModel();
@@ -557,7 +604,7 @@ int main(int argc, char** argv) {
     auto failure_config = MakeConfig(work_dir / "failure_checkpoints");
     failure_config.optimizer_type = gui::NodeType::Output;
     auto failure_panel = std::make_shared<cyxwiz::TrainingPlotPanel>();
-    const bool failure_started = manager.StartTrainingArrow(
+    const bool failure_started = StartArrow(manager, 
         failure_config,
         MakeDataset(),
         "label",
@@ -632,7 +679,7 @@ int main(int argc, char** argv) {
     callback_success.store(true);
     auto device_failure_panel = std::make_shared<cyxwiz::TrainingPlotPanel>();
     auto device_failure_config = MakeConfig(work_dir / "device_failure_checkpoints");
-    Check(manager.StartTrainingArrow(device_failure_config, MakeDataset(), "label",
+    Check(StartArrow(manager, device_failure_config, MakeDataset(), "label",
               1, 2, device_failure_panel), "accept device-preflight failure fixture");
     const auto device_failure_task = WaitForTerminalTask(manager, tasks,
         manager.GetCurrentTaskId(), "device preflight failure");

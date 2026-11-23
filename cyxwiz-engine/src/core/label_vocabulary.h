@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -28,14 +29,17 @@ struct LabelVocabulary {
 // utf8 / large_utf8.
 bool IsTextLabelType(const arrow::DataType& type);
 
-// The distinct non-null values of text label columns, sorted.
+// The distinct non-null, non-empty values of text label columns, sorted. An
+// empty text is a missing label (as the Row Filter's IS NOT EMPTY reads it; a
+// text of spaces is a value there and here), never a class "".
 LabelVocabulary BuildLabelVocabulary(const std::vector<std::shared_ptr<arrow::ChunkedArray>>& columns);
 // The same from plain values (a Table Viewer / analysis panel column); empty
 // strings are missing values.
 LabelVocabulary BuildLabelVocabulary(const std::vector<std::string>& values);
 
-// The column as int32 class indices; nulls stay null; a value missing from the
-// vocabulary is an error naming it.
+// The column as int32 class indices; nulls and empty texts are null (missing
+// labels, refused by training); a value missing from the vocabulary is an
+// error naming it.
 arrow::Result<std::shared_ptr<arrow::ChunkedArray>> EncodeLabels(const arrow::ChunkedArray& column,
                                                                  const LabelVocabulary& vocabulary);
 
@@ -49,5 +53,11 @@ arrow::Result<std::shared_ptr<arrow::Table>> EncodeLabelColumn(const std::shared
 // not text.
 std::shared_ptr<arrow::ChunkedArray> TextLabelColumn(const std::shared_ptr<arrow::Table>& table,
                                                      const std::string& label_column);
+
+// The classes a label column trains: text labels count their vocabulary; whole
+// non-negative numbers are class indices, so max + 1 (the width one-hot needs);
+// booleans are 2. Empty for a missing or all-null column and for fractional or
+// negative values (a regression target, not classes).
+std::optional<size_t> LabelClassCount(const std::shared_ptr<arrow::Table>& table, const std::string& label_column);
 
 }  // namespace cyxwiz

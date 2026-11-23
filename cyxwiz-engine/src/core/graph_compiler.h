@@ -6,6 +6,8 @@
 #include "metric_learning_graph_contract.h"
 #include "metric_learning_batch.h"
 #include "training_parameter_contract.h"
+#include "learning_rate_range_test.h"
+#include "model_decision.h"
 #include "training_scheduler_controller.h"
 #include "training_generation_preview_settings.h"
 #include <core/regression_target_transform.h>
@@ -29,6 +31,8 @@ namespace cyxwiz {
 /**
  * Represents a compiled layer ready for execution
  */
+struct RLTrainingConfiguration;  // rl_graph_compile.h
+
 struct CompiledLayer {
     gui::NodeType type = gui::NodeType::Dense;
     int node_id = -1;
@@ -105,6 +109,7 @@ struct GraphPreprocessingConfig {
     std::string norm_statistics = "same";
     std::vector<float> norm_channel_mean, norm_channel_std;
     size_t norm_channels = 0;  // the images' channels where Normalize sits (image graphs)
+    std::vector<std::string> norm_channel_names;  // what they are: R, G, B, edges, ...
     int norm_node_id = -1;
 
     bool has_onehot = false;
@@ -182,7 +187,7 @@ struct TextPreprocessingConfig {
 };
 
 // Sequence tagging / NER batch contract. Compile identifies the intended
-// named payloads. Runtime training must enter through StartTrainingSequence
+// named payloads. Runtime training must enter through SequenceTrainingRecipe
 // with a prebuilt ISequenceBatcher; generic tabular dispatch still fails closed.
 struct SequenceBatchConfig {
     // Runtime-only identity captured when preparing the active model.
@@ -207,7 +212,7 @@ struct SequenceBatchConfig {
 
 inline std::string SequenceBatchRuntimeUnsupportedMessage() {
     return "Sequence/NER graph training requires a prebuilt ISequenceBatcher. "
-           "Use the Studio graph-training launcher or StartTrainingSequence; "
+           "Use the Studio graph-training launcher or SequenceTrainingRecipe; "
            "generic tabular TrainingExecutor dispatch cannot consume named "
            "sequence payloads.";
 }
@@ -416,6 +421,9 @@ struct TrainingConfiguration {
     // The compiler leaves this empty until a node group is deliberately
     // exposed. Focused backend tests may populate it directly.
     std::vector<int> graph_op_node_ids;
+    // Each graph op's output sample shapes by node id (one per output pin),
+    // from the compiler's shape walk; the Model window's Summary lists them.
+    std::map<int, std::vector<std::vector<size_t>>> graph_op_output_shapes;
     // Layers with several inputs (Cross Attention): the graph runtime runs
     // them, so the model is built as a graph even without graph ops.
     std::vector<int> multi_input_layer_node_ids;
@@ -443,6 +451,11 @@ struct TrainingConfiguration {
     std::string dataset_name;           // Name of dataset in DataRegistry
     int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
     ResolvedDatasetPartitions dataset_roles;  // Typed partition resolution
+    // Columns the Data Input's column roles keep out of the features (TOFIX129
+    // D7a G1): the ID, Group, Weight and Ignore columns set in Explore >
+    // Profile and written into the node as `column_roles` (dataset_contract.h
+    // IsFeatureRole). The batchers skip them by name; the label is never among them.
+    std::vector<std::string> excluded_feature_columns;
     // A step only the pipeline run applies (SQL, Text Clean ...) is on the
     // Training Dataset path: training trains on that run's result.
     bool training_data_needs_pipeline_run = false;
@@ -486,6 +499,9 @@ struct TrainingConfiguration {
     int early_stopping_patience = 5;    // stop after this many non-improving epochs
     std::string checkpoint_dir;         // optional override, defaults to run-local path
     std::string initialize_from_checkpoint; // warm start: model weights only (TOFIX143)
+    // A published weight file (.pth / .pt state-dict, .safetensors): layers named
+    // as the file's entries start from its weights, the others start fresh.
+    std::string initialize_from_weights_file;
     PinMemoryTransferStatus pin_memory_transfer;
 
     // Preprocessing — tabular config (backward-compatible)
@@ -511,6 +527,9 @@ struct TrainingConfiguration {
     // The OpenCV image steps (TOFIX178 1.3f), done once when the images are
     // prepared; each one's position places it among image_augmentation.ops.
     std::vector<cyxwiz::CvImageStep> image_cv_steps;
+    // What the model input's channels are after those steps (image graphs):
+    // R, G, B; grey; R, G, B, edges.
+    cyxwiz::ImageChannelLayout image_channels;
     // The Advanced Augment node that set image_augmentation.mix (mixup / cutmix).
     int image_mix_node_id = -1;
     // The Quality Analyzer node and the files its analysis leaves out of
@@ -566,15 +585,23 @@ struct TrainingConfiguration {
     float weight_decay = 0.0f;
     // Training recipe (optimizer node, all optimizers): per-update learning-rate
     // schedule, global-norm gradient clipping, AdamW weight-decay exclusions.
-    std::string lr_schedule = "none";   // none | warmup_cosine | warmup_linear | warmup_constant
+    std::string lr_schedule = "none";   // none | warmup_cosine | warmup_linear | warmup_constant | one_cycle
     float warmup_ratio = 0.02f;         // fraction of all optimizer updates spent warming up
     float min_lr_ratio = 0.1f;          // decay floor as a fraction of learning_rate
     float grad_clip_norm = 0.0f;        // 0 = off
     std::string weight_decay_exclude = "none";  // none | norms_and_biases | norms_biases_embeddings
+    bool nesterov = false;              // SGD: Nesterov momentum
     // Scheduler node on the training optimizer (TOFIX140 A3). TrainingExecutor
     // attaches it unless a scheduler is configured on the executor directly.
     std::optional<TrainingSchedulerSpec> scheduler;
     int scheduler_node_id = -1;
+    // A learning rate range test instead of a training (the Model window,
+    // TOFIX129 D11): the rate rises every optimizer step, no validation, no
+    // checkpoints, and the trained model in use is kept.
+    LearningRateRangeSettings learning_rate_range;
+    // The trained model's threshold and calibration, kept from Results >
+    // Test (TOFIX129 D11): Test applies it; checkpoints and packages carry it.
+    ModelDecision decision;
     // Regularization node between the loss and the optimizer (TOFIX140 A4):
     // penalty = l1 x sum(|w|) + l2 x sum(w^2) over every trainable parameter.
     float regularization_l1 = 0.0f;
@@ -611,6 +638,10 @@ struct TrainingConfiguration {
     bool pair_score_output = false;
     std::string pair_score_mode = "distance";
     double pair_score_threshold = 0.5;
+
+    // A reinforcement learning graph (Environment, Policy Head, Value Head,
+    // PPO; TOFIX195 S4.3): set instead of the supervised fields above.
+    std::shared_ptr<const RLTrainingConfiguration> rl;
 
     // Validation
     bool is_valid = false;
@@ -722,6 +753,27 @@ inline bool UsesContinuousTargetMetrics(
            config.loss_type == gui::NodeType::HuberLoss;
 }
 
+// How many target columns a continuous target has (0 for a class target):
+// the label, then <label>_1 ... <label>_{width-1}, as the batchers read them.
+inline size_t RegressionTargetWidth(const TrainingConfiguration& config) {
+    if (!UsesContinuousTargetMetrics(config)) return 0;
+    return config.target.width > 0 ? config.target.width
+                                   : (config.is_time_series ? config.time_series_target_width
+                                                            : std::max<size_t>(1, config.output_size));
+}
+
+// The target columns a batcher reads for `label_column`: the label itself,
+// and for a continuous target of width > 1 the ordered <label>_1 ... columns.
+inline std::vector<std::string> TrainingTargetColumns(const TrainingConfiguration& config,
+                                                      const std::string& label_column) {
+    std::vector<std::string> columns;
+    if (label_column.empty()) return columns;
+    columns.push_back(label_column);
+    for (size_t target = 1; target < RegressionTargetWidth(config); ++target)
+        columns.push_back(label_column + "_" + std::to_string(target));
+    return columns;
+}
+
 /**
  * GraphCompiler - Compiles visual node graph into executable training configuration
  *
@@ -775,6 +827,10 @@ public:
     static std::optional<PreprocessingDomain> GetPreprocessingNodeDomain(gui::NodeType type);
 
 private:
+    // An RL graph: Environment -> layers -> Policy Head / Value Head -> PPO (rl_graph_compile.cpp)
+    TrainingConfiguration CompileReinforcementLearning(const std::vector<gui::MLNode>& nodes,
+                                                       const std::vector<gui::NodeLink>& links);
+
     // Topological sort for execution order
     std::vector<int> TopologicalSort(
         const std::vector<gui::MLNode>& nodes,

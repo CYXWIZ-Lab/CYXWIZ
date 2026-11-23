@@ -18,6 +18,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from backend_pack_contract import (  # noqa: E402
     ContractError,
     canonical_json_bytes,
+    manifest_support_status,
     validate_pack_manifest,
 )
 
@@ -70,12 +71,14 @@ def prepare_document(manifest_path: Path) -> tuple[dict[str, Any], bytes]:
             "Canonical .signed.json does not match the signed manifest body"
         )
 
-    compatibility = document["signed"]["compatibility"]
-    if compatibility["support_status"] != "diagnostic":
+    signed = document["signed"]
+    if manifest_support_status(signed) != "diagnostic":
         raise PromotionError(
             "Only a diagnostic manifest can be prepared for supported promotion"
         )
-    compatibility["support_status"] = "supported"
+    # Plugin packs carry the status at the top level (schema 2).
+    status_owner = signed if signed["pack_kind"] == "plugin_pack" else signed["compatibility"]
+    status_owner["support_status"] = "supported"
     document["signatures"] = []
     promoted_input = canonical_json_bytes(document["signed"])
 

@@ -213,7 +213,7 @@ SmokeCapability EvaluateSmokeCapability(const std::string& graph_domain) {
         ? "Smoke Run needs a compiled graph with a loaded dataset."
         : "Smoke Run supports text graphs only; this graph's data is " + graph_domain + ".";
     capability.alternative =
-        "Use Local Debug to check the model on a synthetic batch, then Train.";
+        "Use Local Debug to check the model on one sample, then Train.";
     return capability;
 }
 
@@ -574,6 +574,13 @@ DebugTraceRecord BuildStudioDebuggerRunSummaryTrace(const StudioDebuggerSnapshot
     // fresh one.
     trace.payload["graph_summary"] = snapshot.graph_summary;
     trace.payload["sample_summary"] = snapshot.sample_summary;
+    trace.payload["sample_facts"] = {{"item_names", snapshot.sample_facts.item_names},
+                                     {"labels", snapshot.sample_facts.labels},
+                                     {"class_names", snapshot.sample_facts.class_names},
+                                     {"output_rule", snapshot.sample_facts.output_rule}};
+    nlohmann::json groups = nlohmann::json::array();
+    for (const auto& group : snapshot.node_groups) groups.push_back({{"name", group.name}, {"node_ids", group.node_ids}});
+    trace.payload["node_groups"] = groups;
     nlohmann::json preflight = {{"ready", snapshot.preflight.ready},
                                 {"summary", snapshot.preflight.summary}};
     nlohmann::json preflight_issues = nlohmann::json::array();
@@ -637,6 +644,19 @@ bool ApplyStudioDebuggerRunSummaryTrace(StudioDebuggerSnapshot& snapshot) {
         }
         if (payload.contains("sample_summary")) {
             snapshot.sample_summary = payload.value("sample_summary", snapshot.sample_summary);
+        }
+        if (payload.contains("sample_facts") && payload["sample_facts"].is_object()) {
+            const auto& facts = payload["sample_facts"];
+            snapshot.sample_facts.item_names = facts.value("item_names", std::vector<std::string>{});
+            snapshot.sample_facts.labels = facts.value("labels", std::vector<int>{});
+            snapshot.sample_facts.class_names = facts.value("class_names", std::vector<std::string>{});
+            snapshot.sample_facts.output_rule = facts.value("output_rule", std::string{});
+        }
+        if (payload.contains("node_groups") && payload["node_groups"].is_array()) {
+            snapshot.node_groups.clear();
+            for (const auto& group : payload["node_groups"])
+                snapshot.node_groups.push_back({group.value("name", std::string{}),
+                                                group.value("node_ids", std::vector<int>{})});
         }
         if (payload.contains("preflight") && payload["preflight"].is_object()) {
             const auto& preflight = payload["preflight"];

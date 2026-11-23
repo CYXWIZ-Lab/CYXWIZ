@@ -23,6 +23,20 @@ namespace cyxwiz::spatial {
 using Params = std::map<std::string, std::string>;
 
 // The resolved geometry of a convolution or pooling layer.
+// A Squeeze-Excitation node's settings as they resolve for C channels.
+struct SqueezeExcitationSettings {
+    size_t squeeze = 1;                     // the gate's hidden width
+    bool exact_width = false;               // typed (squeeze_channels), not C / reduction
+    int reduction = 16;                     // read in reduction mode only
+    std::string inner_activation = "relu";  // relu | hardswish | swish
+    std::string gate = "sigmoid";           // sigmoid | hardsigmoid
+    bool use_bias = true;
+};
+
+// Throws std::invalid_argument with the reason when a setting is refused.
+// (Defined after ParseIntParam.)
+inline SqueezeExcitationSettings ResolveSqueezeExcitation(size_t channels, const Params& params);
+
 struct Geometry {
     int channels_out = 0;    // Conv2D filters / ConvTranspose2D out_channels / Depthwise C x M; 0 = keeps C
     int depth_multiplier = 1;  // DepthwiseConv2D only
@@ -30,6 +44,7 @@ struct Geometry {
     int stride = 1;
     int padding = 0;
     int output_padding = 0;  // ConvTranspose2D only
+    bool use_bias = true;    // the convolutions; off when a BatchNorm follows (torch bias=False)
     int groups = 1;          // GroupNorm only
 };
 
@@ -46,6 +61,37 @@ inline int ParseIntParam(const Params& params, const char* key, int fallback) {
     }
 }
 
+inline SqueezeExcitationSettings ResolveSqueezeExcitation(size_t channels, const Params& params) {
+    const auto text = [&params](const char* key, const char* fallback) {
+        const auto it = params.find(key);
+        return it == params.end() || it->second.empty() ? std::string(fallback) : it->second;
+    };
+    SqueezeExcitationSettings settings;
+    const std::string mode = text("width_mode", "reduction");
+    if (mode != "reduction" && mode != "exact") throw std::invalid_argument("width_mode must be reduction or exact");
+    settings.exact_width = mode == "exact";
+    if (settings.exact_width) {
+        const int width = ParseIntParam(params, "squeeze_channels", 8);
+        if (width < 1) throw std::invalid_argument("squeeze_channels must be 1 or more");
+        settings.squeeze = static_cast<size_t>(width);
+    } else {
+        settings.reduction = ParseIntParam(params, "reduction", 16);
+        if (settings.reduction < 1) throw std::invalid_argument("reduction must be 1 or more");
+        settings.squeeze = std::max<size_t>(1, channels / static_cast<size_t>(settings.reduction));
+    }
+    settings.inner_activation = text("inner_activation", "relu");
+    if (settings.inner_activation != "relu" && settings.inner_activation != "hardswish" &&
+        settings.inner_activation != "swish")
+        throw std::invalid_argument("inner_activation must be relu, hardswish or swish");
+    settings.gate = text("gate", "sigmoid");
+    if (settings.gate != "sigmoid" && settings.gate != "hardsigmoid")
+        throw std::invalid_argument("gate must be sigmoid or hardsigmoid");
+    const std::string bias = text("use_bias", "true");
+    if (bias != "true" && bias != "false") throw std::invalid_argument("use_bias must be true or false");
+    settings.use_bias = bias == "true";
+    return settings;
+}
+
 // "same" keeps the sample size at stride 1 ((k-1)/2 each side, odd kernels);
 // "valid" is no padding; a number is the padding itself.
 inline int ResolvePadding(const Params& params, int kernel) {
@@ -59,6 +105,14 @@ inline int ResolvePadding(const Params& params, int kernel) {
     return ParseIntParam(params, "padding", 0);
 }
 
+// A convolution's "use_bias": on unless the node says false.
+inline bool ResolveUseBias(const Params& params) {
+    const auto it = params.find("use_bias");
+    if (it == params.end() || it->second.empty() || it->second == "true") return true;
+    if (it->second == "false") return false;
+    throw std::invalid_argument("use_bias must be true or false");
+}
+
 // Layers that change or need the [H,W,C] layout.
 inline bool IsSpatialLayer(gui::NodeType type) {
     switch (type) {
@@ -69,6 +123,7 @@ inline bool IsSpatialLayer(gui::NodeType type) {
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle:
         case gui::NodeType::AdaptiveAvgPool:
@@ -101,6 +156,9 @@ inline bool IsShapePreservingLayer(gui::NodeType type) {
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:
+        case gui::NodeType::Hardswish:
+        case gui::NodeType::Hardsigmoid:
+        case gui::NodeType::ReLU6:
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Dropout:
@@ -122,6 +180,7 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
             g.kernel = ParseIntParam(params, "kernel_size", 3);
             g.stride = ParseIntParam(params, "stride", 1);
             g.padding = ResolvePadding(params, g.kernel);
+            g.use_bias = ResolveUseBias(params);
             break;
         case gui::NodeType::DepthwiseConv2D:
             // torch Conv2d(C, C x M, k, groups=C): C x M output channels
@@ -131,6 +190,7 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
             g.kernel = ParseIntParam(params, "kernel_size", 3);
             g.stride = ParseIntParam(params, "stride", 1);
             g.padding = ResolvePadding(params, g.kernel);
+            g.use_bias = ResolveUseBias(params);
             break;
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
@@ -138,6 +198,10 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
             g.stride = ParseIntParam(params, "stride", g.kernel);
             if (g.stride <= 0) g.stride = g.kernel;
             g.padding = ResolvePadding(params, g.kernel);
+            // torch.nn.MaxPool2d / AvgPool2d: pad at most half the window.
+            if (g.kernel > 0 && g.padding > g.kernel / 2)
+                throw std::invalid_argument("padding " + std::to_string(g.padding) + " is more than half the pool size " +
+                                            std::to_string(g.kernel));
             break;
         case gui::NodeType::ConvTranspose2D:
             g.channels_out = ParseIntParam(params, "out_channels", 32);
@@ -145,6 +209,7 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
             g.stride = ParseIntParam(params, "stride", 2);
             g.padding = ParseIntParam(params, "padding", 1);
             g.output_padding = ParseIntParam(params, "output_padding", 1);
+            g.use_bias = ResolveUseBias(params);
             break;
         case gui::NodeType::AdaptiveAvgPool:
             AdaptiveOutputSize(params);
@@ -236,6 +301,9 @@ inline std::vector<size_t> SampleShapeAfter(gui::NodeType type, const Params& pa
             ResolveGeometry(type, params, in[2]);  // validates the groups
             return in;
         case gui::NodeType::InstanceNorm:
+            return in;
+        case gui::NodeType::SqueezeExcitation:
+            ResolveSqueezeExcitation(in[2], params);  // validates the settings
             return in;
         case gui::NodeType::AdaptiveAvgPool: {
             const size_t size = static_cast<size_t>(AdaptiveOutputSize(params));

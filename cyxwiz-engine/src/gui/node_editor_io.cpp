@@ -45,6 +45,24 @@ void NodeEditor::DetachFromFile() {
     unsaved_ = true;
 }
 
+void NodeEditor::DetachFromExample() {
+    const std::string& project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+    for (auto& node : nodes_) {
+        if (node.type != NodeType::DataInput) continue;
+        for (const char* key : {"file_path", "folder_path", "labels_csv", "audio_labels_csv"}) {
+            const auto it = node.parameters.find(key);
+            if (it == node.parameters.end() || it->second.empty() || std::filesystem::path(it->second).is_absolute())
+                continue;
+            const std::string resolved = cyxwiz::ResolveProjectDataPath(it->second, project_root);
+            std::error_code ec;
+            if (!std::filesystem::exists(resolved, ec)) continue;  // the Data Input says it is missing
+            it->second = cyxwiz::MakeProjectRelativePath(
+                std::filesystem::absolute(resolved, ec).lexically_normal().generic_string(), project_root);
+        }
+    }
+    DetachFromFile();
+}
+
 bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
     if (!CanReplaceGraph("load a graph")) return false;
     // Clear existing graph
@@ -210,6 +228,7 @@ bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
     // Update next IDs
     next_node_id_ = next_id;
     next_link_id_ = link_id;
+    ForgetUndoHistory();
 
     std::string name = j.value("name", "Imported Pattern");
     spdlog::info("Loaded pattern '{}' as graph ({} nodes, {} links)",
@@ -585,9 +604,9 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
         int loaded_next_group_id = 1;
         int loaded_next_annotation_id = 1;
 
-        CodeFramework loaded_framework = selected_framework_;
+        cyxwiz::CodeFramework loaded_framework = selected_framework_;
         if (graph_json.contains("framework")) {
-            loaded_framework = static_cast<CodeFramework>(
+            loaded_framework = static_cast<cyxwiz::CodeFramework>(
                 graph_json["framework"].get<int>());
         }
 
@@ -703,6 +722,7 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
         execution_mode_ = loaded_execution_mode;
         SetWorkflowDescription(loaded_workflow_description);
         RebuildPinLookup();
+        ForgetUndoHistory();
 
         spdlog::info(
             "Graph loaded from {} ({} nodes, {} links, execution mode {})",
@@ -738,6 +758,9 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
             graph_json["template"].is_object() &&
             graph_json["template"].contains("nodes")) {
             spdlog::info("Detected pattern template format, converting to graph format");
+            // A template example names its data relative to its own folder
+            // (or a parent, e.g. examples/datasets/...), as a saved graph does.
+            cyxwiz::SetGraphDataSearchDirectoryFromGraphFile(filepath);
             return LoadPatternAsGraph(graph_json);
         }
 
@@ -809,6 +832,27 @@ void NodeEditor::ShowSaveDialog() {
     }
 }
 
+void NodeEditor::SaveFromStudio() {
+    if (nodes_.empty()) {
+        save_refusal_pending_ = true;
+        return;
+    }
+    SaveCurrentGraph();
+}
+
+void NodeEditor::SaveAsFromStudio() {
+    if (nodes_.empty()) {
+        save_refusal_pending_ = true;
+        return;
+    }
+    ShowSaveDialog();
+}
+
+std::string NodeEditor::GraphDisplayName() const {
+    return current_file_path_.empty() ? std::string("Untitled graph")
+                                      : std::filesystem::path(current_file_path_).filename().string();
+}
+
 bool NodeEditor::SaveCurrentGraph() {
     if (nodes_.empty()) return true;
     if (current_file_path_.empty()) {
@@ -832,116 +876,24 @@ void NodeEditor::ShowLoadDialog() {
     }
 }
 
-// ========== Code Export Implementation ==========
-
-void NodeEditor::ExportCodeToFile() {
-    // Validate graph first
-    std::string error_message;
-    if (!ValidateGraph(error_message)) {
-        spdlog::error("Cannot export code: {}", error_message);
-        // TODO: Show error dialog to user
-        return;
-    }
-
-    // Generate code
-    auto sorted_ids = TopologicalSort();
-    if (sorted_ids.empty()) {
-        spdlog::error("Failed to sort graph for code generation");
-        return;
-    }
-
-    std::string code;
-    std::string extension = ".py";
-    std::string framework_name;
-
-    switch (selected_framework_) {
-        case CodeFramework::PyTorch:
-            code = GeneratePyTorchCode(sorted_ids);
-            framework_name = "PyTorch";
-            break;
-        case CodeFramework::TensorFlow:
-            code = GenerateTensorFlowCode(sorted_ids);
-            framework_name = "TensorFlow";
-            break;
-        case CodeFramework::Keras:
-            code = GenerateKerasCode(sorted_ids);
-            framework_name = "Keras";
-            break;
-        case CodeFramework::PyCyxWiz:
-            code = GeneratePyCyxWizCode(sorted_ids);
-            framework_name = "PyCyxWiz";
-            break;
-    }
-
-    // Build the code with header and footer
-    std::string header = "# Neural Network Model Generated by CyxWiz\n";
-    header += "# Framework: " + framework_name + "\n";
-    header += "# Generated on: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
-
-    std::string full_code = header + code;
-
-    // Save to file - will be called from ShowExportDialog
-    return;
-}
-
-void NodeEditor::ShowExportDialog() {
-    // Validate graph first
-    std::string error_message;
-    if (!ValidateGraph(error_message)) {
-        spdlog::error("Cannot export code: {}", error_message);
-        return;
-    }
-
-    // Generate code
-    auto sorted_ids = TopologicalSort();
-    if (sorted_ids.empty()) {
-        spdlog::error("Failed to sort graph for code generation");
-        return;
-    }
-
-    std::string code;
-    std::string framework_name;
-
-    switch (selected_framework_) {
-        case CodeFramework::PyTorch:
-            code = GeneratePyTorchCode(sorted_ids);
-            framework_name = "PyTorch";
-            break;
-        case CodeFramework::TensorFlow:
-            code = GenerateTensorFlowCode(sorted_ids);
-            framework_name = "TensorFlow";
-            break;
-        case CodeFramework::Keras:
-            code = GenerateKerasCode(sorted_ids);
-            framework_name = "Keras";
-            break;
-        case CodeFramework::PyCyxWiz:
-            code = GeneratePyCyxWizCode(sorted_ids);
-            framework_name = "PyCyxWiz";
-            break;
-    }
-
-    // Build the code with header
-    std::string header = "# Neural Network Model Generated by CyxWiz\n";
-    header += "# Framework: " + framework_name + "\n";
-    header += "# Generated on: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
-
-    std::string full_code = header + code;
-
-    // Default filename based on framework
-    std::string default_name = "model_" + framework_name + ".py";
-
-    // Show cross-platform save dialog
-    auto result = cyxwiz::FileDialogs::SaveScript();
-    if (result) {
-        std::ofstream file(*result);
-        if (file.is_open()) {
-            file << full_code;
-            file.close();
-            spdlog::info("Code exported successfully to: {}", *result);
-        } else {
-            spdlog::error("Failed to open file for writing: {}", *result);
+void NodeEditor::ExportGraphCopy() {
+    if (nodes_.empty()) return;
+    auto& project = cyxwiz::ProjectManager::Instance();
+    const std::string start = project.HasActiveProject() ? project.GetCyxGraphsPath() : std::string();
+    const std::string name = GetGraphStem() + " copy.cyxgraph";
+    const auto path = cyxwiz::FileDialogs::SaveFile("Export a copy of the graph", {{"CyxWiz Graphs", "cyxgraph"}},
+                                                    start.empty() ? nullptr : start.c_str(), name.c_str());
+    if (!path) return;
+    try {
+        std::ofstream file(*path, std::ios::binary | std::ios::trunc);
+        if (!file || !(file << GraphDocumentJson().dump(4))) {
+            spdlog::error("Could not write the copy of the graph to {}", *path);
+            return;
         }
+        // The open graph stays on its own file; the copy is not the graph's file.
+        spdlog::info("Wrote a copy of the graph to {}", *path);
+    } catch (const std::exception& e) {
+        spdlog::error("Could not write the copy of the graph to {}: {}", *path, e.what());
     }
 }
 

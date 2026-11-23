@@ -1,6 +1,9 @@
 // engine_config.cpp - Centralized configuration management implementation
 #include "core/engine_config.h"
+#include "core/cloud_gateway_address.h"
+#include "common/server_address.h"
 
+#include <cmath>
 #include <fstream>
 #include <algorithm>
 #include <cctype>
@@ -117,6 +120,32 @@ std::filesystem::path GetExecutableDir() {
 #endif
 }
 
+HyperparamSearchDefaults ClampedSearchDefaults(HyperparamSearchDefaults value) {
+    if (value.strategy != "grid" && value.strategy != "bayesian") value.strategy = "random";
+    if (value.objective != "val_accuracy" && value.objective != "val_mae") value.objective = "val_loss";
+    value.trials = std::clamp(value.trials, 1, kSearchMaxTrials);
+    value.hours = std::clamp(value.hours, kSearchMinHours, kSearchMaxHours);
+    return value;
+}
+
+ArchitectureSearchDefaults ClampedArchitectureSearchDefaults(ArchitectureSearchDefaults value) {
+    value.versions = std::clamp(value.versions, 2, kArchitectureSearchMaxVersions);
+    value.rounds = std::clamp(value.rounds, 1, kArchitectureSearchMaxRounds);
+    value.kept = std::clamp(value.kept, 0, value.versions - 1);
+    value.changed_percent = std::clamp(value.changed_percent, 0, 100);
+    value.mixed_percent = std::clamp(value.mixed_percent, 0, 100);
+    value.train_best = std::clamp(value.train_best, 1, kArchitectureSearchMaxTrain);
+    return value;
+}
+
+// The Stress test's defaults within the panel's ranges
+PolicyStressDefaults ClampStressDefaults(PolicyStressDefaults d) {
+    d.kind = std::clamp(d.kind, 0, 4);  // the five disturbances of rl::StressKind
+    d.levels = std::clamp(d.levels, 2, 21);
+    d.episodes = std::clamp(d.episodes, 1, 100);
+    return d;
+}
+
 }  // namespace
 
 std::filesystem::path ExecutableDirectory() { return GetExecutableDir(); }
@@ -132,14 +161,13 @@ EngineConfig::EngineConfig() {
 }
 
 void EngineConfig::SetDefaults() {
+    server_address_.clear();
+    server_ca_file_.clear();
     central_server_address_ = "localhost:50051";
+    cloud_gateway_address_.clear();  // derived from the central address
     auth_api_url_ = "http://127.0.0.1:3002/api";
     default_deployment_address_ = "localhost:50056";
     default_p2p_port_ = 50052;
-    use_secure_connection_ = false;
-    auto_connect_on_startup_ = false;
-    connection_timeout_ = 10;
-    request_timeout_ = 30;
     system_python_path_ = "";  // Will be auto-detected on first launch
     runtime_log_saved_filters_.clear();
 }
@@ -219,18 +247,15 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             // Build default config using current values
             json defaults;
             defaults["servers"] = {
+                {"cyxwiz", server_address_},
+                {"ca_file", server_ca_file_},
                 {"central", central_server_address_},
+                {"cloud_gateway", cloud_gateway_address_},
                 {"deployment", default_deployment_address_},
                 {"default_p2p_port", default_p2p_port_}
             };
             defaults["auth"] = {
                 {"api_url", auth_api_url_}
-            };
-            defaults["connection"] = {
-                {"use_tls", use_secure_connection_},
-                {"auto_connect", auto_connect_on_startup_},
-                {"timeout", connection_timeout_},
-                {"request_timeout", request_timeout_}
             };
             defaults["python"] = {
                 {"system_python_path", system_python_path_},
@@ -240,7 +265,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             defaults["debug"] = {
                 {"require_debug_before_train", require_debug_before_train_}
             };
-            defaults["recent_projects"] = recent_projects_;
 
             json config = defaults;
 
@@ -282,18 +306,15 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             if (!exe_dir.empty() && !std::filesystem::exists(template_path)) {
                 json template_config;
                 template_config["servers"] = {
+                    {"cyxwiz", server_address_},
+                    {"ca_file", server_ca_file_},
                     {"central", central_server_address_},
+                    {"cloud_gateway", cloud_gateway_address_},
                     {"deployment", default_deployment_address_},
                     {"default_p2p_port", default_p2p_port_}
                 };
                 template_config["auth"] = {
                     {"api_url", auth_api_url_}
-                };
-                template_config["connection"] = {
-                    {"use_tls", use_secure_connection_},
-                    {"auto_connect", auto_connect_on_startup_},
-                    {"timeout", connection_timeout_},
-                    {"request_timeout", request_timeout_}
                 };
                 template_config["python"] = {
                     {"system_python_path", system_python_path_},
@@ -303,7 +324,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                 template_config["debug"] = {
                     {"require_debug_before_train", require_debug_before_train_}
                 };
-                template_config["recent_projects"] = recent_projects_;
 
                 std::ofstream tmpl(template_path);
                 if (tmpl.is_open()) {
@@ -330,8 +350,17 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         // Server addresses
         if (config.contains("servers")) {
             const auto& servers = config["servers"];
+            if (servers.contains("cyxwiz")) {
+                server_address_ = servers["cyxwiz"].get<std::string>();
+            }
+            if (servers.contains("ca_file")) {
+                server_ca_file_ = servers["ca_file"].get<std::string>();
+            }
             if (servers.contains("central")) {
                 central_server_address_ = servers["central"].get<std::string>();
+            }
+            if (servers.contains("cloud_gateway")) {
+                cloud_gateway_address_ = servers["cloud_gateway"].get<std::string>();
             }
             if (servers.contains("deployment")) {
                 default_deployment_address_ = servers["deployment"].get<std::string>();
@@ -349,26 +378,16 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
-        // Connection settings
-        if (config.contains("connection")) {
-            const auto& conn = config["connection"];
-            if (conn.contains("use_tls")) {
-                use_secure_connection_ = conn["use_tls"].get<bool>();
-            }
-            if (conn.contains("auto_connect")) {
-                auto_connect_on_startup_ = conn["auto_connect"].get<bool>();
-            }
-            if (conn.contains("timeout")) {
-                connection_timeout_ = conn["timeout"].get<int>();
-            }
-            if (conn.contains("request_timeout")) {
-                request_timeout_ = conn["request_timeout"].get<int>();
-            }
-        }
-
         // Python settings
+        python_start_ = {};
         if (config.contains("python")) {
             const auto& python = config["python"];
+            python_start_.startup_scripts = python.value("startup_scripts", std::vector<std::string>());
+            python_start_.import_numpy = python.value("import_numpy", true);
+            python_start_.import_pycyxwiz = python.value("import_pycyxwiz", true);
+            python_start_.console_commands_kept =
+                std::clamp(python.value("console_commands_kept", 500), PythonStartConfig::kMinCommandsKept,
+                           PythonStartConfig::kMaxCommandsKept);
             if (python.contains("system_python_path")) {
                 system_python_path_ = python["system_python_path"].get<std::string>();
             }
@@ -394,6 +413,79 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
+        studio_ = StudioConfig{};
+        if (config.contains("studio") && config["studio"].is_object()) {
+            const auto& s = config["studio"];
+            studio_.auto_save_at_start = s.value("auto_save_at_start", false);
+            studio_.minimap = s.value("minimap", true);
+        }
+        training_dashboard_ = TrainingDashboardConfig{};
+        if (config.contains("training_dashboard") && config["training_dashboard"].is_object()) {
+            const auto& d = config["training_dashboard"];
+            using TD = TrainingDashboardConfig;
+            training_dashboard_.auto_scale = d.value("auto_scale", true);
+            training_dashboard_.follow_current_epoch = d.value("follow_current_epoch", false);
+            training_dashboard_.epoch_window =
+                std::clamp(d.value("epoch_window", 30), TD::kMinEpochWindow, TD::kMaxEpochWindow);
+            training_dashboard_.log_loss_axis = d.value("log_loss_axis", false);
+            training_dashboard_.smooth = d.value("smooth", false);
+            training_dashboard_.smooth_window =
+                std::clamp(d.value("smooth_window", 5), TD::kMinSmoothWindow, TD::kMaxSmoothWindow);
+        }
+        training_defaults_ = TrainingDefaultsConfig{};
+        if (config.contains("training_defaults") && config["training_defaults"].is_object()) {
+            training_defaults_.frozen_batchnorm_keeps_statistics =
+                config["training_defaults"].value("frozen_batchnorm_keeps_statistics", true);
+        }
+
+        studio_debugger_ = StudioDebuggerConfig{};
+        if (config.contains("studio_debugger") && config["studio_debugger"].is_object()) {
+            const auto& sd = config["studio_debugger"];
+            StudioDebuggerConfig loaded;
+            const std::string when = sd.value("capture_when", std::string("off"));
+            loaded.capture_when = when == "local_debug" ? LayerCaptureWhen::LocalDebug
+                                : when == "training"    ? LayerCaptureWhen::Training
+                                                        : LayerCaptureWhen::Off;
+            loaded.capture_every_epochs = std::clamp(sd.value("capture_every_epochs", 5), 1, 1000);
+            loaded.capture_activations = sd.value("capture_activations", true);
+            loaded.capture_parameters = sd.value("capture_parameters", true);
+            loaded.capture_gradients = sd.value("capture_gradients", true);
+            loaded.capture_batch = sd.value("capture_batch", false);
+            loaded.feature_map_colour = sd.value("feature_map_colour", std::string("heat")) == "grayscale"
+                                            ? FeatureMapColour::Grayscale
+                                            : FeatureMapColour::Heat;
+            const std::string sort = sd.value("channel_sort", std::string("strongest"));
+            loaded.channel_sort = sort == "peak"     ? ChannelSort::Peak
+                                : sort == "number"   ? ChannelSort::Number
+                                                     : ChannelSort::Strongest;
+            loaded.where_it_looks_method = sd.value("where_it_looks_method", std::string("occlusion")) == "saliency"
+                                               ? WhereItLooksMethod::Saliency
+                                               : WhereItLooksMethod::Occlusion;
+            loaded.saliency_show = sd.value("saliency_show", std::string("size")) == "times_input"
+                                       ? SaliencyShow::TimesInput
+                                       : SaliencyShow::Size;
+            const std::string channels = sd.value("top_images_channels", std::string("head_votes"));
+            loaded.top_images_channels = channels == "clicked"     ? TopImagesChannels::Clicked
+                                       : channels == "strongest" ? TopImagesChannels::Strongest
+                                                                 : TopImagesChannels::HeadVotes;
+            loaded.top_images_rank = sd.value("top_images_rank", std::string("maximum")) == "mean"
+                                         ? TopImagesRank::Mean
+                                         : TopImagesRank::Maximum;
+            const std::string embedding = sd.value("embedding_method", std::string("pca"));
+            loaded.embedding_method = embedding == "tsne"   ? EmbeddingMethod::Tsne
+                                    : embedding == "umap" ? EmbeddingMethod::Umap
+                                                          : EmbeddingMethod::Pca;
+            loaded.embedding_colour =
+                sd.value("embedding_colour", std::string("true_class")) == "predicted_class"
+                    ? EmbeddingColour::PredictedClass
+                    : EmbeddingColour::TrueClass;
+            loaded.unit_weights_order = sd.value("unit_weights_order", std::string("norm")) == "number"
+                                            ? UnitWeightsOrder::Number
+                                            : UnitWeightsOrder::Norm;
+            loaded.keep_capture_runs = std::clamp(sd.value("keep_capture_runs", 10), 1, 1000);
+            studio_debugger_ = loaded;
+        }
+
         if (config.contains("appearance") && config["appearance"].is_object()) {
             const auto& look = config["appearance"];
             AppearanceConfig loaded;
@@ -402,12 +494,139 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             loaded.code_font_scale = look.value("code_font_scale", loaded.code_font_scale);
             loaded.sidebar_left = look.value("sidebar_left", loaded.sidebar_left);
             loaded.custom_theme_file = look.value("custom_theme_file", std::string());
+            loaded.node_icon_pack = look.value("node_icon_pack", loaded.node_icon_pack);
             appearance_ = loaded;
+        }
+
+        nodes_panel_ = NodesPanelConfig{};
+        if (config.contains("nodes_panel") && config["nodes_panel"].is_object()) {
+            const auto& panel = config["nodes_panel"];
+            NodesPanelConfig loaded;
+            const auto types = [&panel](const char* key) {
+                std::vector<int> out;
+                if (panel.contains(key) && panel[key].is_array())
+                    for (const auto& v : panel[key])
+                        if (v.is_number_integer()) out.push_back(v.get<int>());
+                return out;
+            };
+            loaded.favourites = types("favourites");
+            loaded.recent = types("recent");
+            loaded.show_recent = panel.value("show_recent", loaded.show_recent);
+            loaded.recent_count = std::clamp(panel.value("recent_count", loaded.recent_count), 1, kNodesPanelMaxRecent);
+            if (panel.contains("open_groups") && panel["open_groups"].is_array()) {
+                loaded.open_groups.clear();
+                for (const auto& v : panel["open_groups"])
+                    if (v.is_string()) loaded.open_groups.push_back(v.get<std::string>());
+            }
+            loaded.list_view = panel.value("list_view", loaded.list_view);
+            if (loaded.recent.size() > static_cast<size_t>(kNodesPanelMaxRecent)) loaded.recent.resize(kNodesPanelMaxRecent);
+            nodes_panel_ = loaded;
+        }
+
+        search_defaults_ = HyperparamSearchDefaults{};
+        if (config.contains("hyperparam_search") && config["hyperparam_search"].is_object()) {
+            const auto& search = config["hyperparam_search"];
+            HyperparamSearchDefaults loaded;
+            loaded.strategy = search.value("strategy", loaded.strategy);
+            loaded.trials = search.value("trials", loaded.trials);
+            loaded.hours = search.value("hours", loaded.hours);
+            loaded.objective = search.value("objective", loaded.objective);
+            search_defaults_ = ClampedSearchDefaults(loaded);
+        }
+
+        architecture_search_defaults_ = ArchitectureSearchDefaults{};
+        if (config.contains("architecture_search") && config["architecture_search"].is_object()) {
+            const auto& search = config["architecture_search"];
+            ArchitectureSearchDefaults loaded;
+            loaded.versions = search.value("versions", loaded.versions);
+            loaded.rounds = search.value("rounds", loaded.rounds);
+            loaded.kept = search.value("kept", loaded.kept);
+            loaded.changed_percent = search.value("changed_percent", loaded.changed_percent);
+            loaded.mixed_percent = search.value("mixed_percent", loaded.mixed_percent);
+            loaded.train_best = search.value("train_best", loaded.train_best);
+            architecture_search_defaults_ = ClampedArchitectureSearchDefaults(loaded);
+        }
+
+        if (config.contains("utilities") && config["utilities"].is_object()) try {
+            const auto& u = config["utilities"];
+            UtilitiesConfig loaded;
+            loaded.tab = u.value("tab", loaded.tab);
+            loaded.digits = std::clamp(u.value("digits", loaded.digits), 1, 17);
+            loaded.degrees = u.value("degrees", loaded.degrees);
+            loaded.unit_category = u.value("unit_category", loaded.unit_category);
+            loaded.hash_algorithm = u.value("hash_algorithm", loaded.hash_algorithm);
+            loaded.json_indent = std::clamp(u.value("json_indent", loaded.json_indent), 0, 8);
+            loaded.regex_ignore_case = u.value("regex_ignore_case", loaded.regex_ignore_case);
+            loaded.regex_multiline = u.value("regex_multiline", loaded.regex_multiline);
+            utilities_ = loaded;
+        } catch (const std::exception& e) {
+            // A hand-edited value of the wrong type: the shipped defaults, and
+            // the rest of the file still loads.
+            spdlog::warn("Engine settings: the utilities defaults could not be read ({}); using the shipped ones", e.what());
+        }
+
+        if (config.contains("monitor") && config["monitor"].is_object()) try {
+            const auto& m = config["monitor"];
+            MonitorConfig loaded;
+            loaded.tab = m.value("tab", loaded.tab);
+            loaded.interval_seconds = std::clamp(m.value("interval_seconds", loaded.interval_seconds), 0.25, 60.0);
+            // One of the three lengths the window offers; another value takes the nearest.
+            const double keep = m.value("keep_seconds", loaded.keep_seconds);
+            loaded.keep_seconds = 300.0;
+            for (const double offered : {900.0, 3600.0})
+                if (std::fabs(offered - keep) < std::fabs(loaded.keep_seconds - keep)) loaded.keep_seconds = offered;
+            loaded.log_frame_rate = m.value("log_frame_rate", loaded.log_frame_rate);
+            loaded.log_python_commands = m.value("log_python_commands", loaded.log_python_commands);
+            loaded.frame_overlay = m.value("frame_overlay", loaded.frame_overlay);
+            monitor_ = loaded;
+        } catch (const std::exception& e) {
+            spdlog::warn("Engine settings: the monitor defaults could not be read ({}); using the shipped ones", e.what());
         }
 
         data_budget_bytes_ = 0;
         if (config.contains("data") && config["data"].is_object())
             data_budget_bytes_ = config["data"].value("budget_bytes", uint64_t{0});
+
+        simulation_rate_hz_ = kDefaultSimulationRateHz;
+        open_simulation_monitor_on_run_ = true;
+        if (config.contains("simulation") && config["simulation"].is_object()) {
+            const auto& simulation = config["simulation"];
+            simulation_rate_hz_ = std::clamp(simulation.value("rate_hz", kDefaultSimulationRateHz),
+                                             kMinSimulationRateHz, kMaxSimulationRateHz);
+            open_simulation_monitor_on_run_ = simulation.value("open_monitor_on_run", true);
+        }
+
+        plugin_settings_.clear();
+        if (config.contains("plugin_settings") && config["plugin_settings"].is_object()) {
+            for (const auto& [plugin_id, values] : config["plugin_settings"].items()) {
+                if (!values.is_object()) continue;
+                for (const auto& [key, value] : values.items())
+                    if (value.is_string()) plugin_settings_[plugin_id][key] = value.get<std::string>();
+            }
+        }
+
+        policy_playback_best_ = true;
+        policy_playback_speed_ = 0;
+        play_policy_after_training_ = false;
+        policy_stress_defaults_ = {};
+        watch_training_mode_ = 0;
+        watch_training_every_ = 20;
+        if (config.contains("policy_playback") && config["policy_playback"].is_object()) {
+            const auto& playback = config["policy_playback"];
+            policy_playback_best_ = playback.value("best_actions", true);
+            policy_playback_speed_ = std::clamp(playback.value("speed", 0), 0, 2);
+            play_policy_after_training_ = playback.value("play_after_training", false);
+            const PolicyStressDefaults d;
+            policy_stress_defaults_ = ClampStressDefaults({playback.value("stress_kind", d.kind),
+                                                           playback.value("stress_levels", d.levels),
+                                                           playback.value("stress_episodes", d.episodes)});
+            watch_training_mode_ = std::clamp(playback.value("watch_training", 0), 0, 2);
+            watch_training_every_ = std::clamp(playback.value("watch_every_updates", 20), 1, 1000);
+        }
+
+        every_window_may_leave_ = false;
+        if (config.contains("windows") && config["windows"].is_object())
+            every_window_may_leave_ = config["windows"].value("every_window_may_leave", false);
 
         runtime_log_saved_filters_.clear();
         if (config.contains("observability") &&
@@ -432,17 +651,58 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
-        // Recent projects
-        if (config.contains("recent_projects")) {
-            recent_projects_ = config["recent_projects"].get<std::vector<std::string>>();
+        // The Script Editor
+        editor_ = {};
+        if (config.contains("editor") && config["editor"].is_object()) {
+            const auto& e = config["editor"];
+            const int tab = e.value("tab_size", 4);
+            editor_.tab_size = tab == 2 || tab == 8 ? tab : 4;
+            editor_.show_whitespace = e.value("show_whitespace", true);
+            editor_.syntax_colours = e.value("syntax_colours", true);
+            editor_.minimap = e.value("minimap", true);
+            editor_.word_wrap = e.value("word_wrap", false);
+            editor_.auto_indent = e.value("auto_indent", true);
+            const std::string eol = e.value("new_file_line_endings", std::string("system"));
+            editor_.new_file_line_endings = eol == "lf" ? 1 : eol == "crlf" ? 2 : 0;
+            editor_.trim_trailing_whitespace = e.value("trim_trailing_whitespace", false);
+            editor_.final_newline = e.value("final_newline", true);
+        }
+
+        // General: how the Engine starts and closes
+        start_with_last_project_ = false;
+        recent_projects_kept_ = kDefaultRecentProjects;
+        ask_before_closing_always_ = false;
+        if (config.contains("general") && config["general"].is_object()) {
+            const auto& general = config["general"];
+            start_with_last_project_ = general.value("start", std::string("start_page")) == "last_project";
+            recent_projects_kept_ =
+                std::clamp(general.value("recent_projects", kDefaultRecentProjects), kMinRecentProjects, kMaxRecentProjects);
+            ask_before_closing_always_ = general.value("ask_before_closing", std::string("when_lost")) == "always";
         }
 
         config_path_ = config_path;
         modified_ = false;
 
+        // Every connection to the server verifies it with this CA from now on
+        cyxwiz::protocol::SetServerCaFile(server_ca_file_);
+        if (const std::string ca_error = cyxwiz::protocol::ServerCaError(); !ca_error.empty()) {
+            spdlog::warn("servers.ca_file: {}; connections to an https:// server will fail until it is fixed",
+                         ca_error);
+        }
+
         spdlog::debug("Loaded config from: {}", config_path.string());
-        spdlog::debug("  Central Server: {}", central_server_address_);
-        spdlog::debug("  Auth API: {}", auth_api_url_);
+        if (!server_address_.empty()) {
+            const auto endpoints = cyxwiz::protocol::ResolveServerAddress(server_address_);
+            if (!endpoints.error.empty()) {
+                spdlog::warn("servers.cyxwiz: {}; using the per-service addresses", endpoints.error);
+            } else {
+                spdlog::debug("  Server: {} ({})", server_address_,
+                              endpoints.front_door ? "front door" : "three services");
+            }
+        }
+        spdlog::debug("  Central Server: {}", CentralLocked());
+        spdlog::debug("  CyxCloud gateway: {}", GatewayLocked());
+        spdlog::debug("  Auth API: {}", AuthApiLocked());
         spdlog::debug("  Default Deployment: {}", default_deployment_address_);
         spdlog::debug("  Default P2P Port: {}", default_p2p_port_);
         spdlog::debug("  System Python: {}", system_python_path_.empty() ? "not configured" : system_python_path_);
@@ -479,7 +739,10 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
 
         // Server addresses
         config["servers"] = {
+            {"cyxwiz", server_address_},
+            {"ca_file", server_ca_file_},
             {"central", central_server_address_},
+            {"cloud_gateway", cloud_gateway_address_},
             {"deployment", default_deployment_address_},
             {"default_p2p_port", default_p2p_port_}
         };
@@ -489,19 +752,15 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"api_url", auth_api_url_}
         };
 
-        // Connection settings
-        config["connection"] = {
-            {"use_tls", use_secure_connection_},
-            {"auto_connect", auto_connect_on_startup_},
-            {"timeout", connection_timeout_},
-            {"request_timeout", request_timeout_}
-        };
-
         // Python settings
         config["python"] = {
             {"system_python_path", system_python_path_},
             {"auto_create_venv", auto_create_venv_},
-            {"default_venv_packages", default_venv_packages_}
+            {"default_venv_packages", default_venv_packages_},
+            {"startup_scripts", python_start_.startup_scripts},
+            {"import_numpy", python_start_.import_numpy},
+            {"import_pycyxwiz", python_start_.import_pycyxwiz},
+            {"console_commands_kept", python_start_.console_commands_kept}
         };
 
         // Local Debug settings
@@ -515,10 +774,66 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
                 {"name", filter.name}, {"expression", filter.expression}});
         }
         config["data"] = {{"budget_bytes", data_budget_bytes_}};
+        config["simulation"] = {{"rate_hz", simulation_rate_hz_},
+                                {"open_monitor_on_run", open_simulation_monitor_on_run_}};
+        if (!plugin_settings_.empty()) config["plugin_settings"] = plugin_settings_;
+        config["policy_playback"] = {{"best_actions", policy_playback_best_},
+                                     {"speed", policy_playback_speed_},
+                                     {"play_after_training", play_policy_after_training_},
+                                     {"stress_kind", policy_stress_defaults_.kind},
+                                     {"stress_levels", policy_stress_defaults_.levels},
+                                     {"stress_episodes", policy_stress_defaults_.episodes},
+                                     {"watch_training", watch_training_mode_},
+                                     {"watch_every_updates", watch_training_every_}};
+        config["windows"] = {{"every_window_may_leave", every_window_may_leave_}};
         config["observability"] = {
             {"record_debug_logs", record_debug_logs_},
             {"saved_filters_version", 1},
             {"saved_filters", std::move(saved_runtime_filters)}
+        };
+
+        config["training_defaults"] = {
+            {"frozen_batchnorm_keeps_statistics", training_defaults_.frozen_batchnorm_keeps_statistics}
+        };
+        config["studio"] = {{"auto_save_at_start", studio_.auto_save_at_start}, {"minimap", studio_.minimap}};
+        config["training_dashboard"] = {{"auto_scale", training_dashboard_.auto_scale},
+                                        {"follow_current_epoch", training_dashboard_.follow_current_epoch},
+                                        {"epoch_window", training_dashboard_.epoch_window},
+                                        {"log_loss_axis", training_dashboard_.log_loss_axis},
+                                        {"smooth", training_dashboard_.smooth},
+                                        {"smooth_window", training_dashboard_.smooth_window}};
+
+        config["studio_debugger"] = {
+            {"capture_when", studio_debugger_.capture_when == LayerCaptureWhen::LocalDebug ? "local_debug"
+                             : studio_debugger_.capture_when == LayerCaptureWhen::Training ? "training"
+                                                                                           : "off"},
+            {"capture_every_epochs", studio_debugger_.capture_every_epochs},
+            {"capture_activations", studio_debugger_.capture_activations},
+            {"capture_parameters", studio_debugger_.capture_parameters},
+            {"capture_gradients", studio_debugger_.capture_gradients},
+            {"capture_batch", studio_debugger_.capture_batch},
+            {"feature_map_colour",
+             studio_debugger_.feature_map_colour == FeatureMapColour::Grayscale ? "grayscale" : "heat"},
+            {"channel_sort", studio_debugger_.channel_sort == ChannelSort::Peak     ? "peak"
+                             : studio_debugger_.channel_sort == ChannelSort::Number ? "number"
+                                                                                    : "strongest"},
+            {"where_it_looks_method",
+             studio_debugger_.where_it_looks_method == WhereItLooksMethod::Saliency ? "saliency" : "occlusion"},
+            {"saliency_show", studio_debugger_.saliency_show == SaliencyShow::TimesInput ? "times_input" : "size"},
+            {"top_images_channels",
+             studio_debugger_.top_images_channels == TopImagesChannels::Clicked     ? "clicked"
+             : studio_debugger_.top_images_channels == TopImagesChannels::Strongest ? "strongest"
+                                                                                    : "head_votes"},
+            {"top_images_rank", studio_debugger_.top_images_rank == TopImagesRank::Mean ? "mean" : "maximum"},
+            {"embedding_method", studio_debugger_.embedding_method == EmbeddingMethod::Tsne   ? "tsne"
+                                 : studio_debugger_.embedding_method == EmbeddingMethod::Umap ? "umap"
+                                                                                              : "pca"},
+            {"embedding_colour", studio_debugger_.embedding_colour == EmbeddingColour::PredictedClass
+                                     ? "predicted_class"
+                                     : "true_class"},
+            {"unit_weights_order",
+             studio_debugger_.unit_weights_order == UnitWeightsOrder::Number ? "number" : "norm"},
+            {"keep_capture_runs", studio_debugger_.keep_capture_runs}
         };
 
         config["appearance"] = {
@@ -526,11 +841,67 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"ui_text_px", appearance_.ui_text_px},
             {"code_font_scale", appearance_.code_font_scale},
             {"sidebar_left", appearance_.sidebar_left},
-            {"custom_theme_file", appearance_.custom_theme_file}
+            {"custom_theme_file", appearance_.custom_theme_file},
+            {"node_icon_pack", appearance_.node_icon_pack}
+        };
+        config["utilities"] = {
+            {"tab", utilities_.tab},
+            {"digits", utilities_.digits},
+            {"degrees", utilities_.degrees},
+            {"unit_category", utilities_.unit_category},
+            {"hash_algorithm", utilities_.hash_algorithm},
+            {"json_indent", utilities_.json_indent},
+            {"regex_ignore_case", utilities_.regex_ignore_case},
+            {"regex_multiline", utilities_.regex_multiline}
+        };
+        config["monitor"] = {
+            {"tab", monitor_.tab},
+            {"interval_seconds", monitor_.interval_seconds},
+            {"keep_seconds", monitor_.keep_seconds},
+            {"log_frame_rate", monitor_.log_frame_rate},
+            {"log_python_commands", monitor_.log_python_commands},
+            {"frame_overlay", monitor_.frame_overlay}
         };
 
-        // Recent projects
-        config["recent_projects"] = recent_projects_;
+        config["nodes_panel"] = {
+            {"favourites", nodes_panel_.favourites},
+            {"recent", nodes_panel_.recent},
+            {"show_recent", nodes_panel_.show_recent},
+            {"recent_count", nodes_panel_.recent_count},
+            {"open_groups", nodes_panel_.open_groups},
+            {"list_view", nodes_panel_.list_view}
+        };
+
+        config["hyperparam_search"] = {
+            {"strategy", search_defaults_.strategy},
+            {"trials", search_defaults_.trials},
+            {"hours", search_defaults_.hours},
+            {"objective", search_defaults_.objective}
+        };
+
+        config["architecture_search"] = {
+            {"versions", architecture_search_defaults_.versions},
+            {"rounds", architecture_search_defaults_.rounds},
+            {"kept", architecture_search_defaults_.kept},
+            {"changed_percent", architecture_search_defaults_.changed_percent},
+            {"mixed_percent", architecture_search_defaults_.mixed_percent},
+            {"train_best", architecture_search_defaults_.train_best}
+        };
+
+        config["editor"] = {{"tab_size", editor_.tab_size},
+                            {"show_whitespace", editor_.show_whitespace},
+                            {"syntax_colours", editor_.syntax_colours},
+                            {"minimap", editor_.minimap},
+                            {"word_wrap", editor_.word_wrap},
+                            {"auto_indent", editor_.auto_indent},
+                            {"new_file_line_endings", editor_.new_file_line_endings == 1   ? "lf"
+                                                      : editor_.new_file_line_endings == 2 ? "crlf"
+                                                                                           : "system"},
+                            {"trim_trailing_whitespace", editor_.trim_trailing_whitespace},
+                            {"final_newline", editor_.final_newline}};
+        config["general"] = {{"start", start_with_last_project_ ? "last_project" : "start_page"},
+                             {"recent_projects", recent_projects_kept_},
+                             {"ask_before_closing", ask_before_closing_always_ ? "always" : "when_lost"}};
 
         std::ofstream file(config_path);
         if (!file.is_open()) {
@@ -563,9 +934,72 @@ std::filesystem::path EngineConfig::GetConfigPath() const {
 
 // ===== Getters and Setters =====
 
+// The one address decides when it is set and usable (TOFIX168)
+std::string EngineConfig::CentralLocked() const {
+    if (!server_address_.empty()) {
+        const auto e = cyxwiz::protocol::ResolveServerAddress(server_address_);
+        if (e.error.empty()) {
+            return e.central;
+        }
+    }
+    return central_server_address_;
+}
+
+std::string EngineConfig::GatewayLocked() const {
+    if (!server_address_.empty()) {
+        const auto e = cyxwiz::protocol::ResolveServerAddress(server_address_);
+        if (e.error.empty()) {
+            return e.gateway;
+        }
+    }
+    return ResolveCloudGatewayAddress(cloud_gateway_address_, central_server_address_);
+}
+
+std::string EngineConfig::AuthApiLocked() const {
+    if (!server_address_.empty()) {
+        const auto e = cyxwiz::protocol::ResolveServerAddress(server_address_);
+        if (e.error.empty()) {
+            return e.api_base_url;
+        }
+    }
+    return auth_api_url_;
+}
+
+std::string EngineConfig::GetServerAddress() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return server_address_;
+}
+
+EngineConfig::SeparateAddresses EngineConfig::GetSeparateAddresses() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return {central_server_address_, cloud_gateway_address_, auth_api_url_};
+}
+
+void EngineConfig::SetServerAddress(const std::string& address) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (server_address_ != address) {
+        server_address_ = address;
+        modified_ = true;
+    }
+}
+
+std::string EngineConfig::GetServerCaFile() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return server_ca_file_;
+}
+
+void EngineConfig::SetServerCaFile(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (server_ca_file_ != path) {
+        server_ca_file_ = path;
+        modified_ = true;
+    }
+    cyxwiz::protocol::SetServerCaFile(server_ca_file_);
+}
+
 std::string EngineConfig::GetCentralServerAddress() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return central_server_address_;
+    return CentralLocked();
 }
 
 void EngineConfig::SetCentralServerAddress(const std::string& address) {
@@ -576,9 +1010,22 @@ void EngineConfig::SetCentralServerAddress(const std::string& address) {
     }
 }
 
+std::string EngineConfig::GetCloudGatewayAddress() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return GatewayLocked();
+}
+
+void EngineConfig::SetCloudGatewayAddress(const std::string& address) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (cloud_gateway_address_ != address) {
+        cloud_gateway_address_ = address;
+        modified_ = true;
+    }
+}
+
 std::string EngineConfig::GetAuthApiUrl() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return auth_api_url_;
+    return AuthApiLocked();
 }
 
 void EngineConfig::SetAuthApiUrl(const std::string& url) {
@@ -602,58 +1049,6 @@ void EngineConfig::SetDefaultDeploymentAddress(const std::string& address) {
     }
 }
 
-bool EngineConfig::UseSecureConnection() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return use_secure_connection_;
-}
-
-void EngineConfig::SetUseSecureConnection(bool secure) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (use_secure_connection_ != secure) {
-        use_secure_connection_ = secure;
-        modified_ = true;
-    }
-}
-
-bool EngineConfig::AutoConnectOnStartup() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return auto_connect_on_startup_;
-}
-
-void EngineConfig::SetAutoConnectOnStartup(bool auto_connect) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (auto_connect_on_startup_ != auto_connect) {
-        auto_connect_on_startup_ = auto_connect;
-        modified_ = true;
-    }
-}
-
-int EngineConfig::GetConnectionTimeout() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return connection_timeout_;
-}
-
-void EngineConfig::SetConnectionTimeout(int seconds) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (connection_timeout_ != seconds) {
-        connection_timeout_ = seconds;
-        modified_ = true;
-    }
-}
-
-int EngineConfig::GetRequestTimeout() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return request_timeout_;
-}
-
-void EngineConfig::SetRequestTimeout(int seconds) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (request_timeout_ != seconds) {
-        request_timeout_ = seconds;
-        modified_ = true;
-    }
-}
-
 int EngineConfig::GetDefaultP2PPort() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return default_p2p_port_;
@@ -666,7 +1061,6 @@ void EngineConfig::SetDefaultP2PPort(int port) {
         modified_ = true;
     }
 }
-
 
 // ===== Python Settings =====
 
@@ -789,6 +1183,65 @@ void EngineConfig::SetRequireDebugBeforeTrain(bool require) {
     }
 }
 
+StudioDebuggerConfig EngineConfig::GetStudioDebugger() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return studio_debugger_;
+}
+
+void EngineConfig::SetStudioDebugger(const StudioDebuggerConfig& studio_debugger) {
+    StudioDebuggerConfig value = studio_debugger;
+    value.capture_every_epochs = std::clamp(value.capture_every_epochs, 1, 1000);
+    value.keep_capture_runs = std::clamp(value.keep_capture_runs, 1, 1000);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(studio_debugger_ == value)) {
+        studio_debugger_ = value;
+        modified_ = true;
+    }
+}
+
+StudioConfig EngineConfig::GetStudio() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return studio_;
+}
+
+void EngineConfig::SetStudio(const StudioConfig& studio) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(studio_ == studio)) {
+        studio_ = studio;
+        modified_ = true;
+    }
+}
+
+TrainingDashboardConfig EngineConfig::GetTrainingDashboard() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return training_dashboard_;
+}
+
+void EngineConfig::SetTrainingDashboard(const TrainingDashboardConfig& dashboard) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    using TD = TrainingDashboardConfig;
+    TD d = dashboard;
+    d.epoch_window = std::clamp(d.epoch_window, TD::kMinEpochWindow, TD::kMaxEpochWindow);
+    d.smooth_window = std::clamp(d.smooth_window, TD::kMinSmoothWindow, TD::kMaxSmoothWindow);
+    if (!(training_dashboard_ == d)) {
+        training_dashboard_ = d;
+        modified_ = true;
+    }
+}
+
+TrainingDefaultsConfig EngineConfig::GetTrainingDefaults() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return training_defaults_;
+}
+
+void EngineConfig::SetTrainingDefaults(const TrainingDefaultsConfig& training_defaults) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(training_defaults_ == training_defaults)) {
+        training_defaults_ = training_defaults;
+        modified_ = true;
+    }
+}
+
 AppearanceConfig EngineConfig::GetAppearance() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return appearance_;
@@ -802,9 +1255,92 @@ void EngineConfig::SetAppearance(const AppearanceConfig& appearance) {
     }
 }
 
+NodesPanelConfig EngineConfig::GetNodesPanel() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return nodes_panel_;
+}
+
+void EngineConfig::SetNodesPanel(const NodesPanelConfig& nodes_panel) {
+    NodesPanelConfig value = nodes_panel;
+    value.recent_count = std::clamp(value.recent_count, 1, kNodesPanelMaxRecent);
+    if (value.recent.size() > static_cast<size_t>(kNodesPanelMaxRecent)) value.recent.resize(kNodesPanelMaxRecent);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(nodes_panel_ == value)) {
+        nodes_panel_ = value;
+        modified_ = true;
+    }
+}
+
+HyperparamSearchDefaults EngineConfig::GetSearchDefaults() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return search_defaults_;
+}
+
+void EngineConfig::SetSearchDefaults(const HyperparamSearchDefaults& defaults) {
+    const HyperparamSearchDefaults value = ClampedSearchDefaults(defaults);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(search_defaults_ == value)) {
+        search_defaults_ = value;
+        modified_ = true;
+    }
+}
+
+ArchitectureSearchDefaults EngineConfig::GetArchitectureSearchDefaults() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return architecture_search_defaults_;
+}
+
+void EngineConfig::SetArchitectureSearchDefaults(const ArchitectureSearchDefaults& defaults) {
+    const ArchitectureSearchDefaults value = ClampedArchitectureSearchDefaults(defaults);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(architecture_search_defaults_ == value)) {
+        architecture_search_defaults_ = value;
+        modified_ = true;
+    }
+}
+
+UtilitiesConfig EngineConfig::GetUtilities() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return utilities_;
+}
+
+void EngineConfig::SetUtilities(const UtilitiesConfig& utilities) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(utilities_ == utilities)) {
+        utilities_ = utilities;
+        modified_ = true;
+    }
+}
+
+MonitorConfig EngineConfig::GetMonitor() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return monitor_;
+}
+
+void EngineConfig::SetMonitor(const MonitorConfig& monitor) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(monitor_ == monitor)) {
+        monitor_ = monitor;
+        modified_ = true;
+    }
+}
+
 bool EngineConfig::RecordDebugLogs() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return record_debug_logs_;
+}
+
+bool EngineConfig::EveryWindowMayLeave() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return every_window_may_leave_;
+}
+
+void EngineConfig::SetEveryWindowMayLeave(bool every) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (every_window_may_leave_ != every) {
+        every_window_may_leave_ = every;
+        modified_ = true;
+    }
 }
 
 void EngineConfig::SetRecordDebugLogs(bool record) {
@@ -828,6 +1364,128 @@ void EngineConfig::SetDataBudgetBytes(uint64_t bytes) {
     }
 }
 
+int EngineConfig::SimulationRateHz() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return simulation_rate_hz_;
+}
+
+void EngineConfig::SetSimulationRateHz(int hz) {
+    hz = std::clamp(hz, kMinSimulationRateHz, kMaxSimulationRateHz);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (simulation_rate_hz_ != hz) {
+        simulation_rate_hz_ = hz;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::OpenSimulationMonitorOnRun() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return open_simulation_monitor_on_run_;
+}
+
+void EngineConfig::SetOpenSimulationMonitorOnRun(bool open) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (open_simulation_monitor_on_run_ != open) {
+        open_simulation_monitor_on_run_ = open;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::PluginSetting(const std::string& plugin_id, const std::string& key, std::string& value) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto plugin = plugin_settings_.find(plugin_id);
+    if (plugin == plugin_settings_.end()) return false;
+    const auto it = plugin->second.find(key);
+    if (it == plugin->second.end()) return false;
+    value = it->second;
+    return true;
+}
+
+void EngineConfig::SetPluginSetting(const std::string& plugin_id, const std::string& key, const std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& stored = plugin_settings_[plugin_id][key];
+    if (stored != value) {
+        stored = value;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::PolicyPlaybackBestActions() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return policy_playback_best_;
+}
+
+void EngineConfig::SetPolicyPlaybackBestActions(bool best) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (policy_playback_best_ != best) {
+        policy_playback_best_ = best;
+        modified_ = true;
+    }
+}
+
+int EngineConfig::PolicyPlaybackSpeed() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return policy_playback_speed_;
+}
+
+void EngineConfig::SetPolicyPlaybackSpeed(int speed) {
+    speed = std::clamp(speed, 0, 2);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (policy_playback_speed_ != speed) {
+        policy_playback_speed_ = speed;
+        modified_ = true;
+    }
+}
+
+PolicyStressDefaults EngineConfig::PolicyStressTestDefaults() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return policy_stress_defaults_;
+}
+
+void EngineConfig::SetPolicyStressTestDefaults(PolicyStressDefaults defaults) {
+    defaults = ClampStressDefaults(defaults);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (defaults.kind != policy_stress_defaults_.kind || defaults.levels != policy_stress_defaults_.levels ||
+        defaults.episodes != policy_stress_defaults_.episodes) {
+        policy_stress_defaults_ = defaults;
+        modified_ = true;
+    }
+}
+
+int EngineConfig::WatchTrainingMode() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return watch_training_mode_;
+}
+
+int EngineConfig::WatchTrainingEvery() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return watch_training_every_;
+}
+
+void EngineConfig::SetWatchTraining(int mode, int every_updates) {
+    mode = std::clamp(mode, 0, 2);
+    every_updates = std::clamp(every_updates, 1, 1000);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (mode != watch_training_mode_ || every_updates != watch_training_every_) {
+        watch_training_mode_ = mode;
+        watch_training_every_ = every_updates;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::PlayPolicyAfterTraining() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return play_policy_after_training_;
+}
+
+void EngineConfig::SetPlayPolicyAfterTraining(bool play) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (play_policy_after_training_ != play) {
+        play_policy_after_training_ = play;
+        modified_ = true;
+    }
+}
+
 std::vector<RuntimeLogSavedFilterConfig>
 EngineConfig::GetRuntimeLogSavedFilters() const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -843,29 +1501,76 @@ void EngineConfig::SetRuntimeLogSavedFilters(
     }
 }
 
-std::vector<std::string> EngineConfig::GetRecentProjects() const {
+PythonStartConfig EngineConfig::GetPythonStart() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return recent_projects_;
+    return python_start_;
 }
 
-void EngineConfig::AddRecentProject(const std::string& project_path) {
+void EngineConfig::SetPythonStart(const PythonStartConfig& start) {
     std::lock_guard<std::mutex> lock(mutex_);
-
-    // Remove if already exists
-    auto it = std::find(recent_projects_.begin(), recent_projects_.end(), project_path);
-    if (it != recent_projects_.end()) {
-        recent_projects_.erase(it);
+    PythonStartConfig s = start;
+    s.console_commands_kept = std::clamp(s.console_commands_kept, PythonStartConfig::kMinCommandsKept,
+                                         PythonStartConfig::kMaxCommandsKept);
+    if (!(python_start_ == s)) {
+        python_start_ = s;
+        modified_ = true;
     }
+}
 
-    // Add to front
-    recent_projects_.insert(recent_projects_.begin(), project_path);
+EditorConfig EngineConfig::GetEditor() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return editor_;
+}
 
-    // Limit to 10 recent projects
-    if (recent_projects_.size() > 10) {
-        recent_projects_.resize(10);
+void EngineConfig::SetEditor(const EditorConfig& editor) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    EditorConfig e = editor;
+    if (e.tab_size != 2 && e.tab_size != 8) e.tab_size = 4;
+    e.new_file_line_endings = std::clamp(e.new_file_line_endings, 0, 2);
+    if (!(editor_ == e)) {
+        editor_ = e;
+        modified_ = true;
     }
+}
 
-    modified_ = true;
+bool EngineConfig::StartWithLastProject() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return start_with_last_project_;
+}
+
+void EngineConfig::SetStartWithLastProject(bool last_project) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (start_with_last_project_ != last_project) {
+        start_with_last_project_ = last_project;
+        modified_ = true;
+    }
+}
+
+int EngineConfig::RecentProjectsKept() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return recent_projects_kept_;
+}
+
+void EngineConfig::SetRecentProjectsKept(int kept) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    kept = std::clamp(kept, kMinRecentProjects, kMaxRecentProjects);
+    if (recent_projects_kept_ != kept) {
+        recent_projects_kept_ = kept;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::AskBeforeClosingAlways() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return ask_before_closing_always_;
+}
+
+void EngineConfig::SetAskBeforeClosingAlways(bool always) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (ask_before_closing_always_ != always) {
+        ask_before_closing_always_ = always;
+        modified_ = true;
+    }
 }
 
 } // namespace cyxwiz::core

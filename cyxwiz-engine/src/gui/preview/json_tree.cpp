@@ -7,7 +7,7 @@ namespace gui {
 
 bool JSONTreeRenderer::SetContent(const std::string& json_str) {
     try {
-        json_ = nlohmann::json::parse(json_str);
+        json_ = nlohmann::ordered_json::parse(json_str);
         is_valid_ = true;
         error_.clear();
         return true;
@@ -16,12 +16,6 @@ bool JSONTreeRenderer::SetContent(const std::string& json_str) {
         error_ = e.what();
         return false;
     }
-}
-
-void JSONTreeRenderer::SetJSON(const nlohmann::json& json) {
-    json_ = json;
-    is_valid_ = true;
-    error_.clear();
 }
 
 void JSONTreeRenderer::Render() {
@@ -50,7 +44,7 @@ void JSONTreeRenderer::Render() {
     ImGui::EndChild();
 }
 
-void JSONTreeRenderer::RenderNode(const std::string& key, const nlohmann::json& value, bool is_root) {
+void JSONTreeRenderer::RenderNode(const std::string& key, const nlohmann::ordered_json& value, bool is_root) {
     const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     node_id_++;
     ImGui::PushID(node_id_);
@@ -125,7 +119,7 @@ void JSONTreeRenderer::RenderNode(const std::string& key, const nlohmann::json& 
     ImGui::PopID();
 }
 
-void JSONTreeRenderer::RenderValue(const nlohmann::json& value) {
+void JSONTreeRenderer::RenderValue(const nlohmann::ordered_json& value) {
     const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     if (value.is_string()) {
         std::string s = value.get<std::string>();
@@ -138,7 +132,7 @@ void JSONTreeRenderer::RenderValue(const nlohmann::json& value) {
         ImGui::PopStyleColor();
     } else if (value.is_number_integer()) {
         ImGui::PushStyleColor(ImGuiCol_Text, t.series[3]); // numbers
-        ImGui::Text("%lld", value.get<int64_t>());
+        ImGui::Text("%lld", static_cast<long long>(value.get<int64_t>()));
         ImGui::PopStyleColor();
     } else if (value.is_number_float()) {
         ImGui::PushStyleColor(ImGuiCol_Text, t.series[3]); // numbers
@@ -155,7 +149,7 @@ void JSONTreeRenderer::RenderValue(const nlohmann::json& value) {
     }
 }
 
-void JSONTreeRenderer::RenderContextMenu(const nlohmann::json& value) {
+void JSONTreeRenderer::RenderContextMenu(const nlohmann::ordered_json& value) {
     if (ImGui::BeginPopupContextItem()) {
         if (ImGui::MenuItem("Copy Value")) {
             std::string text;

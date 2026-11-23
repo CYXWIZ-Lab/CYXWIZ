@@ -2,6 +2,7 @@
 
 #include "../panel.h"
 #include "language_model_load_dialog.h"
+#include "../../core/active_model_use.h"
 #include "../../core/language_model_loader.h"
 
 #include <atomic>
@@ -40,6 +41,7 @@ private:
         std::string error;
         uint64_t task_id = 0;
         int max_new_tokens = 0;
+        std::shared_ptr<ActiveModelUse> use;  // This session's model only; released when done.
     };
 
     void RenderEmpty();
@@ -57,11 +59,17 @@ private:
     void RenderSpeed();
     void StartSpeedMeasurement();
     void PollRun();
-    void Start(const std::string& message);
+    // Starts a reply to `message`; `replace_last` sends the history without the
+    // last reply and removes it once the prompt is built (Regenerate). False,
+    // with the reason in the note, when it could not start.
+    bool Start(const std::string& message, bool replace_last = false);
     void SaveConversation();
     void SetModel(std::shared_ptr<LoadedLanguageModel> model);
     bool Chat() const;
     std::string SendBlocker() const;
+    // A run on this session's model claims it from Train, Test and the other
+    // jobs; null for another model, or with `why` set when it is busy.
+    std::shared_ptr<ActiveModelUse> ClaimModel(std::string& why) const;
 
     LanguageModelLoadDialog load_dialog_;
     std::shared_ptr<LoadedLanguageModel> model_;
@@ -98,6 +106,7 @@ private:
         std::string text;  // Guarded by mutex.
         bool failed = false;
         uint64_t task_id = 0;
+        std::shared_ptr<ActiveModelUse> use;  // As RunState::use.
     };
     std::shared_ptr<SpeedState> speed_run_;
     std::string speed_text_;

@@ -68,10 +68,11 @@ std::vector<OutputRow> OutputRows(const std::vector<GraphNode>& nodes, const std
     std::vector<OutputRow> rows;
     for (const auto& n : nodes) {
         if (!IsOutputNode(n.type)) continue;
+        const char* kind = KindName(n.type);
         OutputRow r;
         r.id = n.id;
         r.name = n.name;
-        r.kind = KindName(n.type);
+        r.kind = kind;
         const GraphNode* from = n.input_from.empty() ? nullptr : by_id(n.input_from.front());
         std::set<int> seen{n.id};
         while (from && from->type == NodeType::RowCountCheck && seen.insert(from->id).second)

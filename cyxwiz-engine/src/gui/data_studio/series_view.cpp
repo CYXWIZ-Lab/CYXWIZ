@@ -158,7 +158,8 @@ void SeriesView::Render(const ExploreContext& context) {
     }
 }
 
-bool RenderSeriesPickers(const char* id, const ExploreContext& context, const DatasetProfile& p, plot::ColumnPicker& picker, series::SeriesRequest& base) {
+bool RenderSeriesPickers(const char* id, const ExploreContext& context, const DatasetProfile& p, plot::ColumnPicker& picker, series::SeriesRequest& base,
+                         bool period, const char* value_label) {
     // Time candidates: date columns, texts that read as dates, numbers; the
     // Data Input's time column first; "(row order)" when none.
     std::vector<plot::ColumnSummary> times, numbers;
@@ -201,9 +202,10 @@ bool RenderSeriesPickers(const char* id, const ExploreContext& context, const Da
     changed |= picker.Pick((sid + "_time").c_str(), base.time, times, false, "(row order)", 200.0f);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("A date column, a text that reads as dates, or numbers; the rows are sorted by it. (row order): the table as it is.");
-    row.Next(ImGui::CalcTextSize("Value").x + 240.0f);
-    Label("Value");
+    row.Next(ImGui::CalcTextSize(value_label).x + 240.0f);
+    Label(value_label);
     changed |= picker.Pick((sid + "_value").c_str(), base.value, numbers, true, nullptr, 200.0f);
+    if (!period) return changed;
     row.Next(ImGui::CalcTextSize("Period").x + 150.0f);
     Label("Period");
     changed |= ui::NumberField((sid + "_period").c_str(), &base.period, 0, 100000, 1, 56.0f,
@@ -284,7 +286,10 @@ void SeriesView::RenderParts(const ExploreContext& context) {
     const std::string dataset = context.dataset;
     const series::PartsRequest req = parts_;
     const explore::MissingTexts texts = context.missing_texts;
-    if (key != stopped_key_) parts_job_.Ask("Series: parts", key, [dataset, req, texts](LambdaTask&) { return series::RunParts(dataset, req, RunNow, texts); });
+    if (key != stopped_key_) parts_job_.Ask("Series: parts", key, [dataset, req, texts](LambdaTask& task) {
+        const TimeSeriesStop stop([&task] { return task.ShouldStop(); });
+        return series::RunParts(dataset, req, RunNow, texts);
+    });
     const series::PartsAnswer* a = parts_job_.Answer(key);
     if (!a) {
         Waiting(parts_job_, key, "Splitting the series on the device...");
@@ -310,7 +315,7 @@ void SeriesView::RenderParts(const ExploreContext& context) {
     if (add_to_graph) {
         if (ui::PrimaryButton("Add as a step", true, nullptr, ui::ButtonSize::Small))
             Message(add_to_graph("TimeSeriesDecomposition", "Decomposition (" + base_.value + ")", series::NodeParameters(a->request), true), false);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Puts the Decomposition node after the data in use: the rest of the graph gets trend, seasonal and residual columns");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", explore_view::StepTip("Decomposition", "trend, seasonal and residual columns").c_str());
         ExploreNextButton("Export CSV...");
     }
     if (ui::SecondaryButton("Export CSV...")) Export("series_parts.csv", sv::PartsCsv(*a));
@@ -329,7 +334,10 @@ void SeriesView::RenderSeasonality(const ExploreContext& context) {
     const std::string dataset = context.dataset;
     const series::SeriesRequest req = base_;
     const explore::MissingTexts texts = context.missing_texts;
-    if (key != stopped_key_) season_job_.Ask("Series: seasonality", key, [dataset, req, texts](LambdaTask&) { return series::RunSeasonality(dataset, req, RunNow, texts); });
+    if (key != stopped_key_) season_job_.Ask("Series: seasonality", key, [dataset, req, texts](LambdaTask& task) {
+        const TimeSeriesStop stop([&task] { return task.ShouldStop(); });
+        return series::RunSeasonality(dataset, req, RunNow, texts);
+    });
     const series::SeasonalityAnswer* a = season_job_.Answer(key);
     if (!a) {
         Waiting(season_job_, key, "Reading the periodogram on the device...");
@@ -392,7 +400,7 @@ void SeriesView::RenderSeasonality(const ExploreContext& context) {
     if (add_to_graph) {
         if (ui::SecondaryButton("Keep as a node"))
             Message(add_to_graph("SeasonalityDetector", "Seasonality (" + base_.value + ")", series::NodeParameters(a->request), false), false);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds the Seasonality Detector node as a branch reading the data in use");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", explore_view::BranchTip("Seasonality Detector").c_str());
         ExploreNextButton("Export CSV...");
     }
     if (ui::SecondaryButton("Export CSV...")) Export("series_seasonality.csv", sv::SeasonalityCsv(*a));
@@ -412,7 +420,10 @@ void SeriesView::RenderStationarity(const ExploreContext& context) {
     const std::string dataset = context.dataset;
     const series::StationarityRequest req = stationarity_;
     const explore::MissingTexts texts = context.missing_texts;
-    if (key != stopped_key_) stationarity_job_.Ask("Series: stationarity", key, [dataset, req, texts](LambdaTask&) { return series::RunStationarity(dataset, req, RunNow, texts); });
+    if (key != stopped_key_) stationarity_job_.Ask("Series: stationarity", key, [dataset, req, texts](LambdaTask& task) {
+        const TimeSeriesStop stop([&task] { return task.ShouldStop(); });
+        return series::RunStationarity(dataset, req, RunNow, texts);
+    });
     const series::StationarityAnswer* a = stationarity_job_.Answer(key);
     if (!a) {
         Waiting(stationarity_job_, key, "Running ADF and KPSS on the device...");
@@ -471,12 +482,12 @@ void SeriesView::RenderStationarity(const ExploreContext& context) {
             if (ui::PrimaryButton("Add a Differencing step", true, nullptr, ui::ButtonSize::Small))
                 Message(add_to_graph("Differencing", "Difference " + base_.value, {{"value_col", base_.value}, {"lag", "1"}, {"order", std::to_string(d)}}, true), false);
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Puts a Differencing node (order %d) after the data in use, so the rest of the graph works on a stationary series", d);
+                ImGui::SetTooltip("%s", explore_view::StepTip("Differencing (order " + std::to_string(d) + ")", "a stationary series").c_str());
             ExploreNextButton("Keep as a node");
         }
         if (ui::SecondaryButton("Keep as a node"))
             Message(add_to_graph("StationarityTest", "Stationarity (" + base_.value + ")", series::NodeParameters(a->request), false), false);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds the Stationarity Test node as a branch reading the data in use");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", explore_view::BranchTip("Stationarity Test").c_str());
         ExploreNextButton("Export CSV...");
     }
     if (ui::SecondaryButton("Export CSV...")) Export("series_stationarity.csv", sv::StationarityCsv(*a));
@@ -496,7 +507,10 @@ void SeriesView::RenderCorrelogram(const ExploreContext& context) {
     const std::string dataset = context.dataset;
     const series::CorrelogramRequest req = correlogram_;
     const explore::MissingTexts texts = context.missing_texts;
-    if (key != stopped_key_) correlogram_job_.Ask("Series: correlogram", key, [dataset, req, texts](LambdaTask&) { return series::RunCorrelogram(dataset, req, RunNow, texts); });
+    if (key != stopped_key_) correlogram_job_.Ask("Series: correlogram", key, [dataset, req, texts](LambdaTask& task) {
+        const TimeSeriesStop stop([&task] { return task.ShouldStop(); });
+        return series::RunCorrelogram(dataset, req, RunNow, texts);
+    });
     const series::CorrelogramAnswer* a = correlogram_job_.Answer(key);
     if (!a) {
         Waiting(correlogram_job_, key, "Computing the autocorrelations on the device...");
@@ -541,7 +555,7 @@ void SeriesView::RenderCorrelogram(const ExploreContext& context) {
             add_to_graph("PACFNode", "PACF (" + base_.value + ")", series::NodeParameters(a->request), false);
             Message(acf + (correlogram_.differenced ? " The nodes read the column as it is; put a Differencing step before them for the differenced correlogram." : ""), false);
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds the ACF and PACF nodes as branches reading the data in use");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", explore_view::BranchTip("ACF and PACF").c_str());
         ExploreNextButton("Export CSV...");
     }
     if (ui::SecondaryButton("Export CSV...")) Export("series_correlogram.csv", sv::CorrelogramCsv(*a));

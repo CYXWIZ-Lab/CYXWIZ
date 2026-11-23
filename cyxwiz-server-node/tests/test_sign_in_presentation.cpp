@@ -178,59 +178,45 @@ TEST_CASE("service address: host shown, website derived", "[sign-in]") {
     CHECK(WebsiteOf("") == "");
 }
 
-TEST_CASE("change the sign-in service", "[sign-in]") {
-    SECTION("addresses are checked and normalized") {
-        auto check = CheckServiceAddress("http://192.168.1.116:3002/api");
-        CHECK(check.ok);
-        CHECK(check.normalized == "http://192.168.1.116:3002/api");
-        check = CheckServiceAddress("  https://cyxwiz.com  ");
-        CHECK(check.ok);
-        CHECK(check.normalized == "https://cyxwiz.com/api");  // "/api" added
-        check = CheckServiceAddress("http://127.0.0.1:3002/api/");
-        CHECK(check.normalized == "http://127.0.0.1:3002/api");
-        check = CheckServiceAddress("cyxwiz.com/api");
-        CHECK_FALSE(check.ok);
-        CHECK(check.message.rfind("The address must start with http:// or https://", 0) == 0);
-        check = CheckServiceAddress("http://:3002/api");
-        CHECK_FALSE(check.ok);
-        CHECK(check.message.rfind("The address has no host", 0) == 0);
-        check = CheckServiceAddress("http://192.168.1.116:abc/api");
-        CHECK_FALSE(check.ok);
-        CHECK(check.message.rfind("The port must be a number", 0) == 0);
-        check = CheckServiceAddress("http://192.168.1.116 :3002/api");
-        CHECK_FALSE(check.ok);
-        check = CheckServiceAddress("");
-        CHECK_FALSE(check.ok);
-        CHECK(check.message == "Enter an address like http://192.168.1.116:3002/api");
-    }
-    SECTION("the dialog") {
-        const auto dialog = BuildServiceDialog("http://127.0.0.1:3002/api", ServiceReach::Reachable);
-        CHECK(dialog.title == "Sign-in service");
-        CHECK(dialog.explanation ==
-              "The CyxWiz website this node signs in with. The central server it reports to is set separately, in "
-              "Settings.");
-        REQUIRE(dialog.examples.size() == 3);
-        CHECK(dialog.examples[0].first == "CyxWiz (production)");
-        CHECK(dialog.examples[0].second == "https://cyxwiz.com/api");
-        CHECK(dialog.examples[1].second == "http://127.0.0.1:3002/api");
-        CHECK(dialog.examples[2].first == "Another PC on the network");
-        CHECK(dialog.reach_line == "Reachable \xC2\xB7 CyxWiz API");
-        CHECK(dialog.use_enabled);
-        CHECK(dialog.use_label == "Use this service");
-        CHECK(dialog.cancel_label == "Cancel");
-        CHECK(dialog.address_problem.empty());
-        CHECK(dialog.note.rfind("\"Create an account\" opens the website of this address.", 0) == 0);
+TEST_CASE("change the CyxWiz server", "[sign-in]") {
+    using cyxwiz::protocol::ServerReach;
+    using cyxwiz::protocol::ServiceReach;
+    ServerReach up;
+    up.central = up.api = ServiceReach::Reachable;
 
-        const auto bad = BuildServiceDialog("nope", ServiceReach::Reachable);
-        CHECK_FALSE(bad.use_enabled);
-        CHECK(bad.reach == ServiceReach::Unknown);  // no reach claim for a malformed address
-        CHECK(bad.reach_line.empty());
-        CHECK_FALSE(bad.address_problem.empty());
+    const auto dialog = BuildServiceDialog("http://localhost:8000", up);
+    CHECK(dialog.title == "CyxWiz server");
+    CHECK(dialog.explanation == "Where this node signs in and the central server it reports to. One address for both.");
+    REQUIRE(dialog.examples.size() == 4);
+    CHECK(dialog.examples[0].first == "This PC");
+    CHECK(dialog.examples[0].second == "http://localhost:8000");
+    CHECK(dialog.examples[3].second == "https://cloud.cyxwiz.ai");
+    REQUIRE(dialog.view.rows.size() == 2);  // a node: central and sign-in
+    CHECK(dialog.view.rows[0].name == "Central server");
+    CHECK(dialog.view.rows[0].address == "localhost:8000");
+    CHECK(dialog.view.rows[0].reach == ServiceReach::Reachable);
+    CHECK(dialog.view.rows[1].address == "http://localhost:8000/api");
+    CHECK(dialog.view.kind_line.find("front door without TLS") != std::string::npos);
+    CHECK(dialog.use_enabled);
+    CHECK(dialog.use_label == "Use this server");
+    CHECK(dialog.cancel_label == "Cancel");
+    CHECK(dialog.address_problem.empty());
+    CHECK(dialog.note.rfind("\"Create an account\" opens this server's website.", 0) == 0);
 
-        CHECK(BuildServiceDialog("http://x:1/api", ServiceReach::Unreachable).reach_line ==
-              "Not reachable \xC2\xB7 check the address and that the service is running");
-        CHECK(BuildServiceDialog("http://x:1/api", ServiceReach::Checking).reach_line == "Checking...");
-    }
+    const auto bad = BuildServiceDialog("192.168.1.216:8000", up);
+    CHECK_FALSE(bad.use_enabled);
+    CHECK(bad.view.rows.empty());  // no reach claim for an address that can't be used
+    CHECK(bad.address_problem.find("can't be used") != std::string::npos);
+
+    const auto blank = BuildServiceDialog("  ", up);
+    CHECK_FALSE(blank.use_enabled);
+    CHECK(blank.address_problem == "Enter the server address, for example http://localhost:8000.");
+
+    const auto three = BuildServiceDialog("192.168.1.216", ServerReach{});
+    CHECK(three.use_enabled);
+    CHECK(three.view.rows[0].address == "192.168.1.216:50051");
+    CHECK(three.view.rows[1].address == "http://192.168.1.216:3002/api");
+    CHECK(three.view.rows[0].reach == ServiceReach::NotChecked);
 }
 
 TEST_CASE("work offline confirm", "[sign-in]") {

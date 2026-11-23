@@ -1621,7 +1621,10 @@ TEST_CASE("Backend pack lifecycle qualification uses exact staged routes",
         CHECK(invocation.runtime_identity->runtime_set_id == "runtime-v1");
         CHECK(invocation.runtime_identity->backend_packs.front().pack_id ==
               "opencl-v2");
-        CHECK(invocation.runtime_dll_directories.back() == pack / "runtime");
+        // The adapter resolves real paths (letter case as on disk), as
+        // runtime_root above, so compare against the canonical folder.
+        CHECK(invocation.runtime_dll_directories.back() ==
+              std::filesystem::canonical(pack / "runtime"));
     }
 
     options.failure_policy =

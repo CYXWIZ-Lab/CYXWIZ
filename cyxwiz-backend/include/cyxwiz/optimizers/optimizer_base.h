@@ -61,6 +61,9 @@ public:
         return false;
     }
 
+    /** Tensors of a parameter's shape kept per parameter (Adam: m and v), for memory estimates. */
+    virtual size_t StateTensorsPerParameter() const { return 0; }
+
     void SetLearningRate(double lr) { learning_rate_ = lr; }
     double GetLearningRate() const { return learning_rate_; }
     int GetStepCount() const { return step_count_; }

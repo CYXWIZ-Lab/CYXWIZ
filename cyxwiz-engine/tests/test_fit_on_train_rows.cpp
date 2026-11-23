@@ -11,6 +11,8 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/data_registry.h"
 #include "../src/core/node_executors/count_vectorizer_operator.h"
+#include "../src/core/node_executors/linear_algebra_operators.h"
+#include "../src/core/node_executors/pca_operator.h"
 #include "../src/core/node_executors/preprocessing_operators.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
 #include "../src/core/node_executors/tfidf_vectorizer_operator.h"
@@ -153,6 +155,23 @@ void CheckOperators() {
                                   0.5833333333333334},
                "Target encoder: category means from the Train rows; green (no Train row) gets the Train mean");
     }
+    {
+        // A missing target on a Train row is left out of the fit, not spread
+        // as NaN into every value (TOFIX223 0.9). Row 5 (blue, Train) has no
+        // target: Train rows 0, 1, 2 give mean 2/3, red (2 * 1 + 2/3) / 3,
+        // blue (0 + 2/3) / 2.
+        arrow::DoubleBuilder y;
+        (void)y.AppendValues({1, 0, 1, 1, 0});
+        (void)y.AppendNull();
+        std::shared_ptr<arrow::Array> yy;
+        (void)y.Finish(&yy);
+        auto missing = *table->SetColumn(table->schema()->GetFieldIndex("y"), arrow::field("y", arrow::float64()),
+                                         std::make_shared<arrow::ChunkedArray>(yy));
+        TargetEncoderOperator op;
+        auto out = Run(op, {{"columns", "c"}, {"target_col", "y"}, {"smoothing", "1"}}, missing);
+        Expect(Column(out, "c"), {8.0 / 9.0, 1.0 / 3.0, 8.0 / 9.0, 1.0 / 3.0, 2.0 / 3.0, 1.0 / 3.0},
+               "Target encoder: a row with a missing target is left out of the fit");
+    }
     const std::map<std::string, std::string> text_params = {
         {"text_col", "text"}, {"label_col", ""}, {"norm", "none"}, {"ngram_range", "1,1"}, {"stop_words", "none"},
         {"output_format", "dense"}};
@@ -187,6 +206,17 @@ void CheckOperators() {
         Check(SparseFeatureDatasetCache::SaveAtomically(**sparse, file.string()).ok(), "save the sparse dataset");
         auto loaded = SparseFeatureDatasetCache::Load(file.string());
         Check(loaded.ok() && (*loaded)->GetPartition() == want, "the cache file keeps the partition");
+
+        // Truncated SVD reads the sparse features without a dense copy (TOFIX129
+        // D9): the same components as on the dense tfidf_* columns.
+        TruncatedSVDOperator on_dense, on_sparse;
+        const auto from_dense = Run(on_dense, {{"feature_cols", "tfidf_0,tfidf_1,tfidf_2,tfidf_3"}, {"n_components", "2"}}, out);
+        Check(on_sparse.Configure({{"n_components", "2"}}, error), "sparse Truncated SVD configure: " + error);
+        const auto from_sparse = on_sparse.ApplySparseInput(**sparse);
+        Check(from_sparse.ok(), "Truncated SVD on sparse TF-IDF: " + from_sparse.status().ToString());
+        Expect(Column(*from_sparse, "svd_0"), Column(from_dense, "svd_0"), "Truncated SVD: sparse = dense, component 1");
+        Expect(Column(*from_sparse, "svd_1"), Column(from_dense, "svd_1"), "Truncated SVD: sparse = dense, component 2");
+        CheckPartitionCarried(*from_sparse, "Truncated SVD on sparse features");
         std::error_code ec;
         fs::remove(file, ec);
         for (const auto& [phase, rows] : std::vector<std::pair<BatcherPhase, size_t>>{
@@ -287,11 +317,127 @@ void CheckExecutor() {
     std::getline(in, header);
     Check(header.find(kSplitPartitionColumn) == std::string::npos, "the export leaves out the partition: " + header);
     in.close();
+
+    // The file changes and the same executor runs again (TOFIX223 0.8): the
+    // steps read the new rows, not the partitioned copy of the old ones.
+    {
+        std::ofstream csv(csv_path, std::ios::binary | std::ios::trunc);
+        csv << "a,y\n";
+        for (int i = 1; i <= 30; ++i) csv << i * 3 << ',' << (i % 2 ? "odd" : "even") << '\n';
+    }
+    Check(split.ExecutePipeline(pipeline(true)), "the run after the file changed: " + split.GetLastError());
+    const auto reloaded = registry.GetArrowDataset(split.NodeResults().at(1));
+    Check(reloaded && reloaded->GetNumRows() == 30, "the Data Input re-read the changed file");
+    const auto rescaled = scaled(split);
+    Check(rescaled->num_rows() == 30,
+          "the scaler reads the changed file's 30 rows, not the 20 of the old split copy (got " +
+              std::to_string(rescaled->num_rows()) + ")");
+    Check(TrainRowMask(rescaled).size() == 30, "the new rows carry their partition");
     fs::remove_all(dir, ec);
 }
+// Remove Duplicates in a training graph compares the data, not the split's
+// partition column (TOFIX223 0.10): 40 distinct rows, each twice, shuffled
+// 80 / 10 / 10. A copy in Train and its twin in Test once both stayed.
+void CheckRemoveDuplicatesAcrossSplit() {
+    const fs::path dir = fs::temp_directory_path() / "cyxwiz_test_dedup_split";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    const fs::path csv_path = dir / "twins.csv";
+    {
+        std::ofstream csv(csv_path, std::ios::binary);
+        csv << "a,y\n";
+        for (int copy = 0; copy < 2; ++copy)
+            for (int i = 1; i <= 40; ++i) csv << i * 7 << ',' << (i % 2 ? "odd" : "even") << '\n';
+    }
+    nlohmann::json j;
+    j["nodes"] = nlohmann::json::array(
+        {{{"id", 1}, {"type", "DataInput"}, {"name", "Rows"},
+          {"parameters", {{"source_type", "file"}, {"file_path", csv_path.string()}, {"type", "csv"},
+                          {"has_header", "true"}, {"delimiter", ","}, {"label_column", "y"},
+                          {"force_disk_backed", "false"}}}},
+         {{"id", 2}, {"type", "RemoveDuplicates"}, {"name", "Dedup"}, {"parameters", nlohmann::json::object()}}});
+    j["links"] = nlohmann::json::array({{{"start_node", 1}, {"end_node", 2}}});
+    j["training_split"] = {{"label_column", "y"}, {"train", 0.8}, {"val", 0.1}, {"test", 0.1},
+                           {"seed", 42}, {"stratified", false}, {"shuffle", true}};
+    PipelineExecutor executor;
+    Check(executor.ExecutePipeline(j.dump()), "the dedup run: " + executor.GetLastError());
+    const auto it = executor.NodeResults().find(2);
+    Check(it != executor.NodeResults().end(), "Remove Duplicates' result is named");
+    const auto dataset = DataRegistry::Instance().GetArrowDataset(it->second);
+    Check(dataset && dataset->GetArrowTable(), "Remove Duplicates' result is in memory");
+    const auto out = dataset->GetArrowTable();
+    Check(out->num_rows() == 40, "40 distinct rows stay, whatever partition each copy fell in (got " +
+                                     std::to_string(out->num_rows()) + ")");
+    Check(out->schema()->GetFieldIndex(kSplitPartitionColumn) >= 0, "the kept rows carry their partition");
+    fs::remove_all(dir, ec);
+}
+
 // Supplied Validation / Test inputs (S0-g4): their rows join the training
 // rows with partition 1 / 2; the scaler learns from the training rows only
 // and transforms them all.
+// Linear Solve and Linear Projection (TOFIX129 D9). One table: x = (a . y) /
+// (a . a) over the Train rows (a = 1, 2, 4, 3; y = 1, 0, 1, 1): 8 / 30.
+// Two Data Inputs through the executor: A = [2 1; 1 3], b = (5, 10) from a
+// second table on pin 2 gives x = (1, 3); a projection by a named matrix
+// (x1: 1, x2: -1) gives x1 - x2.
+void CheckSolveAndProjection() {
+    LinearSolveOperator one;
+    const auto x = Run(one, {{"a_cols", "a"}, {"b_cols", "y"}}, Table());
+    Expect(Column(x, "x_y"), {8.0 / 30.0}, "Linear Solve: least squares on the Train rows");
+
+    const fs::path dir = fs::temp_directory_path() / "cyxwiz_test_linear_steps";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    const auto write = [&](const char* name, const char* text) {
+        std::ofstream(dir / name, std::ios::binary) << text;
+        return (dir / name).string();
+    };
+    const std::string a_csv = write("a.csv", "x1,x2\n2,1\n1,3\n");
+    const std::string b_csv = write("b.csv", "t\n5\n10\n");
+    const std::string m_csv = write("m.csv", "column,p\nx2,-1\nx1,1\n");
+    const auto input = [](int id, const std::string& path) {
+        return nlohmann::json{{"id", id}, {"type", "DataInput"}, {"name", "In" + std::to_string(id)},
+                              {"parameters", {{"source_type", "file"}, {"file_path", path}, {"type", "csv"}, {"has_header", "true"},
+                                              {"delimiter", ","}, {"force_disk_backed", "false"}}}};
+    };
+    auto& registry = DataRegistry::Instance();
+    const auto result = [&](PipelineExecutor& executor, int id) {
+        const auto it = executor.NodeResults().find(id);
+        Check(it != executor.NodeResults().end(), "node " + std::to_string(id) + " has a result");
+        return registry.GetArrowDataset(it->second)->GetArrowTable();
+    };
+    nlohmann::json solve;
+    solve["nodes"] = nlohmann::json::array({input(1, a_csv), input(2, b_csv),
+                                            {{"id", 3}, {"type", "LinearSolve"}, {"name", "Solve"}, {"parameters", {{"b_cols", "t"}}}}});
+    solve["links"] = nlohmann::json::array({{{"start_node", 1}, {"end_node", 3}, {"end_pin_index", 0}},
+                                            {{"start_node", 2}, {"end_node", 3}, {"end_pin_index", 1}}});
+    PipelineExecutor solver;
+    Check(solver.ExecutePipeline(solve.dump()), "Linear Solve over two Data Inputs: " + solver.GetLastError());
+    Expect(Column(result(solver, 3), "x_t"), {1.0, 3.0}, "Linear Solve: A from one table, b from another");
+
+    nlohmann::json project;
+    project["nodes"] = nlohmann::json::array({input(1, a_csv), input(2, m_csv),
+                                              {{"id", 3}, {"type", "LinearProjection"}, {"name", "Project"}, {"parameters", nlohmann::json::object()}}});
+    project["links"] = nlohmann::json::array({{{"start_node", 1}, {"end_node", 3}, {"end_pin_index", 0}},
+                                              {{"start_node", 2}, {"end_node", 3}, {"end_pin_index", 1}}});
+    PipelineExecutor projector;
+    Check(projector.ExecutePipeline(project.dump()), "Linear Projection with a Matrix input: " + projector.GetLastError());
+    Expect(Column(result(projector, 3), "p"), {1.0, -2.0}, "Linear Projection: the matrix rows matched by name");
+
+    // Two tables of different lengths are refused; a missing Matrix too.
+    const std::string short_b = write("b2.csv", "t\n5\n");
+    solve["nodes"][1] = input(2, short_b);
+    PipelineExecutor uneven;
+    Check(!uneven.ExecutePipeline(solve.dump()) && uneven.GetLastError().find("line up row by row") != std::string::npos,
+          "Linear Solve: two tables of different lengths: " + uneven.GetLastError());
+    LinearProjectionOperator alone;
+    std::string error;
+    Check(alone.Configure({}, error) && !alone.Apply(Table()).ok(), "Linear Projection without a Matrix is refused");
+    fs::remove_all(dir, ec);
+}
+
 void CheckSuppliedInputs() {
     // The helper: columns by name, the supplied label renamed, a cast, extra
     // columns left out, a missing column refused.
@@ -383,11 +529,162 @@ void CheckSuppliedInputs() {
 }
 }  // namespace
 
+// PCA (TOFIX129 D9): the means and the component come from the Train rows,
+// then every row is projected: scikit-learn 1.8's
+// PCA(n_components=1).fit(X[[0, 1, 2, 5]]).transform(X) on (a, y). Fitted on
+// every row it would be (-3.5, -2.5, -0.5, 5.5, 2.5, -1.5). The saved values
+// project an unmarked table the same way.
+void CheckPCA() {
+    const std::vector<double> want = {-1.4611759914, -0.5831323328, 1.5188201928, 7.4788125611, 4.3835279741, 0.5254881314};
+    PCAOperator pca;
+    const auto out = Run(pca, {{"feature_cols", "a,y"}, {"n_components", "1"}}, Table());
+    Expect(Column(out, "pc_0"), want, "PCA fitted on the Train rows");
+    CheckPartitionCarried(out, "PCA");
+    const auto beside = Run(pca, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"keep_columns", "true"}}, Table());
+    Expect(Column(beside, "pc_0"), want, "PCA beside the input");
+    Check(beside->GetColumnByName("text") != nullptr, "PCA beside the input: the other columns kept");
+    {
+        // The label passes through unchanged (TOFIX223 0.7): a float target
+        // keeps its fractions, a missing target stays missing, a text label
+        // stays text. It once came out as int32: 2.75 -> 2, null -> class 0.
+        arrow::DoubleBuilder target_builder;
+        (void)target_builder.AppendValues({0.25, 2.75, -1.5});
+        (void)target_builder.AppendNull();
+        (void)target_builder.AppendValues({7.125, 3.5});
+        std::shared_ptr<arrow::Array> target;
+        (void)target_builder.Finish(&target);
+        auto with_target = *Table()->AddColumn(0, arrow::field("target", arrow::float64()),
+                                                 std::make_shared<arrow::ChunkedArray>(target));
+        PCAOperator labelled;
+        const auto out_target = Run(labelled, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"label_col", "target"}}, with_target);
+        const auto y = out_target->GetColumnByName("y");
+        Check(y != nullptr && y->type()->Equals(arrow::float64()), "PCA: the label keeps its float type");
+        Check(y && y->length() == 6 && y->null_count() == 1, "PCA: the missing label stays missing");
+        if (y && y->length() == 6 && y->type()->Equals(arrow::float64())) {
+            std::vector<double> values;
+            std::vector<bool> present;
+            for (const auto& chunk : y->chunks()) {
+                const auto& doubles = static_cast<const arrow::DoubleArray&>(*chunk);
+                for (int64_t i = 0; i < doubles.length(); ++i) {
+                    present.push_back(doubles.IsValid(i));
+                    values.push_back(doubles.IsValid(i) ? doubles.Value(i) : 0.0);
+                }
+            }
+            Check(!present[3], "PCA: row 3's label is the missing one");
+            Check(values[0] == 0.25 && values[1] == 2.75 && values[2] == -1.5 && values[4] == 7.125 && values[5] == 3.5,
+                  "PCA: the label values pass through unchanged");
+        }
+        PCAOperator text_labelled;
+        const auto out_text = Run(text_labelled, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"label_col", "c"}}, Table());
+        const auto text_y = out_text->GetColumnByName("y");
+        Check(text_y && text_y->type()->Equals(arrow::utf8()) &&
+                  std::static_pointer_cast<arrow::StringScalar>(*text_y->GetScalar(1))->ToString() == "blue",
+              "PCA: a text label stays text");
+    }
+    {
+        // A second PCA beside the first would add pc_0 twice: refused with the reason.
+        PCAOperator twice;
+        std::string error;
+        Check(twice.Configure({{"feature_cols", "a,y"}, {"n_components", "1"}, {"keep_columns", "true"}}, error), "PCA configure: " + error);
+        const auto again = twice.Apply(beside);
+        Check(!again.ok() && again.status().ToString().find("already has a column 'pc_0'") != std::string::npos,
+              "PCA beside an input that has pc_0: " + (again.ok() ? std::string("ran") : again.status().ToString()));
+    }
+
+    const fs::path state = fs::temp_directory_path() / "cyxwiz_fit_on_train_pca.cyxstate.json";
+    fs::remove(state);
+    PCAOperator fit;
+    Run(fit, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"save_state", "true"}, {"state_path", state.string()}}, Table());
+    PCAOperator reuse;
+    const auto again = Run(reuse, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"operation_mode", "transform_only"},
+                                   {"state_path", state.string()}},
+                           Table(false));
+    Expect(Column(again, "pc_0"), want, "PCA from its saved values on an unmarked table");
+    PCAOperator other;
+    std::string error;
+    Check(other.Configure({{"feature_cols", "a,y"}, {"n_components", "1"}, {"center", "false"}, {"operation_mode", "transform_only"},
+                           {"state_path", state.string()}},
+                          error) &&
+              !other.Apply(Table(false)).ok(),
+          "PCA: saved values fitted with other settings are refused");
+    fs::remove(state);
+}
+
+// Truncated SVD and Whitening (TOFIX129 D9), fitted on the Train rows of
+// (a, y): scikit-learn 1.8's TruncatedSVD(1, algorithm="arpack") and
+// PCA(2, whiten=True), and ZCA ((x - mean) V diag(1 / sqrt(λ)) V^T, the
+// covariance's eigenvectors with n - 1) from numpy.
+void CheckLinearSteps() {
+    TruncatedSVDOperator svd;
+    const auto s = Run(svd, {{"feature_cols", "a,y"}, {"n_components", "1"}}, Table());
+    Expect(Column(s, "svd_0"), {1.2287401639, 1.9288812994, 4.122062113, 9.9087060113, 6.751084548, 3.1576214633}, "Truncated SVD");
+    CheckPartitionCarried(s, "Truncated SVD");
+    WhiteningOperator pca;
+    const auto w = Run(pca, {{"feature_cols", "a,y"}, {"n_components", "2"}}, Table());
+    Expect(Column(w, "white_0"), {-1.1253105883, -0.4490937385, 1.1697047137, 5.7597353176, 3.3759317648, 0.404699613}, "PCA whitening 1");
+    Expect(Column(w, "white_1"), {0.8771489985, -1.4311934929, 0.1569968969, -1.2833073064, -2.6314469956, 0.3970475974}, "PCA whitening 2");
+    WhiteningOperator zca;
+    const auto z = Run(zca, {{"feature_cols", "a,y"}, {"method", "zca"}, {"keep_columns", "true"}}, Table());
+    Expect(Column(z, "a_white"), {-1.2189321934, -0.281099197, 1.143805273, 5.8692802058, 3.6567965803, 0.3562261175}, "ZCA a");
+    Expect(Column(z, "y_white"), {0.7415649624, -1.4734256824, 0.2908034395, -0.6107196064, -2.2246948873, 0.4410572805}, "ZCA y");
+    Check(z->GetColumnByName("text") != nullptr, "ZCA beside the input");
+
+    // A direction with no variance needs epsilon; too many components are refused.
+    WhiteningOperator flat;
+    std::string error;
+    Check(flat.Configure({{"feature_cols", "a,a2"}}, error), "whitening configure");
+    auto two = Table();
+    two = *two->AddColumn(two->num_columns(), arrow::field("a2", arrow::float64()), two->GetColumnByName("a"));
+    const auto refused = flat.Apply(two);
+    Check(!refused.ok() && refused.status().message().find("no variance") != std::string::npos, "whitening: a direction with no variance is refused");
+    Check(flat.Configure({{"feature_cols", "a,a2"}, {"n_components", "1"}}, error) && flat.Apply(two).ok(), "whitening: fewer components then run");
+    TruncatedSVDOperator wide;
+    Check(wide.Configure({{"feature_cols", "a,y"}, {"n_components", "3"}}, error) && !wide.Apply(Table()).ok(), "Truncated SVD: k above the features");
+
+    // The saved values on an unmarked table.
+    const fs::path state = fs::temp_directory_path() / "cyxwiz_fit_on_train_svd.cyxstate.json";
+    fs::remove(state);
+    TruncatedSVDOperator fit;
+    Run(fit, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"save_state", "true"}, {"state_path", state.string()}}, Table());
+    TruncatedSVDOperator reuse;
+    Expect(Column(Run(reuse, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"operation_mode", "transform_only"}, {"state_path", state.string()}},
+                      Table(false)),
+                  "svd_0"),
+           {1.2287401639, 1.9288812994, 4.122062113, 9.9087060113, 6.751084548, 3.1576214633}, "Truncated SVD from its saved values");
+    fs::remove(state);
+
+    // A feature whose name holds a comma: quoted in feature_cols, and its
+    // output name survives the saved values.
+    const auto rename = [](std::shared_ptr<arrow::Table> t) {
+        std::vector<std::string> names = t->ColumnNames();
+        for (auto& n : names)
+            if (n == "a") n = "a, x";
+        return *t->RenameColumns(names);
+    };
+    const fs::path comma_state = fs::temp_directory_path() / "cyxwiz_fit_on_train_zca_comma.cyxstate.json";
+    fs::remove(comma_state);
+    WhiteningOperator comma_fit;
+    const auto cz = Run(comma_fit, {{"feature_cols", "\"a, x\",y"}, {"method", "zca"}, {"save_state", "true"}, {"state_path", comma_state.string()}},
+                        rename(Table()));
+    Expect(Column(cz, "a, x_white"), {-1.2189321934, -0.281099197, 1.143805273, 5.8692802058, 3.6567965803, 0.3562261175}, "ZCA on a name with a comma");
+    WhiteningOperator comma_reuse;
+    Expect(Column(Run(comma_reuse, {{"feature_cols", "\"a, x\",y"}, {"method", "zca"}, {"operation_mode", "transform_only"},
+                                    {"state_path", comma_state.string()}},
+                      rename(Table(false))),
+                  "a, x_white"),
+           {-1.2189321934, -0.281099197, 1.143805273, 5.8692802058, 3.6567965803, 0.3562261175}, "ZCA from saved values on a name with a comma");
+    fs::remove(comma_state);
+}
+
 int main() {
     CheckOperators();
+    CheckPCA();
+    CheckLinearSteps();
+    CheckSolveAndProjection();
     CheckExecutor();
+    CheckRemoveDuplicatesAcrossSplit();
     CheckSuppliedInputs();
-    std::cout << "fit on Train rows: scaler, target encoder, TF-IDF, count and tokenizer learn from the Train rows "
+    std::cout << "fit on Train rows: scaler, target encoder, PCA, Truncated SVD, Whitening, Linear Solve, TF-IDF, count and tokenizer learn from the Train rows "
                  "(scikit-learn values); the run marks rows with the shared split rule; supplied Validation / Test rows join and are transformed; exports leave the partition out. OK\n";
     return 0;
 }

@@ -11,6 +11,7 @@
 #include "parquet_backed_dataset.h"
 #include "sequence_batcher.h"
 #include "sequence_token_window_input.h"
+#include "cyxwiz/portable_random.h"
 
 #include <arrow/api.h>
 
@@ -75,7 +76,7 @@ public:
             rng_.seed(static_cast<std::mt19937::result_type>(*pending_seed_));
             pending_seed_.reset();
         }
-        if (phase_ == BatcherPhase::Train && config_.shuffle) std::shuffle(order_.begin(), order_.end(), rng_);
+        if (phase_ == BatcherPhase::Train && config_.shuffle) cyxwiz::portable::Shuffle(order_.begin(), order_.end(), rng_);
         next_unit_ = 0;
         inner_.reset();
     }

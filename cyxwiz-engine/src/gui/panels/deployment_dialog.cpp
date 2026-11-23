@@ -3,6 +3,7 @@
 #include "../icons.h"
 #include "../../auth/auth_client.h"
 #include "../../core/engine_config.h"
+#include "../ui_buttons.h"
 #include "../../core/file_dialogs.h"
 #include "../ui_tokens.h"
 #include <imgui.h>
@@ -24,8 +25,6 @@ DeploymentDialog::DeploymentDialog()
     auto& config = core::EngineConfig::Instance();
     std::strncpy(server_address_, config.GetDefaultDeploymentAddress().c_str(), sizeof(server_address_) - 1);
     server_address_[sizeof(server_address_) - 1] = '\0';
-    std::strncpy(central_server_address_, config.GetCentralServerAddress().c_str(), sizeof(central_server_address_) - 1);
-    central_server_address_[sizeof(central_server_address_) - 1] = '\0';
 }
 
 DeploymentDialog::~DeploymentDialog() {
@@ -247,29 +246,27 @@ void DeploymentDialog::RenderServerNodeConfig() {
     ImGui::Text("%s Step 1: Connect to Central Server", ICON_FA_CLOUD);
     ImGui::Spacing();
 
-    ImGui::SetNextItemWidth(250);
-    ImGui::InputText("##CentralServerAddress", central_server_address_, sizeof(central_server_address_));
+    // The server in use (TOFIX168 step 3b), set in Preferences > Servers
+    {
+        auto& config = core::EngineConfig::Instance();
+        const std::string server = config.GetServerAddress();
+        ImGui::TextColored(t.text_dim, "Server");
+        ImGui::SameLine();
+        ImGui::TextUnformatted(server.empty() ? config.GetCentralServerAddress().c_str() : server.c_str());
+        ImGui::SameLine();
+        if (ui::LinkButton("Change in Preferences##Central") && open_server_preferences_) {
+            open_server_preferences_();
+        }
+    }
 
-    ImGui::SameLine();
     bool central_connected = central_server_client_ && central_server_client_->IsConnected();
-
     if (central_connected) {
-        if (ImGui::Button(ICON_FA_LINK_SLASH " Disconnect##Central")) {
+        if (ui::SecondaryButton(ICON_FA_LINK_SLASH " Disconnect##Central", true, nullptr, ui::ButtonSize::Regular)) {
             DisconnectFromCentralServer();
         }
-    } else {
-        if (!is_authenticated) {
-            ImGui::BeginDisabled();
-        }
-        if (ImGui::Button(ICON_FA_LINK " Connect##Central")) {
-            ConnectToCentralServer();
-        }
-        if (!is_authenticated) {
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Please log in first to connect to Central Server");
-            }
-        }
+    } else if (ui::SecondaryButton(ICON_FA_LINK " Connect##Central", is_authenticated,
+                                   "Please log in first to connect to Central Server", ui::ButtonSize::Regular)) {
+        ConnectToCentralServer();
     }
 
     // Central Server connection status
@@ -789,7 +786,7 @@ void DeploymentDialog::ConnectToCentralServer() {
 
     central_server_client_->SetAuthToken(auth.GetJwtToken());
 
-    if (central_server_client_->Connect(central_server_address_)) {
+    if (central_server_client_->Connect(core::EngineConfig::Instance().GetCentralServerAddress())) {
         status_message_ = "Connected to Central Server";
         // Immediately refresh node list
         RefreshNodeList();
@@ -804,6 +801,12 @@ void DeploymentDialog::DisconnectFromCentralServer() {
     selected_node_index_ = -1;
     selected_node_id_.clear();
     status_message_ = "Disconnected from Central Server";
+}
+
+void DeploymentDialog::OnServerChanged() {
+    if (central_server_client_ && central_server_client_->IsConnected()) {
+        DisconnectFromCentralServer();
+    }
 }
 
 void DeploymentDialog::RefreshNodeList() {

@@ -1,4 +1,5 @@
 #include "cyxwiz/rl_interface.h"
+#include "cyxwiz/portable_random.h"
 #include <algorithm>
 #include <numeric>
 #include <stdexcept>
@@ -50,7 +51,7 @@ RLBatch ReplayBuffer::Sample(size_t batch_size) {
     // Generate random indices
     std::vector<size_t> indices(buffer_.size());
     std::iota(indices.begin(), indices.end(), 0);
-    std::shuffle(indices.begin(), indices.end(), rng_);
+    cyxwiz::portable::Shuffle(indices.begin(), indices.end(), rng_);
     indices.resize(batch_size);
 
     RLBatch batch;

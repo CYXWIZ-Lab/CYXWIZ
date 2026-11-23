@@ -4,6 +4,7 @@
 // differ), ModelBuilder sizes each Dense from the pin that feeds it, and the
 // GraphExecutableModel's forward pass and per-pin backward match
 // fixtures/branch_graph_pytorch.json (generate_branch_graph_fixtures.py).
+#include "oracle/training_oracle_test.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_document.h"
@@ -605,7 +606,7 @@ void CheckGraphTrainingKeepsBestCheckpoint() {
     config.num_workers = 0;
     config.log_interval = 0;
 
-    cyxwiz::test::InstallQualifiedRouteSnapshot();  // a test run trains on this PC's devices
+    cyxwiz::test::PinTrainingDevice();  // the test device, qualified, Strict
     cyxwiz::TrainingExecutor executor(config, dataset, "label");
     cyxwiz::TrainingMetrics final_metrics;
     executor.Train(config.epochs, config.batch_size, nullptr, nullptr,
@@ -615,8 +616,25 @@ void CheckGraphTrainingKeepsBestCheckpoint() {
               final_metrics.active_model_provenance == "restored_best_checkpoint",
           "the graph model's best checkpoint is kept and restored (" + final_metrics.active_model_provenance +
               ", epoch " + std::to_string(final_metrics.restored_checkpoint_epoch) + ")");
+
+    // A second run starts from that checkpoint and leaves biases out of weight
+    // decay: both work on a graph with branches, not only on a layer stack.
+    const auto second_dir = std::filesystem::temp_directory_path() / "cyxwiz_branch_graph_warm";
+    std::filesystem::remove_all(second_dir);
+    auto warm = config;
+    warm.initialize_from_checkpoint = final_metrics.checkpoint_used;
+    warm.optimizer_type = gui::NodeType::AdamW;
+    warm.weight_decay_exclude = "norms_biases_embeddings";
+    warm.checkpoint_dir = second_dir.string();
+    cyxwiz::TrainingExecutor warm_executor(warm, dataset, "label");
+    cyxwiz::TrainingMetrics warm_metrics;
+    warm_executor.Train(warm.epochs, warm.batch_size, nullptr, nullptr,
+                        [&](const cyxwiz::TrainingMetrics& metrics) { warm_metrics = metrics; });
+    Check(warm_metrics.is_complete, "a graph model starts from a checkpoint: " + warm_metrics.status_message);
+    Check(!warm_metrics.initialized_from.empty(), "the run records the checkpoint it started from");
+    std::filesystem::remove_all(second_dir);
     std::filesystem::remove_all(dir);
-    std::cout << "  residual graph: training keeps and restores its best checkpoint\n";
+    std::cout << "  residual graph: training keeps and restores its best checkpoint; a second run starts from it\n";
 }
 
 // Feature importance on a graph with branches (TOFIX157): permutation and
@@ -847,6 +865,7 @@ std::filesystem::path FixturePath(const char* argv0) {
 }  // namespace
 
 int main(int, char** argv) {
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_branch_graph_training")) return 1;
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
     cyxwiz::SetGraphCompilerDatasetHooks(hooks);
@@ -941,7 +960,14 @@ int main(int, char** argv) {
           std::tuple{gui::NodeType::Augmentation, "Old augmentation", "Augmentation Preset replaced"},
           std::tuple{gui::NodeType::GeometricTransform, "Old geometric", "Random Crop, Image Rotate"},
           std::tuple{gui::NodeType::ColorTransform, "Old color", "Color Jitter replaced"},
-          std::tuple{gui::NodeType::ImagePreprocessor, "Old preprocessor", "Resize and Normalize replaced"}}) {
+          std::tuple{gui::NodeType::HDF5Dataset, "Old HDF5 reader", "Data Input replaced"},
+          std::tuple{gui::NodeType::ImagePreprocessor, "Old preprocessor", "Resize and Normalize replaced"},
+          // TOFIX195 S4.3: the RL sketch nodes the native PPO graph replaced.
+          std::tuple{gui::NodeType::GymEnvironment, "Old gym", "which Environment replaced"},
+          std::tuple{gui::NodeType::ReplayBufferNode, "Old buffer", "which PPO does not use"},
+          std::tuple{gui::NodeType::PolicyNetwork, "Old policy", "ending in a Policy Head replaced"},
+          std::tuple{gui::NodeType::ValueNetwork, "Old value", "ending in a Value Head replaced"},
+          std::tuple{gui::NodeType::RLTraining, "Old RL training", "which PPO replaced"}}) {
         const json saved = {
             {"nodes", json::array({{{"id", 1}, {"type", static_cast<int>(retired)},
                                     {"name", name}, {"parameters", json::object()}}})},
@@ -953,6 +979,8 @@ int main(int, char** argv) {
               std::string("a saved ") + name + " node is refused with a message naming its replacement: " + error);
     }
 
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     std::cout << "Branched graphs match PyTorch: " << fixture.at("cases").size() << " cases\n";
     return 0;
 }

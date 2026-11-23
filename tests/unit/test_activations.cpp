@@ -607,3 +607,59 @@ TEST_CASE("Standalone activation GPU gradients materialize host data lazily", "[
     REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() >=
             before + relu_grad.NumBytes() + sigmoid_grad.NumBytes() + tanh_grad.NumBytes());
 }
+
+TEST_CASE("Hardswish module matches torch.nn.Hardswish, forward and backward", "[activation][truth]") {
+    // torch 2.10.0: y = Hardswish()(x); (y * [1..8]).sum().backward()
+    float values[] = {-4.0f, -3.0f, -1.5f, 0.0f, 1.0f, 2.5f, 3.0f, 4.0f};
+    float upstream[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+    const float expected[] = {0.0f, 0.0f, -0.375f, 0.0f, 0.666666687f, 2.29166675f, 3.0f, 4.0f};
+    const float expected_grad[] = {0.0f, 0.0f, 0.0f, 2.0f, 4.16666698f, 7.99999952f, 7.0f, 8.0f};
+    cyxwiz::HardswishModule module;
+    REQUIRE(module.GetName() == "Hardswish");
+    const cyxwiz::Tensor output = module.Forward(cyxwiz::Tensor({1, 8}, values, cyxwiz::DataType::Float32));
+    const cyxwiz::Tensor grad = module.Backward(cyxwiz::Tensor({1, 8}, upstream, cyxwiz::DataType::Float32));
+    for (int i = 0; i < 8; ++i) {
+        INFO("x = " << values[i]);
+        CHECK(output.Data<float>()[i] == Catch::Approx(expected[i]).margin(1e-6));
+        CHECK(grad.Data<float>()[i] == Catch::Approx(expected_grad[i]).margin(1e-5));
+    }
+    REQUIRE(cyxwiz::CreateModule(cyxwiz::ModuleType::Hardswish) != nullptr);
+}
+
+TEST_CASE("Hardsigmoid module matches torch.nn.Hardsigmoid, forward and backward", "[activation][truth]") {
+    // torch 2.10.0: y = Hardsigmoid()(x); (y * [1..8]).sum().backward()
+    float values[] = {-4.0f, -3.0f, -1.5f, 0.0f, 1.0f, 2.5f, 3.0f, 4.0f};
+    float upstream[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+    const float expected[] = {0.0f, 0.0f, 0.25f, 0.5f, 0.666666687f, 0.916666687f, 1.0f, 1.0f};
+    const float expected_grad[] = {0.0f, 0.0f, 0.5f, 0.666666687f, 0.833333373f, 1.0f, 0.0f, 0.0f};
+    cyxwiz::HardsigmoidModule module;
+    REQUIRE(module.GetName() == "Hardsigmoid");
+    const cyxwiz::Tensor output = module.Forward(cyxwiz::Tensor({1, 8}, values, cyxwiz::DataType::Float32));
+    const cyxwiz::Tensor grad = module.Backward(cyxwiz::Tensor({1, 8}, upstream, cyxwiz::DataType::Float32));
+    for (int i = 0; i < 8; ++i) {
+        INFO("x = " << values[i]);
+        CHECK(output.Data<float>()[i] == Catch::Approx(expected[i]).margin(1e-6));
+        CHECK(grad.Data<float>()[i] == Catch::Approx(expected_grad[i]).margin(1e-5));
+    }
+    REQUIRE(cyxwiz::CreateModule(cyxwiz::ModuleType::Hardsigmoid) != nullptr);
+    REQUIRE(cyxwiz::CreateActivation(cyxwiz::ActivationType::Hardsigmoid) != nullptr);
+}
+
+TEST_CASE("ReLU6 module matches torch.nn.ReLU6, forward and backward", "[activation][truth]") {
+    // torch 2.10.0: y = ReLU6()(x); (y * [1..8]).sum().backward()
+    float values[] = {-2.0f, 0.0f, 0.5f, 3.0f, 5.5f, 6.0f, 7.0f, 10.0f};
+    float upstream[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+    const float expected[] = {0.0f, 0.0f, 0.5f, 3.0f, 5.5f, 6.0f, 6.0f, 6.0f};
+    const float expected_grad[] = {0.0f, 0.0f, 3.0f, 4.0f, 5.0f, 0.0f, 0.0f, 0.0f};
+    cyxwiz::ReLU6Module module;
+    REQUIRE(module.GetName() == "ReLU6");
+    const cyxwiz::Tensor output = module.Forward(cyxwiz::Tensor({1, 8}, values, cyxwiz::DataType::Float32));
+    const cyxwiz::Tensor grad = module.Backward(cyxwiz::Tensor({1, 8}, upstream, cyxwiz::DataType::Float32));
+    for (int i = 0; i < 8; ++i) {
+        INFO("x = " << values[i]);
+        CHECK(output.Data<float>()[i] == Catch::Approx(expected[i]).margin(1e-6));
+        CHECK(grad.Data<float>()[i] == Catch::Approx(expected_grad[i]).margin(1e-5));
+    }
+    REQUIRE(cyxwiz::CreateModule(cyxwiz::ModuleType::ReLU6) != nullptr);
+    REQUIRE(cyxwiz::CreateActivation(cyxwiz::ActivationType::ReLU6) != nullptr);
+}

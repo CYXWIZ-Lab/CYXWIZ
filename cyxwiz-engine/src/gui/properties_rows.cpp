@@ -1,12 +1,15 @@
 #include "properties_rows.h"
 
 #include "icons.h"
+#include "ui_buttons.h"
 #include "ui_tokens.h"
+#include "ui_fonts.h"
 #include "ui_widgets.h"
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
 #include <string>
 
@@ -131,7 +134,11 @@ Rows::~Rows() {
     ImGui::PopStyleVar();
 }
 
-void Label(const char* label, bool required, const char* tooltip) {
+namespace {
+
+// The label cell: the text (wrapped at the cell), " *" when required, and
+// `tooltip` on hover. Leaves the cursor in the label cell.
+void LabelCell(const char* label, bool required, const char* tooltip) {
     const auto& t = cyxwiz::ui::CurrentTokens();
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
@@ -144,8 +151,37 @@ void Label(const char* label, bool required, const char* tooltip) {
         ImGui::TextColored(t.warning, "*");
     }
     if (tooltip && tooltip[0]) cyxwiz::ui::Tooltip(tooltip);
+}
+
+void EditorCell() {
     ImGui::TableSetColumnIndex(1);
     ImGui::SetNextItemWidth(-FLT_MIN);
+}
+
+}  // namespace
+
+void Label(const char* label, bool required, const char* tooltip) {
+    LabelCell(label, required, tooltip);
+    EditorCell();
+}
+
+bool LabelWithReset(const char* label, bool required, const char* tooltip, const char* reset_tooltip, bool* drawn) {
+    LabelCell(label, required, tooltip);
+    // LinkButton pads 2 px on each side.
+    const char* reset_label = ICON_FA_ROTATE_LEFT "##reset";
+    const float gap = cyxwiz::ui::CurrentTokens().space_sm;
+    const float width = ImGui::CalcTextSize(reset_label, nullptr, true).x + 4.0f;
+    const float cell_end = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    const bool fits = ImGui::GetItemRectMax().x + gap + width <= cell_end;
+    bool clicked = false;
+    if (fits) {
+        ImGui::SameLine(0.0f, gap);
+        clicked = cyxwiz::ui::LinkButton(reset_label);
+        if (reset_tooltip && reset_tooltip[0]) cyxwiz::ui::Tooltip(reset_tooltip);
+    }
+    if (drawn) *drawn = fits;
+    EditorCell();
+    return clicked;
 }
 
 void Note(const char* text) {
@@ -156,6 +192,28 @@ void Note(const char* text) {
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(t.text_dim, "%s", text);
     ImGui::PopTextWrapPos();
+}
+
+void Section(const char* title) {
+    if (!title || !title[0]) return;
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    // Drawn across the whole row (the label column alone would clip a long
+    // heading), as SettingsSection draws it; the row keeps only its height, so
+    // the heading never widens the label column
+    std::string upper(title);
+    for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    ImGui::Spacing();
+    cyxwiz::ui::FontScope font(cyxwiz::ui::Font::Medium);
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->PushClipRect(ImGui::GetWindowPos(),
+                     ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x,
+                            ImGui::GetWindowPos().y + ImGui::GetWindowSize().y));
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), at, ImGui::GetColorU32(t.text_dim), upper.c_str());
+    dl->PopClipRect();
+    ImGui::Dummy(ImVec2(1.0f, ImGui::GetTextLineHeight()));
 }
 
 void Status(const char* key) {

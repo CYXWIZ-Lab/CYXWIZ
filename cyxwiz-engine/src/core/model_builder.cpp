@@ -1,6 +1,7 @@
 #include "extension_node_registry.h"
 #include "guarded_extension_module.h"
 #include "model_builder.h"
+#include "frozen_layers.h"
 #include "dense_activation_configuration_policy.h"
 #include "error_codes.h"
 #include "graph_executable_model.h"
@@ -208,10 +209,11 @@ std::vector<float> ResolveCrossEntropyClassWeights(
     if (class_weight) {
         const std::string mode = ToLowerAscii(TrimAscii(*class_weight));
         if (mode == "balanced") {
-            spdlog::warn(
-                "TrainingExecutor: class_weight=balanced was not resolved "
-                "before loss construction; "
-                "using unweighted CrossEntropy loss");
+            // Weights need the Train part's class counts: TrainingExecutor
+            // sets them once its batchers are built and rebuilds the loss, or
+            // refuses the run (ResolveBalancedClassWeights, TOFIX223 0.16).
+            // Built here before that, the loss is unweighted.
+            spdlog::debug("class_weight=balanced: loss built unweighted until the Train class counts are known");
             return {};
         }
         if (mode == "manual") {
@@ -265,7 +267,8 @@ float ResolveBCEWithLogitsPosWeight(const TrainingConfiguration& config) {
     }
 }
 
-float ResolveCrossEntropyLabelSmoothing(const TrainingConfiguration& config) {
+// CrossEntropy and BCEWithLogits share label_smoothing in [0, 1).
+float ResolveLabelSmoothing(const TrainingConfiguration& config) {
     const std::string* value = FindLossParam(config, {"label_smoothing"});
     if (!value || IsNeutralLossValue(*value)) {
         return 0.0f;
@@ -281,7 +284,7 @@ float ResolveCrossEntropyLabelSmoothing(const TrainingConfiguration& config) {
         return smoothing;
     } catch (...) {
         throw std::runtime_error(
-            "CrossEntropy label_smoothing must be a finite float in [0, 1)");
+            config.GetLossName() + " label_smoothing must be a finite float in [0, 1)");
     }
 }
 
@@ -398,6 +401,16 @@ gui::NodeType NextConsumerType(const TrainingConfiguration& config, size_t i) {
     return gui::NodeType::Unknown;
 }
 
+// The feature width a sequence layer (LSTM, GRU, RNN, attention, transformer)
+// reads: the last dimension of its compiled [sequence, features] input, else
+// the running width. After a Reshape the running width is still the whole row
+// (18 for a [6, 3] reshape), so these layers were built for 18 features and
+// failed on the first batch (TOFIX228 1.5b, the level 2 oracle).
+size_t SequenceInputFeatures(const CompiledLayer& layer, size_t running_width) {
+    return layer.input_shape.size() >= 2 && layer.input_shape.back() > 0 ? layer.input_shape.back() : running_width;
+}
+
+
 // Populate `model` with modules per config.layers. Returns false if
 // config produced zero layers. Logging is identical to the pre-extraction
 // path so existing training regression tests still match on log output.
@@ -470,6 +483,23 @@ bool BuildSequential(
         if ((!config.graph_op_node_ids.empty() || !config.multi_input_layer_node_ids.empty()) &&
             !layer_cfg.input_shape.empty() && layer_cfg.input_shape.size() <= 2) {
             current_input_size = layer_cfg.input_shape.back();
+        }
+
+        // Rows that hold an [L, C] sequence channel-major (time-series windows,
+        // audio features: torch [N, C, L]) reach a first recurrent layer as
+        // [N, L, C] time steps, as torch's x.view(N, C, L).transpose(1, 2)
+        // (TOFIX223 0.20, audit SEQ-01: they reached LSTM / GRU / RNN as
+        // [N, L*C] rows and the layer threw on the first batch).
+        const bool recurrent = layer_cfg.type == gui::NodeType::LSTM || layer_cfg.type == gui::NodeType::GRU ||
+                               layer_cfg.type == gui::NodeType::RNN;
+        if (i == 0 && recurrent && config.sequence_input_shape.size() == 2 &&
+            config.sequence_input_shape[0] * config.sequence_input_shape[1] == current_input_size) {
+            const size_t steps = config.sequence_input_shape[0];
+            const size_t channels = config.sequence_input_shape[1];
+            model.Add<ReshapeModule>(std::vector<size_t>{channels, steps});
+            model.Add<PermuteModule>(std::vector<int>{1, 0});
+            current_input_size = channels;
+            CYXWIZ_BUILDER_INFO("  [{}] rows -> [{} steps, {} features]", i, steps, channels);
         }
 
         switch (layer_cfg.type) {
@@ -686,6 +716,7 @@ bool BuildSequential(
                 if (hidden_size < 1) hidden_size = 1;
                 if (num_layers < 1) num_layers = 1;
 
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 model.Add<LSTMModule>(current_input_size, hidden_size,
                                       num_layers, bidirectional,
                                       return_sequences);
@@ -731,6 +762,7 @@ bool BuildSequential(
                 if (hidden_size < 1) hidden_size = 1;
                 if (num_layers < 1) num_layers = 1;
 
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 model.Add<GRUModule>(current_input_size, hidden_size,
                                      num_layers, bidirectional,
                                      return_sequences);
@@ -785,6 +817,7 @@ bool BuildSequential(
                 if (hidden_size < 1) hidden_size = 1;
                 if (num_layers < 1) num_layers = 1;
 
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 model.Add<RNNModule>(current_input_size, hidden_size,
                                      num_layers, return_sequences,
                                      nonlinearity, bidirectional);
@@ -802,6 +835,7 @@ bool BuildSequential(
             }
 
             case gui::NodeType::TransformerEncoder: {
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 const size_t d_model = current_input_size > 0
                     ? current_input_size
                     : transformer_configuration.model_width;
@@ -920,6 +954,7 @@ bool BuildSequential(
             }
 
             case gui::NodeType::MultiHeadAttention: {
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 const size_t embed_dim = current_input_size > 0
                     ? current_input_size
                     : transformer_configuration.model_width;
@@ -966,6 +1001,7 @@ bool BuildSequential(
             }
 
             case gui::NodeType::PositionalEncoding: {
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 const size_t d_model = current_input_size > 0
                     ? current_input_size
                     : transformer_configuration.model_width;
@@ -992,6 +1028,7 @@ bool BuildSequential(
             }
 
             case gui::NodeType::TransformerDecoder: {
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 const size_t d_model = current_input_size > 0
                     ? current_input_size
                     : transformer_configuration.model_width;
@@ -1162,6 +1199,24 @@ bool BuildSequential(
                 break;
             }
 
+            case gui::NodeType::Hardswish: {
+                model.Add<HardswishModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] Hardswish", i);
+                break;
+            }
+
+            case gui::NodeType::Hardsigmoid: {
+                model.Add<HardsigmoidModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] Hardsigmoid", i);
+                break;
+            }
+
+            case gui::NodeType::ReLU6: {
+                model.Add<ReLU6Module>();
+                CYXWIZ_BUILDER_INFO("  [{}] ReLU6", i);
+                break;
+            }
+
             case gui::NodeType::Softmax: {
                 model.Add<SoftmaxModule>();
                 CYXWIZ_BUILDER_INFO("  [{}] Softmax", i);
@@ -1185,6 +1240,7 @@ bool BuildSequential(
             case gui::NodeType::AvgPool2D:
             case gui::NodeType::ConvTranspose2D:
             case gui::NodeType::GroupNorm:
+            case gui::NodeType::SqueezeExcitation:
             case gui::NodeType::InstanceNorm: {
                 if (!spatial_head || i >= spatial_head->input_shapes.size()) {
                     throw std::runtime_error(
@@ -1207,13 +1263,13 @@ bool BuildSequential(
                 }
                 switch (layer_cfg.type) {
                     case gui::NodeType::Conv2D:
-                        model.Add<Conv2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding, true);
+                        model.Add<Conv2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding, g.use_bias);
                         CYXWIZ_BUILDER_INFO("  [{}] Conv2D({} -> {}, k={}, s={}, p={})", i, channels,
                                             g.channels_out, g.kernel, g.stride, g.padding);
                         break;
                     case gui::NodeType::DepthwiseConv2D:
                         model.Add<DepthwiseConv2DModule>(channels, g.depth_multiplier, g.kernel, g.stride,
-                                                         g.padding, true);
+                                                         g.padding, g.use_bias);
                         CYXWIZ_BUILDER_INFO("  [{}] DepthwiseConv2D({} x {}, k={}, s={}, p={})", i, channels,
                                             g.depth_multiplier, g.kernel, g.stride, g.padding);
                         break;
@@ -1227,7 +1283,7 @@ bool BuildSequential(
                         break;
                     case gui::NodeType::ConvTranspose2D:
                         model.Add<ConvTranspose2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding,
-                                                         g.output_padding, true);
+                                                         g.output_padding, g.use_bias);
                         CYXWIZ_BUILDER_INFO("  [{}] ConvTranspose2D({} -> {}, k={}, s={}, p={}, op={})", i, channels,
                                             g.channels_out, g.kernel, g.stride, g.padding, g.output_padding);
                         break;
@@ -1243,6 +1299,26 @@ bool BuildSequential(
                         const bool affine = ParseBoolParam(layer_cfg, "affine", false);
                         model.Add<InstanceNorm2DModule>(channels, eps, affine);
                         CYXWIZ_BUILDER_INFO("  [{}] InstanceNorm2D(channels={})", i, channels);
+                        break;
+                    }
+                    case gui::NodeType::SqueezeExcitation: {
+                        spatial::SqueezeExcitationSettings settings;
+                        try {
+                            settings = spatial::ResolveSqueezeExcitation(static_cast<size_t>(channels), layer_cfg.parameters);
+                        } catch (const std::invalid_argument& error) {
+                            throw std::runtime_error("invalid layer configuration at index " + std::to_string(i) +
+                                                     ": " + error.what());
+                        }
+                        SqueezeExcitationOptions options;
+                        options.activation = settings.inner_activation == "hardswish" ? ActivationType::Hardswish
+                                             : settings.inner_activation == "swish" ? ActivationType::Swish
+                                                                                    : ActivationType::ReLU;
+                        options.gate = settings.gate == "hardsigmoid" ? ActivationType::Hardsigmoid : ActivationType::Sigmoid;
+                        options.use_bias = settings.use_bias;
+                        model.Add<SqueezeExcitationModule>(static_cast<size_t>(channels), settings.squeeze, options);
+                        CYXWIZ_BUILDER_INFO("  [{}] SqueezeExcitation(channels={}, squeeze={}, activation={}, gate={}, bias={})",
+                                            i, channels, settings.squeeze, settings.inner_activation, settings.gate,
+                                            settings.use_bias);
                         break;
                     }
                     default:
@@ -1305,7 +1381,7 @@ bool BuildSequential(
                 }
                 auto conv = std::make_unique<Conv3DModule>(in_shape[0], in_shape[1], in_shape[2], in_shape[3],
                                                            static_cast<size_t>(g.channels_out), g.kernel,
-                                                           g.stride, g.padding, true);
+                                                           g.stride, g.padding, g.use_bias);
                 const auto out_shape = conv->OutputSample();
                 if (out_shape != layer_cfg.output_shape) {
                     throw std::runtime_error("Conv3D at index " + std::to_string(i) +
@@ -1336,7 +1412,7 @@ bool BuildSequential(
                 }
                 const auto g = spatial::ResolveGeometry(layer_cfg.type, layer_cfg.parameters, in_shape[1]);
                 model.Add<Conv1DModule>(static_cast<int>(in_shape[1]), g.channels_out, g.kernel,
-                                        g.stride, g.padding, 1, true);
+                                        g.stride, g.padding, 1, g.use_bias);
                 CYXWIZ_BUILDER_INFO("  [{}] Conv1D({} -> {}, k={}, s={}, p={}) on [L={}, C={}]", i,
                                     in_shape[1], g.channels_out, g.kernel, g.stride, g.padding,
                                     in_shape[0], in_shape[1]);
@@ -1369,6 +1445,11 @@ bool BuildSequential(
                     break;
                 }
                 model.Add<ReshapeModule>(layer_cfg.output_shape);
+                // A [sequence, features] result: the sequence layers after it
+                // size their outputs from its length (SequenceInputFeatures
+                // gives them its width).
+                if (layer_cfg.output_shape.size() == 2 && layer_cfg.output_shape[0] > 0)
+                    current_sequence_length = layer_cfg.output_shape[0];
                 CYXWIZ_BUILDER_INFO("  [{}] ShapeOp({} dims)", i, layer_cfg.output_shape.size());
                 break;
             }
@@ -1699,6 +1780,24 @@ bool BuildSequential(
                 break;
         }
 
+        // The node's Frozen setting: its modules keep their weights while the
+        // rest trains; a BatchNorm also keeps its running statistics unless
+        // the node says to keep updating them.
+        if (ParseBoolParam(layer_cfg, frozen::kFrozen, false)) {
+            const bool keep_statistics =
+                ParseStringParam(layer_cfg, frozen::kStatistics, frozen::kStatisticsKeep) != frozen::kStatisticsUpdate;
+            size_t frozen_modules = 0;
+            for (size_t module_index = module_count_before; module_index < model.Size(); ++module_index) {
+                Module* module = model.GetModule(module_index);
+                if (!module || !module->HasParameters()) continue;
+                module->SetTrainable(false);
+                ++frozen_modules;
+                if (auto* norm = dynamic_cast<BatchNormModule*>(module)) norm->SetKeepStatisticsWhenFrozen(keep_statistics);
+                if (auto* norm = dynamic_cast<BatchNorm2DModule*>(module)) norm->SetKeepStatisticsWhenFrozen(keep_statistics);
+            }
+            if (frozen_modules) CYXWIZ_BUILDER_INFO("  [{}] {} is frozen", i, layer_cfg.name);
+        }
+
         if (provenance) {
             const size_t module_count_after = model.Size();
             if (module_count_after == module_count_before) {
@@ -1776,6 +1875,8 @@ ResolvedOptimizerConfiguration ResolveOptimizerConfigurationImpl(
     switch (config.optimizer_type) {
         case gui::NodeType::SGD:
             out.momentum = config.momentum;
+            out.weight_decay = config.weight_decay;
+            out.nesterov = config.nesterov;
             break;
         case gui::NodeType::Adam:
         case gui::NodeType::NAdam:
@@ -1811,7 +1912,8 @@ std::unique_ptr<Optimizer> BuildOptimizerFromConfigImpl(
     switch (config.optimizer_type) {
         case gui::NodeType::SGD:
             return std::make_unique<SGDOptimizer>(
-                resolved.learning_rate, resolved.momentum.value());
+                resolved.learning_rate, resolved.momentum.value(),
+                resolved.weight_decay.value(), resolved.nesterov.value());
         case gui::NodeType::Adam:
             return std::make_unique<AdamOptimizer>(
                 resolved.learning_rate, resolved.beta1.value(),
@@ -1852,7 +1954,7 @@ ResolvedLossConfiguration ResolveLossConfigurationImpl(
             out.class_weights_applicable = true;
             out.class_weights = ResolveCrossEntropyClassWeights(config);
             out.label_smoothing_applicable = true;
-            out.label_smoothing = ResolveCrossEntropyLabelSmoothing(config);
+            out.label_smoothing = ResolveLabelSmoothing(config);
             break;
         case gui::NodeType::FocalLoss:
             out.alpha = ResolveLossFloatParam(
@@ -1862,6 +1964,8 @@ ResolvedLossConfiguration ResolveLossConfigurationImpl(
             break;
         case gui::NodeType::BCEWithLogits:
             out.pos_weight = ResolveBCEWithLogitsPosWeight(config);
+            out.label_smoothing_applicable = true;
+            out.label_smoothing = ResolveLabelSmoothing(config);
             break;
         case gui::NodeType::SmoothL1Loss:
         case gui::NodeType::HuberLoss:
@@ -1945,10 +2049,11 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
         case gui::NodeType::BCEWithLogits: {
             const float pos_weight = resolved.pos_weight.value();
             CYXWIZ_BUILDER_INFO("TrainingExecutor: Using BCEWithLogits loss "
-                         "(reduction={}, pos_weight={})",
-                         ReductionName(reduction), pos_weight);
+                         "(reduction={}, pos_weight={}, label_smoothing={})",
+                         ReductionName(reduction), pos_weight,
+                         resolved.label_smoothing);
             return std::make_unique<BCEWithLogitsLoss>(
-                reduction, pos_weight);
+                reduction, pos_weight, resolved.label_smoothing);
         }
         case gui::NodeType::L1Loss:
             CYXWIZ_BUILDER_INFO("TrainingExecutor: Using L1 loss (reduction={})",
@@ -2275,6 +2380,7 @@ BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& conf
     BuiltModel sequential = BuildSequentialFromConfig(config);
     if (!sequential.ok()) {
         out.error_message = sequential.error_message;
+        out.module_provenance = std::move(sequential.module_provenance);
         return out;
     }
 
@@ -2282,6 +2388,25 @@ BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& conf
         std::move(sequential.model));
     out.loss = std::move(sequential.loss);
     out.optimizer = std::move(sequential.optimizer);
+    out.module_provenance = std::move(sequential.module_provenance);
+    return out;
+}
+
+BuiltExecutableModel BuildNetworkFromLayers(const std::vector<CompiledLayer>& layers, size_t input_size) {
+    BuiltExecutableModel out;
+    TrainingConfiguration config;
+    config.layers = layers;
+    config.input_size = input_size;
+    try {
+        auto model = std::make_unique<SequentialModel>();
+        if (!BuildSequential(*model, config, nullptr)) {
+            out.error_message = "The network has no layers the model builder can build";
+            return out;
+        }
+        out.model = std::make_unique<SequentialExecutableModel>(std::move(model));
+    } catch (const std::exception& e) {
+        out.error_message = e.what();
+    }
     return out;
 }
 
@@ -2317,6 +2442,7 @@ BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration&
         sequential = BuildSequentialFromConfig(config);
         if (!sequential.ok()) {
             out.error_message = sequential.error_message;
+            out.module_provenance = std::move(sequential.module_provenance);
             return out;
         }
     } else {
@@ -2348,6 +2474,7 @@ BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration&
         config.graph_op_node_ids);
     out.loss = std::move(sequential.loss);
     out.optimizer = std::move(sequential.optimizer);
+    out.module_provenance = std::move(sequential.module_provenance);
     return out;
 }
 

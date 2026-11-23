@@ -7,7 +7,7 @@ template first with the [quickstart](plugin-quickstart.md). Every type,
 the [node contract](node-contract.md). For dataset formats and analytics
 instead of nodes, see [Data plugins](data-plugin-guide.md).
 
-> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.4.0 and pycyxwiz 0.2.0.
 
 The code in this guide is taken from the SDK's template
 (`plugins/template/my_nodes_plugin.cpp`, in the SDK as
@@ -35,7 +35,7 @@ The template's `plugin.json`:
     "id": "com.example.my-nodes",
     "name": "My Nodes",
     "version": "1.0.0",
-    "api_version": "1.3.0",
+    "api_version": "1.4.0",
     "description": "A trainable activation written in C++: Bent Identity",
     "author": "",
     "license": "",
@@ -53,7 +53,7 @@ The template's `plugin.json`:
 |---|---|
 | `id` | Required. `a-z`, `0-9`, `.`, `-`, `_` only (a plugin with other characters loads, but every node is refused). It is the first half of every node's saved type id, so do not change it once graphs use your nodes |
 | `name`, `version` | Shown on the Plugin Manager card. `version` is `major.minor.patch`; dangerous permissions are approved per version (section 4) |
-| `api_version` | The plugin API you built against, `1.3.0` with this SDK. The Engine loads the plugin when the major number equals its own and the minor number is not higher |
+| `api_version` | The plugin API you built against, `1.4.0` with this SDK. The Engine loads the plugin when the major number equals its own and the minor number is not higher |
 | `capabilities` | `ProvidesTensorNodes`. Shown only; the Engine finds your nodes through `QueryInterface`, whatever this says |
 | `permissions` | `Training`, as the template has. Nothing checks it for trainable nodes today. `FileSystem`, `Network`, `SystemCommands` and `Python` make the Engine ask the user (section 4) |
 | `platforms` | The library path per platform, relative to the folder |
@@ -207,9 +207,9 @@ snake.parameters = {{"initial_a", "float", "1.0", "Starting value of the frequen
 | Field | Rule and where the user sees it |
 |---|---|
 | `type_name` | Letters `A-Z a-z`, digits, `_`. With the plugin id it forms the type id `com.cyxwiz.examples.activation-nodes:Snake`, saved in graphs. Do not rename it |
-| `display_name` | The node's title on the canvas and in the Node Browser (empty: `type_name`) |
-| `category` | Your own group name; the Node Browser and search group by it |
-| `description` | Shown in the Node Browser, Info panel and Properties |
+| `display_name` | The node's title on the canvas and in the Nodes panel (empty: `type_name`) |
+| `category` | Your own group name; the Nodes panel and search group by it |
+| `description` | Shown in the Nodes panel, Info panel and Properties |
 | `version` | The version of this node's pins and settings. Saved with the graph; a different version when a graph is opened gives a warning on the node |
 | `color` | Header colour, `IM_COL32` layout (`0xAABBGGRR`). A colour with alpha 0, such as `0`, uses the Engine's plugin node colour |
 | `icon` | Leave empty: the Engine uses its plug icon |
@@ -399,7 +399,10 @@ short:
 - `Backward` returns the gradient for the input of the last `Forward`, with
   that input's shape, and stores the gradients of your weights.
 - `GetParameters`, `GetGradients` and `SetParameters` use the same keys;
-  `HasParameters` returns `true` when there are any.
+  `HasParameters` returns `true` when there are any. State you keep beside
+  the weights without training it (a running mean, as BatchNorm does) goes in
+  `GetParameters` and `SetParameters` only, so saved models keep it, and
+  `GetStateNames` names those keys: they need no gradient.
 - `SetParameters` may receive only some of your keys (the gradient check
   sets one at a time): update the ones it holds and keep the others, as
   `SnakeModule` does.
@@ -502,7 +505,7 @@ directly, so your plugin must be built the way the Engine was.
 compiler that builds your plugin, for example
 
 ```
-sdk=0.2;api=1.2;compiler=msvc-19;stdlib=msvc-stl;build=release;ptr=64;arrayfire=none
+sdk=0.2;api=1.3;compiler=msvc-19;stdlib=msvc-stl;build=release;ptr=64;arrayfire=none
 ```
 
 The Engine loads your library, then compares the fingerprint with its own
@@ -556,7 +559,7 @@ What the fingerprint cannot see:
   Engine keeps the library loaded until the last such module is gone. You do
   not need to handle this.
 - The **Apps** menu lists your plugin under *Loaded plugins* with what it
-  adds (*2 nodes*); choosing it opens the Node Browser on your nodes.
+  adds (*2 nodes*); choosing it opens the Nodes panel on your nodes.
 
 ### Logs
 

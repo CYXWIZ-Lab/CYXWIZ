@@ -9,6 +9,7 @@
 // initialisation, which the fixture records and the test checks first.
 // Also: the samplers' picks, the stacked losses, the pair/triplet accuracy
 // decisions, and the compiler's refusals.
+#include "oracle/training_oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "algorithms/arrayfire_backend_utils.h"
 #include "../src/core/classification_decision.h"
@@ -273,19 +274,6 @@ void CheckRefused(const Graph& graph, const std::string& text, const std::string
     Check(!config.is_valid && reported, what + ": refused with '" + text + "'");
 }
 
-void SelectArrayFireCpu() {
-    const auto devices = cyxwiz::Device::GetAvailableDevices();
-    const auto cpu = std::find_if(devices.begin(), devices.end(), [](const cyxwiz::DeviceInfo& device) {
-        return device.type == cyxwiz::DeviceType::CPU;
-    });
-    Check(cpu != devices.end(), "an ArrayFire CPU route is required");
-    cyxwiz::test::InstallQualifiedRouteSnapshot(devices);
-    cyxwiz::ClearPendingExecutionDeviceSelection();
-    cyxwiz::SetPendingExecutionDeviceSelection(cyxwiz::DeviceType::CPU, cpu->device_id);
-    cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
-}
-
 struct Trained {
     Parameters parameters;
     std::vector<double> batch_losses;
@@ -294,7 +282,7 @@ struct Trained {
 
 Trained Train(const cyxwiz::TrainingConfiguration& config, const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
               int epochs, const std::string& what) {
-    SelectArrayFireCpu();
+    cyxwiz::test::PinTrainingDevice();
     cyxwiz::TrainingExecutor executor(config, dataset, "label");
     Trained trained;
     bool completed = false;
@@ -558,6 +546,7 @@ gui::NodeType LossFor(const std::string& kind) {
 }  // namespace
 
 int RunChecks(char** argv) {
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_metric_graph_training")) return 1;
     namespace fs = std::filesystem;
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
@@ -604,7 +593,7 @@ int RunChecks(char** argv) {
         Check(config.pair_metrics && config.retrieval_metrics && config.retrieval_k == 2 &&
                   std::abs(config.pair_metric_threshold - 0.5) < 1e-12,
               "the Pair / Retrieval Metrics nodes compile into the evaluation");
-        SelectArrayFireCpu();
+        cyxwiz::test::PinTrainingDevice();
         // As training does before building the model, so the model the
         // TestExecutor builds is the seeded start.
         cyxwiz::SeedCurrentArrayFireRandomEngine(static_cast<uint64_t>(kModelSeed));
@@ -745,6 +734,8 @@ int RunChecks(char** argv) {
     }
 
     fs::remove_all(work_dir);
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     std::cout << "Metric learning matches PyTorch: " << fixture.at("cases").size() << " cases\n";
     return 0;
 }

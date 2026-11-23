@@ -14,6 +14,13 @@ set(_cyxwiz_engine_src "${CMAKE_SOURCE_DIR}/cyxwiz-engine/src")
 
 set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/training_executor.cpp
+    ${_cyxwiz_engine_src}/core/run_execution_device.cpp
+    ${_cyxwiz_engine_src}/core/optimizer_step.cpp
+    ${_cyxwiz_engine_src}/core/rl/ppo_trainer.cpp
+    ${_cyxwiz_engine_src}/core/rl/vec_normalize.cpp
+    ${_cyxwiz_engine_src}/core/rl/ppo_reference.cpp
+    ${_cyxwiz_engine_src}/core/rl_graph_presentation.cpp
+    ${_cyxwiz_engine_src}/core/rl_graph_compile.cpp
     ${_cyxwiz_engine_src}/core/metric_learning_sampling.cpp
     ${_cyxwiz_engine_src}/core/metric_learning_evaluation.cpp
     ${_cyxwiz_engine_src}/core/metric_learning_metrics.cpp
@@ -22,6 +29,9 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/generation_preview_presentation.cpp
     ${_cyxwiz_engine_src}/core/language_model_generation.cpp
     ${_cyxwiz_engine_src}/core/training_scheduler_controller.cpp
+    ${_cyxwiz_engine_src}/core/learning_rate_range_test.cpp
+    ${_cyxwiz_engine_src}/core/training_health.cpp
+    ${_cyxwiz_engine_src}/core/model_decision.cpp
     ${_cyxwiz_engine_src}/core/regression_target_transform.cpp
     ${_cyxwiz_engine_src}/core/preprocessing_state.cpp
     ${_cyxwiz_engine_src}/core/training_batcher_setup.cpp
@@ -32,8 +42,12 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/classification_decision.cpp
     ${_cyxwiz_engine_src}/core/arrow_dataset.cpp
     ${_cyxwiz_engine_src}/core/arrow_dataset_batcher.cpp
+    ${_cyxwiz_engine_src}/core/batch_uploads.cpp
     ${_cyxwiz_engine_src}/core/label_vocabulary.cpp
     ${_cyxwiz_engine_src}/core/model_builder.cpp
+    ${_cyxwiz_engine_src}/core/model_memory_estimate.cpp
+    ${_cyxwiz_engine_src}/core/layer_capture.cpp
+    ${_cyxwiz_engine_src}/core/layer_capture_store.cpp
     ${_cyxwiz_engine_src}/core/guarded_extension_module.cpp
     ${_cyxwiz_engine_src}/core/stacked_metric_loss.cpp
     ${_cyxwiz_engine_src}/core/metric_learning_mining.cpp
@@ -45,6 +59,10 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/parquet_arrow_batcher.cpp
     ${_cyxwiz_engine_src}/core/dataset_base.cpp
     ${_cyxwiz_engine_src}/core/checkpoint_manager.cpp
+    ${_cyxwiz_engine_src}/core/weight_file.cpp
+    ${_cyxwiz_engine_src}/core/weight_match.cpp
+    ${_cyxwiz_engine_src}/core/weight_start.cpp
+    ${_cyxwiz_engine_src}/core/tensor_file.cpp
     ${_cyxwiz_engine_src}/core/checkpoint_tokenizer.cpp
     ${_cyxwiz_engine_src}/core/crash_run_recorder.cpp
     ${_cyxwiz_engine_src}/core/training_trace_collector.cpp
@@ -120,9 +138,12 @@ add_library(cyxwiz-training-hooks STATIC
     ${_cyxwiz_engine_src}/core/extension_node_registry.cpp
     ${_cyxwiz_engine_src}/core/python_node_bundle.cpp
     ${_cyxwiz_engine_src}/core/python_node_approvals.cpp
+    # Here, not in training-core: python_node_bundle hashes the bundle code, and
+    # GNU ld resolves a static library only from the libraries after it.
+    ${_cyxwiz_engine_src}/core/sha256_digest.cpp
 )
 target_include_directories(cyxwiz-training-hooks PUBLIC ${_cyxwiz_engine_src})
-target_link_libraries(cyxwiz-training-hooks PUBLIC spdlog::spdlog)
+target_link_libraries(cyxwiz-training-hooks PUBLIC spdlog::spdlog OpenSSL::Crypto)
 set_target_properties(cyxwiz-training-hooks PROPERTIES CXX_STANDARD 20 POSITION_INDEPENDENT_CODE ON)
 if(WIN32)
     target_compile_definitions(cyxwiz-training-hooks PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
@@ -142,12 +163,12 @@ add_library(cyxwiz-training-core STATIC
     ${_cyxwiz_engine_src}/core/graph_training_prep.cpp
     ${_cyxwiz_engine_src}/core/graph_training_job.cpp
     ${_cyxwiz_engine_src}/core/compiled_graph_plan.cpp
+    ${_cyxwiz_engine_src}/core/code_export.cpp
     ${_cyxwiz_engine_src}/core/graph_topology_utils.cpp
     ${_cyxwiz_engine_src}/core/node_metadata_registry.cpp
     ${_cyxwiz_engine_src}/core/extension_node_metadata.cpp
     ${_cyxwiz_engine_src}/core/pipeline_runtime_capabilities.cpp
     ${_cyxwiz_engine_src}/core/sequence_arrow_batcher.cpp
-    ${_cyxwiz_engine_src}/core/sha256_digest.cpp
     ${_cyxwiz_engine_src}/core/compute_runtime_config.cpp
     ${_cyxwiz_engine_src}/core/training_benchmark.cpp
     ${_cyxwiz_engine_src}/core/machine_capability.cpp

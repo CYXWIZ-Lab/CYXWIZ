@@ -70,6 +70,7 @@ ImVec4 PinTypeColour(PinType type) {
         case PinType::Labels:     return t.series[3];
         case PinType::Loss:       return t.series[4];
         case PinType::Dataset:    return t.series[5];
+        case PinType::Environment: return t.accent_text;  // not data: its own colour
         default:                  return t.text_dim;
     }
 }

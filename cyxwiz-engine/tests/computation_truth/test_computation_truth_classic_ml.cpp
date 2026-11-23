@@ -3,7 +3,7 @@
 //
 // fixtures/classic_ml_sklearn.json (generate_classic_ml_fixtures.py). Runs on the
 // active ArrayFire backend (CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu).
-#include "test_device_selection.h"
+#include "../oracle/oracle_test.h"
 
 #include <cyxwiz/classic_ml.h>
 
@@ -232,7 +232,7 @@ void RunSVR(const json& c, const std::string& name) {
 }  // namespace
 
 int main(int, char** argv) {
-    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
+    Check(cyxwiz::test::BeginOracleTest("test_computation_truth_classic_ml"), "requested test device");
     std::ifstream in(FixturePath(argv[0]));
     Check(static_cast<bool>(in), "cannot open the classic ML fixture");
     const json fixture = json::parse(in);

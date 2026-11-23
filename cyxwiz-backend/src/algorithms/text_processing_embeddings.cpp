@@ -2,80 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
-#include <random>
 
 namespace cyxwiz {
 
 // ============================================================================
 // Word Embeddings
 // ============================================================================
-
-EmbeddingResult TextProcessing::CreateOneHotEmbeddings(
-    const std::vector<std::string>& vocabulary
-) {
-    EmbeddingResult result;
-
-    if (vocabulary.empty()) {
-        result.success = true;
-        result.method = "onehot";
-        return result;
-    }
-
-    try {
-        result.words = vocabulary;
-        result.embedding_dim = static_cast<int>(vocabulary.size());
-        result.method = "onehot";
-
-        result.embeddings.resize(vocabulary.size());
-        for (size_t i = 0; i < vocabulary.size(); ++i) {
-            result.embeddings[i].resize(vocabulary.size(), 0.0);
-            result.embeddings[i][i] = 1.0;
-        }
-
-        result.success = true;
-    } catch (const std::exception& e) {
-        result.error_message = std::string("One-hot error: ") + e.what();
-    }
-
-    return result;
-}
-
-EmbeddingResult TextProcessing::CreateRandomEmbeddings(
-    const std::vector<std::string>& vocabulary,
-    int embedding_dim,
-    int seed
-) {
-    EmbeddingResult result;
-
-    if (vocabulary.empty()) {
-        result.success = true;
-        result.method = "random";
-        return result;
-    }
-
-    try {
-        result.words = vocabulary;
-        result.embedding_dim = embedding_dim;
-        result.method = "random";
-
-        std::mt19937 gen(seed >= 0 ? seed : std::random_device{}());
-        std::normal_distribution<> dist(0.0, 1.0 / std::sqrt(embedding_dim));
-
-        result.embeddings.resize(vocabulary.size());
-        for (size_t i = 0; i < vocabulary.size(); ++i) {
-            result.embeddings[i].resize(embedding_dim);
-            for (int j = 0; j < embedding_dim; ++j) {
-                result.embeddings[i][j] = dist(gen);
-            }
-        }
-
-        result.success = true;
-    } catch (const std::exception& e) {
-        result.error_message = std::string("Random embedding error: ") + e.what();
-    }
-
-    return result;
-}
 
 EmbeddingResult TextProcessing::FindSimilarWords(
     const std::string& word,

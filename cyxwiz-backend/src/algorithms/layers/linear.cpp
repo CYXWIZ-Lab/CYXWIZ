@@ -1,5 +1,6 @@
 #include "cyxwiz/layers/linear.h"
 #include "../arrayfire_backend_utils.h"
+#include "../device_random.h"
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -172,6 +173,41 @@ Tensor LinearLayer::Forward(const Tensor& input) {
     }
 }
 
+// The batch's CSR on the device and the host view it came from: the backward
+// of the same batch (the same host buffers and sizes) reuses it.
+struct LinearLayer::SparseCsrDevice {
+    LinearSparseCsrBatchView view;
+    af::array matrix;
+};
+
+namespace {
+
+bool SameCsrView(const LinearSparseCsrBatchView& a, const LinearSparseCsrBatchView& b) {
+    return a.rows == b.rows && a.columns == b.columns && a.nnz == b.nnz && a.row_offsets == b.row_offsets &&
+           a.column_indices == b.column_indices && a.values == b.values;
+}
+
+}  // namespace
+
+LinearLayer::SparseCsrDevice& LinearLayer::SparseCsrFor(const LinearSparseCsrBatchView& input, bool reuse) {
+    if (!reuse || !sparse_device_ || !SameCsrView(sparse_device_->view, input)) {
+        auto made = std::make_shared<SparseCsrDevice>();
+        made->view = input;
+        made->matrix = af::sparse(
+            static_cast<dim_t>(input.rows),
+            static_cast<dim_t>(input.columns),
+            static_cast<dim_t>(input.nnz),
+            input.values,
+            input.row_offsets,
+            input.column_indices,
+            f32,
+            AF_STORAGE_CSR,
+            afHost);
+        sparse_device_ = std::move(made);
+    }
+    return *sparse_device_;
+}
+
 Tensor LinearLayer::ForwardSparseCsr(
     const LinearSparseCsrBatchView& input) {
     ValidateLinearSparseCsrBatchView(input, in_features_);
@@ -185,16 +221,7 @@ Tensor LinearLayer::ForwardSparseCsr(
                 static_cast<dim_t>(out_features_),
                 f32);
         } else {
-            af::array sparse_input = af::sparse(
-                static_cast<dim_t>(input.rows),
-                static_cast<dim_t>(input.columns),
-                static_cast<dim_t>(input.nnz),
-                input.values,
-                input.row_offsets,
-                input.column_indices,
-                f32,
-                AF_STORAGE_CSR,
-                afHost);
+            const af::array& sparse_input = SparseCsrFor(input, false).matrix;
             af::array weight_transposed = af::transpose(
                 weight_.GetArrayRowMajor2D().as(af::dtype::f32));
             output_gpu = af::matmul(
@@ -359,16 +386,7 @@ void LinearLayer::BackwardSparseCsr(
                 static_cast<dim_t>(in_features_),
                 f32);
         } else {
-            af::array sparse_input = af::sparse(
-                static_cast<dim_t>(input.rows),
-                static_cast<dim_t>(input.columns),
-                static_cast<dim_t>(input.nnz),
-                input.values,
-                input.row_offsets,
-                input.column_indices,
-                f32,
-                AF_STORAGE_CSR,
-                afHost);
+            const af::array& sparse_input = SparseCsrFor(input, true).matrix;
             af::array feature_by_output = af::matmul(
                 sparse_input,
                 grad_gpu,
@@ -384,6 +402,7 @@ void LinearLayer::BackwardSparseCsr(
             bias_grad_gpu.eval();
             bias_grad_ = Tensor(bias_grad_gpu);
         }
+        sparse_device_.reset();  // the batch is done with
         return;
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("LinearLayer::BackwardSparseCsr failed on the ArrayFire device: ") + e.what());
@@ -420,6 +439,28 @@ std::map<std::string, Tensor> LinearLayer::GetGradients() {
         grads["bias"] = bias_grad_;
     }
     return grads;
+}
+
+Tensor OrthogonalWeights(size_t rows, size_t cols, float gain) {
+    if (rows == 0 || cols == 0) throw std::invalid_argument("OrthogonalWeights: rows and cols must be at least 1");
+    try {
+        const bool wide = rows < cols;
+        const dim_t m = static_cast<dim_t>(wide ? cols : rows);
+        const dim_t k = static_cast<dim_t>(wide ? rows : cols);
+        const af::array a = cyxwiz::DeviceNormal(af::dim4(m, k), f32);  // the same on every device
+        af::array q, r, tau;
+        af::qr(q, r, tau, a);
+        const af::seq first_k(static_cast<double>(k));
+        const af::array top = r(first_k, first_k);
+        const af::array diagonal = k == 1 ? top : af::diag(top);  // af::diag refuses a 1 x 1 matrix
+        const af::array signs = af::sign(diagonal) * -2.0f + 1.0f;  // af::sign is 1 for negatives
+        af::array w = q(af::span, first_k) * af::tile(af::transpose(signs), static_cast<unsigned>(m)) * gain;
+        if (wide) w = af::transpose(w);
+        w.eval();
+        return Tensor::FromArrayRowMajor2D(w);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("OrthogonalWeights failed on the ArrayFire device: ") + e.what());
+    }
 }
 
 } // namespace cyxwiz

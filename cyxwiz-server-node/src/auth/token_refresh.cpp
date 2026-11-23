@@ -1,6 +1,7 @@
 #include "auth/token_refresh.h"
 
 #include <httplib.h>
+#include "common/server_http_trust.h"
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
@@ -19,6 +20,7 @@ std::optional<std::string> RefreshTokenWithApi(const std::string& api_base_url, 
 
     try {
         httplib::Client client(scheme + "://" + server);
+        cyxwiz::protocol::TrustServer(client);
         client.set_connection_timeout(10);
         client.set_read_timeout(30);
         const httplib::Headers headers = {{"Authorization", "Bearer " + token}};

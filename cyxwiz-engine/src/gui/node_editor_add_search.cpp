@@ -31,6 +31,8 @@ bool DoneOnceWithImages(NodeType type) {
         case NodeType::ImageSmooth:
         case NodeType::ImageWarp:
         case NodeType::ImagePyramid:
+        case NodeType::ImageFilter:
+        case NodeType::ImageGabor:
             return true;
         default:
             return false;
@@ -349,13 +351,9 @@ void NodeEditor::ShowNodeAddSearch() {
 
     ImVec2 search_pos(canvas_pos.x + canvas_size.x - search_width - margin, canvas_pos.y + toolbar_offset + margin);
 
-    // Create a floating window for the search box that renders on top of ImNodes
-    ::gui::NextWindowFollowsCurrent();
-    ImGui::SetNextWindowPos(search_pos);
-    ImGui::SetNextWindowSize(ImVec2(search_width, search_height));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 5.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, t.bg_input);  // a search field: the input tone
+    // An overlay on the canvas, drawn over ImNodes and with the Studio window
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 5.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_input);  // a search field: the input tone
 
     ImGuiWindowFlags search_window_flags =
         ImGuiWindowFlags_NoTitleBar |
@@ -370,7 +368,8 @@ void NodeEditor::ShowNodeAddSearch() {
     // Declare at function scope so it's accessible for the "close dropdown" check
     bool input_focused = false;
 
-    if (ImGui::Begin("##NodeSearchBox", nullptr, search_window_flags)) {
+    if (::gui::BeginCanvasOverlay("##NodeSearchBox", search_pos.x, search_pos.y, search_width, search_height,
+                                  search_window_flags)) {
         // Push style for search input
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 6));
@@ -458,12 +457,9 @@ void NodeEditor::ShowNodeAddSearch() {
                 selected->support_blocked) {
                 // Don't add unavailable nodes; the dropdown shows the reason.
             } else {
-                // Set position for new node (center of visible canvas)
-                ImVec2 editor_pan = ImNodes::EditorContextGetPanning();
-                context_menu_pos_ = ImVec2(
-                    canvas_size.x / 2 - editor_pan.x,
-                    canvas_size.y / 2 - editor_pan.y
-                );
+                // The free spot nearest the middle of the view, as from the
+                // Nodes panel (the view centre ignored the zoom and other nodes).
+                context_menu_pos_ = kPlaceInFreeSpot;
 
                 // For plugin nodes, pass qualified name so CreateNode can look up the registry
                 if (selected->type == NodeType::PluginCustom && !selected->extension_type_id.empty())
@@ -483,9 +479,9 @@ void NodeEditor::ShowNodeAddSearch() {
         ImGui::PopStyleColor(3);
         ImGui::PopStyleVar(2);
     }
-    ImGui::End();
+    ::gui::EndCanvasOverlay();
     ImGui::PopStyleColor(1);
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(1);
 
     // Render dropdown results - only show when user has typed something
     std::string query(node_add_search_.search_buffer);
@@ -500,13 +496,10 @@ void NodeEditor::ShowNodeAddSearch() {
         float dropdown_height = std::min(item_height * filtered_nodes_.size() + 8 + footer_height, 400.0f);
         node_add_search_.dropdown_height = dropdown_height;
 
-        // Create a separate floating window for dropdown results
-        ::gui::NextWindowFollowsCurrent();
-        ImGui::SetNextWindowPos(dropdown_pos);
-        ImGui::SetNextWindowSize(ImVec2(dropdown_width, dropdown_height));
+        // The result list: an overlay on the canvas under the box
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 5.0f);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, cyxwiz::ui::WithAlpha(t.bg_panel, 0.96f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 5.0f);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, cyxwiz::ui::WithAlpha(t.bg_panel, 0.96f));
         ImGui::PushStyleColor(ImGuiCol_Border, t.border);
 
         ImGuiWindowFlags dropdown_flags =
@@ -519,7 +512,8 @@ void NodeEditor::ShowNodeAddSearch() {
             ImGuiWindowFlags_NoFocusOnAppearing |
             ImGuiWindowFlags_NoNav;
 
-        if (ImGui::Begin("##NodeSearchDropdown", nullptr, dropdown_flags)) {
+        if (::gui::BeginCanvasOverlay("##NodeSearchDropdown", dropdown_pos.x, dropdown_pos.y, dropdown_width,
+                                      dropdown_height, dropdown_flags, true)) {
             for (size_t i = 0; i < filtered_nodes_.size(); ++i) {
                 SearchableNode* node = filtered_nodes_[i].second;
                 bool is_selected = (static_cast<int>(i) == node_add_search_.selected_index);
@@ -544,12 +538,8 @@ void NodeEditor::ShowNodeAddSearch() {
                 bool can_add = !is_template && !is_blocked;
                 ImGui::InvisibleButton(("node_result_" + std::to_string(i)).c_str(), item_size);
                 if (ImGui::IsItemClicked() && can_add) {
-                    // Add the clicked node.
-                    ImVec2 editor_pan = ImNodes::EditorContextGetPanning();
-                    context_menu_pos_ = ImVec2(
-                        canvas_size.x / 2 - editor_pan.x,
-                        canvas_size.y / 2 - editor_pan.y
-                    );
+                    // Add the clicked node, in the free spot nearest the middle.
+                    context_menu_pos_ = kPlaceInFreeSpot;
 
                     if (node->type == NodeType::PluginCustom &&
                         !node->extension_type_id.empty())
@@ -618,7 +608,7 @@ void NodeEditor::ShowNodeAddSearch() {
                 }
             }
         }
-        ImGui::End();
+        ::gui::EndCanvasOverlay();
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(2);
     }

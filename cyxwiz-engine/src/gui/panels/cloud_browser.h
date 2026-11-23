@@ -31,10 +31,19 @@ public:
 
     // Set DataStream client (must be connected)
     void SetDataStreamClient(network::DataStreamClient* client) { datastream_client_ = client; }
+    // A message on the panel's error line (shown for a few seconds).
+    void ShowError(const std::string& text) {
+        last_error_ = text;
+        error_time_ = 5.0f;
+    }
 
     // Callback when user selects a dataset for training
     using DatasetSelectedCallback = std::function<void(const network::CloudDatasetInfo& dataset)>;
     void SetDatasetSelectedCallback(DatasetSelectedCallback callback) { on_dataset_selected_ = callback; }
+    // Called once the panel's own gateway connection is up, so the rest of
+    // the Engine (remote jobs with CyxCloud datasets) can use it (TOFIX164).
+    using ConnectedCallback = std::function<void(network::DataStreamClient*)>;
+    void SetConnectedCallback(ConnectedCallback callback) { on_connected_ = callback; }
 
     // Callback when user wants to upload a new dataset
     using UploadRequestedCallback = std::function<void()>;
@@ -72,10 +81,12 @@ private:
 
     // Filtering and sorting
     void ApplyFilter();
+    void ApplyFilterLocked();  // with datasets_mutex_ held
     void SortDatasets(int column, bool ascending);
 
     network::DataStreamClient* datastream_client_ = nullptr;
     DatasetSelectedCallback on_dataset_selected_;
+    ConnectedCallback on_connected_;
     UploadRequestedCallback on_upload_requested_;
 
     // Dataset lists

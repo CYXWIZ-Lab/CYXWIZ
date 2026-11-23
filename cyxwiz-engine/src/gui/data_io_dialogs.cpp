@@ -16,6 +16,12 @@
 #include "../core/graph_compiler.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/training_parameter_contract.h"
+#include "../core/live_graph_compile.h"
+#include "../core/weight_file.h"
+#include "../core/weight_match.h"
+#include "icons.h"
+#include <atomic>
+#include <thread>
 #include "../core/worker_defaults.h"
 
 #include <cmath>
@@ -1051,8 +1057,7 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
         ReadIntParam(node_->parameters, "early_stopping_patience", early_stopping_patience_);
         CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
                      ReadStringParamValue(node_->parameters, "checkpoint_dir"));
-        CopyToBuffer(initialize_from_checkpoint_, sizeof(initialize_from_checkpoint_),
-                     ReadStringParamValue(node_->parameters, "initialize_from_checkpoint"));
+        LoadStartFrom(node_->parameters);
     }
     if (node_) generation_tab_.Load(node_->parameters);
 }
@@ -1081,10 +1086,15 @@ void DataLoaderDialog::Apply() {
     node_->parameters["save_best_checkpoint"] = save_best_checkpoint_ ? "true" : "false";
     node_->parameters["early_stopping_patience"] = std::to_string(early_stopping_patience_);
     node_->parameters["checkpoint_dir"] = checkpoint_dir_;
-    if (initialize_from_checkpoint_[0] != '\0')
+    // One starting point: the choice keeps its own setting and clears the other.
+    if (start_from_ == 1 && initialize_from_checkpoint_[0] != '\0')
         node_->parameters["initialize_from_checkpoint"] = initialize_from_checkpoint_;
     else
         node_->parameters.erase("initialize_from_checkpoint");
+    if (start_from_ == 2 && initialize_from_weights_file_[0] != '\0')
+        node_->parameters["initialize_from_weights_file"] = initialize_from_weights_file_;
+    else
+        node_->parameters.erase("initialize_from_weights_file");
     generation_tab_.Store(node_->parameters);
     node_->description = "epochs=" + std::to_string(epochs_) +
                           ", batch=" + std::to_string(batch_size_) +
@@ -1120,6 +1130,8 @@ void DataLoaderDialog::Reset() {
     early_stopping_patience_ = 5;
     checkpoint_dir_[0] = '\0';
     initialize_from_checkpoint_[0] = '\0';
+    initialize_from_weights_file_[0] = '\0';
+    start_from_ = 0;
     ReadIntParam(original_params_, "epochs", epochs_);
     ReadIntParam(original_params_, "batch_size", batch_size_);
     ReadBoolParam(original_params_, "shuffle", shuffle_);
@@ -1158,10 +1170,238 @@ void DataLoaderDialog::Reset() {
     ReadIntParam(original_params_, "early_stopping_patience", early_stopping_patience_);
     CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
                  ReadStringParamValue(original_params_, "checkpoint_dir"));
-    CopyToBuffer(initialize_from_checkpoint_, sizeof(initialize_from_checkpoint_),
-                 ReadStringParamValue(original_params_, "initialize_from_checkpoint"));
+    LoadStartFrom(original_params_);
     has_changes_ = false;
     generation_tab_.Load(original_params_);
+}
+
+// What the worker fills: the weights file read and matched to the graph.
+struct DataLoaderDialog::WeightsProbe {
+    std::atomic<bool> done{false};
+    bool ok = false;
+    std::string error;
+    std::string file_name;
+    cyxwiz::weight_match::Report report;
+};
+
+void DataLoaderDialog::LoadStartFrom(const std::map<std::string, std::string>& parameters) {
+    CopyToBuffer(initialize_from_checkpoint_, sizeof(initialize_from_checkpoint_),
+                 ReadStringParamValue(parameters, "initialize_from_checkpoint"));
+    CopyToBuffer(initialize_from_weights_file_, sizeof(initialize_from_weights_file_),
+                 ReadStringParamValue(parameters, "initialize_from_weights_file"));
+    start_from_ = initialize_from_weights_file_[0] != '\0' ? 2 : initialize_from_checkpoint_[0] != '\0' ? 1 : 0;
+    weights_probe_key_.clear();
+    weights_view_ready_ = false;
+    weights_error_.clear();
+}
+
+// Start from: one choice, so a run cannot ask for a checkpoint and a file at once.
+void DataLoaderDialog::RenderStartFrom() {
+    static const char* const kChoices[] = {"Random weights", "A checkpoint of an earlier run", "A weights file"};
+    Field("Start from");
+    ImGui::SetNextItemWidth(320);
+    if (ImGui::Combo("##start_from", &start_from_, kChoices, 3)) has_changes_ = true;
+    const float browse = cyxwiz::ui::ButtonWidth("Browse...", cyxwiz::ui::ButtonSize::Regular);
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const char* hint = "Every layer starts from random weights.";
+    bool committed = false;
+    if (start_from_ == 1) {
+        Field("Checkpoint");
+        ImGui::SetNextItemWidth(-(browse + spacing));
+        if (ImGui::InputText("##initialize_from_checkpoint", initialize_from_checkpoint_,
+                             sizeof(initialize_from_checkpoint_)))
+            has_changes_ = true;
+        ImGui::SameLine();
+        if (cyxwiz::ui::SecondaryButton("Browse...##checkpoint", true, nullptr, cyxwiz::ui::ButtonSize::Regular)) {
+            // Start in the project's checkpoints folder when nothing is chosen yet.
+            std::string start = initialize_from_checkpoint_;
+            if (start.empty()) {
+                const std::string& root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+                if (!root.empty()) start = (std::filesystem::path(root) / "checkpoints").string();
+            }
+            if (auto picked = cyxwiz::FileDialogs::SelectFolder("Choose a checkpoint folder (.../train-<id>/best)",
+                                                                start.empty() ? nullptr : start.c_str())) {
+                CopyToBuffer(initialize_from_checkpoint_, sizeof(initialize_from_checkpoint_), *picked);
+                has_changes_ = true;
+            }
+        }
+        hint = "A checkpoint folder from an earlier run (e.g. .../train-<id>/best). Its weights are this model's "
+               "starting point and every layer keeps training on this data. Optimizer, schedule, epochs and seed "
+               "start fresh. Layer names, shapes and the tokenizer must match.";
+    } else if (start_from_ == 2) {
+        Field("Weights file");
+        ImGui::SetNextItemWidth(-(browse + spacing));
+        if (ImGui::InputText("##initialize_from_weights_file", initialize_from_weights_file_,
+                             sizeof(initialize_from_weights_file_)))
+            has_changes_ = true;
+        committed = ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SameLine();
+        if (cyxwiz::ui::SecondaryButton("Browse...", true, nullptr, cyxwiz::ui::ButtonSize::Regular)) {
+            if (auto picked = cyxwiz::FileDialogs::OpenFile(
+                    "Choose a weights file", {{"Weight files", "pth,pt,safetensors"}, {"All Files", "*"}},
+                    initialize_from_weights_file_[0] == '\0' ? nullptr : initialize_from_weights_file_)) {
+                CopyToBuffer(initialize_from_weights_file_, sizeof(initialize_from_weights_file_), *picked);
+                has_changes_ = true;
+                committed = true;
+            }
+        }
+        hint = "A PyTorch state-dict (.pth, .pt) or a .safetensors file. A layer takes the entries named after its "
+               "node (node conv1 takes conv1.weight). The file is only read, never run. Optimizer, schedule, epochs "
+               "and seed start fresh.";
+        RenderWeightsCard(committed);
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", hint);
+    ImGui::PopTextWrapPos();
+    if (start_from_ == 2 && weights_report_open_ && weights_view_ready_) RenderWeightsReport();
+}
+
+// "What the file gives this graph": read and matched off the UI thread
+// whenever the file or the compiled graph changes.
+void DataLoaderDialog::RenderWeightsCard(bool path_committed) {
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    namespace fs = std::filesystem;
+    const cyxwiz::LiveGraphCompile* live = node_editor_ ? node_editor_->GetLiveCompile() : nullptr;
+    const bool has_path = initialize_from_weights_file_[0] != '\0';
+    const bool compiled = live && live->ParametersCounted() && !live->WeightSlots().empty();
+
+    // The path as the run resolves it (relative to the project).
+    std::string resolved = initialize_from_weights_file_;
+    if (has_path && !fs::path(resolved).is_absolute()) {
+        const std::string& root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+        if (!root.empty()) resolved = (fs::path(root) / resolved).lexically_normal().string();
+    }
+    // The file as it is now (size and write time) and the compile it is matched to.
+    std::string key = resolved + "|" + std::to_string(live ? live->ResultSerial() : 0);
+    if (has_path) {
+        std::error_code ec;
+        const auto size = fs::file_size(resolved, ec);
+        const auto written = ec ? fs::file_time_type{} : fs::last_write_time(resolved, ec);
+        if (!ec) key += "|" + std::to_string(size) + "|" + std::to_string(written.time_since_epoch().count());
+    }
+    const bool typing = ImGui::IsAnyItemActive() && !path_committed;
+    if (has_path && compiled && key != weights_probe_key_ && !typing && (!weights_probe_ || weights_probe_->done)) {
+        weights_probe_key_ = key;
+        weights_view_ready_ = false;
+        weights_error_.clear();
+        auto probe = std::make_shared<WeightsProbe>();
+        probe->file_name = fs::path(resolved).filename().string();
+        weights_probe_ = probe;
+        std::thread([probe, resolved, slots = live->WeightSlots()] {
+            cyxwiz::weight_file::WeightFile file;
+            // Names, shapes and types only: the card needs the words, not the values.
+            probe->ok = cyxwiz::weight_file::Read(resolved, file, probe->error, false);
+            if (probe->ok) {
+                probe->report = cyxwiz::weight_match::Match(file, slots);
+                probe->report.tensors.clear();
+            }
+            probe->done = true;
+        }).detach();
+    }
+    if (weights_probe_ && weights_probe_->done && !weights_view_ready_ && weights_error_.empty()) {
+        if (weights_probe_->ok) {
+            weights_view_ = cyxwiz::BuildWeightReportView(weights_probe_->report, weights_probe_->file_name);
+            weights_view_ready_ = true;
+            if (weights_view_.loaded == 0)
+                weights_error_ = "No layer of this graph matches the file, so a run would stop. A layer takes the "
+                                 "entries named after its node.";
+        } else {
+            weights_error_ = weights_probe_->error;
+        }
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
+    if (ImGui::BeginChild("##weights_card", ImVec2(0, 0),
+                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding)) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "What the file gives this graph");
+        if (!has_path) {
+            ImGui::TextColored(t.text_dim, "Choose a file to see which layers take their weights.");
+        } else if (!compiled) {
+            ImGui::TextColored(t.text_dim, "The match is shown once the graph compiles (it is still compiling, has an "
+                                           "error, or has no layer with weights).");
+        } else if (weights_probe_ && !weights_probe_->done) {
+            ImGui::TextColored(t.running, "Reading the file...");
+        } else {
+            if (weights_view_ready_) {
+                ImGui::TextColored(t.text_dim, "%s", weights_view_.file_line.c_str());
+                if (weights_view_.loaded > 0) {
+                    ImGui::TextColored(t.success, ICON_FA_CIRCLE_CHECK);
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted(weights_view_.loaded_line.c_str());
+                }
+                for (const auto& line : weights_view_.fresh_lines) {
+                    ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION);
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted(line.c_str());
+                }
+                if (!weights_view_.unused_line.empty())
+                    ImGui::TextColored(t.text_dim, "%s", weights_view_.unused_line.c_str());
+            }
+            if (!weights_error_.empty()) {
+                ImGui::TextColored(t.caution, ICON_FA_TRIANGLE_EXCLAMATION);
+                ImGui::SameLine();
+                ImGui::TextUnformatted(weights_error_.c_str());
+            }
+            if (weights_view_ready_ &&
+                cyxwiz::ui::LinkButton(weights_report_open_ ? "Hide the match report" : "Match report"))
+                weights_report_open_ = !weights_report_open_;
+        }
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+// One row per layer of the graph, and the file's entries no layer took.
+void DataLoaderDialog::RenderWeightsReport() {
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    ImGui::Spacing();
+    const struct { const char* label; size_t count; } chips[] = {
+        {"All layers", weights_view_.layers}, {"Loaded", weights_view_.loaded},
+        {"Starts fresh", weights_view_.fresh}, {"In the file only", weights_view_.file_only}};
+    for (int i = 0; i < 4; ++i) {
+        if (i) ImGui::SameLine();
+        const std::string count = std::to_string(chips[i].count);
+        const std::string id = std::string("##weights_filter_") + std::to_string(i);
+        if (cyxwiz::ui::FilterChip(id.c_str(), chips[i].label, count.c_str(), weights_report_filter_ == i))
+            weights_report_filter_ = i;
+    }
+    const ImGuiTableFlags flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg;
+    const float height = std::max(160.0f, ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing() * 3.0f);
+    if (ImGui::BeginTable("##weights_report", 5, flags, ImVec2(0, height))) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("Node", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("Layer", ImGuiTableColumnFlags_WidthStretch, 1.3f);
+        ImGui::TableSetupColumn("Entries in the file", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn("Shape in the graph", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("Result", ImGuiTableColumnFlags_WidthStretch, 2.6f);
+        ImGui::TableHeadersRow();
+        for (const auto& row : weights_view_.rows) {
+            if (!cyxwiz::WeightReportRowShown(row, weights_report_filter_)) continue;
+            ImGui::TableNextRow();
+            const auto cell = [](const std::string& text) {
+                ImGui::TableNextColumn();
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextUnformatted(text.c_str());
+                ImGui::PopTextWrapPos();
+            };
+            cell(row.node);
+            cell(row.layer);
+            cell(row.entries);
+            cell(row.shapes);
+            ImGui::TableNextColumn();
+            const ImVec4 colour = row.kind == cyxwiz::WeightReportRow::Kind::Loaded
+                                      ? t.success
+                                      : row.kind == cyxwiz::WeightReportRow::Kind::Fresh ? t.warning : t.text_dim;
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(colour, "%s", row.result.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextColored(t.text_dim, "Convolution kernels are stored [out, in, h, w] in a PyTorch file and [h, w, in, out] "
+                                   "here; the loader turns them.");
 }
 
 void DataLoaderDialog::RenderContent() {
@@ -1310,17 +1550,7 @@ void DataLoaderDialog::RenderContent() {
         ImGui::SetNextItemWidth(-1);
         if (ImGui::InputText("##checkpoint_dir", checkpoint_dir_, sizeof(checkpoint_dir_))) has_changes_ = true;
         ImGui::TextDisabled("Empty uses the project's checkpoints folder (.cyxwiz/checkpoints without a project).");
-        Field("Start from");
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputText("##initialize_from_checkpoint", initialize_from_checkpoint_,
-                             sizeof(initialize_from_checkpoint_)))
-            has_changes_ = true;
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("Optional: a checkpoint folder from an earlier run (e.g. .../train-<id>/best). Its weights "
-                            "are this model's starting point and every layer keeps training on this data (full "
-                            "fine-tuning; nothing is frozen). Optimizer, schedule, epochs and seed start fresh. Layer "
-                            "names, shapes and the tokenizer must match. Empty = random weights.");
-        ImGui::PopTextWrapPos();
+        RenderStartFrom();
         ImGui::EndTabItem();
     }
     if (ImGui::BeginTabItem("Generation")) {

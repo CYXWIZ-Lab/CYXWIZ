@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <map>
 #include <random>
 #include <stdexcept>
+#include "cyxwiz/portable_random.h"
 
 namespace cyxwiz {
 
@@ -21,7 +23,7 @@ Tensor FromHost(const std::vector<size_t>& shape, const std::vector<float>& valu
 }
 
 std::vector<float> Random(size_t count, float range, std::mt19937& rng) {
-    std::uniform_real_distribution<float> dist(-range, range);
+    const auto dist = [low = -range, high = range](auto& r) { return cyxwiz::portable::UniformFloat(r, low, high); };
     std::vector<float> values(count);
     for (auto& v : values) {
         v = dist(rng);
@@ -53,6 +55,13 @@ std::vector<size_t> Probe(size_t count, size_t max_elements) {
 }
 
 void Record(GradientCheckResult& result, double error, const std::string& where) {
+    // A NaN or infinite gradient fails the check (TOFIX223 0.21, audit BE-26:
+    // NaN compares false, so it was never recorded and the check passed).
+    if (!std::isfinite(error)) {
+        if (std::isfinite(result.max_relative_error)) result.worst = where;
+        result.max_relative_error = std::numeric_limits<double>::infinity();
+        return;
+    }
     if (error > result.max_relative_error) {
         result.max_relative_error = error;
         result.worst = where;
@@ -104,8 +113,11 @@ GradientCheckResult CheckModuleGradients(
                 Record(result, RelativeError(analytic_input.at(i), numeric, options.absolute_floor), "input");
             }
 
-            // Parameter gradients.
+            // Parameter gradients; state the module keeps (GetStateNames) is
+            // not trained and has none.
+            const auto state = module->GetStateNames();
             for (const auto& [key, value] : parameters) {
+                if (std::find(state.begin(), state.end(), key) != state.end()) continue;
                 const auto base = Host(value);
                 const auto gradient = analytic_params.find(key);
                 if (gradient == analytic_params.end()) {
@@ -159,7 +171,7 @@ GradientCheckResult CheckLossGradients(
             if (targets == LossCheckTargets::OneHot) {
                 const size_t width = shape.back();
                 t.assign(count, 0.0f);
-                std::uniform_int_distribution<size_t> pick(0, width - 1);
+                const auto pick = [low = 0, high = width - 1](auto& r) { return cyxwiz::portable::UniformInt<size_t>(r, low, high); };
                 for (size_t row = 0; row < count / width; ++row) t[row * width + pick(rng)] = 1.0f;
             } else {
                 t = Random(count, 1.0f, rng);

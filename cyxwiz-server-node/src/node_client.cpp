@@ -1,4 +1,5 @@
 #include "auth/token_refresh.h"
+#include "common/server_address.h"
 #include "core/jwt_expiry.h"
 #include "node_client.h"
 #include "core/backend_manager.h"
@@ -367,7 +368,7 @@ NodeClient::NodeClient(const std::string& central_server_address, const std::str
     spdlog::info("NodeClient created for Central Server: {}", central_server_address);
 
     // Create gRPC channel
-    channel_ = grpc::CreateChannel(central_server_address, grpc::InsecureChannelCredentials());
+    channel_ = cyxwiz::protocol::CreateServerChannel(central_server_address);
     stub_ = protocol::NodeService::NewStub(channel_);
     job_status_stub_ = protocol::JobStatusService::NewStub(channel_);
     reservation_stub_ = protocol::JobReservationService::NewStub(channel_);
@@ -649,10 +650,7 @@ bool NodeClient::RefreshAuthTokenIfDue() {
     const long long left = cyxwiz::JwtExpiry(token) - now;
     if (left >= cyxwiz::kJwtRefreshBeforeSeconds) return true;
 
-    auto& backend = core::BackendManager::Instance();
-    const std::string api = backend.IsInitialized() ? backend.GetConfig().auth_api_url
-                                                    : std::string("http://127.0.0.1:3002/api");
-    if (const auto fresh = auth::RefreshTokenWithApi(api, token)) {
+    if (const auto fresh = auth::RefreshTokenWithApi(auth_api_url_, token)) {
         SetAuthToken(*fresh);
         spdlog::info("Sign-in token refreshed ({} min were left)", left / 60);
         return true;

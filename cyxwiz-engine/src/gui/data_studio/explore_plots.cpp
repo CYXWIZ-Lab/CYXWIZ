@@ -119,7 +119,7 @@ void Scatter(const std::vector<double>& xs, const std::vector<double>& ys, float
     XAxis(at, width, lx, x_label, hx);
 }
 
-void Bars(const std::vector<int64_t>& bins, double lo, double hi, float width, float height) {
+void Bars(const std::vector<int64_t>& bins, double lo, double hi, float width, float height, double mark, const std::string& caption) {
     const ui::Tokens& t = ui::CurrentTokens();
     const ImVec2 at = ImGui::GetCursorScreenPos();
     ImGui::Dummy(ImVec2(width, height));
@@ -138,11 +138,55 @@ void Bars(const std::vector<int64_t>& bins, double lo, double hi, float width, f
         dl->AddRectFilled(ImVec2(x + 1.0f, at.y + height - h), ImVec2(x + std::max(2.0f, bw - 1.0f), at.y + height), ui::ToU32(fill), 2.0f,
                           ImDrawFlags_RoundCornersTop);
     }
+    if (std::isfinite(mark) && hi > lo && mark >= lo && mark <= hi) {
+        const float x = at.x + width * static_cast<float>((mark - lo) / (hi - lo));
+        for (float y = at.y + 2.0f; y < at.y + height; y += 7.0f)
+            dl->AddLine(ImVec2(x, y), ImVec2(x, std::min(y + 4.0f, at.y + height)), ui::ToU32(t.caution), 1.5f);
+        if (!caption.empty()) dl->AddText(ImVec2(x + 5.0f, at.y + 3.0f), ui::ToU32(t.text_dim), caption.c_str());
+    }
     const std::string l = sv::Num(lo), h = sv::Num(hi);
     ImGui::TextColored(t.text_faint, "%s", l.c_str());
     ImGui::SameLine();
     ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), at.x - ImGui::GetWindowPos().x + ImGui::GetScrollX() + width - ImGui::CalcTextSize(h.c_str()).x));
     ImGui::TextColored(t.text_faint, "%s", h.c_str());
+}
+
+void NamedBars(const std::vector<std::string>& names, const std::vector<double>& values, float width,
+               const std::vector<std::string>* texts) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const size_t n = std::min(names.size(), values.size());
+    if (n == 0) return;
+    double top = 0.0;
+    for (size_t i = 0; i < n; ++i)
+        if (std::isfinite(values[i])) top = std::max(top, values[i]);
+    float label_w = 0.0f, value_w = 0.0f;
+    std::vector<std::string> shown(n);
+    for (size_t i = 0; i < n; ++i) {
+        shown[i] = texts && i < texts->size() ? (*texts)[i] : sv::Num(values[i]);
+        label_w = std::max(label_w, ImGui::CalcTextSize(names[i].c_str()).x);
+        value_w = std::max(value_w, ImGui::CalcTextSize(shown[i].c_str()).x);
+    }
+    label_w = std::min(label_w, width * 0.4f);
+    const float line = ImGui::GetTextLineHeight() + 4.0f;
+    const float height = line * static_cast<float>(n) + 6.0f;
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(width, height));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(at, ImVec2(at.x + width, at.y + height), ui::ToU32(t.plot_bg), 4.0f);
+    ImVec4 fill = t.accent_text;
+    fill.w = 0.75f;
+    const float x0 = at.x + 8.0f + label_w + 8.0f;
+    const float span = std::max(10.0f, at.x + width - 8.0f - value_w - 6.0f - x0);
+    for (size_t i = 0; i < n; ++i) {
+        const float y = at.y + 3.0f + line * static_cast<float>(i);
+        const ImVec2 size = ImGui::CalcTextSize(names[i].c_str());
+        dl->PushClipRect(ImVec2(at.x, y), ImVec2(at.x + 8.0f + label_w, y + line), true);
+        dl->AddText(ImVec2(at.x + 8.0f + label_w - std::min(size.x, label_w), y + 2.0f), ui::ToU32(t.text_dim), names[i].c_str());
+        dl->PopClipRect();
+        const float w = top > 0.0 && std::isfinite(values[i]) ? span * static_cast<float>(values[i] / top) : 0.0f;
+        dl->AddRectFilled(ImVec2(x0, y + 3.0f), ImVec2(x0 + std::max(1.0f, w), y + line - 3.0f), ui::ToU32(fill), 2.0f);
+        dl->AddText(ImVec2(x0 + w + 6.0f, y + 2.0f), ui::ToU32(t.text_faint), shown[i].c_str());
+    }
 }
 
 void Lines(const std::vector<double>& xs, const std::vector<Line>& lines, float width, float height, bool own_scale,
@@ -439,6 +483,58 @@ void PositionBars(const std::vector<double>& values, const std::vector<std::stri
         }
     }
     dl->AddText(ImVec2(at.x + 4.0f, at.y + 2.0f), ui::ToU32(t.text_faint), sv::Num(hi - pad).c_str());
+}
+
+void Heatmap(const std::vector<std::vector<double>>& cells, size_t rows, double lo, double hi, float width, float height,
+             const std::string& x_lo, const char* x_label, const std::string& x_hi, const std::string& y_lo, const std::string& y_hi) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (cells.empty() || cells.front().empty()) return;
+    const size_t columns = cells.size();
+    if (rows == 0 || rows > cells.front().size()) rows = cells.front().size();
+    if (!(hi > lo)) hi = lo + 1.0;
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(width, height));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(at, ImVec2(at.x + width, at.y + height), ui::ToU32(t.plot_bg), 4.0f);
+    const float line_h = ImGui::GetTextLineHeight();
+    const float top = at.y + 4.0f, bottom = at.y + height - line_h - 4.0f;
+    const float plot_h = bottom - top;
+    // The frequency labels sit in a gutter left of the cells, never on them.
+    const float gutter = std::max(ImGui::CalcTextSize(y_hi.c_str()).x, ImGui::CalcTextSize(y_lo.c_str()).x) + 8.0f;
+    const float left = at.x + gutter, cells_w = std::max(1.0f, width - gutter);
+    // One drawn column per pixel at most, one drawn row per pixel at most: a
+    // long series or a wide spectrum is binned by its maximum (the loudest
+    // cell shows, as a spectrogram wants).
+    const size_t px_columns = std::min<size_t>(columns, static_cast<size_t>(cells_w));
+    const size_t px_rows = std::min<size_t>(rows, static_cast<size_t>(std::max(1.0f, plot_h)));
+    const auto colour = [&](double v) {
+        const double u = std::clamp((v - lo) / (hi - lo), 0.0, 1.0);
+        const double pos = u * 3.0;
+        const size_t i = std::min<size_t>(2, static_cast<size_t>(pos));
+        const float f = static_cast<float>(pos - static_cast<double>(i));
+        const ImVec4& a = t.scale_sequential[i];
+        const ImVec4& b = t.scale_sequential[i + 1];
+        return ui::ToU32(ImVec4(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f, 1.0f));
+    };
+    for (size_t cx = 0; cx < px_columns; ++cx) {
+        const size_t c0 = cx * columns / px_columns, c1 = std::max(c0 + 1, (cx + 1) * columns / px_columns);
+        const float x0 = left + cells_w * static_cast<float>(cx) / static_cast<float>(px_columns);
+        const float x1 = left + cells_w * static_cast<float>(cx + 1) / static_cast<float>(px_columns);
+        for (size_t ry = 0; ry < px_rows; ++ry) {
+            const size_t r0 = ry * rows / px_rows, r1 = std::max(r0 + 1, (ry + 1) * rows / px_rows);
+            double v = -INFINITY;
+            for (size_t c = c0; c < c1 && c < columns; ++c)
+                for (size_t r = r0; r < r1 && r < cells[c].size(); ++r)
+                    if (std::isfinite(cells[c][r])) v = std::max(v, cells[c][r]);
+            if (!(v > lo)) continue;  // at or below the floor: the background
+            const float y1 = bottom - plot_h * static_cast<float>(ry) / static_cast<float>(px_rows);
+            const float y0 = bottom - plot_h * static_cast<float>(ry + 1) / static_cast<float>(px_rows);
+            dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), colour(v));
+        }
+    }
+    dl->AddText(ImVec2(at.x + 4.0f, top), ui::ToU32(t.text_faint), y_hi.c_str());
+    dl->AddText(ImVec2(at.x + 4.0f, bottom - line_h), ui::ToU32(t.text_faint), y_lo.c_str());
+    XAxis(at, width, x_lo, x_label, x_hi);
 }
 
 }  // namespace cyxwiz::explore_plot

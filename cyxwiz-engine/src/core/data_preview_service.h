@@ -21,7 +21,7 @@ enum class DataPreviewStatus {
 
 struct DataPreviewColumn {
     std::string name;
-    std::string type;
+    std::string type{};
     bool nullable = false;
     int64_t sampled_values = 0;
     int64_t sampled_nulls = 0;

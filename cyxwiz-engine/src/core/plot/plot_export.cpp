@@ -946,6 +946,11 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& sty
                 }
             }
             break;
+        // Drawn after the clipped area (maps, Sankey, Treemap) or returned above (3D, Network, Tree).
+        case Kind::MapPoints: case Kind::MapRegions: case Kind::Sankey: case Kind::Treemap:
+        case Kind::Scatter3D: case Kind::Line3D: case Kind::Surface: case Kind::Mesh:
+        case Kind::Network: case Kind::Tree:
+            break;
     }
     o << "</g>\n";
 

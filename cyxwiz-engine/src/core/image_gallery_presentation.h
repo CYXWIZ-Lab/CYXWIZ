@@ -24,8 +24,8 @@ struct Row {
     // From the index's quality columns, once quality is measured.
     bool measured = false;
     float blur = 0.0f, brightness = 0.0f, contrast = 0.0f;
-    std::string verdict;          // "" passes, else "blurry, low contrast"
-    std::string duplicate_of;     // the kept image's file name
+    std::string verdict{};        // "" passes, else "blurry, low contrast"
+    std::string duplicate_of{};   // the kept image's file name
 };
 
 // The first four are the grid's Sort buttons; the list's column headers

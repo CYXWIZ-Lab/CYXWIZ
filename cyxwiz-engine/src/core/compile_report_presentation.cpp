@@ -149,6 +149,12 @@ void AddConfig(Report& r, const ConfigFacts& c) {
     if (c.parameters >= 0)
         r.tiles.push_back({FormatCompiledCount(c.parameters),
                            "parameters, " + FormatCompiledBytes(static_cast<unsigned long long>(c.parameters) * 4ull)});
+    const ModelMemoryEstimate& m = c.memory;
+    const bool too_large = m.available && m.device_memory_bytes > 0 && m.total_bytes > m.device_memory_bytes;
+    if (m.available)
+        r.tiles.push_back({"about " + FormatCompiledBytes(m.total_bytes),
+                           too_large ? "per training step: more than the device has"
+                                     : "per training step, batch " + std::to_string(m.batch_size)});
 
     ConfigGroup data{"Data", {}};
     data.rows.emplace_back("Dataset", c.dataset.empty() ? "not set in the Data Input" : c.dataset);
@@ -193,12 +199,47 @@ void AddConfig(Report& r, const ConfigFacts& c) {
     }
     if (c.one_hot) learning.rows.emplace_back("Labels", "one-hot, " + Count(static_cast<size_t>(c.num_classes), "class", "classes"));
     r.config.push_back(std::move(learning));
+
+    if (m.available) {
+        ConfigGroup memory{"Memory of a training step (estimate)", {}};
+        memory.rows.emplace_back("Weights", FormatCompiledBytes(m.parameter_bytes) + " (" +
+                                                FormatCompiledCount(static_cast<long long>(m.trained_elements)) +
+                                                " parameters)");
+        memory.rows.emplace_back("Gradients", FormatCompiledBytes(m.gradient_bytes) + " (one per parameter)");
+        memory.rows.emplace_back("Optimizer state",
+                                 m.optimizer_tensors_per_parameter == 0
+                                     ? std::string("none (") + c.optimizer + " keeps nothing per parameter)"
+                                     : FormatCompiledBytes(m.optimizer_bytes) + " (" + c.optimizer + " keeps " +
+                                           std::to_string(m.optimizer_tensors_per_parameter) + " per parameter)");
+        if (m.state_elements > 0)
+            memory.rows.emplace_back("Kept state", FormatCompiledBytes(m.state_bytes) +
+                                                       " (kept but not trained: frozen layers and BatchNorm running statistics)");
+        memory.rows.emplace_back("Activations", FormatCompiledBytes(m.activation_bytes) + " (batch " +
+                                                    std::to_string(m.batch_size) +
+                                                    ": each layer's output and what it keeps for the backward pass)");
+        memory.rows.emplace_back("Total", "about " + FormatCompiledBytes(m.total_bytes) +
+                                              "; the device runtime and the training data come on top");
+        if (m.device_memory_bytes > 0) {
+            const double share = static_cast<double>(m.total_bytes) / static_cast<double>(m.device_memory_bytes);
+            memory.rows.emplace_back(
+                "Device", m.device_name + ", " + FormatCompiledBytes(m.device_memory_bytes) + ": the estimate is " +
+                              Number(share * 100.0, share < 0.1 ? 1 : 0) + "% of it" +
+                              (too_large ? ". Lower the batch size or the input size, or train on a larger device"
+                                         : ""));
+        }
+        r.config.push_back(std::move(memory));
+    }
 }
 
 std::string CopyText(const Report& r) {
     std::ostringstream out;
     out << r.title << "\n" << r.verdict << "\n";
     if (!r.subtitle.empty()) out << r.subtitle << "\n";
+    if (!r.missing_values.empty()) {
+        out << "\nMissing values\n";
+        for (const auto& card : r.missing_values)
+            for (const auto& line : card.copy_lines) out << "  " << line << "\n";
+    }
     out << "\nFindings\n";
     if (r.findings.empty()) out << "  none\n";
     for (const auto& f : r.findings) {
@@ -339,6 +380,41 @@ Report BuildReport(const Input& in) {
 
     if (in.has_config) AddConfig(r, in.config);
     r.offer_train = in.mode == Mode::Compile && r.ready;
+
+    // Missing values (the one-click fix, decision M-1): the cards replace the
+    // verdict; each open card is an error.
+    if (in.mode == Mode::TrainBlocked && !in.missing_values.empty()) {
+        r.missing_values = in.missing_values;
+        bool resolved = true;
+        size_t columns = 0, open_cards = 0;
+        for (const auto& card : r.missing_values) {
+            columns += card.open_columns;
+            r.missing_value_groups += missing_values_fix::GroupCount(card);
+            if (card.resolved) continue;
+            resolved = false;
+            ++open_cards;
+            if (card.fix_all_steps.empty())
+                r.fix_and_train_blocked = "The missing values of " + card.input_name +
+                                          " cannot be fixed with a step here: fix them in its file.";
+        }
+        r.errors += open_cards;
+        r.chips.front() = {Count(r.errors, "error", "errors"), r.errors ? Tone::Error : Tone::Neutral};
+        if (resolved) {
+            r.verdict = r.missing_values.size() == 1 ? r.missing_values.front().resolved_verdict
+                                                     : "Fixed: every input's missing values have their steps";
+            r.verdict_tone = Tone::Ok;
+            r.subtitle = r.missing_values.front().resolved_subtitle;
+            r.offer_train = r.errors == 0;
+        } else {
+            r.verdict = r.missing_values.size() == 1
+                            ? r.missing_values.front().verdict
+                            : "Training did not start: " + Count(columns, "column has", "columns have") +
+                                  " missing values";
+            r.verdict_tone = Tone::Error;
+            r.subtitle = r.missing_values.front().subtitle;
+            r.offer_fix_and_train = true;
+        }
+    }
     r.copy_text = CopyText(r);
     return r;
 }

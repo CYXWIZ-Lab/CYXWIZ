@@ -2,11 +2,15 @@
 
 #include "executable_model.h"
 #include "graph_compiler.h"
+#include "layer_capture.h"
+#include "layer_capture_store.h"
+#include "training_health.h"
 #include "metric_learning_metrics.h"
 #include "dataset_batcher.h"  // Includes ArrowDatasetBatcher + IBatcher
 #include "parquet_arrow_batcher.h"
 #include "parquet_backed_dataset.h"
 #include "data_registry.h"
+#include "missing_columns.h"
 #include "arrow_dataset.h"
 #include "training_scheduler_controller.h"
 #include "training_randomness.h"
@@ -49,6 +53,12 @@ struct TrainingMetrics {
     int optimizer_step_count = 0;
     int scheduler_step_count = 0;
     double learning_rate = 0.0;
+    // A learning rate range test (config.learning_rate_range): every step's
+    // rate, loss and smoothed loss so far, and why it stopped once it has.
+    std::vector<LearningRateRangePoint> range_points;
+    std::string range_stop_reason;
+    // Weights, gradients and dead units once an epoch (the Model window's Health).
+    TrainingHealth health;
     float grad_norm = 0.0f;  // global gradient norm before clipping (grad_clip_norm > 0)
     size_t train_sample_count = 0;
     size_t val_sample_count = 0;
@@ -57,6 +67,10 @@ struct TrainingMetrics {
     // Training metrics
     float train_loss = 0.0f;
     float train_accuracy = 0.0f;
+    // The latest Dashboard point (TOFIX178 1.8i): the mean over the batches
+    // since the previous point (ReportWindow), not since the epoch began.
+    float report_loss = 0.0f;
+    float report_accuracy = 0.0f;
     float train_mae = 0.0f;
     float train_rmse = 0.0f;
 
@@ -113,8 +127,14 @@ struct TrainingMetrics {
     bool is_paused = false;
     bool is_complete = false;
     std::string status_message;
+    std::string waiting_for_gpu;  // why, while the run waits for another run's GPU (else empty)
     std::string terminal_status;
     std::string terminal_reason;
+    // A run refused for missing values: the columns and counts, so the
+    // Dashboard can offer the fix (empty otherwise).
+    std::vector<MissingColumn> missing_columns;
+    int64_t missing_values_total_rows = -1;
+    std::string missing_values_supplied_role;  // "Validation" / "Test": a supplied input refused (fix its file)
 
     // History (for plotting)
     std::vector<float> loss_history;
@@ -131,7 +151,7 @@ struct TrainingMetrics {
 
     // Resume checkpoints (TOFIX118 P4e).
     std::string last_resume_checkpoint;  // newest complete one written by this run
-    std::string initialized_from;        // warm-start checkpoint (model weights only)
+    std::string initialized_from;        // warm-start checkpoint or weights file (model weights only)
     int resumed_after_epoch = 0;         // > 0: this run continued a checkpoint
     bool resume_exact = false;           // seeds and data order replay exactly
 };
@@ -246,6 +266,16 @@ public:
     // True once Stop was asked for; long setup work (a batcher factory
     // preparing images) checks it to stop early.
     bool StopRequested() const { return stop_requested_.load(); }
+    // While Train waits for another training run to release the GPU:
+    // on_change is told why when the wait starts and "" when it ends;
+    // should_cancel is asked every 200 ms, true ends the run as Stop does
+    // (for a caller that otherwise cancels from its batch callback). Set
+    // before Train.
+    struct GpuWaitHooks {
+        std::function<void(const std::string& reason)> on_change;
+        std::function<bool()> should_cancel;
+    };
+    void SetGpuWaitHooks(GpuWaitHooks hooks) { gpu_wait_hooks_ = std::move(hooks); }
     // Stop, first writing a resume checkpoint at the batch it stops on where
     // the loop supports mid-epoch resume (sequence batches); the other loops
     // keep their epoch-end checkpoint. Needs EnableResumeCheckpoints. Used
@@ -269,6 +299,41 @@ public:
     void SetResumeCheckpointCallback(ResumeCheckpointCallback callback) {
         resume_checkpoint_callback_ = std::move(callback);
     }
+
+    // Layer snapshots (TOFIX178 6.1b). Enable before Train: after every
+    // `every_epochs`-th epoch and after the last one (an early stop's too),
+    // CaptureStep on `features` / `labels`, batch first as a batcher hands
+    // them out; or, when `source_count` > 0, on items `source_index` ..
+    // `source_index + source_count - 1` taken from the run's own batchers at
+    // the start of Train (as validation sees them, GetSourceSampleRange;
+    // snapshots are off when no batcher reaches items by number). Each is saved with the training run in the debug run store
+    // (layer_capture_store.h, label EpochCaptureLabel) when `save`, and the
+    // captures of all but the last `keep_runs` runs are then deleted (6.1c).
+    // A snapshot that fails is logged and training goes on.
+    struct LayerSnapshotSchedule {
+        LayerCaptureOptions options;
+        int every_epochs = 5;
+        Tensor features;
+        Tensor labels;
+        size_t source_index = 0;
+        size_t source_count = 0;
+        bool save = true;
+        size_t keep_runs = 10;
+        std::string graph_name;   // saved with the run's epochs (training.json)
+        std::string output_rule;  // how the output reads (layer_view::OutputRuleKey), saved there too
+    };
+    void EnableLayerSnapshots(LayerSnapshotSchedule schedule);
+    struct LayerSnapshot {
+        int epoch = 0;
+        // The tensors, for a snapshot that is not saved; a saved one is read
+        // back from the run store (LoadLayerCapture) and holds none here.
+        std::shared_ptr<const LayerCapture> capture;
+        // The run and label it is saved under; empty when not saved.
+        std::string run_id;
+        std::string label;
+    };
+    // The snapshots taken so far, in epoch order (any thread).
+    std::vector<LayerSnapshot> LayerSnapshots() const;
 
     /**
      * Pause training (thread-safe)
@@ -316,6 +381,12 @@ public:
      * Get the optimizer (for export)
      */
     Optimizer* GetOptimizer() { return optimizer_.get(); }
+
+    // The built model (sequential or with branches) and where each of its
+    // modules comes from, while Train runs: read on the training thread (the
+    // batch callback), e.g. by the training oracle after each step.
+    IExecutableModel* GetExecutableModel() { return model_.get(); }
+    const std::vector<BuiltModuleProvenance>& GetModuleProvenance() const { return module_provenance_; }
 
     /**
      * Release ownership of the trained model (transfers ownership to caller):
@@ -383,6 +454,7 @@ private:
     // Thread safety
     std::atomic<bool> is_training_{false};
     std::atomic<bool> stop_requested_{false};
+    GpuWaitHooks gpu_wait_hooks_;
     std::atomic<bool> checkpoint_on_stop_{false};
     std::atomic<bool> is_paused_{false};
 
@@ -410,8 +482,20 @@ private:
     ResumeCheckpointCallback resume_checkpoint_callback_;
     int last_mid_epoch_checkpoint_step_ = -1;
     std::optional<TrainingEpochProgress> pending_epoch_resume_;
+    std::optional<LayerSnapshotSchedule> layer_snapshot_schedule_;
+    std::vector<BuiltModuleProvenance> module_provenance_;
+    mutable std::mutex layer_snapshots_mutex_;
+    std::vector<LayerSnapshot> layer_snapshots_;
+    // Every epoch's metrics while snapshots are on, saved with each snapshot.
+    TrainingRunRecord snapshot_run_record_;
+    void TakeLayerSnapshot(int epoch, const std::string& run_id);
     // Generation previews (TOFIX159): bound for the duration of Train.
     std::unique_ptr<TrainingGenerationPreview> generation_preview_;
+    // The range test of a learning_rate_range run; the loss of the batch
+    // just computed, which it records after the optimizer step.
+    std::unique_ptr<LearningRateRangeTest> range_test_;
+    std::unique_ptr<TrainingHealthRecorder> health_;
+    double range_batch_loss_ = 0.0;
     std::filesystem::path generation_preview_dir_;
     std::string generation_preview_run_id_;
     CheckpointManager* generation_preview_checkpoints_ = nullptr;

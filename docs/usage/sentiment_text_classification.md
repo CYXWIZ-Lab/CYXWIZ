@@ -39,9 +39,15 @@ norm=l2
 output_format=dense
 ```
 
-`stop_words=none` is intentional: the engine's English stop-word list removes
-negation words, which would prevent features such as `not good` from being
-built.
+`stop_words=none` is intentional: the English stop-word list (scikit-learn's
+`ENGLISH_STOP_WORDS` and their contractions) removes negation words such as
+`not`, `no` and `nor`, which would prevent features such as `not good` from
+being built.
+
+To look at the text before choosing features, open the column in Data
+Studio's Explore > Text ([text](text.md)): the commonest words and pairs, what
+sets each class apart (Terms), VADER sentiment per class, and the token
+lengths.
 
 ## Reproducible comparison
 

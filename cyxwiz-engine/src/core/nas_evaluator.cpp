@@ -1,4 +1,9 @@
 #include "nas_evaluator.h"
+#include "node_metadata_registry.h"
+#include "graph_compiler.h"
+#include "model_builder.h"
+#include "model_summary_presentation.h"
+#include <cyxwiz/device.h>
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <algorithm>
@@ -7,6 +12,76 @@
 #include <set>
 
 namespace cyxwiz {
+
+namespace {
+
+const NodeMetadata* MetadataFor(gui::NodeType type) {
+    auto& registry = NodeMetadataRegistry::Instance();
+    if (!registry.IsInitialized()) registry.Initialize();
+    return registry.GetMetadata(type);
+}
+
+// A node of the model itself (a layer, activation, merge, ...), not the data
+// pipeline around it (Data Input, Split, DataLoader, Normalize) or the loss.
+bool IsModelNode(gui::NodeType type) {
+    const NodeMetadata* metadata = MetadataFor(type);
+    if (!metadata) return false;
+    switch (metadata->category) {
+        case gui::NodeCategory::Layers:
+        case gui::NodeCategory::Activation:
+        case gui::NodeCategory::Pooling:
+        case gui::NodeCategory::Normalization:
+        case gui::NodeCategory::Attention:
+        case gui::NodeCategory::Recurrent:
+        case gui::NodeCategory::ShapeOps:
+        case gui::NodeCategory::MergeOps:
+        case gui::NodeCategory::Upsampling:
+        case gui::NodeCategory::Regularization:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Parameters and FLOPs of a version as the Model window counts them (the
+// one counter, model_summary_presentation): the graph compiled from its saved
+// data contract, multiply-adds per compiled layer (two FLOPs each), learnable
+// parameters from the built model. False, with why, when it cannot be counted.
+bool CountWithCompiler(const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links,
+                       ArchitectureScore& score, std::string& why) {
+    const TrainingConfiguration compiled = GraphCompiler{}.Compile(nodes, links, /*allow_unloaded_data=*/true);
+    if (!compiled.is_valid || compiled.layers.empty()) {
+        why = compiled.error_message.empty() ? "The version does not compile" : compiled.error_message;
+        return false;
+    }
+    long long multiply_adds = 0;
+    for (const auto& layer : compiled.layers) {
+        const LayerCost cost = CountLayerMultiplyAdds(layer);
+        if (cost.counted) multiply_adds += cost.value;
+    }
+    try {
+        const QuietModelBuildScope quiet;  // no Console lines per version
+        Device::ActivateProcessDeviceOnThisThread();
+        auto built = BuildExecutableFromConfig(compiled);
+        if (!built.ok()) {
+            why = "The version could not be built";
+            return false;
+        }
+        const auto state = built.model->GetStateParameterNames();
+        long long parameters = 0;
+        for (const auto& [name, tensor] : built.model->GetParameters())
+            if (!state.count(name)) parameters += static_cast<long long>(tensor.NumElements());
+        score.trainable_params = parameters;
+        score.total_params = parameters;
+        score.total_flops = 2 * multiply_adds;
+    } catch (const std::exception& error) {
+        why = std::string("The version could not be built: ") + error.what();
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
 
 // ============================================================================
 // Utility Methods
@@ -56,6 +131,7 @@ bool NASEvaluator::IsTrainableLayer(gui::NodeType type) {
         case gui::NodeType::LayerNorm:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::MultiHeadAttention:
         case gui::NodeType::TransformerEncoder:
         case gui::NodeType::TransformerDecoder:
@@ -75,6 +151,9 @@ bool NASEvaluator::IsActivation(gui::NodeType type) {
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:
+        case gui::NodeType::Hardswish:
+        case gui::NodeType::Hardsigmoid:
+        case gui::NodeType::ReLU6:
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Softmax:
@@ -84,16 +163,14 @@ bool NASEvaluator::IsActivation(gui::NodeType type) {
     }
 }
 
-gui::NodeType NASEvaluator::GetRandomLayerType(std::mt19937& rng) {
-    std::vector<gui::NodeType> types = {
-        gui::NodeType::Dense,
-        gui::NodeType::Conv2D,
-        gui::NodeType::MaxPool2D,
-        gui::NodeType::AvgPool2D,
-        gui::NodeType::BatchNorm,
-        gui::NodeType::Dropout,
-        gui::NodeType::Flatten
-    };
+gui::NodeType NASEvaluator::GetRandomLayerType(std::mt19937& rng, gui::NodeType neighbour, gui::NodeType except) {
+    // Shape-keeping choices only: a convolution stays a convolution of the
+    // same kind (no Flatten or pooling that would change what follows).
+    const bool spatial = neighbour == gui::NodeType::Conv1D || neighbour == gui::NodeType::Conv2D ||
+                         neighbour == gui::NodeType::Conv3D || neighbour == gui::NodeType::DepthwiseConv2D;
+    std::vector<gui::NodeType> types = {spatial ? neighbour : gui::NodeType::Dense, gui::NodeType::BatchNorm,
+                                        gui::NodeType::Dropout};
+    std::erase(types, except);
     std::uniform_int_distribution<int> dist(0, static_cast<int>(types.size()) - 1);
     return types[dist(rng)];
 }
@@ -110,127 +187,6 @@ gui::NodeType NASEvaluator::GetRandomActivation(std::mt19937& rng) {
     return types[dist(rng)];
 }
 
-int64_t NASEvaluator::EstimateLayerParams(
-    gui::NodeType type,
-    const std::map<std::string, std::string>& params,
-    const std::vector<size_t>& input_shape)
-{
-    auto GetParam = [&params](const std::string& key, int default_val) -> int {
-        auto it = params.find(key);
-        if (it != params.end()) {
-            try {
-                return std::stoi(it->second);
-            } catch (...) {}
-        }
-        return default_val;
-    };
-
-    int64_t param_count = 0;
-    size_t in_features = input_shape.empty() ? 64 : input_shape.back();
-
-    switch (type) {
-        case gui::NodeType::Dense: {
-            int units = GetParam("units", 64);
-            param_count = static_cast<int64_t>(in_features) * units + units;  // W + b
-            break;
-        }
-        case gui::NodeType::Conv2D: {
-            int filters = GetParam("filters", 32);
-            int kernel_size = GetParam("kernel_size", 3);
-            size_t in_channels = input_shape.size() > 1 ? input_shape[1] : 3;
-            param_count = static_cast<int64_t>(in_channels) * filters * kernel_size * kernel_size + filters;
-            break;
-        }
-        case gui::NodeType::BatchNorm:
-        case gui::NodeType::LayerNorm: {
-            param_count = static_cast<int64_t>(in_features) * 4;  // gamma, beta, running_mean, running_var
-            break;
-        }
-        case gui::NodeType::LSTM: {
-            int units = GetParam("units", 64);
-            param_count = 4 * ((static_cast<int64_t>(in_features) + units + 1) * units);  // 4 gates
-            break;
-        }
-        case gui::NodeType::GRU: {
-            int units = GetParam("units", 64);
-            param_count = 3 * ((static_cast<int64_t>(in_features) + units + 1) * units);  // 3 gates
-            break;
-        }
-        case gui::NodeType::Embedding: {
-            int vocab_size = GetParam("num_embeddings", 10000);
-            int embed_dim = GetParam("embedding_dim", 256);
-            param_count = static_cast<int64_t>(vocab_size) * embed_dim;
-            break;
-        }
-        case gui::NodeType::MultiHeadAttention: {
-            int dim = GetParam("embed_dim", 64);
-            param_count = 4 * static_cast<int64_t>(dim) * dim;  // Q, K, V, O projections
-            break;
-        }
-        default:
-            param_count = 0;
-            break;
-    }
-
-    return param_count;
-}
-
-int64_t NASEvaluator::EstimateLayerFLOPs(
-    gui::NodeType type,
-    const std::map<std::string, std::string>& params,
-    const std::vector<size_t>& input_shape)
-{
-    auto GetParam = [&params](const std::string& key, int default_val) -> int {
-        auto it = params.find(key);
-        if (it != params.end()) {
-            try {
-                return std::stoi(it->second);
-            } catch (...) {}
-        }
-        return default_val;
-    };
-
-    int64_t flops = 0;
-    size_t batch = input_shape.empty() ? 1 : input_shape[0];
-    size_t in_features = input_shape.size() > 1 ? input_shape.back() : 64;
-
-    switch (type) {
-        case gui::NodeType::Dense: {
-            int units = GetParam("units", 64);
-            flops = 2 * batch * static_cast<int64_t>(in_features) * units;  // multiply-add
-            break;
-        }
-        case gui::NodeType::Conv2D: {
-            int filters = GetParam("filters", 32);
-            int kernel_size = GetParam("kernel_size", 3);
-            size_t in_channels = input_shape.size() > 1 ? input_shape[1] : 3;
-            size_t height = input_shape.size() > 2 ? input_shape[2] : 28;
-            size_t width = input_shape.size() > 3 ? input_shape[3] : 28;
-            flops = 2 * batch * static_cast<int64_t>(filters) * height * width *
-                    in_channels * kernel_size * kernel_size;
-            break;
-        }
-        case gui::NodeType::ReLU:
-        case gui::NodeType::LeakyReLU:
-        case gui::NodeType::Sigmoid:
-        case gui::NodeType::Tanh: {
-            flops = batch * static_cast<int64_t>(in_features);
-            break;
-        }
-        case gui::NodeType::GELU:
-        case gui::NodeType::Swish:
-        case gui::NodeType::Mish: {
-            flops = batch * static_cast<int64_t>(in_features) * 5;  // More complex activation
-            break;
-        }
-        default:
-            flops = 0;
-            break;
-    }
-
-    return flops;
-}
-
 // ============================================================================
 // Architecture Scoring
 // ============================================================================
@@ -238,7 +194,6 @@ int64_t NASEvaluator::EstimateLayerFLOPs(
 ArchitectureScore NASEvaluator::ScoreArchitecture(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
-    const std::vector<size_t>& input_shape,
     const NASSearchConfig& config)
 {
     ArchitectureScore score;
@@ -254,15 +209,15 @@ ArchitectureScore NASEvaluator::ScoreArchitecture(
         if (IsTrainableLayer(node.type)) {
             score.trainable_layer_count++;
             score.layer_type_counts[node.type]++;
-
-            // Estimate parameters
-            score.trainable_params += EstimateLayerParams(node.type, node.parameters, input_shape);
-            score.total_flops += EstimateLayerFLOPs(node.type, node.parameters, input_shape);
         }
-        score.layer_count++;
+        if (IsModelNode(node.type)) score.layer_count++;
     }
 
-    score.total_params = score.trainable_params;
+    // Parameters and FLOPs as the Model window counts them (CountWithCompiler).
+    // The layout scores below need no compile: a version that does not
+    // compile is still described, but not scored.
+    std::string not_sized;
+    const bool sized = CountWithCompiler(nodes, links, score, not_sized);
 
     // Calculate complexity score (prefer smaller models)
     // Log scale: 1M params -> 0.5, 10M -> 0.25, 100K -> 0.75
@@ -290,15 +245,25 @@ ArchitectureScore NASEvaluator::ScoreArchitecture(
     int unique_types = static_cast<int>(score.layer_type_counts.size());
     score.diversity_score = std::min(1.0, unique_types / 5.0);
 
-    // Connectivity score (skip connections are good)
-    // Count links that skip layers
+    // Connectivity score (skip connections are good): links drawn as skips,
+    // and merge nodes (Add, Concatenate, ...) that join two or more paths,
+    // the way the canvas builds residual and dense blocks.
     int skip_connections = 0;
+    std::map<int, int> incoming;
     for (const auto& link : links) {
         if (link.type == gui::LinkType::ResidualSkip ||
             link.type == gui::LinkType::DenseSkip) {
             skip_connections++;
         }
+        incoming[link.to_node]++;
     }
+    for (const auto& node : nodes) {
+        const NodeMetadata* metadata = MetadataFor(node.type);
+        if (metadata && metadata->category == gui::NodeCategory::MergeOps && incoming[node.id] >= 2) {
+            skip_connections++;
+        }
+    }
+    score.skip_connections = skip_connections;
     score.connectivity_score = std::min(1.0, skip_connections / 3.0);
 
     // Overall score (weighted combination)
@@ -311,9 +276,69 @@ ArchitectureScore NASEvaluator::ScoreArchitecture(
 
     // Generate summary
     score.architecture_summary = DescribeArchitecture(nodes, links);
+    if (!sized) {
+        score.success = false;
+        score.error_message = not_sized;
+        score.overall_score = 0.0;
+        return score;
+    }
     score.success = true;
 
     return score;
+}
+
+std::vector<int> NASEvaluator::ModelChain(const std::vector<gui::MLNode>& nodes,
+                                          const std::vector<gui::NodeLink>& links) {
+    // Kahn's order over the links, ties in the nodes' order.
+    std::map<int, int> index_of;
+    for (size_t i = 0; i < nodes.size(); ++i) index_of[nodes[i].id] = static_cast<int>(i);
+    std::vector<int> waiting(nodes.size(), 0);
+    std::vector<std::vector<int>> next(nodes.size());
+    for (const auto& link : links) {
+        const auto from = index_of.find(link.from_node);
+        const auto to = index_of.find(link.to_node);
+        if (from == index_of.end() || to == index_of.end() || from->second == to->second) continue;
+        next[from->second].push_back(to->second);
+        ++waiting[to->second];
+    }
+    std::set<int> ready;
+    for (size_t i = 0; i < nodes.size(); ++i)
+        if (waiting[i] == 0) ready.insert(static_cast<int>(i));
+    std::vector<int> order;
+    std::vector<bool> placed(nodes.size(), false);
+    while (order.size() < nodes.size()) {
+        int index = -1;
+        if (!ready.empty()) {
+            index = *ready.begin();
+            ready.erase(ready.begin());
+        } else {
+            // A cycle: take the first node not placed yet.
+            for (size_t i = 0; i < nodes.size() && index < 0; ++i)
+                if (!placed[i]) index = static_cast<int>(i);
+        }
+        placed[index] = true;
+        order.push_back(index);
+        for (int to : next[index])
+            if (!placed[to] && --waiting[to] == 0) ready.insert(to);
+    }
+    std::vector<int> chain;
+    for (int index : order)
+        if (IsModelNode(nodes[index].type)) chain.push_back(index);
+    return chain;
+}
+
+std::string NASEvaluator::LayerKind(const gui::MLNode& node) {
+    const NodeMetadata* metadata = MetadataFor(node.type);
+    return metadata ? metadata->name : node.name;
+}
+
+std::string NASEvaluator::LayerText(const gui::MLNode& node) {
+    const std::string text = LayerKind(node);
+    for (const char* size : {"units", "filters", "out_channels", "hidden_size"}) {
+        const auto it = node.parameters.find(size);
+        if (it != node.parameters.end() && !it->second.empty()) return text + " " + it->second;
+    }
+    return text;
 }
 
 std::string NASEvaluator::DescribeArchitecture(
@@ -322,32 +347,24 @@ std::string NASEvaluator::DescribeArchitecture(
 {
     std::stringstream ss;
 
-    // Count layer types
-    std::map<gui::NodeType, int> counts;
+    // Model layers by type, in the order they first appear; the data pipeline
+    // and the loss are counted in the node total only.
+    std::vector<std::pair<std::string, int>> counts;
     for (const auto& node : nodes) {
-        counts[node.type]++;
+        if (!IsModelNode(node.type)) continue;
+        const NodeMetadata* metadata = MetadataFor(node.type);
+        const std::string name = metadata ? metadata->name : node.name;
+        auto it = std::find_if(counts.begin(), counts.end(), [&](const auto& c) { return c.first == name; });
+        if (it == counts.end()) counts.emplace_back(name, 1);
+        else ++it->second;
     }
 
     ss << nodes.size() << " nodes, " << links.size() << " links\n";
     ss << "Layers: ";
-
-    bool first = true;
-    for (const auto& [type, count] : counts) {
-        if (!first) ss << ", ";
-        first = false;
-
-        // Get type name
-        switch (type) {
-            case gui::NodeType::Dense: ss << count << "x Dense"; break;
-            case gui::NodeType::Conv2D: ss << count << "x Conv2D"; break;
-            case gui::NodeType::MaxPool2D: ss << count << "x MaxPool"; break;
-            case gui::NodeType::BatchNorm: ss << count << "x BatchNorm"; break;
-            case gui::NodeType::Dropout: ss << count << "x Dropout"; break;
-            case gui::NodeType::ReLU: ss << count << "x ReLU"; break;
-            case gui::NodeType::LSTM: ss << count << "x LSTM"; break;
-            case gui::NodeType::Flatten: ss << count << "x Flatten"; break;
-            default: ss << count << "x Other"; break;
-        }
+    if (counts.empty()) ss << "none";
+    for (size_t i = 0; i < counts.size(); ++i) {
+        if (i) ss << ", ";
+        ss << counts[i].second << "x " << counts[i].first;
     }
 
     return ss.str();
@@ -459,7 +476,7 @@ gui::MLNode NASEvaluator::CreateLayerNode(
             node.name = "GELU";
             break;
         default:
-            node.name = "Layer";
+            node.name = LayerKind(node);  // its name in the Nodes panel ("Mish")
             break;
     }
 
@@ -485,6 +502,35 @@ std::vector<int> NASEvaluator::FindTrainableLayers(const std::vector<gui::MLNode
     return indices;
 }
 
+bool NASEvaluator::FeedsTrainableLayer(const std::vector<gui::MLNode>& nodes,
+                                       const std::vector<gui::NodeLink>& links, int node_id) {
+    std::map<int, const gui::MLNode*> by_id;
+    for (const auto& node : nodes) by_id[node.id] = &node;
+    // Walk downstream until a trainable layer is met.
+    std::set<int> seen;
+    std::vector<int> frontier = {node_id};
+    while (!frontier.empty()) {
+        const int id = frontier.back();
+        frontier.pop_back();
+        for (const auto& link : links) {
+            if (link.from_node != id || !seen.insert(link.to_node).second) continue;
+            const auto next = by_id.find(link.to_node);
+            if (next == by_id.end()) continue;
+            if (IsTrainableLayer(next->second->type)) return true;
+            frontier.push_back(link.to_node);
+        }
+    }
+    return false;
+}
+
+std::vector<int> NASEvaluator::FindBodyLayers(const std::vector<gui::MLNode>& nodes,
+                                              const std::vector<gui::NodeLink>& links) {
+    std::vector<int> body;
+    for (const int index : FindTrainableLayers(nodes))
+        if (FeedsTrainableLayer(nodes, links, nodes[index].id)) body.push_back(index);
+    return body;
+}
+
 std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::MutateArchitecture(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
@@ -504,6 +550,7 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
         std::vector<MutationType> types = {
             MutationType::AddLayer,
             MutationType::RemoveLayer,
+            MutationType::SwapLayer,
             MutationType::ChangeUnits,
             MutationType::ChangeActivation
         };
@@ -512,6 +559,8 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
     }
 
     std::vector<int> trainable = FindTrainableLayers(mutated_nodes);
+    // Remove, resize and swap leave the head alone: it sets the output size.
+    const std::vector<int> body = FindBodyLayers(mutated_nodes, mutated_links);
 
     switch (mutation) {
         case MutationType::AddLayer: {
@@ -523,32 +572,55 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
                 int new_node_id = GetNextNodeId(mutated_nodes);
                 int pin_id = GetNextPinId(mutated_nodes);
 
-                gui::NodeType new_type = GetRandomLayerType(rng);
+                gui::NodeType new_type = GetRandomLayerType(rng, mutated_nodes[target_idx].type);
                 std::uniform_int_distribution<int> units_dist(32, 256);
                 gui::MLNode new_node = CreateLayerNode(new_type, new_node_id, pin_id, units_dist(rng));
+                const int target_id = mutated_nodes[target_idx].id;
 
+                // Splice the new layer into the links that fed the target:
+                // they feed the new layer, which feeds the target's input.
+                int next_link_id = GetNextLinkId(mutated_links);
+                std::vector<gui::NodeLink> added;
+                for (auto& link : mutated_links) {
+                    if (link.to_node != target_id) continue;
+                    added.push_back({next_link_id++, new_node_id, new_node.outputs[0].id, target_id, link.to_pin,
+                                     link.type});
+                    link.to_node = new_node_id;
+                    link.to_pin = new_node.inputs[0].id;
+                }
+                if (added.empty()) break;  // nothing feeds the target: leave the graph as it was
+                mutated_links.insert(mutated_links.end(), added.begin(), added.end());
                 mutated_nodes.insert(mutated_nodes.begin() + target_idx, new_node);
-
-                // TODO: Update links to include new node
             }
             break;
         }
 
         case MutationType::RemoveLayer: {
-            // Remove a random trainable layer (if more than 1)
-            if (trainable.size() > 1) {
-                std::uniform_int_distribution<int> dist(0, static_cast<int>(trainable.size()) - 1);
-                int remove_idx = trainable[dist(rng)];
+            // Remove a random trainable layer other than the head
+            if (!body.empty()) {
+                std::uniform_int_distribution<int> dist(0, static_cast<int>(body.size()) - 1);
+                int remove_idx = body[dist(rng)];
 
                 int node_id = mutated_nodes[remove_idx].id;
 
                 // Remove the node
                 mutated_nodes.erase(mutated_nodes.begin() + remove_idx);
 
-                // Remove links to/from this node and reconnect
+                // Remove links to/from this node and reconnect: what fed it
+                // feeds what it fed (the first feeder, for each consumer).
+                const gui::NodeLink* feeder = nullptr;
+                for (const auto& link : mutated_links)
+                    if (link.to_node == node_id) {
+                        feeder = &link;
+                        break;
+                    }
                 std::vector<gui::NodeLink> new_links;
+                int next_link_id = GetNextLinkId(mutated_links);
                 for (const auto& link : mutated_links) {
-                    if (link.from_node != node_id && link.to_node != node_id) {
+                    if (link.from_node == node_id && feeder) {
+                        new_links.push_back({next_link_id++, feeder->from_node, feeder->from_pin, link.to_node,
+                                             link.to_pin, link.type});
+                    } else if (link.from_node != node_id && link.to_node != node_id) {
                         new_links.push_back(link);
                     }
                 }
@@ -558,22 +630,22 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
         }
 
         case MutationType::ChangeUnits: {
-            // Change units/filters of a random trainable layer
-            if (!trainable.empty()) {
-                std::uniform_int_distribution<int> dist(0, static_cast<int>(trainable.size()) - 1);
-                int target_idx = trainable[dist(rng)];
+            // Change units/filters of a random trainable layer other than the head
+            if (!body.empty()) {
+                std::uniform_int_distribution<int> dist(0, static_cast<int>(body.size()) - 1);
+                int target_idx = body[dist(rng)];
 
                 auto& node = mutated_nodes[target_idx];
 
                 // Modify units or filters
                 if (node.parameters.count("units")) {
-                    int current = std::stoi(node.parameters["units"]);
+                    const int current = std::max(1, std::atoi(node.parameters["units"].c_str()));
                     std::uniform_real_distribution<double> factor(0.5, 2.0);
                     int new_units = static_cast<int>(current * factor(rng));
                     new_units = std::max(16, std::min(1024, new_units));
                     node.parameters["units"] = std::to_string(new_units);
                 } else if (node.parameters.count("filters")) {
-                    int current = std::stoi(node.parameters["filters"]);
+                    const int current = std::max(1, std::atoi(node.parameters["filters"].c_str()));
                     std::uniform_real_distribution<double> factor(0.5, 2.0);
                     int new_filters = static_cast<int>(current * factor(rng));
                     new_filters = std::max(8, std::min(512, new_filters));
@@ -583,11 +655,32 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
             break;
         }
 
+        case MutationType::SwapLayer: {
+            // Replace a layer other than the head with another type that fits
+            // there; it keeps its id and its pins, so its links stay.
+            if (!body.empty()) {
+                std::uniform_int_distribution<int> dist(0, static_cast<int>(body.size()) - 1);
+                auto& node = mutated_nodes[body[dist(rng)]];
+                const gui::NodeType new_type = GetRandomLayerType(rng, node.type, node.type);
+                int units = 64;
+                const auto units_it = node.parameters.find("units");
+                if (units_it != node.parameters.end()) units = std::max(1, std::atoi(units_it->second.c_str()));
+                int unused_pin = 0;
+                const gui::MLNode swapped = CreateLayerNode(new_type, node.id, unused_pin, units);
+                node.type = swapped.type;
+                node.name = swapped.name;
+                node.parameters = swapped.parameters;
+            }
+            break;
+        }
+
         case MutationType::ChangeActivation: {
-            // Find activation nodes and change one
+            // A hidden activation: one that still feeds a trainable layer. The
+            // output activation belongs to the head and the loss.
             std::vector<int> activation_indices;
             for (size_t i = 0; i < mutated_nodes.size(); i++) {
-                if (IsActivation(mutated_nodes[i].type)) {
+                if (IsActivation(mutated_nodes[i].type) &&
+                    FeedsTrainableLayer(mutated_nodes, mutated_links, mutated_nodes[i].id)) {
                     activation_indices.push_back(static_cast<int>(i));
                 }
             }
@@ -597,6 +690,7 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
                 int target_idx = activation_indices[dist(rng)];
 
                 gui::NodeType new_activation = GetRandomActivation(rng);
+                if (mutated_nodes[target_idx].type != new_activation) mutated_nodes[target_idx].parameters.clear();
                 mutated_nodes[target_idx].type = new_activation;
 
                 // Update name
@@ -620,210 +714,6 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
 }
 
 // ============================================================================
-// Architecture Suggestions
-// ============================================================================
-
-std::vector<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>>
-NASEvaluator::SuggestArchitectures(
-    const std::string& task_type,
-    const std::vector<size_t>& input_shape,
-    int output_size,
-    int num_suggestions)
-{
-    (void)input_shape;
-
-    std::vector<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>> suggestions;
-
-    std::mt19937 rng(42);
-
-    for (int s = 0; s < num_suggestions; s++) {
-        std::vector<gui::MLNode> nodes;
-        std::vector<gui::NodeLink> links;
-        int node_id = 1;
-        int pin_id = 1;
-        int link_id = 1;
-
-        // Input node
-        gui::MLNode input_node;
-        input_node.id = node_id++;
-        input_node.type = gui::NodeType::DatasetInput;
-        input_node.name = "Input";
-        gui::NodePin input_out;
-        input_out.id = pin_id++;
-        input_out.type = gui::PinType::Dataset;
-        input_out.name = "data";
-        input_out.is_input = false;
-        input_node.outputs.push_back(input_out);
-        nodes.push_back(input_node);
-
-        int last_output_pin = input_out.id;
-        int last_node_id = input_node.id;
-
-        // Different architectures based on task
-        if (task_type == "image_classification" || task_type == "image") {
-            // CNN architecture
-            std::vector<int> filters = {32, 64, 128};
-            std::uniform_int_distribution<int> layer_dist(2, 4);
-            int num_conv_blocks = layer_dist(rng);
-
-            for (int i = 0; i < num_conv_blocks && i < 3; i++) {
-                // Conv2D
-                gui::MLNode conv = CreateLayerNode(gui::NodeType::Conv2D, node_id++, pin_id, filters[i]);
-                nodes.push_back(conv);
-
-                gui::NodeLink link;
-                link.id = link_id++;
-                link.from_node = last_node_id;
-                link.from_pin = last_output_pin;
-                link.to_node = conv.id;
-                link.to_pin = conv.inputs[0].id;
-                links.push_back(link);
-
-                last_node_id = conv.id;
-                last_output_pin = conv.outputs[0].id;
-
-                // ReLU
-                gui::MLNode relu = CreateLayerNode(gui::NodeType::ReLU, node_id++, pin_id);
-                nodes.push_back(relu);
-
-                link.id = link_id++;
-                link.from_node = last_node_id;
-                link.from_pin = last_output_pin;
-                link.to_node = relu.id;
-                link.to_pin = relu.inputs[0].id;
-                links.push_back(link);
-
-                last_node_id = relu.id;
-                last_output_pin = relu.outputs[0].id;
-
-                // MaxPool
-                gui::MLNode pool = CreateLayerNode(gui::NodeType::MaxPool2D, node_id++, pin_id);
-                nodes.push_back(pool);
-
-                link.id = link_id++;
-                link.from_node = last_node_id;
-                link.from_pin = last_output_pin;
-                link.to_node = pool.id;
-                link.to_pin = pool.inputs[0].id;
-                links.push_back(link);
-
-                last_node_id = pool.id;
-                last_output_pin = pool.outputs[0].id;
-            }
-
-            // Flatten
-            gui::MLNode flatten = CreateLayerNode(gui::NodeType::Flatten, node_id++, pin_id);
-            nodes.push_back(flatten);
-
-            gui::NodeLink link;
-            link.id = link_id++;
-            link.from_node = last_node_id;
-            link.from_pin = last_output_pin;
-            link.to_node = flatten.id;
-            link.to_pin = flatten.inputs[0].id;
-            links.push_back(link);
-
-            last_node_id = flatten.id;
-            last_output_pin = flatten.outputs[0].id;
-
-        } else {
-            // MLP architecture for classification/regression
-            std::vector<int> units = {256, 128, 64};
-            std::uniform_int_distribution<int> layer_dist(2, 4);
-            int num_hidden = layer_dist(rng);
-
-            for (int i = 0; i < num_hidden && i < 3; i++) {
-                // Dense
-                gui::MLNode dense = CreateLayerNode(gui::NodeType::Dense, node_id++, pin_id, units[i]);
-                nodes.push_back(dense);
-
-                gui::NodeLink link;
-                link.id = link_id++;
-                link.from_node = last_node_id;
-                link.from_pin = last_output_pin;
-                link.to_node = dense.id;
-                link.to_pin = dense.inputs[0].id;
-                links.push_back(link);
-
-                last_node_id = dense.id;
-                last_output_pin = dense.outputs[0].id;
-
-                // Activation
-                gui::NodeType act_type = GetRandomActivation(rng);
-                gui::MLNode act = CreateLayerNode(act_type, node_id++, pin_id);
-                nodes.push_back(act);
-
-                link.id = link_id++;
-                link.from_node = last_node_id;
-                link.from_pin = last_output_pin;
-                link.to_node = act.id;
-                link.to_pin = act.inputs[0].id;
-                links.push_back(link);
-
-                last_node_id = act.id;
-                last_output_pin = act.outputs[0].id;
-
-                // Optional dropout
-                std::uniform_real_distribution<double> drop_prob(0, 1);
-                if (drop_prob(rng) < 0.3) {
-                    gui::MLNode dropout = CreateLayerNode(gui::NodeType::Dropout, node_id++, pin_id);
-                    nodes.push_back(dropout);
-
-                    link.id = link_id++;
-                    link.from_node = last_node_id;
-                    link.from_pin = last_output_pin;
-                    link.to_node = dropout.id;
-                    link.to_pin = dropout.inputs[0].id;
-                    links.push_back(link);
-
-                    last_node_id = dropout.id;
-                    last_output_pin = dropout.outputs[0].id;
-                }
-            }
-        }
-
-        // Output Dense
-        gui::MLNode output_dense = CreateLayerNode(gui::NodeType::Dense, node_id++, pin_id, output_size);
-        nodes.push_back(output_dense);
-
-        gui::NodeLink link;
-        link.id = link_id++;
-        link.from_node = last_node_id;
-        link.from_pin = last_output_pin;
-        link.to_node = output_dense.id;
-        link.to_pin = output_dense.inputs[0].id;
-        links.push_back(link);
-
-        last_node_id = output_dense.id;
-        last_output_pin = output_dense.outputs[0].id;
-
-        // Output node
-        gui::MLNode output_node;
-        output_node.id = node_id++;
-        output_node.type = gui::NodeType::Output;
-        output_node.name = "Output";
-        gui::NodePin output_in;
-        output_in.id = pin_id++;
-        output_in.type = gui::PinType::Tensor;
-        output_in.name = "prediction";
-        output_in.is_input = true;
-        output_node.inputs.push_back(output_in);
-        nodes.push_back(output_node);
-
-        link.id = link_id++;
-        link.from_node = last_node_id;
-        link.from_pin = last_output_pin;
-        link.to_node = output_node.id;
-        link.to_pin = output_in.id;
-        links.push_back(link);
-
-        suggestions.push_back({nodes, links});
-    }
-
-    return suggestions;
-}
-
-// ============================================================================
 // Evolutionary Search
 // ============================================================================
 
@@ -834,7 +724,8 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Cr
     const std::vector<gui::NodeLink>& parent2_links,
     unsigned int seed)
 {
-    // Simple crossover: take first half from parent1, second half from parent2
+    // Keeps one parent whole, chosen at random: splicing halves of two graphs
+    // would need their links rewired, which this does not do.
     std::mt19937 rng(seed);
     std::uniform_real_distribution<double> prob(0, 1);
 
@@ -848,9 +739,8 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Cr
 NASSearchResult NASEvaluator::EvolveArchitecture(
     const std::vector<gui::MLNode>& initial_nodes,
     const std::vector<gui::NodeLink>& initial_links,
-    const std::vector<size_t>& input_shape,
     const NASSearchConfig& config,
-    std::function<void(int, const ArchitectureScore&)> progress_callback)
+    std::function<bool(int, const ArchitectureScore&)> progress_callback)
 {
     NASSearchResult result;
 
@@ -876,9 +766,16 @@ NASSearchResult NASEvaluator::EvolveArchitecture(
         population.push_back({mutated_nodes, mutated_links});
     }
 
-    // Evolutionary loop
-    ArchitectureScore best_score;
-    best_score.overall_score = -1;
+    // The best different architectures seen, keyed by their layers in order.
+    std::map<std::string, NASCandidate> seen;
+    const auto keep = [&](const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links,
+                          const ArchitectureScore& score) {
+        std::string key;
+        for (int index : ModelChain(nodes, links)) key += LayerText(nodes[index]) + ";";
+        auto it = seen.find(key);
+        if (it == seen.end() || it->second.score.overall_score < score.overall_score)
+            seen[key] = NASCandidate{nodes, links, score};
+    };
 
     for (int gen = 0; gen < config.generations; gen++) {
         // Evaluate population
@@ -886,9 +783,9 @@ NASSearchResult NASEvaluator::EvolveArchitecture(
 
         for (size_t i = 0; i < population.size(); i++) {
             ArchitectureScore score = ScoreArchitecture(
-                population[i].first, population[i].second, input_shape, config);
+                population[i].first, population[i].second, config);
+            if (score.success) keep(population[i].first, population[i].second, score);
             scores.push_back({score, static_cast<int>(i)});
-            result.all_scores.push_back(score);
             result.total_evaluations++;
         }
 
@@ -897,21 +794,13 @@ NASSearchResult NASEvaluator::EvolveArchitecture(
                   [](const auto& a, const auto& b) {
                       return a.first.overall_score > b.first.overall_score;
                   });
-
-        // Track best
-        if (scores[0].first.overall_score > best_score.overall_score) {
-            best_score = scores[0].first;
-            result.best_architecture = population[scores[0].second].first;
-            result.best_links = population[scores[0].second].second;
-        }
-
-        result.generation_best.push_back(scores[0].first);
-
-        if (progress_callback) {
-            progress_callback(gen, scores[0].first);
-        }
+        result.total_generations = gen + 1;
 
         spdlog::debug("Generation {}: best score = {:.4f}", gen, scores[0].first.overall_score);
+        if (progress_callback && !progress_callback(gen, scores[0].first)) {
+            result.stopped = true;
+            break;
+        }
 
         // Create next generation
         std::vector<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>> new_population;
@@ -952,12 +841,17 @@ NASSearchResult NASEvaluator::EvolveArchitecture(
         population = new_population;
     }
 
-    result.best_score = best_score;
-    result.total_generations = config.generations;
-    result.success = true;
+    for (auto& [key, candidate] : seen) result.ranked.push_back(std::move(candidate));
+    std::stable_sort(result.ranked.begin(), result.ranked.end(), [](const NASCandidate& a, const NASCandidate& b) {
+        return a.score.overall_score > b.score.overall_score;
+    });
+    if (result.ranked.size() > static_cast<size_t>(kNASRanked)) result.ranked.resize(kNASRanked);
+    result.success = !result.ranked.empty();
+    if (!result.success) result.error_message = "no version of the architecture could be scored";
 
-    spdlog::info("NAS complete: best score = {:.4f}, params = {}",
-                 best_score.overall_score, best_score.total_params);
+    if (result.success)
+        spdlog::info("NAS complete: best score = {:.4f}, params = {}", result.ranked.front().score.overall_score,
+                     result.ranked.front().score.total_params);
 
     return result;
 }

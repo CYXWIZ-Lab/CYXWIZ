@@ -86,13 +86,15 @@ const char* PinTypeToText(gui::PinType type) {
         case gui::PinType::Loss:       return "Loss";
         case gui::PinType::Optimizer:  return "Optimizer";
         case gui::PinType::Dataset:    return "Dataset";
+        case gui::PinType::Environment: return "Environment";
     }
     return "Tensor";
 }
 
 bool PinTypeFromText(const std::string& text, gui::PinType& type) {
     const gui::PinType all[] = {gui::PinType::Tensor, gui::PinType::Labels, gui::PinType::Parameters,
-                                gui::PinType::Loss, gui::PinType::Optimizer, gui::PinType::Dataset};
+                                gui::PinType::Loss, gui::PinType::Optimizer, gui::PinType::Dataset,
+                                gui::PinType::Environment};
     for (const auto candidate : all) {
         if (text == PinTypeToText(candidate)) {
             type = candidate;

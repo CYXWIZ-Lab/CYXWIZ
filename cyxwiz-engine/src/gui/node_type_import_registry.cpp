@@ -5,7 +5,7 @@
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 229> kNodeTypeImportNames = {{
+constexpr std::array<NodeTypeImportName, 251> kNodeTypeImportNames = {{
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
@@ -21,6 +21,7 @@ constexpr std::array<NodeTypeImportName, 229> kNodeTypeImportNames = {{
         {"LayerNorm", NodeType::LayerNorm},
         {"GroupNorm", NodeType::GroupNorm},
         {"InstanceNorm", NodeType::InstanceNorm},
+        {"SqueezeExcitation", NodeType::SqueezeExcitation},
         {"Dropout", NodeType::Dropout},
         {"Flatten", NodeType::Flatten},
         {"RNN", NodeType::RNN},
@@ -42,6 +43,9 @@ constexpr std::array<NodeTypeImportName, 229> kNodeTypeImportNames = {{
         {"GELU", NodeType::GELU},
         {"Swish", NodeType::Swish},
         {"Mish", NodeType::Mish},
+        {"Hardswish", NodeType::Hardswish},
+        {"Hardsigmoid", NodeType::Hardsigmoid},
+        {"ReLU6", NodeType::ReLU6},
         {"Sigmoid", NodeType::Sigmoid},
         {"Tanh", NodeType::Tanh},
         {"Softmax", NodeType::Softmax},
@@ -178,6 +182,11 @@ constexpr std::array<NodeTypeImportName, 229> kNodeTypeImportNames = {{
         {"PolynomialFeaturesNode", NodeType::PolynomialFeaturesNode},
         {"OutlierDetector", NodeType::OutlierDetector},
         {"PCANode", NodeType::PCANode},
+        {"TruncatedSVD", NodeType::TruncatedSVD},
+        {"Whitening", NodeType::Whitening},
+        {"LinearSolve", NodeType::LinearSolve},
+        {"LinearProjection", NodeType::LinearProjection},
+        {"PortfolioWeights", NodeType::PortfolioWeights},
         {"KMeansCluster", NodeType::KMeansCluster},
         {"DBSCANCluster", NodeType::DBSCANCluster},
         {"HierarchicalCluster", NodeType::HierarchicalCluster},
@@ -219,6 +228,8 @@ constexpr std::array<NodeTypeImportName, 229> kNodeTypeImportNames = {{
         {"ImageSmooth", NodeType::ImageSmooth},
         {"ImageWarp", NodeType::ImageWarp},
         {"ImagePyramid", NodeType::ImagePyramid},
+        {"ImageFilter", NodeType::ImageFilter},
+        {"ImageGabor", NodeType::ImageGabor},
         {"RandomResizedCrop", NodeType::RandomResizedCrop},
         {"RandomAffine", NodeType::RandomAffine},
         {"RandomPerspective", NodeType::RandomPerspective},
@@ -228,14 +239,26 @@ constexpr std::array<NodeTypeImportName, 229> kNodeTypeImportNames = {{
         {"AugmentationPreset", NodeType::AugmentationPreset},
         {"QualityAnalyzer", NodeType::QualityAnalyzer},
         {"FFTNode", NodeType::FFTNode},
+        {"IFFTNode", NodeType::IFFTNode},
         {"FilterDesigner", NodeType::FilterDesigner},
         {"Convolution1D", NodeType::Convolution1D},
+        {"WaveletTransform", NodeType::WaveletTransform},
         // Evaluation tables and the Plot node (TOFIX134 P2): example graphs may use them.
         {"ConfusionMatrixNode", NodeType::ConfusionMatrixNode},
         {"ROCCurveNode", NodeType::ROCCurveNode},
         {"PRCurveNode", NodeType::PRCurveNode},
         {"Plot", NodeType::Plot},
         {"Dashboard", NodeType::Dashboard},
+        // Graph simulation nodes (TOFIX195): a signal graph opens from a file too
+        {"SignalSlider", NodeType::SignalSlider},
+        {"SineWave", NodeType::SineWave},
+        {"StepSignal", NodeType::StepSignal},
+        {"RampSignal", NodeType::RampSignal},
+        {"SignalScope", NodeType::SignalScope},
+        {"RLEnvironment", NodeType::RLEnvironment},
+        {"PolicyHead", NodeType::PolicyHead},
+        {"ValueHead", NodeType::ValueHead},
+        {"PPO", NodeType::PPO},
 }};
 
 } // namespace

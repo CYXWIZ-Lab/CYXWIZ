@@ -63,4 +63,13 @@ std::string Csv(const std::vector<std::vector<std::string>>& rows);
 // missing) is not one of them.
 guided::GuidedStep KeepRowsWithValue(const std::string& column, const std::vector<std::string>& texts);
 
+// Hover words of Explore's graph buttons (TOFIX129 D7a): what a step and a
+// branch mean for training, so no button misleads. `node` is the node's name
+// ("K-Means"), `gives` what a step adds ("a cluster_id column"; "" for none).
+std::string StepTip(const std::string& node, const std::string& gives);
+std::string BranchTip(const std::string& node);
+// The tail of the message after a node was added: how training sees it.
+const char* StepAddedNote();    // "Training reads its result."
+const char* BranchAddedNote();  // "Training does not read a branch."
+
 }  // namespace cyxwiz::explore_view

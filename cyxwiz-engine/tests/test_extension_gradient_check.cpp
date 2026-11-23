@@ -5,8 +5,10 @@
 
 #include <cyxwiz/sequential.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -80,6 +82,28 @@ private:
     cyxwiz::Tensor grad_a_;
 };
 
+// Scale that also keeps a tensor beside its weight (like BatchNorm's running
+// statistics): declared as state, or not.
+class ScaleWithState : public Scale {
+public:
+    explicit ScaleWithState(bool declared) : Scale(false), declared_(declared) {
+        const float seen = 0.0f;
+        seen_ = cyxwiz::Tensor(std::vector<size_t>{1}, &seen);
+    }
+    std::map<std::string, cyxwiz::Tensor> GetParameters() override {
+        auto params = Scale::GetParameters();
+        params["seen"] = seen_;
+        return params;
+    }
+    std::vector<std::string> GetStateNames() const override {
+        return declared_ ? std::vector<std::string>{"seen"} : std::vector<std::string>{};
+    }
+
+private:
+    bool declared_;
+    cyxwiz::Tensor seen_;
+};
+
 // y = x + sin^2(a x) / a with a = 0.8: its true gradient 1 + sin(2ax) comes
 // close to zero, where 32-bit rounding must not read as a failure.
 class SnakeLike : public cyxwiz::Module {
@@ -93,6 +117,20 @@ public:
         return grad * ((input_cache_ * 1.6f).Sin() + 1.0f);
     }
     std::string GetName() const override { return "SnakeLike"; }
+};
+
+// A backward that gives NaN: the check must fail it (TOFIX223 0.21: NaN
+// compares false, so its error was never recorded and the check passed).
+class NanGradient : public cyxwiz::Module {
+public:
+    cyxwiz::Tensor Forward(const cyxwiz::Tensor& x) override {
+        input_cache_ = x;
+        return x * 2.0f;
+    }
+    cyxwiz::Tensor Backward(const cyxwiz::Tensor& grad) override {
+        return grad * std::numeric_limits<float>::quiet_NaN();
+    }
+    std::string GetName() const override { return "NanGradient"; }
 };
 
 class Throws : public cyxwiz::Module {
@@ -123,6 +161,16 @@ int main() {
             [](const std::vector<size_t>&) { return std::make_unique<SnakeLike>(); }, options);
         Check(r.passed, "a gradient that passes near zero (Snake-like): " + cyxwiz::DescribeGradientCheck(r));
     }
+    std::cout << "state the module declares has no gradient to check\n";
+    {
+        const auto r = cyxwiz::CheckModuleGradients(
+            [](const std::vector<size_t>&) { return std::make_unique<ScaleWithState>(true); });
+        Check(r.passed && r.error.empty(), "Scale with declared state: " + cyxwiz::DescribeGradientCheck(r));
+        const auto undeclared = cyxwiz::CheckModuleGradients(
+            [](const std::vector<size_t>&) { return std::make_unique<ScaleWithState>(false); });
+        Check(!undeclared.passed && undeclared.error.find("'seen'") != std::string::npos,
+              "an undeclared parameter without a gradient fails: " + cyxwiz::DescribeGradientCheck(undeclared));
+    }
     std::cout << "built-in modules pass (the checker is not too strict)\n";
     {
         const auto r = cyxwiz::CheckModuleGradients(
@@ -150,6 +198,12 @@ int main() {
             [](const std::vector<size_t>&) { return std::make_unique<Scale>(true); });
         Check(!r.passed && r.worst == "parameter a",
               "a wrong parameter gradient fails and is named: " + cyxwiz::DescribeGradientCheck(r));
+    }
+    {
+        const auto r = cyxwiz::CheckModuleGradients(
+            [](const std::vector<size_t>&) { return std::make_unique<NanGradient>(); });
+        Check(!r.passed && r.worst == "input" && !std::isfinite(r.max_relative_error),
+              "a NaN input gradient fails: " + cyxwiz::DescribeGradientCheck(r));
     }
     std::cout << "a module that throws is reported, not crashed on\n";
     {

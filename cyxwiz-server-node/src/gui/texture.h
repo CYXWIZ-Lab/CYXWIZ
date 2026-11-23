@@ -22,8 +22,10 @@ struct Texture {
 // logs when the file is missing or unreadable.
 bool LoadTexture(const std::string& path, Texture& out);
 
-// Finds a node resource next to the executable or in the source tree (the same
-// places the window icon is looked for). Empty when not found.
+// Finds a node resource (a file name, or a path such as "fonts/x.ttf") in
+// resources/ beside the executable, in a macOS bundle's Resources, or in
+// ./resources. The path is UTF-8 (ImGui's font loader and stb_image, built
+// with STBI_WINDOWS_UTF8, open it as such). Empty when not found.
 std::string FindResourceFile(const std::string& file_name);
 
 }  // namespace cyxwiz::servernode::gui

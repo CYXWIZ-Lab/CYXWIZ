@@ -8,6 +8,7 @@
 // shares stay, the same seed gives the same folds, and bad settings are
 // refused. Last, the nodes: their settings, data passing through, the run's
 // table on pin 1.
+#include "../oracle/training_oracle_test.h"
 #include "../../src/core/arrow_dataset.h"
 #include "../../src/core/cross_validation_runner.h"
 #include "../../src/core/graph_node_factory.h"
@@ -149,8 +150,8 @@ int main() {
         return 1;
     }
     const nlohmann::json fixture = nlohmann::json::parse(in);
-    // The executor's route preflight refuses unqualified devices.
-    cyxwiz::test::InstallQualifiedRouteSnapshot();
+    // Every fold trains on the requested device (qualified, Strict).
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_computation_truth_cross_validation")) return 1;
     const fs::path work = fs::temp_directory_path() / "cyxwiz_cross_validation_truth";
     std::error_code ec;
     fs::remove_all(work, ec);
@@ -169,8 +170,16 @@ int main() {
             cyxwiz::CrossValidationSettings settings;
             settings.folds = 5;
             settings.fold_of_row = folds;
-            const auto r = cyxwiz::RunCrossValidation(p.job.config, p.table, "species", epochs, batch, settings);
+            int highest_epoch = 0, last_epoch = 0;
+            cyxwiz::CrossValidationCallbacks callbacks;
+            callbacks.on_progress = [&](const cyxwiz::CrossValidationProgress& progress) {
+                highest_epoch = std::max(highest_epoch, progress.epoch);
+                last_epoch = progress.epoch;
+            };
+            const auto r = cyxwiz::RunCrossValidation(p.job.config, p.table, "species", epochs, batch, settings, callbacks);
             Check(r.ok && r.runs.size() == 5, "five folds trained" + (r.error.empty() ? "" : ": " + r.error));
+            Check(highest_epoch == epochs && last_epoch == epochs,
+                  "progress counts epochs 1.." + std::to_string(epochs) + " (highest " + std::to_string(highest_epoch) + ")");
             Check(r.rows == static_cast<int64_t>(folds.size()) && r.test_rows_left_out == 0 && !r.regression,
                   "every row used, none held out (no Split)");
             for (size_t k = 0; k < r.runs.size() && k < 5; ++k) {
@@ -326,6 +335,8 @@ int main() {
     }
 
     fs::remove_all(work, ec);
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every fold on the requested device: " + device_problem);
     std::cout << (g_failures == 0 ? "cross-validation truth: OK\n" : "cross-validation truth: FAILED\n");
     return g_failures == 0 ? 0 : 1;
 }

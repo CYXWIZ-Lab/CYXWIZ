@@ -2,12 +2,13 @@
 
 #include <string>
 
-// Windows of their own (TOFIX129 piece A8). The big windows (Dashboard,
-// Plot, Data Studio, Script Editor, ...) may leave the Engine's main window
-// and become windows of the operating system, on any monitor, and come
-// back; every other window stays inside the main window. ImGui's
-// multi-viewport mode does the OS part; this file decides which window may
-// leave, keeps the rest inside and offers the two commands.
+// Windows of their own (TOFIX129 pieces A8, A8b). The big windows
+// (Dashboard, Plot, Data Studio, Script Editor, ...) may leave the Engine's
+// main window and become windows of the operating system, on any monitor,
+// and come back; with Preferences > General "Any window can have a window of
+// its own", every movable window may. The rest stays inside the main window.
+// ImGui's multi-viewport mode does the OS part; this file decides which
+// window may leave, keeps the rest inside and offers the two commands.
 
 namespace gui {
 
@@ -35,6 +36,17 @@ void NextWindowStaysInMain();
 // search bar, completion list): it goes with that window when the window
 // is in a window of its own. Called between the owner's Begin and End.
 void NextWindowFollowsCurrent();
+
+// An overlay on the current window's canvas (minimap, search box, its result
+// list): a child window of it at `screen_pos`, so it is drawn with that window
+// and in its OS window, and never over another window (a window of its own
+// came back on top whenever the owner's tab showed again). The owner's cursor
+// is kept. Always pair with EndCanvasOverlay, whatever Begin returned.
+// padding: the style's WindowPadding inside; border: a 1 px edge. A width or
+// height of 0 sizes the overlay to its content along that axis.
+bool BeginCanvasOverlay(const char* id, float x, float y, float width, float height, int window_flags,
+                        bool padding = false, bool border = false);
+void EndCanvasOverlay();
 
 // Every frame from the main window's dock space: where "Dock back" returns
 // a window to.
@@ -69,5 +81,15 @@ void MoveAllWindowsBack();
 // or title bar with the two commands and Close (`open` is the flag given to
 // Begin; may be null).
 void TabMenu(const char* name, bool* open);
+
+// Every movable window may leave (Preferences > General), not only the big
+// ones. Off by default.
+void SetEveryWindowMayLeave(bool every);
+bool EveryWindowMayLeave();
+
+// Once a frame, after every window has drawn (outside any Begin): the same
+// menu on the tab or title bar of a window that has no TabMenu of its own,
+// while every window may leave.
+void WindowMenus();
 
 }  // namespace gui

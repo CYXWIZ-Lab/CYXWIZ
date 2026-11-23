@@ -4,24 +4,17 @@
  * Tests the complete Data Studio foundation:
  * 1. ArrowDataset: Load CSV/Parquet files
  * 2. DataRegistry: Register and manage Arrow tables
- * 3. ArrowConverters: Bidirectional Arrow <-> Tensor conversion
- * 4. DuckDBConnector: SQL queries on Arrow tables
- *
- * This validates the zero-copy pipeline that Data Studio nodes will use.
+ * 3. DuckDBConnector: SQL queries on Arrow tables
  */
 
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/data_registry.h"
-#include "../src/core/arrow_converters.h"
 #include "../src/core/duckdb_connector.h"
 #include <spdlog/spdlog.h>
 #include <iostream>
 #include <fstream>
 #include <cassert>
 #include <cmath>
-
-// Include ArrayFire header for tests
-#include <arrayfire.h>
 
 using namespace cyxwiz;
 
@@ -161,125 +154,10 @@ bool Test_DataRegistry_Arrow() {
 }
 
 /**
- * Test 4: Arrow to Tensor Conversion
- */
-bool Test_ArrowToTensor() {
-    spdlog::info("\n=== Test 4: Arrow to Tensor Conversion ===");
-
-    std::string csv_path = "test_tensor.csv";
-    CreateTestCSV(csv_path);
-
-    auto dataset = ArrowDataset::FromCSV(csv_path, "data");
-    TEST_ASSERT(dataset != nullptr, "Dataset loaded");
-
-    auto table = dataset->GetArrowTable();
-
-    // Get numeric columns
-    auto numeric_cols = arrow_converters::GetNumericColumns(table);
-    TEST_ASSERT(!numeric_cols.empty(), "Numeric columns detected");
-    spdlog::info("Numeric columns: {}", numeric_cols.size());
-
-    // Convert to tensor
-    arrow_converters::ConversionOptions opts;
-    opts.selected_columns = {"age", "salary"};  // Only numeric columns
-    auto tensor = arrow_converters::ArrowToTensor(table, opts);
-    TEST_ASSERT(tensor != nullptr, "Arrow to Tensor conversion");
-
-    // Check tensor dimensions
-    ::af::dim4 dims = tensor->dims();
-    TEST_ASSERT(dims[0] == 6, "Correct tensor rows");
-    TEST_ASSERT(dims[1] == 2, "Correct tensor columns");
-
-    spdlog::info("Tensor shape: [{}, {}]", dims[0], dims[1]);
-
-    // Cleanup
-    std::remove(csv_path.c_str());
-
-    return true;
-}
-
-/**
- * Test 5: Tensor to Arrow Conversion
- */
-bool Test_TensorToArrow() {
-    spdlog::info("\n=== Test 5: Tensor to Arrow Conversion ===");
-
-    // Create a simple tensor
-    std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
-    ::af::array tensor(3, 2, data.data());  // 3 rows, 2 cols
-
-    // Convert to Arrow
-    std::vector<std::string> col_names = {"feature1", "feature2"};
-    auto table = arrow_converters::TensorToArrow(tensor, col_names, "test_data");
-    TEST_ASSERT(table != nullptr, "Tensor to Arrow conversion");
-    TEST_ASSERT(table->num_rows() == 3, "Correct row count");
-    TEST_ASSERT(table->num_columns() == 2, "Correct column count");
-
-    spdlog::info("Arrow table: {} rows, {} columns", table->num_rows(), table->num_columns());
-
-    return true;
-}
-
-/**
- * Test 6: Categorical encoding preserves values and nulls
- */
-bool Test_CategoricalEncoding() {
-    spdlog::info("\n=== Test 6: Categorical Encoding ===");
-
-    arrow::StringBuilder source_builder;
-    TEST_ASSERT(source_builder.Append("red").ok(), "Append first category");
-    TEST_ASSERT(source_builder.AppendNull().ok(), "Append null category");
-    TEST_ASSERT(source_builder.Append("blue").ok(), "Append second category");
-    TEST_ASSERT(source_builder.Append("red").ok(), "Append repeated category");
-
-    std::shared_ptr<arrow::Array> source_array;
-    TEST_ASSERT(source_builder.Finish(&source_array).ok(),
-                "Finish categorical source array");
-
-    auto source_table = arrow::Table::Make(
-        arrow::schema({arrow::field("color", arrow::utf8())}),
-        {source_array});
-
-    std::vector<std::string> vocabulary;
-    auto encoded = arrow_converters::EncodeCategorical(
-        source_table, "color", vocabulary);
-    TEST_ASSERT(encoded != nullptr, "Encode categorical column");
-    TEST_ASSERT(vocabulary == std::vector<std::string>({"red", "blue"}),
-                "Vocabulary preserves first-seen order");
-
-    auto encoded_values = std::static_pointer_cast<arrow::Int32Array>(
-        encoded->GetColumnByName("color_encoded")->chunk(0));
-    TEST_ASSERT(encoded_values->Value(0) == 0, "Encode first category as zero");
-    TEST_ASSERT(encoded_values->IsNull(1), "Preserve null encoded value");
-    TEST_ASSERT(encoded_values->Value(2) == 1, "Encode second category as one");
-    TEST_ASSERT(encoded_values->Value(3) == 0, "Reuse existing category code");
-
-    auto one_hot = arrow_converters::OneHotEncode(source_table, "color");
-    TEST_ASSERT(one_hot != nullptr, "One-hot encode categorical column");
-    TEST_ASSERT(one_hot->GetColumnByName("color_red") != nullptr,
-                "Create first one-hot column");
-    TEST_ASSERT(one_hot->GetColumnByName("color_blue") != nullptr,
-                "Create second one-hot column");
-
-    auto red_values = std::static_pointer_cast<arrow::BooleanArray>(
-        one_hot->GetColumnByName("color_red")->chunk(0));
-    auto blue_values = std::static_pointer_cast<arrow::BooleanArray>(
-        one_hot->GetColumnByName("color_blue")->chunk(0));
-    TEST_ASSERT(red_values->Value(0) && !blue_values->Value(0),
-                "Set first one-hot category");
-    TEST_ASSERT(red_values->IsNull(1) && blue_values->IsNull(1),
-                "Preserve nulls in one-hot columns");
-    TEST_ASSERT(!red_values->Value(2) && blue_values->Value(2),
-                "Set second one-hot category");
-
-    return true;
-}
-
-/**
- * Test 7: DuckDB SQL Queries
+ * Test 4: DuckDB SQL Queries
  */
 bool Test_DuckDB_Queries() {
-    spdlog::info("\n=== Test 7: DuckDB SQL Queries ===");
+    spdlog::info("\n=== Test 4: DuckDB SQL Queries ===");
 
     std::string csv_path = "test_duckdb.csv";
     CreateTestCSV(csv_path);
@@ -415,17 +293,16 @@ bool Test_DuckDB_Queries() {
 }
 
 /**
- * Test 8: End-to-End Data Studio Pipeline
+ * Test 5: End-to-End Data Studio Pipeline
  */
 bool Test_EndToEnd_Pipeline() {
-    spdlog::info("\n=== Test 8: End-to-End Pipeline ===");
+    spdlog::info("\n=== Test 5: End-to-End Pipeline ===");
 
     // This simulates a typical Data Studio workflow:
     // 1. Load CSV -> Arrow
     // 2. SQL query for data cleaning
-    // 3. Convert to Tensor for training
-    // 4. Convert predictions back to Arrow
-    // 5. Export to Parquet
+    // 3. Register the cleaned table (training reads registered tables)
+    // 4. Export to Parquet
 
     std::string csv_path = "test_e2e.csv";
     CreateTestCSV(csv_path);
@@ -448,29 +325,19 @@ bool Test_EndToEnd_Pipeline() {
     TEST_ASSERT(cleaned != nullptr, "Data cleaning query");
     spdlog::info("Cleaned data: {} rows", cleaned->num_rows());
 
-    // Step 3: Convert to tensor for training
-    auto tensor = arrow_converters::ArrowToTensor(cleaned);
-    TEST_ASSERT(tensor != nullptr, "Convert cleaned data to tensor");
-    ::af::dim4 tensor_dims = tensor->dims();
-    spdlog::info("Training tensor: [{}, {}]", tensor_dims[0], tensor_dims[1]);
+    // Step 3: Register the cleaned table
+    auto cleaned_dataset = registry.RegisterArrowTable(cleaned, "cleaned_data");
+    TEST_ASSERT(cleaned_dataset != nullptr && cleaned_dataset->GetNumRows() == cleaned->num_rows(),
+                "Register the cleaned table");
 
-    // Step 4: Simulate predictions and convert back
-    // (In real workflow, this would be model.predict(tensor))
-    ::af::array predictions = ::af::randu(tensor_dims[0], 1);  // Random predictions
-    auto results = arrow_converters::TensorToArrow(predictions, {"prediction"}, "results");
-    TEST_ASSERT(results != nullptr, "Convert predictions to Arrow");
-
-    // Step 5: Register results for export
-    auto results_dataset = registry.RegisterArrowTable(results, "predictions");
-    TEST_ASSERT(results_dataset != nullptr, "Register prediction results");
-
-    // Export to Parquet
+    // Step 4: Export to Parquet
     std::string parquet_path = "test_results.parquet";
     bool exported = dataset->ExportParquet(parquet_path);
     TEST_ASSERT(exported, "Export to Parquet");
 
     // Cleanup
     registry.UnloadDataset("raw_data");
+    registry.UnloadDataset("cleaned_data");
     std::remove(csv_path.c_str());
     std::remove(parquet_path.c_str());
 
@@ -500,9 +367,6 @@ int main() {
         {"ArrowDataset Loading", Test_ArrowDataset_Load},
         {"ArrowDataset Operations", Test_ArrowDataset_Operations},
         {"DataRegistry Integration", Test_DataRegistry_Arrow},
-        {"Arrow to Tensor Conversion", Test_ArrowToTensor},
-        {"Tensor to Arrow Conversion", Test_TensorToArrow},
-        {"Categorical Encoding", Test_CategoricalEncoding},
         {"DuckDB SQL Queries", Test_DuckDB_Queries},
         {"End-to-End Pipeline", Test_EndToEnd_Pipeline},
     };

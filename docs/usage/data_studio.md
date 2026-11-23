@@ -99,9 +99,9 @@ they are loaded again.
 
 ## Explore
 
-Explore has fourteen views: **Query**, **Profile**, **Missing**, **Outliers**,
+Explore has sixteen views: **Query**, **Profile**, **Missing**, **Outliers**,
 **Correlation**, **Distribution**, **Tests**, **Regression**, **Groups**,
-**Projection**, **Series**, **Forecast**, **Visualize** and **Plugins**, and a fifteenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+**Projection**, **Series**, **Forecast**, **Signal**, **Text**, **Visualize** and **Plugins**, and a seventeenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
 Correlation Matrix) and Tools > Statistics (Summary Statistics and
@@ -110,10 +110,53 @@ Polynomial Regression opens Regression) and Tools > Clustering and Projection
 (K-Means, DBSCAN, Hierarchical Clustering and Gaussian Mixture Models open
 Groups on that method, Cluster Evaluation opens Groups, PCA / t-SNE / UMAP opens
 Projection) and Tools > Time Series (Decomposition, ACF / PACF, Stationarity and
-Seasonality open Series on that look; Forecasting opens Forecast). In Profile, a column's missing or outlier count opens
+Seasonality open Series on that look; Forecasting opens Forecast) and Tools > Signal
+Processing (FFT opens Signal on Spectrum; Spectrogram; Filter Designer opens Filter;
+Convolution Calculator opens Filter in Kernel mode; Wavelet Transform opens Wavelet) and Tools > Text
+(Tokenization opens Text on Tokens, Word Frequency on Words, TF-IDF Analysis on Terms, Word Embeddings
+on Embeddings, Sentiment Analysis on Sentiment; Data > Tokenization opens Tokens). In Profile, a column's missing or outlier count opens
 Missing or Outliers on it, "More about this column" opens Distribution, and
 "See the matrix" opens Correlation. The views wrap to a second line in a
 narrow dock.
+
+### What reaches training
+
+Training reads one table: the result of the node wired into the Data Split's
+Training Dataset input (the Data Loader's input when there is no Split). Start
+Training takes the canvas run's result of that node, else the prepared data
+kept on disk, else it runs the steps before it through the Data Pipeline
+executor first. Steps that learn (scalers, encoders, Fill Missing, Outlier
+Detector) learn from the Train rows only. So:
+
+- **A step feeds training.** Everything on the way to that node does: every
+  Prepare step, Missing's **Drop these rows** and **Fill in Prepare**,
+  Outliers' **Flag / Clip / Drop rows**, Groups', Projection's, Series',
+  Forecast's and Signal's (Filter, Wavelet) **Add as a step**, Query's **Turn
+  into step**, Images' **Use in Normalize**. Their buttons say so on hover, and the message after adding one
+  ends with *Training reads its result.*
+- **A branch only shows.** **Keep as a node** (Tests, Regression, Series'
+  Seasonality / Stationarity / ACF, Groups, Projection, Forecast, Signal's
+  Spectrum: the FFT node's table has one row per bin), **Keep as
+  Plot node** and dashboards read the data and keep their result with the
+  graph; training does not read them. The message ends with *Training does not
+  read a branch.*
+- **Column roles reach training through the Data Input.** A role set in
+  Profile on a Data Input's table is written into that node (`column_roles`),
+  and training keeps ID, Group, Weight and Ignore columns out of the features
+  (the compile report says which). Group is not used to split and Weight not
+  to weigh rows yet. *Treat as missing* counts in Explore only until **Make
+  them empty in Prepare** adds the step that turns the texts into empty cells.
+- **Nothing else changes training.** Query's **Save as Dataset**, every
+  **Export CSV...**, ML readiness and Validate's table change no step (a
+  failing check stops the run).
+
+The rail marks the table training reads with a cap, and Explore opens on it
+when nothing is picked. One line above every view says what training makes of
+the table in front of you: *Training reads this table through the Data Split.*,
+*Training reads "Scale numbers", not this table.* (with **Show what training
+reads**), *Training reads "Scale numbers", which has no table yet (run its steps
+in Prepare); this is not it.* (with **Show the node**), or *Nothing feeds a Data
+Split or a Data Loader yet, so training reads no table.*
 
 ## Query
 
@@ -259,7 +302,13 @@ here. The *from* column says who decided:
   cannot be changed here; change the label in the Data Input.
 - **you**: set here. Click the role and pick another (or **Back to
   inferred**). Saved with the project in `datasets/column_roles.json` for
-  this file, and used by dashboards, plots and Visualize.
+  this file, and used by dashboards, plots and Visualize. When the table is
+  a Data Input of the graph, the roles are also written into that node
+  (`column_roles`, Ctrl+Z on the canvas undoes it), and training keeps every
+  ID, Group, Weight and Ignore column out of the features; the line under
+  the table names them (Group is not used to split and Weight not to weigh
+  rows yet). A table that is not a Data Input says its roles guide
+  dashboards and plots only.
 - **inferred**: guessed from the values: text unique per row is an ID, a
   name ending in `_id` is an ID, dates are Date, yes/no and numbers with up
   to 12 values are Category, long or mostly different text is Text, image or
@@ -284,6 +333,10 @@ min, quartiles, max, mean, std, outliers, text length, type).
 as missing (saved with the project for this file). When a frequent value
 looks like one, the panel suggests it. Spotify's artist_genres has `N/A` in
 3,361 rows (39.2%); treated as missing, the table has 2.6% missing cells.
+The cells still hold the texts, so Explore and dashboards count them as
+missing but the graph does not: **Make them empty in Prepare** adds an SQL
+step after the data in use that turns those texts into empty cells, and
+Missing's Fill and Drop steps and training then see them as missing.
 
 The strongest correlations between number columns (Pearson) are listed
 under the details (Spotify: artist_popularity and artist_followers +0.64).
@@ -389,8 +442,14 @@ Profile; the link under the summary goes there).
     the canvas undoes it. It needs the table to be a Data Input or a node
     result of the open graph.
   - **Open in Query** puts the SQL for these rows in Query and runs it.
+  - **Fill with ... / Fill in Prepare** adds a Fill Missing Values step on
+    the column: a number column takes its mean, median or mode, or a typed
+    constant; any other column its mode or a constant. The step learns the
+    statistic from the Train rows and fills the empty cells of every row.
+    Texts marked as missing are values to it: drop those rows, or make
+    them empty first.
   - **General recommendations** (folded) lists ways to fill values by kind
-    of data. Prepare has no "fill missing values" step yet.
+    of data.
 
 The counts come from Profile's profile, so switching tabs does not compute
 them again; complete rows, the mixes and the row pages are SQL on the
@@ -411,6 +470,14 @@ Values far from the rest of a number column.
   - A rule with no spread on the column (Q1 = Q3, all values equal, or
     MAD = 0) says so instead of counting every value.
 - **Summary**: how many outliers, low and high, and the bounds.
+- **In Prepare**: **Flag rows**, **Clip values** and **Drop rows** add an
+  Outlier Detector step on the column with this rule and factor, and the
+  action flag (an `is_outlier` column, which training then reads as one more
+  feature), clip (every value pulled into the bounds) or remove (the rows
+  outside dropped). The step learns the bounds
+  from the Train rows (every row without a Data Split) and applies them to
+  every row, so its count can differ from the one found here, which reads
+  the whole table. Training reads the step's result.
 - **Distribution**: the column's histogram with the bounds dashed and the
   bins past them in orange; a note says when a bound lies beyond the values.
 - **Rows**: row number, score, low or high, the column checked, then the
@@ -541,7 +608,8 @@ chosen number columns (Scale as in Groups).
   of the first two (those of 0.4 or more stand out) and what the components
   are in words ("Component 1: flipper_length_mm, body_mass_g and
   bill_length_mm together, against bill_depth_mm").
-- t-SNE takes perplexity, learning rate and iterations; UMAP neighbours and
+- t-SNE takes perplexity, learning rate (0: auto, the rows / 48 and at least
+  50, as scikit-learn) and iterations; UMAP neighbours and
   min distance. Both read at most 5,000 rows: beyond that a seeded sample (the
   seed is typed) in table order, and the sentence says so. t-SNE shows its
   iteration, KL divergence and a progress bar; **Cancel** stops it. UMAP has no
@@ -588,6 +656,50 @@ series with the fit and the band, the forecast table and the held-out
 table. **Add as a step** / **Keep as a node** add the ARIMA or Exp. Smoothing
 node with these settings; **Stop** ends a long search ([time
 series](time_series.md#forecast)).
+
+## Signal
+
+One number column read as a signal over the same **Time** as Series (the
+step gives the sample rate: 0.1 Hz for rows every 10 s, typed over in Hz;
+frequencies read in the unit that fits, per hour for a 10-second step), in
+four looks: **Spectrum** (the one-sided amplitude spectrum with a window and
+the mean or the trend removed, or Welch segments; the peaks in the spectrum
+with their harmonics named, and the peaks in the rows by how many SDs they
+stand out and how far apart), **Spectrogram** (frames of N rows every N rows
+as a heatmap in dB with a typed floor), **Filter** (a windowed-sinc FIR kept
+below / above / between / outside a cut typed in the display unit, or a
+kernel: moving average, Gaussian, difference, second difference, typed;
+applied zero-phase, the removed and kept RMS and the response in dB) and
+**Wavelet** (the column split by scale into an approximation and details,
+each brought back to the rows with its share of the energy; denoised at the
+universal threshold or a typed one). Each look says the signal ("Sample rate
+0.1 Hz = 360 per hour (from the step: every 10 s, even); 1,440 rows, none
+missing.") and puts its node into the graph: **Keep as a node** (Spectrum: the
+FFT branch) or **Add as a step** (Filter Designer / Convolution 1D, Wavelet
+Transform: new columns beside the others). The figures match numpy, scipy and
+PyWavelets; the rules, the words and the nodes are in [signal
+processing](signal_processing.md).
+
+## Text
+
+One text column, optionally **Group by** a category or the label (the 12
+largest groups, the rest as "other"), in five looks: **Words** (the commonest
+words or word pairs, the common English words left out or kept, by Porter stem
+when asked; each group's own words; words per row), **Terms** (TF-IDF as the
+TF-IDF node weighs it: what sets each group apart, a row's terms and the five
+rows that read most like it, and the text quality the terms show: HTML
+entities, links, repeated rows, broken characters), **Sentiment** (VADER on
+every row: negative, neutral and positive rows at VADER's thresholds, the
+compound per group, a row word by word), **Tokens** (the Tokenizer node's
+tokenizer trained on the column: tokens per row, the rows a length limit cuts,
+the vocabulary's coverage, a row's tokens and ids) and **Embeddings** (word
+vectors learned with the Word Embeddings node's trainers on the device, from a
+sample of 500,000 words by default, skip-gram or CBOW: the nearest words and a
+3D word map in a window of its own). Each look puts its node into the graph:
+**Add as a step** (TF-IDF, Sentiment Analysis, Tokenizer) or **Keep as a
+node** (Word Embeddings). Every look splits the words as the TF-IDF and Count
+Vectorizer nodes do; the figures match Python, scikit-learn, NLTK and
+vaderSentiment. The rules, the words and the nodes are in [text](text.md).
 
 ## Visualize
 

@@ -1,3 +1,4 @@
+#include "../oracle/oracle_test.h"
 #include "../../src/core/execution_device_context.h"
 #include "../../src/core/materialization_memory_guard.h"
 #include "../../src/core/metric_learning_metrics.h"
@@ -649,7 +650,8 @@ void TestProbabilityLossParity(const json& cases) {
                 "torch.nn.functional.binary_cross_entropy";
         } else if (loss_type == "bce_with_logits") {
             loss = std::make_unique<cyxwiz::BCEWithLogitsLoss>(
-                reduction, test_case.at("pos_weight").get<float>());
+                reduction, test_case.at("pos_weight").get<float>(),
+                test_case.at("label_smoothing").get<float>());
             expected_operation =
                 "torch.nn.functional.binary_cross_entropy_with_logits";
         } else {
@@ -2161,6 +2163,8 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
           "ArrayFire CPU activation failed: " + activation.message);
     Check(activation.execution_validated,
           "ArrayFire CPU activation did not validate execution");
+    std::printf("device: cpu %d (training-core truth)\n", activation.effective_device_id);
+    std::fflush(stdout);
     Check(activation.requested_type == cyxwiz::DeviceType::CPU &&
               activation.effective_type == cyxwiz::DeviceType::CPU &&
               activation.requested_device_id == 0 &&
@@ -2231,7 +2235,11 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
     }
 }
 
-void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
+// Every selectable CUDA / OpenCL route, or only `requested` (any accelerator
+// type, oneAPI included) when CYXWIZ_TEST_ARRAYFIRE_BACKEND names one: then
+// that route must exist.
+void TestInstalledAcceleratorTrainingCoreTruth(
+    const json& cases, const std::optional<cyxwiz::test::RequestedTestDevice>& requested) {
     const bool initialized_here = !cyxwiz::IsInitialized();
     if (initialized_here) {
         Check(cyxwiz::Initialize(), "CyxWiz backend initialization failed");
@@ -2239,9 +2247,11 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
 
     size_t exercised_routes = 0;
     for (const auto& device : cyxwiz::Device::GetAvailableDevices()) {
-        if (!device.device_selectable ||
-            (device.type != cyxwiz::DeviceType::CUDA &&
-             device.type != cyxwiz::DeviceType::OPENCL)) {
+        if (!device.device_selectable) continue;
+        if (requested) {
+            if (device.type != requested->type || device.device_id != requested->id) continue;
+        } else if (device.type != cyxwiz::DeviceType::CUDA &&
+                   device.type != cyxwiz::DeviceType::OPENCL) {
             continue;
         }
 
@@ -2249,6 +2259,9 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
             cyxwiz::Device(device.type, device.device_id).ActivateExact(true);
         const std::string route = device.name + " device=" +
             std::to_string(device.device_id);
+        std::printf("device: %s %d (training-core truth, %s)\n", cyxwiz::CurrentArrayFireBackendName().c_str(),
+                    activation.effective_device_id, device.name.c_str());
+        std::fflush(stdout);
         Check(activation.success,
               "accelerator training-core activation failed for " + route +
                   ": " + activation.message);
@@ -2312,7 +2325,10 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
         ++exercised_routes;
     }
 
-    if (exercised_routes == 0) {
+    if (requested) {
+        Check(exercised_routes == 1, "the requested device " + requested->name + " " +
+                                         std::to_string(requested->id) + " is not a selectable route here");
+    } else if (exercised_routes == 0) {
         std::cout << "SKIP: no selectable CUDA/OpenCL training-core route\n";
     }
     const auto cpu_restore =
@@ -2327,6 +2343,11 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // This test goes over its devices itself: CPU, then every CUDA / OpenCL
+    // route; only the requested one when CYXWIZ_TEST_ARRAYFIRE_BACKEND is set.
+    cyxwiz::test::PrintOracleHeader("test_computation_truth_tfidf_loss");
+    std::optional<cyxwiz::test::RequestedTestDevice> requested;
+    if (!cyxwiz::test::ReadRequestedTestDevice(requested)) return 1;
     const auto fixture = LoadTrainingCoreFixture(
         argc > 0 ? fs::path(argv[0]) : fs::path{}, argc > 1 ? argv[1] : nullptr);
     const auto& cases = fixture.at("cases");
@@ -2334,8 +2355,9 @@ int main(int argc, char** argv) {
     TestTFIDFBlocksBeforeAllocationHeavyWork();
     TestBoundedTFIDFMaterialization();
     TestTFIDFNGramMaterialization();
-    TestArrayFireCpuTrainingCoreTruth(cases);
-    TestInstalledAcceleratorTrainingCoreTruth(cases);
+    const bool cpu_asked = !requested || requested->type == cyxwiz::DeviceType::CPU;
+    if (cpu_asked) TestArrayFireCpuTrainingCoreTruth(cases);
+    if (!requested || !cpu_asked) TestInstalledAcceleratorTrainingCoreTruth(cases, requested);
     std::cout << "Computation truth TF-IDF + training-core checks passed\n";
     return 0;
 }

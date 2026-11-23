@@ -1,0 +1,41 @@
+{
+  "batch_size": 8,
+  "classes": 3,
+  "image_rows": true,
+  "input_shape": [
+    6,
+    5,
+    2
+  ],
+  "model": "resnet_block",
+  "modules": [
+    {
+      "module": "layer0",
+      "node": "Stem"
+    },
+    {
+      "module": "layer1",
+      "node": "ConvA"
+    },
+    {
+      "module": "layer2",
+      "node": "NormA"
+    },
+    {
+      "module": "layer3",
+      "node": "ConvB"
+    },
+    {
+      "module": "layer4",
+      "node": "NormB"
+    },
+    {
+      "module": "layer5",
+      "node": "Head"
+    }
+  ],
+  "rows": 40,
+  "summary": "6 x 5 x 2 images, Conv 4 + ReLU, [Conv 4 no bias, BN, ReLU, Conv 4 no bias, BN] + skip, ReLU, Flatten, Dense 3; cross-entropy; RMSprop momentum clip",
+  "task": "classification",
+  "token_ids": 0
+}

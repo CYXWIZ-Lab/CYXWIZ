@@ -1,4 +1,12 @@
+// gRPC (network/grpc_client.h) brings winsock2.h; ArrayFire's af/timing.h,
+// reached first through the device headers, brings windows.h, whose full
+// form includes the old winsock.h. The lean form leaves winsock.h out.
+#if defined(_WIN32) && !defined(WIN32_LEAN_AND_MEAN)
+#define WIN32_LEAN_AND_MEAN
+#endif
+
 #include "application.h"
+#include "core/frame_pace.h"
 #include "gui/appearance_settings.h"
 #include "gui/main_window.h"
 #include "gui/node_editor.h"
@@ -23,10 +31,13 @@
 #include "core/dataset_catalog.h"
 #include "core/project_manager.h"
 #include "core/training_manager.h"
+#include "plugin/engine_plugin_context.h"
 #include "core/engine_config.h"
+#include "core/project_session.h"
 #include "core/python_detector.h"
 #include "core/texture_manager.h"
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>  // for _exit()
@@ -64,6 +75,8 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 #include <filesystem>
+#include <fstream>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <algorithm>
 #include <cctype>
@@ -236,8 +249,8 @@ void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
         const std::filesystem::path script = std::filesystem::absolute(arg, ec);
         const std::string ext = script.extension().string();
         if (!ec && (ext == ".py" || ext == ".cyx" || ext == ".ipynb") && std::filesystem::is_regular_file(script, ec)) {
-            startup_scripts_.push_back(script.string());
-            spdlog::info("Startup script: {}", startup_scripts_.back());
+            command_line_scripts_.push_back(script.string());
+            spdlog::info("Script to open: {}", command_line_scripts_.back());
         } else if (!ec && ext == ".cyxgraph" && std::filesystem::is_regular_file(script, ec)) {
             // cyxwiz-engine <project> graph.cyxgraph opens the graph in the Node Editor.
             startup_graph_path_ = script.string();
@@ -258,6 +271,14 @@ void CyxWizApp::OpenStartupProjectIfRequested() {
     if (pm.OpenProject(startup_project_path_)) {
         if (startup_project_from_command_line_)
             spdlog::debug("Opened project from the command line: {}", startup_project_path_);
+        // The last project brings back the graph that was open (a graph
+        // named on the command line wins)
+        if (reopening_last_project_ && startup_graph_path_.empty()) {
+            const std::string graph =
+                cyxwiz::project_session::ResolvedGraph(pm.GetConfig().open_graph, pm.GetProjectRoot());
+            std::error_code ec;
+            if (!graph.empty() && std::filesystem::is_regular_file(graph, ec)) startup_graph_path_ = graph;
+        }
     } else {
         spdlog::error("Failed to open project {}", startup_project_path_);
     }
@@ -270,12 +291,16 @@ void CyxWizApp::OpenStartupGraphIfRequested() {
 
     if (main_window_->OpenGraphInNodeEditor(startup_graph_path_)) {
         // A starter is a copy to work on: Save asks for a name instead of
-        // overwriting the example next to the Engine. A graph named on the
-        // command line is the user's own file.
-        if (!startup_graph_from_command_line_) {
-            if (auto* editor = main_window_->GetNodeEditor()) editor->DetachFromFile();
+        // overwriting the example next to the Engine, and its data paths keep
+        // working wherever it is saved. A graph named on the command line is
+        // the user's own file, and so is the last project's graph.
+        if (!startup_graph_from_command_line_ && !reopening_last_project_) {
+            if (auto* editor = main_window_->GetNodeEditor()) editor->DetachFromExample();
         }
-        spdlog::info("Opened {} graph: {}", startup_graph_from_command_line_ ? "command-line" : "starter",
+        spdlog::info("Opened {} graph: {}",
+                     startup_graph_from_command_line_ ? "command-line"
+                     : reopening_last_project_        ? "the last project's"
+                                                      : "starter",
                      startup_graph_path_);
     } else {
         spdlog::error("Failed to open graph: {}", startup_graph_path_);
@@ -431,6 +456,7 @@ bool CyxWizApp::Initialize() {
     spdlog::set_level(cyxwiz::core::EngineConfig::Instance().RecordDebugLogs() ? spdlog::level::debug
                                                                               : spdlog::level::info);
     cyxwiz::SetDataBudgetBytes(cyxwiz::core::EngineConfig::Instance().DataBudgetBytes());
+    gui::SetEveryWindowMayLeave(cyxwiz::core::EngineConfig::Instance().EveryWindowMayLeave());
 
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForOpenGL(window_, true);
@@ -484,9 +510,31 @@ bool CyxWizApp::Initialize() {
     python_configured_ = true;
     spdlog::info("Python scripting support is disabled in this build; skipping interpreter setup");
 #endif
-    // A project named on the command line opens straight away; the start
-    // page is for choosing one (its "Continue without project" used to drop
-    // the command-line project).
+    // Preferences > General: how many recent projects are kept, and whether
+    // the last one opens instead of the start page (a command-line project
+    // wins; a project whose folder is gone is skipped).
+    {
+        const auto& general = cyxwiz::core::EngineConfig::Instance();
+        auto& pm = cyxwiz::ProjectManager::Instance();
+        pm.SetRecentProjectsLimit(static_cast<size_t>(general.RecentProjectsKept()));
+        if (startup_project_path_.empty() && general.StartWithLastProject()) {
+            std::vector<std::string> paths;
+            for (const auto& recent : pm.GetRecentProjects()) paths.push_back(recent.path);
+            // A file that is gone or does not read as a project is skipped
+            // (opening it would leave neither a project nor the start page)
+            startup_project_path_ = cyxwiz::project_session::FirstExisting(paths, [](const std::string& path) {
+                std::error_code ec;
+                if (!std::filesystem::is_regular_file(path, ec)) return false;
+                std::ifstream file(path);
+                return file && nlohmann::json::accept(file);
+            });
+            reopening_last_project_ = !startup_project_path_.empty();
+            if (reopening_last_project_) spdlog::info("Reopening the last project: {}", startup_project_path_);
+        }
+    }
+    // A project named on the command line (or the last one) opens straight
+    // away; the start page is for choosing one (its "Continue without
+    // project" used to drop the command-line project).
     if (!startup_project_path_.empty()) {
         project_selected_ = true;
     } else {
@@ -508,7 +556,9 @@ int CyxWizApp::Run() {
 
             // Anything still open (running script, unsaved scripts, loaded
             // data) is listed in one dialog; otherwise close at once.
-            if (ShouldPreventClose() || HasUnsavedWork() || HasLoadedData()) {
+            // Something would be lost, or Preferences > General asks every time
+            if (ShouldPreventClose() || HasUnsavedWork() || HasLoadedData() ||
+                cyxwiz::core::EngineConfig::Instance().AskBeforeClosingAlways()) {
                 glfwSetWindowShouldClose(window_, GLFW_FALSE);
                 show_close_dialog_ = true;
             } else {
@@ -543,7 +593,7 @@ bool CyxWizApp::ShouldPreventClose() {
 }
 
 bool CyxWizApp::HasUnsavedWork() {
-    // Check for unsaved files in script editor
+    // Unsaved scripts or graph
     if (main_window_ && main_window_->HasUnsavedFiles()) {
         return true;
     }
@@ -581,7 +631,8 @@ void CyxWizApp::HandleCloseRequest() {
     const std::vector<std::string> datasets = registry.GetDatasetNames();
 
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 600.0f);
-    ImGui::TextUnformatted("Some work is still open. Choose what happens to it.");
+    const bool nothing_open = unsaved.empty() && !script_running && datasets.empty();
+    ImGui::TextUnformatted(nothing_open ? "Nothing is unsaved." : "Some work is still open. Choose what happens to it.");
     ImGui::Spacing();
 
     auto section = [&](const char* title, const std::vector<std::string>& lines, const char* note) {
@@ -592,7 +643,7 @@ void CyxWizApp::HandleCloseRequest() {
         EndCard();
     };
     if (!unsaved.empty()) {
-        section(("Unsaved scripts (" + std::to_string(unsaved.size()) + ")").c_str(), unsaved, nullptr);
+        section(("Unsaved work (" + std::to_string(unsaved.size()) + ")").c_str(), unsaved, nullptr);
     }
     if (script_running) {
         section("Running script", {"A Python script is running. Closing stops it."}, nullptr);
@@ -621,10 +672,11 @@ void CyxWizApp::HandleCloseRequest() {
     };
 
     if (!unsaved.empty()) {
-        if (PrimaryButton("Save scripts and close")) {
+        if (PrimaryButton("Save and close")) {
             main_window_->SaveAllFiles();
             if (main_window_->HasUnsavedFiles()) {
-                close_error_ = "Some scripts could not be saved; they are still listed above. Details are in the log.";
+                close_error_ = "Some work was not saved (a save failed or was cancelled); it is still listed above. "
+                               "Details are in the log.";
             } else {
                 close_now();
             }
@@ -661,45 +713,44 @@ void CyxWizApp::HandleInput() {
 
     bool has_activity = mouse_moved || mouse_clicked || mouse_scrolled || key_pressed;
 
-    // Check if training is active (need full frame rate)
-    bool training_active = cyxwiz::TrainingManager::Instance().IsTrainingActive();
+    // Training, and a plugin with something moving (a running simulation),
+    // need the full frame rate without input.
+    const bool keep_full_rate = cyxwiz::TrainingManager::Instance().IsTrainingActive() ||
+                                cyxwiz::plugin::EnginePluginContext::FullFrameRateRequested();
 
-    if (has_activity || training_active) {
+    if (has_activity || keep_full_rate) {
         last_activity_time_ = current_time;
         is_idle_ = false;
     } else if (current_time - last_activity_time_ > IDLE_TIMEOUT) {
         is_idle_ = true;
     }
 
-    // Track state transitions for debugging
-    static bool was_idle = false;
-
     const bool focused = glfwGetWindowAttrib(window_, GLFW_FOCUSED) != 0;
+    const bool minimised = glfwGetWindowAttrib(window_, GLFW_ICONIFIED) != 0;
 
-    if (is_idle_ && !training_active) {
-        // Use wait with timeout for reduced CPU/GPU usage when idle
-        glfwWaitEventsTimeout(IDLE_FRAME_TIME);
+    // One decision for the frame (core/frame_pace.h). Every change is noted
+    // for Monitor > Frames and, when the switch is on, logged: idle, not in
+    // front and minimised alike.
+    const cyxwiz::FramePace pace = cyxwiz::PaceOf(minimised, is_idle_, keep_full_rate, focused);
+    if (pace != cyxwiz::CurrentFramePace()) {
+        cyxwiz::CurrentFramePaceSlot().store(pace, std::memory_order_relaxed);
+        if (log_idle_transitions_) spdlog::info("Frame rate: {}", cyxwiz::PaceText(pace));
+    }
 
-        if (!was_idle) {
-            if (log_idle_transitions_) {
-                spdlog::info("Entering IDLE mode (reduced GPU usage)");
-            }
-            was_idle = true;
-        }
-    } else if (!focused) {
-        // Another window has focus: 30 frames a second is plenty for a
-        // training chart in the background (TOFIX129 step 0.7).
-        glfwWaitEventsTimeout(UNFOCUSED_FRAME_TIME);
-        was_idle = false;
-    } else {
-        glfwPollEvents();
-
-        if (was_idle) {
-            if (log_idle_transitions_) {
-                spdlog::info("Exiting IDLE mode (full frame rate)");
-            }
-            was_idle = false;
-        }
+    switch (pace) {
+        case cyxwiz::FramePace::Idle:
+            // Use wait with timeout for reduced CPU/GPU usage when idle
+            glfwWaitEventsTimeout(IDLE_FRAME_TIME);
+            break;
+        case cyxwiz::FramePace::NotInFront:
+            // Another window has focus: 30 frames a second is plenty for a
+            // training chart in the background (TOFIX129 step 0.7).
+            glfwWaitEventsTimeout(UNFOCUSED_FRAME_TIME);
+            break;
+        case cyxwiz::FramePace::Minimised:  // the run loop waits and skips the frame
+        case cyxwiz::FramePace::Full:
+            glfwPollEvents();
+            break;
     }
 }
 
@@ -769,6 +820,11 @@ void CyxWizApp::Render() {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+    // The keyboard cursor (the outline Alt, Tab or an arrow key turns on) hides
+    // on any mouse click: ImGui hides it on a left click only, so a menu opened
+    // by right-click after Alt showed its first item outlined.
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
+        ImGui::SetNavCursorVisible(false);
     // Every chart draws in the Engine's ImPlot context. A panel that swapped
     // it (the Data Studio Visualizer once made its own and left it current)
     // is put right here, once per frame, and named in the log once.
@@ -813,7 +869,7 @@ void CyxWizApp::Render() {
                 spdlog::debug("Project selected from start page");
                 startup_project_path_ = start_page_->GetSelectedProjectPath();
                 startup_project_from_command_line_ = false;
-                startup_graph_path_.clear();
+                if (!startup_graph_from_command_line_) startup_graph_path_.clear();  // as below
                 project_selected_ = true;
                 start_page_.reset();
 
@@ -828,7 +884,8 @@ void CyxWizApp::Render() {
             } else if (result == cyxwiz::StartPage::Result::ContinueWithout) {
                 spdlog::info("User chose to continue without project");
                 startup_project_path_ = "";  // No project
-                startup_graph_path_.clear();
+                // A graph named on the command line still opens (cyxwiz-engine graph.cyxgraph)
+                if (!startup_graph_from_command_line_) startup_graph_path_.clear();
                 project_selected_ = true;    // But allow main window to open
                 start_page_.reset();
 
@@ -843,8 +900,8 @@ void CyxWizApp::Render() {
         main_window_ = std::make_unique<gui::MainWindow>();
         OpenStartupProjectIfRequested();
         OpenStartupGraphIfRequested();
-        for (const auto& script : startup_scripts_) main_window_->OpenScriptFile(script);
-        startup_scripts_.clear();
+        for (const auto& script : command_line_scripts_) main_window_->OpenScriptFile(script);
+        command_line_scripts_.clear();
         grpc_client_ = std::make_unique<network::GRPCClient>();
         job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());
 
@@ -864,8 +921,12 @@ void CyxWizApp::Render() {
         // sink. The Commands transcript is reserved for interactive output.
         spdlog::debug("Console panel initialized; runtime logs available");
 
-        // Restore saved auth session
+        // Sign in where the config says (servers.cyxwiz, else auth.api_url).
+        // The Engine used to sign in at the built-in 127.0.0.1:3002 whatever
+        // the config named (TOFIX168).
         auto& auth = cyxwiz::auth::AuthClient::Instance();
+        auth.SetApiBaseUrl(cyxwiz::core::EngineConfig::Instance().GetAuthApiUrl());
+        // Restore saved auth session
         if (auth.LoadSavedSession()) {
             spdlog::info("Auth session restored for: {}", auth.GetUserInfo().email);
         }
@@ -1049,6 +1110,7 @@ void CyxWizApp::RebuildFontAtlas() {
     io.FontDefault = nullptr;
     cyxwiz::gui::ClearEditorMonoFonts();
     cyxwiz::ui::ClearFonts();
+    gui::ClearNodeIconFonts();
     font_regular_ = nullptr;
     font_medium_ = nullptr;
     font_bold_ = nullptr;
@@ -1062,17 +1124,20 @@ void CyxWizApp::RebuildFontAtlas() {
 }
 
 void CyxWizApp::LoadFonts(ImGuiIO& io) {
-    // Font configuration for crisp rendering (high quality)
+    // Glyphs are pixel-snapped and every line of text starts on a whole pixel,
+    // so oversampling buys nothing: at 3 x 2 the atlas was 4096 x 8192 (128 MB
+    // on the GPU), at 1 x 1 it is 2048 x 4096 with the same text (owner
+    // decision 2026-11-12, compared side by side). High-DPI screens raise
+    // RasterizerDensity instead.
     ImFontConfig font_config;
-    const bool needs_manual_oversampling = font_rasterizer_density_ <= 1.0f;
-    font_config.OversampleH = needs_manual_oversampling ? 3 : 1;
-    font_config.OversampleV = needs_manual_oversampling ? 2 : 1;
+    font_config.OversampleH = 1;
+    font_config.OversampleV = 1;
     font_config.PixelSnapH = true;
     font_config.RasterizerDensity = font_rasterizer_density_;
-    // The text the Engine writes: Latin, then punctuation (… – — ‘ ’ “ ”),
-    // arrows (→) and maths signs (≤ ≥ ≈ −). ImGui's default stops at Latin-1,
-    // which drew those as "?".
-    static const ImWchar text_ranges[] = {0x0020, 0x017F, 0x2000, 0x206F, 0x2190, 0x21FF, 0x2200, 0x22FF, 0};
+    // The text the Engine writes: Latin, Greek (σ λ), then punctuation (… – — ‘ ’ “ ”),
+    // superscripts (⁻¹), arrows (→) and maths signs (≤ ≥ ≈ − ∞). ImGui's default stops
+    // at Latin-1, which drew those as "?".
+    static const ImWchar text_ranges[] = {0x0020, 0x017F, 0x0370, 0x03FF, 0x2000, 0x209F, 0x2190, 0x21FF, 0x2200, 0x22FF, 0};
     font_config.GlyphRanges = text_ranges;
 
     // Try multiple font paths (running from different directories)
@@ -1172,35 +1237,42 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     // FontAwesome icon font
     std::string fa_solid = font_base_path + "fa-solid-900.ttf";
 
-    // Tabler Icons font (POC for node icon themes)
-    std::string tabler_icons = font_base_path + "tabler-icons.ttf";
-
-    // Additional icon packs
-    std::string remix_icons = font_base_path + "remixicon.ttf";
-    std::string lucide_icons = font_base_path + "lucide.ttf";
-    std::string iconoir_icons = font_base_path + "iconoir.ttf";
-    std::string phosphor_icons = font_base_path + "phosphor.ttf";
-
     // Icon font glyph ranges (FontAwesome 6)
     static const ImWchar icon_ranges[] = { 0xe000, 0xf8ff, 0 };
 
-    // Tabler Icons glyph ranges (0xea00 - 0xf9ff)
-    static const ImWchar tabler_icon_ranges[] = { 0xea00, 0xf9ff, 0 };
-
-    // Additional icon pack glyph ranges (all use Private Use Area)
-    static const ImWchar remix_icon_ranges[] = { 0xea01, 0xf2ff, 0 };
-    static const ImWchar lucide_icon_ranges[] = { 0xe900, 0xefff, 0 };
-    static const ImWchar iconoir_icon_ranges[] = { 0xe900, 0xefff, 0 };
-    static const ImWchar phosphor_icon_ranges[] = { 0xe000, 0xf8ff, 0 };
-
-    // Icon font config (for merging) - high quality
+    // Icon font config (for merging), pixel-snapped like the text
     ImFontConfig icon_config;
     icon_config.MergeMode = true;
     icon_config.PixelSnapH = true;
-    icon_config.OversampleH = needs_manual_oversampling ? 3 : 1;
-    icon_config.OversampleV = needs_manual_oversampling ? 2 : 1;
+    icon_config.OversampleH = 1;
+    icon_config.OversampleV = 1;
     icon_config.RasterizerDensity = font_rasterizer_density_;
     icon_config.GlyphMinAdvanceX = base_font_size;  // Make icons monospaced
+
+    // Arabic letters and their joined forms (Noto Sans Arabic, OFL), merged
+    // into each interface font: Inter has none, so Arabic data was drawn as
+    // "?". core::DisplayText gives the joined forms and the right-to-left
+    // order; the ranges are the letters and the forms it uses.
+    static const ImWchar arabic_ranges[] = {0x0600, 0x06FF, 0x0750, 0x077F, 0xFB50, 0xFBFF, 0xFE70, 0xFEFF, 0};
+    const std::string arabic_font = font_base_path + "NotoSansArabic-Regular.ttf";
+    const bool has_arabic_font = std::filesystem::exists(arabic_font);
+    ImFontConfig arabic_config;
+    arabic_config.MergeMode = true;
+    arabic_config.PixelSnapH = true;
+    arabic_config.OversampleH = 1;
+    arabic_config.OversampleV = 1;
+    arabic_config.RasterizerDensity = font_rasterizer_density_;
+    // A font's pixel size is its ascent plus descent: 1.21 em for Inter, 2.11
+    // for Noto Sans Arabic, so at the same size Arabic was drawn at 57% of
+    // Inter's scale (small on screen). Its letters span -0.42 to 1.01 em, more
+    // than Inter's line (-0.24 to 0.97): 1.48 times the size fits them in the
+    // line, lifted by 0.095 of the size, so nothing is cut at the bottom.
+    const auto merge_arabic = [&](float font_size) {
+        if (!has_arabic_font) return;
+        arabic_config.GlyphOffset.y = -std::round(font_size * 0.095f);
+        io.Fonts->AddFontFromFileTTF(arabic_font.c_str(), std::round(font_size * 1.48f), &arabic_config, arabic_ranges);
+    };
+    if (!has_arabic_font) spdlog::warn("Arabic font not found ({}): Arabic text is drawn as '?'", arabic_font);
 
     // Load regular font (this becomes the default)
     if (std::filesystem::exists(inter_regular)) {
@@ -1213,36 +1285,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
                 spdlog::debug("Merged FontAwesome icons into regular font");
             }
-
-            // Merge Tabler icons into regular font (POC for node icon themes)
-            if (std::filesystem::exists(tabler_icons)) {
-                io.Fonts->AddFontFromFileTTF(tabler_icons.c_str(), base_font_size - 1.0f, &icon_config, tabler_icon_ranges);
-                spdlog::debug("Merged Tabler icons into regular font");
-            }
-
-            // Merge Remix icons into regular font
-            if (std::filesystem::exists(remix_icons)) {
-                io.Fonts->AddFontFromFileTTF(remix_icons.c_str(), base_font_size - 1.0f, &icon_config, remix_icon_ranges);
-                spdlog::debug("Merged Remix icons into regular font");
-            }
-
-            // Merge Lucide icons into regular font
-            if (std::filesystem::exists(lucide_icons)) {
-                io.Fonts->AddFontFromFileTTF(lucide_icons.c_str(), base_font_size - 1.0f, &icon_config, lucide_icon_ranges);
-                spdlog::debug("Merged Lucide icons into regular font");
-            }
-
-            // Merge Iconoir icons into regular font
-            if (std::filesystem::exists(iconoir_icons)) {
-                io.Fonts->AddFontFromFileTTF(iconoir_icons.c_str(), base_font_size - 1.0f, &icon_config, iconoir_icon_ranges);
-                spdlog::debug("Merged Iconoir icons into regular font");
-            }
-
-            // Merge Phosphor icons into regular font
-            if (std::filesystem::exists(phosphor_icons)) {
-                io.Fonts->AddFontFromFileTTF(phosphor_icons.c_str(), base_font_size - 1.0f, &icon_config, phosphor_icon_ranges);
-                spdlog::debug("Merged Phosphor icons into regular font");
-            }
+            merge_arabic(base_font_size);
         }
     }
 
@@ -1256,6 +1299,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
             if (std::filesystem::exists(fa_solid)) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
             }
+            merge_arabic(base_font_size);
         }
     }
 
@@ -1271,6 +1315,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), heading_font_size - 1.0f, &icon_config, icon_ranges);
                 icon_config.GlyphMinAdvanceX = base_font_size;
             }
+            merge_arabic(heading_font_size);
             cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Heading, heading);
         }
     }
@@ -1285,6 +1330,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
             if (std::filesystem::exists(fa_solid)) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
             }
+            merge_arabic(base_font_size);
         }
     }
 
@@ -1343,10 +1389,34 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Medium, font_medium_);
     cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Bold, font_bold_);
 
+    // The other icon packs (the Studio's Node Icon Pack choice) draw only the
+    // canvas's node icons, each with a font of its own: merged into the
+    // interface font after Font Awesome, every codepoint the two share showed
+    // Font Awesome's glyph. The atlas keeps the few dozen glyphs a pack's node
+    // icons use, not its whole range; the ranges live until the atlas is built.
+    static const std::array<gui::IconPack, 5> extra_packs = {
+        gui::IconPack::Tabler, gui::IconPack::Remix, gui::IconPack::Lucide,
+        gui::IconPack::Iconoir, gui::IconPack::Phosphor};
+    static std::array<std::vector<ImWchar>, extra_packs.size()> pack_ranges;
+    ImFontConfig pack_config = icon_config;
+    pack_config.MergeMode = false;
+    for (size_t i = 0; i < extra_packs.size(); ++i) {
+        const gui::IconPack pack = extra_packs[i];
+        const std::string file = font_base_path + gui::NodeIconFontFile(pack);
+        if (!std::filesystem::exists(file)) continue;
+        if (pack_ranges[i].empty()) pack_ranges[i] = gui::NodeIconGlyphRanges(pack);
+        ImFont* pack_font = io.Fonts->AddFontFromFileTTF(file.c_str(), base_font_size - 1.0f, &pack_config,
+                                                         pack_ranges[i].data());
+        gui::RegisterNodeIconFont(pack, pack_font);
+        if (pack_font) spdlog::debug("Loaded node icon pack font {}", gui::NodeIconFontFile(pack));
+    }
+
     // Build font atlas
     spdlog::debug("Building font atlas...");
     spdlog::default_logger()->flush();  // Force flush before potential crash
     io.Fonts->Build();
-    spdlog::debug("Font atlas built successfully at {:.2f}x rasterizer density",
-                 font_rasterizer_density_);
+    spdlog::debug("Font atlas built: {} x {} px ({:.1f} MB as RGBA), {} fonts, {:.2f}x rasterizer density",
+                  io.Fonts->TexWidth, io.Fonts->TexHeight,
+                  static_cast<double>(io.Fonts->TexWidth) * io.Fonts->TexHeight * 4.0 / (1024.0 * 1024.0),
+                  io.Fonts->Fonts.Size, font_rasterizer_density_);
 }

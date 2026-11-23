@@ -19,6 +19,8 @@
 
 namespace {
 
+// The host-sync observer exists in debug builds only, like its test below.
+#ifndef NDEBUG
 std::vector<cyxwiz::ArrayFireHostSyncEvent>* g_loss_host_sync_events = nullptr;
 
 void CaptureLossHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
@@ -39,7 +41,6 @@ public:
     }
 };
 
-#ifndef NDEBUG
 using LossFactory = std::function<std::unique_ptr<cyxwiz::Loss>()>;
 #endif
 
@@ -241,6 +242,17 @@ TEST_CASE("Probability loss parameters reject invalid domains",
         std::invalid_argument);
     weighted.SetPosWeight(3.5f);
     REQUIRE(weighted.GetPosWeight() == Catch::Approx(3.5f));
+    REQUIRE_THROWS_AS(
+        weighted.SetLabelSmoothing(1.0f), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        weighted.SetLabelSmoothing(-0.1f), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::BCEWithLogitsLoss(
+            cyxwiz::Reduction::Mean, 1.0f,
+            std::numeric_limits<float>::quiet_NaN()),
+        std::invalid_argument);
+    weighted.SetLabelSmoothing(0.1f);
+    REQUIRE(weighted.GetLabelSmoothing() == Catch::Approx(0.1f));
 }
 
 TEST_CASE("Probability losses validate shape and dtype before compute",
@@ -458,6 +470,49 @@ TEST_CASE("CrossEntropyLoss supports token-level logits and ignored targets", "[
     REQUIRE(grad_data[3] == Catch::Approx(0.0f));
     REQUIRE(grad_data[4] == Catch::Approx(0.0f));
     REQUIRE(grad_data[5] == Catch::Approx(0.0f));
+}
+
+// A class-index target that is not ignored must be a class, as PyTorch raises
+// (TOFIX223 0.19): out of range it read a logit outside the row.
+TEST_CASE("Class-index losses refuse targets outside the classes", "[loss][language_model]") {
+    float logit_values[] = {2.0f, 1.0f, 0.0f, 0.0f, 1.0f, 2.0f};
+    cyxwiz::Tensor logits({1, 2, 3}, logit_values, cyxwiz::DataType::Float32);
+    const auto targets_of = [](int64_t first, int64_t second) {
+        int64_t values[] = {first, second};
+        return cyxwiz::Tensor({1, 2}, values, cyxwiz::DataType::Int64);
+    };
+    const auto error_of = [](const std::function<void()>& run) {
+        try {
+            run();
+        } catch (const std::exception& e) {
+            return std::string(e.what());
+        }
+        return std::string();
+    };
+
+    cyxwiz::CrossEntropyLoss ignore_minus_100(cyxwiz::Reduction::Mean, -100);
+    REQUIRE(error_of([&] { (void)ignore_minus_100.Forward(logits, targets_of(2, -100)); }).empty());
+    REQUIRE(error_of([&] { (void)ignore_minus_100.Forward(logits, targets_of(3, 0)); })
+                .find("target class 3 is outside the 3 classes") != std::string::npos);
+
+    // The finding's case: the loss skips 0, the targets carry -100.
+    cyxwiz::CrossEntropyLoss ignore_zero(cyxwiz::Reduction::Mean, 0);
+    REQUIRE(error_of([&] { (void)ignore_zero.Forward(logits, targets_of(1, -100)); })
+                .find("target class -100") != std::string::npos);
+    REQUIRE(error_of([&] { (void)ignore_zero.Forward(logits, targets_of(1, 0)); }).empty());
+
+    float log_probability_values[] = {-0.4f, -1.4f, -2.4f, -2.4f, -1.4f, -0.4f};
+    cyxwiz::Tensor log_probabilities({1, 2, 3}, log_probability_values, cyxwiz::DataType::Float32);
+    cyxwiz::NLLLoss nll(cyxwiz::Reduction::Mean, -100);
+    REQUIRE(error_of([&] { (void)nll.Forward(log_probabilities, targets_of(0, 5)); })
+                .find("NLL: target class 5") != std::string::npos);
+
+    float row_logits[] = {2.0f, 1.0f, 0.0f, 0.0f, 1.0f, 2.0f};
+    cyxwiz::Tensor rows({2, 3}, row_logits, cyxwiz::DataType::Float32);
+    int64_t row_targets[] = {0, -1};
+    cyxwiz::FocalLoss focal(0.25f, 2.0f, cyxwiz::Reduction::Mean);
+    REQUIRE(error_of([&] { (void)focal.Forward(rows, cyxwiz::Tensor({2}, row_targets, cyxwiz::DataType::Int64)); })
+                .find("Focal: target class -1") != std::string::npos);
 }
 
 TEST_CASE("CrossEntropy backward recomputes unless given Forward's own tensors",

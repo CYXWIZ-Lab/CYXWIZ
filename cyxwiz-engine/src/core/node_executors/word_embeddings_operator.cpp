@@ -7,7 +7,6 @@
 #include "../word_embeddings_presentation.h"
 #include "tree_classification_utils.h"
 
-#include <cyxwiz/text_processing.h>
 #include <cyxwiz/tokenizer.h>
 
 #include <spdlog/spdlog.h>
@@ -84,11 +83,6 @@ std::string LocalTimeNow() {
 }
 
 }  // namespace
-
-std::vector<std::string> WordEmbeddingsOperator::SplitWords(const std::string& text) {
-    // Tokenizer::Split, Word mode: lowercase, then runs of letters and digits.
-    return TextProcessing::Tokenize(TextProcessing::ToLowercase(text), "word", 2, false, true).tokens;
-}
 
 std::string WordEmbeddingsOperator::DefaultVectorsFile(int node_id, const std::string& node_name) {
     std::string slug = node_name;
