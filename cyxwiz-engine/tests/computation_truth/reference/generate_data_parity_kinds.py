@@ -103,6 +103,7 @@ def text_kind() -> None:
         values[str(i)] = [float(v) for v in ids + [0] * (max_length - len(ids))]
         labels[str(i)] = float(class_of_row[i])
     train = [i for i, p in enumerate(partition) if p == 0]
+    training = kind_training("text_model", values, class_of_row, partition, epoch_orders(train), 4, ids=True)
     print(f"text: {len(rows)} rows, {partition.count(0)} / {partition.count(1)} / {partition.count(2)}, "
           f"vocabulary {[t for t, _ in kept]}")
     write_fixture("text", {
@@ -121,6 +122,7 @@ def text_kind() -> None:
         "test_rows": [i for i, p in enumerate(partition) if p == 2],
         "values": values,
         "labels": labels,
+        "training": training,
     })
 
 
@@ -149,6 +151,8 @@ def series_kind() -> None:
         train_count, val_count = train_count - 1, 1
     partition = [0] * train_count + [1] * val_count + [2] * (windows - train_count - val_count)
     train = [w for w, p in enumerate(partition) if p == 0]
+    training = kind_training("series_model", values, [labels[str(w)] for w in range(windows)], partition,
+                             epoch_orders(train), 4, regression=True)
     print(f"series: {windows} windows, {partition.count(0)} / {partition.count(1)} / {partition.count(2)}")
     write_fixture("series", {
         "summary": f"{n} readings, windows of {width} over value and temp, target {shift} step on, chronological "
@@ -165,6 +169,7 @@ def series_kind() -> None:
         "test_rows": [w for w, p in enumerate(partition) if p == 2],
         "values": values,
         "labels": labels,
+        "training": training,
     })
 
 
@@ -209,6 +214,8 @@ def image_kind() -> None:
     values = {str(i): (f[2].astype(np.float32) / np.float32(255.0)).reshape(-1).tolist() for i, f in enumerate(files)}
     labels = {str(i): float(labels_of[i]) for i in range(len(files))}
     train = [i for i, p in enumerate(partition) if p == 0]
+    training = kind_training("image_model", values, labels_of, partition, epoch_orders(train), 2,
+                             row_shape=(size, size, 3), images=True)
     print(f"image: {len(files)} images, {partition.count(0)} / {partition.count(1)} / {partition.count(2)}")
     write_fixture("image", {
         "summary": f"{len(files)} PNG in 2 class folders (RGB, grey, RGBA, one 8 x 8), at {size} x {size}",
@@ -221,6 +228,7 @@ def image_kind() -> None:
         "test_rows": [i for i, p in enumerate(partition) if p == 2],
         "values": values,
         "labels": labels,
+        "training": training,
     })
 
 
@@ -270,6 +278,9 @@ def audio_kind() -> None:
     split = {"train": 0.5, "val": 0.25, "test": 0.25, "stratified": True, "seed": 7}
     partition = assign_split(labels_of, (split["train"], split["val"], split["test"]), True, split["seed"])
     train = [i for i, p in enumerate(partition) if p == 0]
+    bins, frames = n_fft // 2 + 1, len(values["0"]) // (n_fft // 2 + 1)
+    training = kind_training("audio_model", values, labels_of, partition, epoch_orders(train), 2,
+                             row_shape=(bins, frames))
     print(f"audio: {len(clips)} clips, {partition.count(0)} / {partition.count(1)} / {partition.count(2)}")
     write_fixture("audio", {
         "summary": f"{len(clips)} WAV in 2 class folders, {rate} Hz, {seconds} s, spectrogram n_fft {n_fft} hop {hop}",
@@ -283,6 +294,7 @@ def audio_kind() -> None:
         "test_rows": [i for i, p in enumerate(partition) if p == 2],
         "values": values,
         "labels": labels,
+        "training": training,
     })
 
 
@@ -320,7 +332,7 @@ def sparse_kind() -> None:
         norm = np.float32(math.sqrt(float(np.sum(v.astype(np.float64) ** 2))))
         values[str(i)] = (v / norm if norm > 0 else v).tolist()
         labels[str(i)] = float(class_of_row[i])
-    training = sparse_training(values, class_of_row, partition, epoch_orders(train))
+    training = kind_training("sparse_linear", values, class_of_row, partition, epoch_orders(train), 4)
     print(f"sparse: {len(rows)} rows, features {features}")
     write_fixture("sparse", {
         "summary": f"the text CSV as TF-IDF, {max_features} terms from the Train rows, l2 rows",
@@ -341,37 +353,53 @@ def sparse_kind() -> None:
     })
 
 
-def sparse_training(values: dict, class_of_row: list[int], partition: list[int], orders: list[list[int]]) -> dict:
-    """The sparse model's export (sparse_linear.py, test_oracle_data
-    --write-exports) trained by PyTorch on the dense TF-IDF rows, in the
-    epochs' orders, as level 2 runs an export."""
+def kind_training(model: str, values: dict, targets: list[float], partition: list[int], orders: list[list[int]],
+                  batch_size: int, ids: bool = False, regression: bool = False,
+                  row_shape: tuple[int, ...] | None = None, images: bool = False) -> dict:
+    """The kind's model export (<model>.py, test_oracle_data --write-exports)
+    trained by PyTorch on the kind's rows as Python reads them, in the
+    epochs' orders, as level 2 runs an export. `ids`: the rows are token ids
+    (an embedding takes integers); `regression`: float targets; `row_shape`:
+    each row's shape as the model's Data node gives it (the row's values are
+    in that order already); `images`: the rows are [H, W, C] images."""
     import hashlib
 
     import torch
 
-    code = (DATA_DIR / "sparse_linear.py").read_text(encoding="utf-8").replace("\r\n", "\n")
+    code = (DATA_DIR / f"{model}.py").read_text(encoding="utf-8").replace("\r\n", "\n")
     setup, loop = split_export(code)
     torch.manual_seed(22863)
     ns = {"__name__": "__main__"}
-    exec(compile(setup, "sparse_linear.py (setup)", "exec"), ns)
+    exec(compile(setup, f"{model}.py (setup)", "exec"), ns)
     x = torch.tensor([values[str(i)] for i in range(len(values))], dtype=torch.float32)
-    y = torch.tensor(class_of_row, dtype=torch.long)
-    model = ns["model"]
-    model.eval()
+    if row_shape:
+        x = x.reshape(len(values), *row_shape)
+    if images:
+        # [H, W, C] rows for the Engine; torch takes images channels first, as
+        # image data reaches a torch model (level 2's image rows likewise).
+        x = x.permute(0, 3, 1, 2).contiguous()
+    if ids:
+        x = x.long()
+    y = torch.tensor(targets, dtype=torch.float32 if regression else torch.long)
+    net = ns["model"]
+    net.eval()
     with torch.no_grad():
-        model(x[:4])
-    model.train()
-    torch.save({k: v.detach().clone() for k, v in model.state_dict().items()}, DATA_DIR / "sparse_linear_init.pth")
+        net(x[:batch_size])  # materialises the lazy layers
+    net.train()
+    init_name = f"{model}_init.pth"
+    torch.save({k: v.detach().clone() for k, v in net.state_dict().items()}, DATA_DIR / init_name)
     val = [i for i, p in enumerate(partition) if p == 1]
-    loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(x, y), batch_size=4,
+    # The validation loss compares like shapes, as the export's loop does.
+    val_y = y[val].unsqueeze(1) if regression else y[val]
+    loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(x, y), batch_size=batch_size,
                                          sampler=EpochOrderSampler(orders), drop_last=False)
-    recorder = RecordingLoader(loader, ns, x[val], y[val])
+    recorder = RecordingLoader(loader, ns, x[val], val_y)
     ns.update({"train_loader": recorder, "num_epochs": EPOCHS})
-    exec(compile(loop, "sparse_linear.py (example loop)", "exec"), ns)
-    print(f"sparse training: loss {recorder.steps[0]['running_loss']:.6f} -> {recorder.steps[-1]['running_loss']:.6f}")
+    exec(compile(loop, f"{model}.py (example loop)", "exec"), ns)
+    print(f"{model} training: loss {recorder.steps[0]['running_loss']:.6f} -> {recorder.steps[-1]['running_loss']:.6f}")
     return {
         "export_sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
-        "init_weights": "sparse_linear_init.pth",
+        "init_weights": init_name,
         "tolerance": {"atol": 2e-5, "rtol": 2e-4},
         "steps": recorder.steps,
         "epochs": recorder.epochs,

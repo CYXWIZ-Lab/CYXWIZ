@@ -43,6 +43,7 @@
 #include <arrow/api.h>
 
 #include <algorithm>
+#include <functional>
 
 #include <iostream>
 #include <memory>
@@ -102,6 +103,51 @@ cyxwiz::test::TrainGraph SparseModel() {
     return g.Take();
 }
 
+// A model per other kind, trained on that kind's batchers (the loss
+// trajectory of design step 5): small, so the comparison is of the data path
+// and the training loop, not of a layer level 1 and 2 cover.
+cyxwiz::test::TrainGraph KindModel(const std::vector<size_t>& shape, const std::string& dataset,
+                                   std::vector<std::pair<gui::NodeType, std::map<std::string, std::string>>> layers,
+                                   gui::NodeType loss_type, const std::string& learning_rate) {
+    cyxwiz::test::GraphBuilder g;
+    const int data = g.Data(shape, dataset);
+    std::vector<int> chain;
+    int n = 0;
+    for (auto& [type, params] : layers) chain.push_back(g.Add(type, "Layer" + std::to_string(++n), params));
+    const int last = g.Chain(data, chain);
+    const int loss = g.Add(loss_type, "Loss");
+    const int sgd = g.Add(gui::NodeType::SGD, "SGD", {{"learning_rate", learning_rate}, {"momentum", "0"}});
+    g.Finish(data, last, loss, sgd);
+    return g.Take();
+}
+
+// Text: the 6 token ids of a row, an embedding, Flatten, Dense 3.
+cyxwiz::test::TrainGraph TextModel() {
+    return KindModel({6}, "oracle_text",
+                     {{gui::NodeType::Embedding, {{"num_embeddings", "12"}, {"embedding_dim", "3"}}},
+                      {gui::NodeType::Flatten, {}},
+                      {gui::NodeType::Dense, {{"units", "3"}}}},
+                     gui::NodeType::CrossEntropyLoss, "0.5");
+}
+
+// Series: a window of 4 values and 4 temperatures to the next value.
+cyxwiz::test::TrainGraph SeriesModel() {
+    return KindModel({8}, "oracle_series", {{gui::NodeType::Dense, {{"units", "1"}}}}, gui::NodeType::MSELoss,
+                     "0.0005");
+}
+
+// Image: 4 x 4 RGB in [H, W, C] order, Flatten, Dense 2.
+cyxwiz::test::TrainGraph ImageModel() {
+    return KindModel({4, 4, 3}, "oracle_image", {{gui::NodeType::Flatten, {}}, {gui::NodeType::Dense, {{"units", "2"}}}},
+                     gui::NodeType::CrossEntropyLoss, "0.05");
+}
+
+// Audio: the [33 bins, 63 frames] spectrogram, Flatten, Dense 2.
+cyxwiz::test::TrainGraph AudioModel() {
+    return KindModel({33, 63}, "oracle_audio", {{gui::NodeType::Flatten, {}}, {gui::NodeType::Dense, {{"units", "2"}}}},
+                     gui::NodeType::CrossEntropyLoss, "0.005");
+}
+
 void WriteExport(const fs::path& dir, const std::string& name, const cyxwiz::test::TrainGraph& graph) {
     const auto exported = cyxwiz::test::UnstampedPyTorchExport(graph);
     std::ofstream(dir / (name + ".py"), std::ios::binary) << exported.code;
@@ -124,6 +170,10 @@ int WriteExports(const fs::path& dir) {
         << "\n";
     std::cout << "wrote " << (dir / (std::string(kModel) + ".py")).string() << "\n";
     WriteExport(dir, "sparse_linear", SparseModel());
+    WriteExport(dir, "text_model", TextModel());
+    WriteExport(dir, "series_model", SeriesModel());
+    WriteExport(dir, "image_model", ImageModel());
+    WriteExport(dir, "audio_model", AudioModel());
     return 0;
 }
 
@@ -254,9 +304,13 @@ RunCheck TrainAgainst(const cyxwiz::TrainingConfiguration& config, cyxwiz::Resol
     executor.Train(
         config.epochs, config.batch_size,
         [&](int, int, int, float loss, float) {
-            if (out.steps < steps.size())
-                Compare({loss}, {steps.at(out.steps).at("running_loss").get<float>()}, atol, rtol,
-                        "step " + std::to_string(out.steps + 1) + " running loss", out.loss);
+            if (out.steps < steps.size()) {
+                const float torch_loss = steps.at(out.steps).at("running_loss").get<float>();
+                std::cout << "    step " << (out.steps + 1) << ": running loss " << loss << " (torch " << torch_loss
+                          << ")\n";
+                Compare({loss}, {torch_loss}, atol, rtol, "step " + std::to_string(out.steps + 1) + " running loss",
+                        out.loss);
+            }
             ++out.steps;
         },
         [&](int, float, float, float val_loss, float, float) {
@@ -714,6 +768,65 @@ void CheckParts(const std::string& kind, const json& f, const PartRead& train, c
     Check(label_mismatch == 0, kind + ": every row's label (" + std::to_string(label_mismatch) + " differ)");
 }
 
+// Training on a kind's batchers: its model, started from the fixture's
+// state-dict, trained by the TrainingExecutor for two epochs on the batchers
+// `make` builds for the model's configuration; every step's running loss and
+// each epoch's validation loss and weights against PyTorch running the
+// model's export on the same rows in the same order (generate_data_parity_kinds.py).
+void TrainKind(const std::string& kind, const json& f, const cyxwiz::test::TrainGraph& graph,
+               const std::string& model_name,
+               const std::function<void(cyxwiz::TrainingConfiguration&)>& data_settings,
+               const std::function<cyxwiz::ResolvedExternalBatchers(const cyxwiz::TrainingConfiguration&)>& make) {
+    const json& run = f.at("training");
+    const auto exported = cyxwiz::test::UnstampedPyTorchExport(graph);
+    const std::string committed = cyxwiz::test::ReadText(ModelDir() / (model_name + ".py"));
+    Check(exported.code == committed, kind + ": the model's PyTorch export is the committed one");
+    Check(run.at("export_sha256") == cyxwiz::test::Sha256Text(committed), kind + ": the fixture was made from it");
+    const auto named = cyxwiz::test::NamedAfterModules(graph, exported);
+    cyxwiz::GraphCompiler compiler;
+    cyxwiz::TrainingConfiguration config = compiler.Compile(named.nodes, named.links, true);
+    for (const auto& issue : config.issues)
+        if (issue.level == cyxwiz::IssueLevel::Error) std::cout << "    compile: " << issue.message << "\n";
+    Check(config.is_valid, kind + ": the model compiles");
+    if (!config.is_valid) return;
+    const fs::path work = fs::temp_directory_path() / ("cyxwiz_oracle_data_" + kind);
+    fs::remove_all(work);
+    fs::create_directories(work);
+    data_settings(config);
+    config.dataloader_seed = kLoaderSeed;
+    config.num_workers = 0;
+    config.batch_size = f.at("batch_size").get<int>();
+    config.epochs = kEpochs;
+    config.validation_freq = 1;
+    config.save_best_checkpoint = false;
+    config.early_stopping_patience = 0;
+    config.log_interval = 1;
+    config.checkpoint_dir = (work / "checkpoints").string();
+    config.initialize_from_weights_file = (ModelDir() / run.at("init_weights").get<std::string>()).string();
+    const RunCheck check = TrainAgainst(config, make(config), run.at("steps"), run.at("epochs"),
+                                        run.at("tolerance").at("atol").get<double>(),
+                                        run.at("tolerance").at("rtol").get<double>());
+    Check(check.status == "completed", kind + ": the run completes (" + check.status + ": " + check.reason + ")");
+    Check(check.steps == run.at("steps").size(), kind + ": " + std::to_string(check.steps) + " steps (PyTorch " +
+                                                      std::to_string(run.at("steps").size()) + ")");
+    Check(check.layout_problem.empty(), kind + ": the model takes the fixture's weights: " + check.layout_problem);
+    Check(check.loss.excess <= 1.0, kind + ": every step's running loss is PyTorch's (worst " +
+                                        std::to_string(check.loss.excess) + " tolerances at " + check.loss.where + ")");
+    Check(check.epoch.excess <= 1.0, kind + ": every epoch's validation loss and weights are PyTorch's (worst " +
+                                         std::to_string(check.epoch.excess) + " tolerances at " + check.epoch.where + ")");
+    fs::remove_all(work);
+}
+
+// The split a kind's Data Split asks for (ratios, stratified, shuffled).
+void ShuffledSplit(cyxwiz::TrainingConfiguration& config, float train, float val, float test) {
+    config.has_data_split = true;
+    config.shuffle = true;
+    config.stratified = true;
+    config.train_ratio = train;
+    config.val_ratio = val;
+    config.test_ratio = test;
+}
+
 json LoadKind(const std::string& name) {
     std::ifstream in(FixtureRoot() / ("data_parity_" + name + ".json"));
     if (!in) throw std::runtime_error("data_parity_" + name + ".json is not readable");
@@ -756,6 +869,12 @@ void RunText() {
     bool seeded = false;
     const PartRead train = ReadTrain(*set.train, 2, kLoaderSeed, seeded);
     CheckParts("text", f, train, ReadOnce(set.val), ReadOnce(set.test), seeded);
+    TrainKind("text", f, TextModel(), "text_model",
+              [](cyxwiz::TrainingConfiguration& c) { ShuffledSplit(c, 0.7f, 0.15f, 0.15f); },
+              [&](const cyxwiz::TrainingConfiguration& c) {
+                  return cyxwiz::TakeResolvedExternalBatchers(
+                      cyxwiz::BuildArrowTrainingBatchers(c, tokens, "y", c.batch_size));
+              });
 }
 
 // Time series: Data Input -> TimeSeriesWindow -> TimeSeriesSplit
@@ -792,6 +911,16 @@ void RunSeries() {
     bool seeded = false;
     const PartRead train = ReadTrain(*set.train, 2, kLoaderSeed, seeded);
     CheckParts("series", f, train, ReadOnce(set.val), ReadOnce(set.test), seeded);
+    TrainKind("series", f, SeriesModel(), "series_model",
+              [](cyxwiz::TrainingConfiguration& c) {
+                  c.is_time_series = true;
+                  c.has_data_split = true;
+                  c.shuffle = true;
+              },
+              [&](const cyxwiz::TrainingConfiguration& c) {
+                  return cyxwiz::TakeResolvedExternalBatchers(
+                      cyxwiz::BuildArrowTrainingBatchers(c, windows, "y", c.batch_size));
+              });
 }
 
 // One batcher serves an image / audio set's three parts (SetPhase), as the
@@ -832,6 +961,14 @@ void RunImage() {
     if (!prepared.set) return;
     cyxwiz::ImageDatasetBatcher batcher(prepared.set, f.at("batch_size").get<int>(), SplitOf(f), true, kLoaderSeed);
     ReadPhases("image", f, batcher);
+    TrainKind("image", f, ImageModel(), "image_model", [](cyxwiz::TrainingConfiguration&) {},
+              [&](const cyxwiz::TrainingConfiguration& c) {
+                  auto shared = std::make_shared<cyxwiz::ImageDatasetBatcher>(prepared.set, c.batch_size, SplitOf(f),
+                                                                              true, kLoaderSeed);
+                  // As the Engine's image setup does (image_batchers.cpp): one-hot class labels.
+                  shared->SetOneHotEncoding(f.at("classes").get<size_t>());
+                  return cyxwiz::ResolvedExternalBatchers{shared, shared, shared};
+              });
 }
 
 // Audio: a class-per-folder set of 16-bit mono WAVs, the magnitude
@@ -855,6 +992,14 @@ void RunAudio() {
                                         kLoaderSeed);
     Check(batcher.GetNumSamples() > 0, "audio: the clips load");
     ReadPhases("audio", f, batcher);
+    TrainKind("audio", f, AudioModel(), "audio_model", [](cyxwiz::TrainingConfiguration&) {},
+              [&](const cyxwiz::TrainingConfiguration& c) {
+                  auto shared = std::make_shared<cyxwiz::AudioDatasetBatcher>(entry, preprocessing, c.batch_size,
+                                                                              SplitOf(f), true, 0, kLoaderSeed);
+                  // As the Engine's audio setup does (audio_dataset_batcher.cpp): one-hot class labels.
+                  shared->SetOneHotEncoding(f.at("classes").get<size_t>());
+                  return cyxwiz::ResolvedExternalBatchers{shared, shared, shared};
+              });
 }
 
 // Sparse: the text CSV through TFIDFVectorizer (sparse output, vocabulary
@@ -896,49 +1041,12 @@ void RunSparse() {
 
     // Training on those batches: a linear model on the CSR rows against
     // PyTorch running its export on the dense rows in the same order.
-    const json& run = f.at("training");
-    const auto graph = SparseModel();
-    const auto exported = cyxwiz::test::UnstampedPyTorchExport(graph);
-    const std::string committed = cyxwiz::test::ReadText(ModelDir() / "sparse_linear.py");
-    Check(exported.code == committed, "sparse: the model's PyTorch export is the committed one");
-    Check(run.at("export_sha256") == cyxwiz::test::Sha256Text(committed), "sparse: the fixture was made from it");
-    const auto named = cyxwiz::test::NamedAfterModules(graph, exported);
-    cyxwiz::GraphCompiler compiler;
-    cyxwiz::TrainingConfiguration model_config = compiler.Compile(named.nodes, named.links, true);
-    Check(model_config.is_valid, "sparse: the model compiles");
-    if (!model_config.is_valid) return;
-    const fs::path work = fs::temp_directory_path() / "cyxwiz_oracle_data_sparse";
-    fs::remove_all(work);
-    fs::create_directories(work);
-    model_config.has_data_split = true;
-    model_config.shuffle = true;
-    model_config.stratified = true;
-    model_config.train_ratio = 0.7f;
-    model_config.val_ratio = 0.15f;
-    model_config.test_ratio = 0.15f;
-    model_config.dataloader_seed = kLoaderSeed;
-    model_config.num_workers = 0;
-    model_config.batch_size = f.at("batch_size").get<int>();
-    model_config.epochs = kEpochs;
-    model_config.validation_freq = 1;
-    model_config.save_best_checkpoint = false;
-    model_config.early_stopping_patience = 0;
-    model_config.log_interval = 1;
-    model_config.checkpoint_dir = (work / "checkpoints").string();
-    model_config.initialize_from_weights_file = (ModelDir() / run.at("init_weights").get<std::string>()).string();
-    auto resolved = cyxwiz::TakeResolvedExternalBatchers(
-        cyxwiz::BuildSparseTrainingBatchers(model_config, features, model_config.batch_size));
-    const RunCheck check = TrainAgainst(model_config, std::move(resolved), run.at("steps"), run.at("epochs"),
-                                        run.at("tolerance").at("atol").get<double>(),
-                                        run.at("tolerance").at("rtol").get<double>());
-    Check(check.status == "completed", "sparse: the run completes (" + check.status + ": " + check.reason + ")");
-    Check(check.steps == run.at("steps").size(), "sparse: " + std::to_string(check.steps) + " steps");
-    Check(check.layout_problem.empty(), "sparse: the head takes the fixture's weights: " + check.layout_problem);
-    Check(check.loss.excess <= 1.0, "sparse: every step's running loss is PyTorch's (worst " +
-                                        std::to_string(check.loss.excess) + " tolerances at " + check.loss.where + ")");
-    Check(check.epoch.excess <= 1.0, "sparse: every epoch's validation loss and weights are PyTorch's (worst " +
-                                         std::to_string(check.epoch.excess) + " tolerances at " + check.epoch.where + ")");
-    fs::remove_all(work);
+    TrainKind("sparse", f, SparseModel(), "sparse_linear",
+              [](cyxwiz::TrainingConfiguration& c) { ShuffledSplit(c, 0.7f, 0.15f, 0.15f); },
+              [&](const cyxwiz::TrainingConfiguration& c) {
+                  return cyxwiz::TakeResolvedExternalBatchers(
+                      cyxwiz::BuildSparseTrainingBatchers(c, features, c.batch_size));
+              });
 }
 
 }  // namespace

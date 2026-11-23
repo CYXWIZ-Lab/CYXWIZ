@@ -53,27 +53,27 @@
    "live_skip": "needs the Palmer penguins CSV (not committed): py -3.12 generate_cross_validation_fixtures.py path/to/penguins.csv"
   },
   "data_parity_audio.json": {
-   "fixture_sha256": "a1075a1c4cf8264886e94059a3f889b14c07bef73c0a67126f813a29df128205",
+   "fixture_sha256": "4fafcb51d84fb82c0c9d33fe2c5c519ea893d44f28da07620681788f519dcd06",
    "generator": "reference/generate_data_parity_kinds.py",
-   "generator_sha256": "a2f1bb2385e5ab52ee9e46f01e69a14bc71bae951d1c9b6b253af1654e6e1562",
+   "generator_sha256": "efcd41d432f9e77dbbec709ab439e4fd6ef339321e8df16fbb14eca945dc036a",
    "note": "also writes the audio input files under data_parity/; batch level, test_oracle_data"
   },
   "data_parity_image.json": {
-   "fixture_sha256": "7a679d6b0ea1570bb0e528090048eaf1134f77d98c0c0b81205b6481a01541ca",
+   "fixture_sha256": "d1009a5b81548e934cc8e08ab3177212118a8bd579a0f1a245c2b3a02e7f7d02",
    "generator": "reference/generate_data_parity_kinds.py",
-   "generator_sha256": "a2f1bb2385e5ab52ee9e46f01e69a14bc71bae951d1c9b6b253af1654e6e1562",
+   "generator_sha256": "efcd41d432f9e77dbbec709ab439e4fd6ef339321e8df16fbb14eca945dc036a",
    "note": "also writes the image input files under data_parity/; batch level, test_oracle_data"
   },
   "data_parity_series.json": {
-   "fixture_sha256": "77a8ff361c1c5243ad226d9fb357684823191c2b51deb7f57804924c466d82ba",
+   "fixture_sha256": "29ce94030e3aa9ab8db5ccc36a9b241eed88590eedc00bca19f0844f3f7f4682",
    "generator": "reference/generate_data_parity_kinds.py",
-   "generator_sha256": "a2f1bb2385e5ab52ee9e46f01e69a14bc71bae951d1c9b6b253af1654e6e1562",
+   "generator_sha256": "efcd41d432f9e77dbbec709ab439e4fd6ef339321e8df16fbb14eca945dc036a",
    "note": "also writes the series input files under data_parity/; batch level, test_oracle_data"
   },
   "data_parity_sparse.json": {
    "fixture_sha256": "045e6fde944b7a6d8838d0dca21484cea693dfb041339022353397403564e16b",
    "generator": "reference/generate_data_parity_kinds.py",
-   "generator_sha256": "a2f1bb2385e5ab52ee9e46f01e69a14bc71bae951d1c9b6b253af1654e6e1562",
+   "generator_sha256": "efcd41d432f9e77dbbec709ab439e4fd6ef339321e8df16fbb14eca945dc036a",
    "note": "also writes the sparse input files under data_parity/; batch level, test_oracle_data"
   },
   "data_parity_tabular_pytorch.json": {
@@ -83,9 +83,9 @@
    "note": "also writes data_parity/tabular.csv and tabular_mlp_init.pth; made from the committed export data_parity/tabular_mlp.py (test_oracle_data --write-exports)"
   },
   "data_parity_text.json": {
-   "fixture_sha256": "375319e91472cc3edd96c9951a4fed6921568293d4ca113029607ab15a56c539",
+   "fixture_sha256": "ea5a64f349dea1da01e6042accf47b78ec2f93eb55e73c9d4ab27ac210ef2806",
    "generator": "reference/generate_data_parity_kinds.py",
-   "generator_sha256": "a2f1bb2385e5ab52ee9e46f01e69a14bc71bae951d1c9b6b253af1654e6e1562",
+   "generator_sha256": "efcd41d432f9e77dbbec709ab439e4fd6ef339321e8df16fbb14eca945dc036a",
    "note": "also writes the text input files under data_parity/; batch level, test_oracle_data"
   },
   "data_transform_pytorch.json": {
