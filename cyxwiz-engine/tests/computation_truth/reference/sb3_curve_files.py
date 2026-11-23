@@ -1,4 +1,5 @@
-"""The reference-curve files of generate_ppo_sb3_curves.py and generate_sac_sb3_curves.py: read, merge one
+"""The reference-curve files of generate_ppo_sb3_curves.py, generate_sac_sb3_curves.py and
+generate_td3_sb3_curves.py: read, merge one
 run's tasks and seeds over a file, and write it with one row per line (resources/rl_reference/*.json)."""
 
 from __future__ import annotations
