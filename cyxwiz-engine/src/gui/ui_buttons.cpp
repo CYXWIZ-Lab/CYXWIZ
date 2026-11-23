@@ -283,7 +283,7 @@ bool ChipButton(const char* label, unsigned int swatch) {
     return clicked;
 }
 
-bool SegmentedControl(const char* id, const char* const* labels, int count, int* selected) {
+bool SegmentedControl(const char* id, const char* const* labels, int count, int* selected, float room) {
     RefreshColors();
     ImGui::PushID(id);
     const float height = ImGui::GetFrameHeight();
@@ -293,7 +293,7 @@ bool SegmentedControl(const char* id, const char* const* labels, int count, int*
     // One tinted track a row; the chosen segment is filled. No outlines or
     // dividers. Segments that do not fit the space left flow onto another row,
     // so nothing is cut off at a narrow cell's edge.
-    const float avail = ImGui::GetContentRegionAvail().x;
+    const float avail = room > 0.0f ? room : ImGui::GetContentRegionAvail().x;
     const size_t n = static_cast<size_t>(std::max(count, 0));
     std::vector<float> widths(n);
     std::vector<int> row_of(n);

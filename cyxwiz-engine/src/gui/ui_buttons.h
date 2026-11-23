@@ -43,7 +43,8 @@ float ChipButtonWidth(const char* label, bool swatch = false);
 // Segmented choice (one of several options side by side). Returns true when
 // the selection changed; `selected` is updated. Options that do not fit the
 // space left flow onto another row rather than being cut off.
-bool SegmentedControl(const char* id, const char* const* labels, int count, int* selected);
+// room: the width it flows within (0: the space left on the line)
+bool SegmentedControl(const char* id, const char* const* labels, int count, int* selected, float room = 0.0f);
 // Its width on one row
 float SegmentedControlWidth(const char* const* labels, int count);
 

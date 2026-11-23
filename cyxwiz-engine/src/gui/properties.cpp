@@ -905,14 +905,16 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
                                                                          : param.enum_values[i].c_str();
         };
         // Two choices side by side as a toggle when both words fit the row
-        // (owner 2026-11-14); more, or too long, stay a dropdown.
+        // (owner 2026-11-14); more, or too long, stay a dropdown. Decided on
+        // the whole row, so a click that moves off the default (a reset
+        // button beside it) keeps the toggle: it flows onto two lines there.
         const char* pair[2] = {nullptr, nullptr};
         if (param.enum_values.size() == 2) {
             pair[0] = shown(0);
             pair[1] = shown(1);
         }
-        if (pair[0] && cyxwiz::ui::SegmentedControlWidth(pair, 2) <= editor_width) {
-            if (cyxwiz::ui::SegmentedControl("##value", pair, 2, &current)) {
+        if (pair[0] && cyxwiz::ui::SegmentedControlWidth(pair, 2) <= ImGui::GetContentRegionAvail().x) {
+            if (cyxwiz::ui::SegmentedControl("##value", pair, 2, &current, editor_width)) {
                 value = param.enum_values[static_cast<size_t>(current)];
                 changed = true;
             }
