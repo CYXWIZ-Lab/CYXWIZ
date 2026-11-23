@@ -2,9 +2,9 @@
  "about": "Every oracle fixture and the script that writes it, with both hashes (scripts/checks/check_oracle_fixtures.py, TOFIX228 1.4). Baseline 2026-11-22: the hashes were recorded from the committed files.",
  "fixtures": {
   "batchnorm1d_pytorch.json": {
-   "fixture_sha256": "2bdb4d400c384cdec909c2372f1f98bd44fd4ac81a9b8869d73fd895cfe6529a",
+   "fixture_sha256": "44068eb704bbab597e49ac0b31e8d7b72490bd45e86aafe1619586df3371f5f7",
    "generator": "reference/generate_batchnorm1d_fixtures.py",
-   "generator_sha256": "7c35a772c2b2731b0e8fa101eb412eec45e8c23ec4685b1874648daf12a132c9"
+   "generator_sha256": "1d6035d926b69a537214434165de1091d05f77bbe94e85e67c033c611efe24c2"
   },
   "branch_graph_pytorch.json": {
    "fixture_sha256": "738244e7bab6ad5e7950473b49b2ddccc4bef1688b7d65444d842b1e68273afc",

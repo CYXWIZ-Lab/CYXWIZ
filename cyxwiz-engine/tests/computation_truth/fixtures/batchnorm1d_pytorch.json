@@ -7176,8 +7176,8 @@
     ]
    },
    "eps": 1e-05,
-   "eps_0.0001_tolerances": 1566.309487279625,
-   "eps_1e-06_tolerances": 2588.2970246156124,
+   "eps_0.0001_tolerances": 7831.547436398125,
+   "eps_1e-06_tolerances": 12941.485123078062,
    "eval": {
     "input": {
      "shape": [
@@ -7252,6 +7252,10 @@
      ]
     }
    },
+   "float32_device_tolerance": {
+    "atol": 0.0001,
+    "rtol": 0.001
+   },
    "gamma": {
     "shape": [
      4
@@ -7266,8 +7270,8 @@
    "momentum": 0.1,
    "num_features": 4,
    "tolerance": {
-    "atol": 0.0001,
-    "rtol": 0.001
+    "atol": 2e-05,
+    "rtol": 0.0002
    },
    "train": [
     {

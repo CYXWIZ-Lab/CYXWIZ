@@ -16,6 +16,7 @@
 
 #include "../oracle/oracle_test.h"
 
+#include <arrayfire.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -84,8 +85,13 @@ void Note(Result& result, double excess, const std::string& where) {
 
 Result RunCase(const json& c, double eps_scale) {
     Result result;
-    const double atol = c.at("tolerance").at("atol").get<double>();
-    const double rtol = c.at("tolerance").at("rtol").get<double>();
+    // A float32-only device cannot keep the statistics in float64 (ORA-16):
+    // the near-eps case then holds the float32 gradient tolerance.
+    const bool float32_only = !af::isDoubleAvailable(af::getDevice());
+    const json& tolerance = float32_only && c.contains("float32_device_tolerance") ? c.at("float32_device_tolerance")
+                                                                                   : c.at("tolerance");
+    const double atol = tolerance.at("atol").get<double>();
+    const double rtol = tolerance.at("rtol").get<double>();
     cyxwiz::BatchNormModule bn(c.at("num_features").get<size_t>(),
                                static_cast<float>(c.at("eps").get<double>() * eps_scale),
                                static_cast<float>(c.at("momentum").get<double>()));

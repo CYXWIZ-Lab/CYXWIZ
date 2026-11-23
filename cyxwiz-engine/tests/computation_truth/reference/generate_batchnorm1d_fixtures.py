@@ -26,10 +26,11 @@ SCHEMA_VERSION = 1
 SEED = 2281
 TRAIN_BATCHES = 4
 TOLERANCE = {"atol": 2.0e-5, "rtol": 2.0e-4}
-# The variance-near-eps case amplifies float32 rounding about 300x; it uses the
-# design's float32 gradient tolerance (07 section 8). The Engine's two-pass
-# float32 statistics land up to 2x the tight tolerance from float64 there,
-# where torch stays within 0.6x (finding ORA-16).
+# The variance-near-eps case amplifies float32 rounding about 300x. The Engine
+# keeps the batch statistics and their gradients in float64 where the device
+# has it (ORA-16, fixed), so the case holds the tight tolerance there; a
+# float32-only device (Intel Iris Xe) keeps the design's float32 gradient
+# tolerance (07 section 8), recorded as float32_device_tolerance.
 NEAR_EPS_TOLERANCE = {"atol": 1.0e-4, "rtol": 1.0e-3}
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[1] / "fixtures" / "batchnorm1d_pytorch.json"
 
@@ -107,9 +108,10 @@ def generate() -> dict[str, Any]:
     }
     cases = {}
     for name, d in definitions.items():
-        tolerance = NEAR_EPS_TOLERANCE if name.startswith("variance_near_eps") else TOLERANCE
+        tolerance = TOLERANCE
         case, inputs = run(generator=generator, tolerance=tolerance, **d)
         if name.startswith("variance_near_eps"):
+            case["float32_device_tolerance"] = NEAR_EPS_TOLERANCE
             # eps / 10 or eps x 10 must miss the fixture by far: the case catches a wrong epsilon.
             for wrong in (d["eps"] / 10.0, d["eps"] * 10.0):
                 other, _ = run(generator=generator, eps_override=wrong, inputs=inputs, tolerance=tolerance, **d)
