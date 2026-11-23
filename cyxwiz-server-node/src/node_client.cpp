@@ -425,7 +425,7 @@ bool NodeClient::Register() {
 
             spdlog::info("Node registered successfully!");
             spdlog::info("  Node ID: {}", node_id_);
-            spdlog::info("  Session Token: {}", session_token_);
+            spdlog::info("  Session token: received ({} characters)", session_token_.size());
             return true;
         } else {
             spdlog::error("Registration failed: {}",
@@ -535,7 +535,7 @@ bool NodeClient::RegisterWithAllocations(const std::vector<DeviceAllocation>& al
 
             spdlog::info("Node registered successfully with device allocations!");
             spdlog::info("  Node ID: {}", node_id_);
-            spdlog::info("  Session Token: {}", session_token_);
+            spdlog::info("  Session token: received ({} characters)", session_token_.size());
             return true;
         } else {
             spdlog::error("Registration with allocations failed: {}",
