@@ -143,6 +143,7 @@ set(BACKEND_SOURCES
     src/algorithms/optimizer.cpp
     src/algorithms/arrayfire_backend_utils.cpp
     src/algorithms/arrayfire_host_materialization.cpp
+    src/algorithms/device_fft.cpp
     src/algorithms/providers/neural_provider_registry.cpp
     src/algorithms/providers/neural_device_interop.cpp
     src/algorithms/providers/neural_provider_dispatch.cpp

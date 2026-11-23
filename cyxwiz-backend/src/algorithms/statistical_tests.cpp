@@ -2,6 +2,7 @@
 
 #include "arrayfire_host_values.h"
 #include "arrayfire_indexed.h"
+#include "device_matvec.h"
 
 #include <arrayfire.h>
 
@@ -625,9 +626,9 @@ bool SolveOls(const af::array& x, const af::array& y, af::array& beta, af::array
         const af::array z = af::solve(r_factor.T(), rhs, AF_MAT_LOWER);
         return af::solve(r_factor, z, AF_MAT_UPPER);
     };
-    beta = solve_normal(af::matmul(x.T(), y));
-    const af::array residual = y - af::matmul(x, beta);
-    beta += solve_normal(af::matmul(x.T(), residual));
+    beta = solve_normal(DeviceMatVec(x, y, true));
+    const af::array residual = y - DeviceMatVec(x, beta);
+    beta += solve_normal(DeviceMatVec(x, residual, true));
     return true;
 }
 
@@ -636,7 +637,7 @@ LinearFit Summarise(const af::array& x, const af::array& y, const af::array& bet
     LinearFit f;
     const double n = static_cast<double>(x.dims(0)), p = static_cast<double>(x.dims(1));
     const double k = intercept ? p - 1.0 : p;  // model degrees of freedom
-    const af::array fitted = af::matmul(x, beta);
+    const af::array fitted = DeviceMatVec(x, beta);
     const af::array residual = y - fitted;
     const double sse = af::sum<double>(residual * residual);
     const double ymean = intercept ? af::mean<double>(y) : 0.0;  // uncentred without an intercept
@@ -760,7 +761,7 @@ LinearFit StatisticalTests::FitPolynomial(const std::vector<double>& x, const st
         const double s2 = fz.rse * fz.rse;
         const af::array r_inv = af::solve(r_factor, af::identity(p, p, type), AF_MAT_UPPER);
         const af::array cov_z = af::matmul(r_inv, r_inv.T()) * s2;
-        const af::array beta_raw = af::matmul(tm, beta);
+        const af::array beta_raw = DeviceMatVec(tm, beta);
         const af::array cov_raw = af::matmul(af::matmul(tm, cov_z), tm.T());
         fz.coef = DeviceToHostValues(beta_raw, "StatisticalTests::FitPolynomial");
         const std::vector<double> var = DeviceToHostValues(af::diag(cov_raw), "StatisticalTests::FitPolynomial");
