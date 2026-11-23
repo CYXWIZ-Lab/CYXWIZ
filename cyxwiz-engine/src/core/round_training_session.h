@@ -15,6 +15,7 @@
 
 #include "graph_training_job.h"
 #include "model_state_layout.h"
+#include "training_executor.h"
 #include "training_failure.h"
 
 #include <cstdint>
@@ -28,7 +29,6 @@
 namespace cyxwiz {
 
 class ArrowDataset;
-class TrainingExecutor;
 
 // Part of a data file: `rows` rows from `row_offset` (0 rows: to the end).
 struct RowRange {
@@ -98,7 +98,12 @@ private:
     std::shared_ptr<ArrowDataset> LoadLeases(const RoundData& data, std::vector<uint64_t>& lease_rows,
                                              RoundFailure& failure);
 
+    // One round's batchers over `dataset` handed to the executor.
+    bool RunRound(const TrainingExecutor::RoundRun& run, const std::shared_ptr<ArrowDataset>& dataset,
+                  TrainingExecutor::RoundRunResult& result, std::string& error);
+
     std::unique_ptr<TrainingExecutor> executor_;
+    bool sequence_ = false;  // a language model on token windows
     TrainingConfiguration round_config_;  // the job's, with every row a training row, in order
     std::string label_column_;
     std::string dataset_name_;

@@ -3,6 +3,7 @@
 #include "arrow_dataset.h"
 #include "executable_model.h"
 #include "label_vocabulary.h"
+#include "sequence_arrow_batcher.h"
 #include "training_batcher_setup.h"
 #include "training_executor.h"
 
@@ -32,8 +33,9 @@ RoundFailure Failure(TrainingFailureKind kind, std::string text) {
 
 // What a round cannot honour: these belong to one node training alone.
 std::string RefusalFor(const TrainingConfiguration& config) {
-    if (config.sequence_batch.enabled) {
-        return "sequence and language-model graphs cannot train in a group yet";
+    if (config.sequence_batch.enabled && !config.sequence_batch.create_causal_lm_targets) {
+        return "of the sequence graphs only language models train in a group; token tagging builds its label "
+               "list from the data, and every part of the data would build its own";
     }
     if (config.scheduler.has_value() || config.lr_schedule != "none") {
         return "a learning-rate schedule cannot follow a group yet: remove the scheduler node (or set the optimizer's "
@@ -72,7 +74,20 @@ std::unique_ptr<RoundTrainingSession> RoundTrainingSession::Open(const GraphTrai
         return nullptr;
     }
     const std::string label_column = config.dataset_roles.train.label_column;
-    if (TextLabelColumn(sample->second->GetArrowTable(), label_column)) {
+    const bool sequence = config.sequence_batch.enabled;
+    if (sequence) {
+        // Token windows carry their tokenizer's vocabulary with them, so every
+        // part of the data numbers the tokens alike. Text does not.
+        const std::string column = config.sequence_batch.token_column.empty() ? "tokens" : config.sequence_batch.token_column;
+        const auto table = sample->second->GetArrowTable();
+        const int index = table && table->schema() ? table->schema()->GetFieldIndex(column) : -1;
+        if (index < 0 || table->field(index)->type()->id() != arrow::Type::LIST) {
+            failure = Failure(TrainingFailureKind::Refused,
+                              "a language model trains in a group on token windows (the Tokenize step's output); "
+                              "column '" + column + "' holds text, and every part of the data would build its own vocabulary");
+            return nullptr;
+        }
+    } else if (TextLabelColumn(sample->second->GetArrowTable(), label_column)) {
         failure = Failure(TrainingFailureKind::Refused,
                           "the label column '" + label_column + "' holds text; in a group every part of the data "
                           "would number the classes on its own. Store the labels as class numbers");
@@ -85,6 +100,7 @@ std::unique_ptr<RoundTrainingSession> RoundTrainingSession::Open(const GraphTrai
     config.val_ratio = 0.0f;
     config.test_ratio = 0.0f;
     config.stratified = false;
+    config.has_data_split = false;
     config.shuffle = false;
     config.save_best_checkpoint = false;
     config.early_stopping_patience = 0;
@@ -92,11 +108,25 @@ std::unique_ptr<RoundTrainingSession> RoundTrainingSession::Open(const GraphTrai
     if (request.batch_size_override > 0) config.batch_size = request.batch_size_override;
 
     std::unique_ptr<RoundTrainingSession> session(new RoundTrainingSession());
-    session->round_config_ = config;
+    session->sequence_ = sequence;
     session->label_column_ = label_column;
     session->dataset_name_ = config.dataset_name;
     session->batch_size_ = std::max(1, config.batch_size);
-    session->executor_ = std::make_unique<TrainingExecutor>(config, ResolvedExternalBatchers{});
+    if (sequence) {
+        // The windows' vocabulary and length complete the model's shape; later
+        // parts must carry the same vocabulary (the batcher builder checks).
+        const auto first = BuildSequenceBatcherFromArrowDataset(sample->second, config, session->batch_size_);
+        if (!first.success()) {
+            failure = Failure(TrainingFailureKind::DataError, "sequence batcher: " + first.error_message);
+            return nullptr;
+        }
+        ApplySequenceBatcherBuildResultToTrainingConfig(first, config);
+        session->round_config_ = config;
+        session->executor_ = std::make_unique<TrainingExecutor>(config, std::unique_ptr<ISequenceBatcher>{}, first.id_to_label);
+    } else {
+        session->round_config_ = config;
+        session->executor_ = std::make_unique<TrainingExecutor>(config, ResolvedExternalBatchers{});
+    }
 
     // Build the model now, on the sample file, without training: the layout
     // and the starting state are needed before the first round.
@@ -108,17 +138,34 @@ std::unique_ptr<RoundTrainingSession> RoundTrainingSession::Open(const GraphTrai
         return DescribeModelState(model, session->layout_, error) &&
                ReadModelState(model, session->layout_, true, session->initial_state_, error);
     };
-    auto batchers = TakeResolvedExternalBatchers(
-        BuildArrowTrainingBatchers(session->round_config_, sample->second, label_column, session->batch_size_));
-    const auto built = session->executor_->TrainRound(setup, session->batch_size_, std::move(batchers));
-    if (!built.ok) {
-        failure = Failure(TrainingFailureKind::Internal, "the model could not be built: " + built.error);
+    TrainingExecutor::RoundRunResult built;
+    std::string build_error;
+    if (!session->RunRound(setup, sample->second, built, build_error) || !built.ok) {
+        failure = Failure(TrainingFailureKind::Internal,
+                          "the model could not be built: " + (build_error.empty() ? built.error : build_error));
         return nullptr;
     }
     spdlog::info("Round training session: model built, {} values exchanged of {} ({} tensors), layout {}",
                  session->layout_.exchanged_count, session->layout_.total_count, session->layout_.segments.size(),
                  session->layout_.hash);
     return session;
+}
+
+bool RoundTrainingSession::RunRound(const TrainingExecutor::RoundRun& run, const std::shared_ptr<ArrowDataset>& dataset,
+                                    TrainingExecutor::RoundRunResult& result, std::string& error) {
+    if (sequence_) {
+        auto built = BuildSequenceBatcherFromArrowDataset(dataset, round_config_, batch_size_);
+        if (!built.success()) {
+            error = "sequence batcher: " + built.error_message;
+            return false;
+        }
+        result = executor_->TrainRound(run, batch_size_, std::move(built.batcher));
+    } else {
+        result = executor_->TrainRound(
+            run, batch_size_,
+            TakeResolvedExternalBatchers(BuildArrowTrainingBatchers(round_config_, dataset, label_column_, batch_size_)));
+    }
+    return true;
 }
 
 bool RoundTrainingSession::LoadInitialState(std::span<const float> full_state, std::string& error) {
@@ -189,7 +236,9 @@ std::shared_ptr<ArrowDataset> RoundTrainingSession::LoadLeases(const RoundData& 
                           "the leased files do not have the same columns: " + joined.status().ToString());
         return nullptr;
     }
-    return std::make_shared<ArrowDataset>(*joined, dataset_name_);
+    // The first part's file notes (a token-window file's tokenizer) stay with the rows.
+    return std::make_shared<ArrowDataset>((*joined)->ReplaceSchemaMetadata(parts.front()->schema()->metadata()),
+                                          dataset_name_);
 }
 
 bool RoundTrainingSession::TrainRound(uint64_t round, std::span<const float> theta, const RoundData& data,
@@ -229,9 +278,12 @@ bool RoundTrainingSession::TrainRound(uint64_t round, std::span<const float> the
     };
     run.on_done = [&](IExecutableModel& model) { ReadModelState(model, layout_, false, local, read_error); };
 
-    auto batchers = TakeResolvedExternalBatchers(
-        BuildArrowTrainingBatchers(round_config_, dataset, label_column_, batch_size_));
-    const auto result = executor_->TrainRound(run, batch_size_, std::move(batchers));
+    TrainingExecutor::RoundRunResult result;
+    std::string data_error;
+    if (!RunRound(run, dataset, result, data_error)) {
+        failure = Failure(TrainingFailureKind::DataError, data_error);
+        return false;
+    }
     if (result.cancelled) {
         failure = Failure(TrainingFailureKind::Cancelled, "the round was stopped");
         return false;

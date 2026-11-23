@@ -8,6 +8,7 @@
 #include "../src/core/round_training_session.h"
 #include "../src/core/round_update_codec.h"
 #include "../src/core/graph_node_factory.h"
+#include "causal_lm_token_window_fixture.h"
 #include "route_qualification_test_fixture.h"
 
 #include <cyxwiz/device.h>
@@ -149,6 +150,46 @@ std::vector<size_t> ReferenceToEngine(const json& reference_layout, const cyxwiz
         for (size_t i = 0; i < segment->count; ++i) position.push_back(segment->exchanged_offset + i);
     }
     return position;
+}
+
+// The exchanged values of a full state.
+std::vector<float> Exchanged(const cyxwiz::ModelStateLayout& layout, const std::vector<float>& full) {
+    std::vector<float> values(layout.exchanged_count);
+    for (const auto& segment : layout.segments) {
+        if (segment.role == cyxwiz::ModelStateRole::Frozen) continue;
+        std::copy_n(full.begin() + static_cast<std::ptrdiff_t>(segment.offset), segment.count,
+                    values.begin() + static_cast<std::ptrdiff_t>(segment.exchanged_offset));
+    }
+    return values;
+}
+
+// A language model's round on token windows: opens on `sample`, loads `start`
+// when given, trains one round over `leases`.
+struct LanguageRound {
+    std::vector<float> start;       // the session's own starting state
+    cyxwiz::ModelStateLayout layout;
+    cyxwiz::RoundOutcome outcome;
+};
+LanguageRound TrainLanguageRound(const std::string& graph, const fs::path& sample, const cyxwiz::RoundData& leases,
+                                 const std::vector<float>* start, const std::string& what) {
+    LanguageRound run;
+    SelectArrayFireCpu();
+    cyxwiz::RoundFailure failure;
+    cyxwiz::GraphTrainingJobRequest request;
+    request.graph_json = graph;
+    request.dataset_files["tiny_causal_lm_tokens"] = sample.string();
+    auto session = cyxwiz::RoundTrainingSession::Open(request, failure);
+    Check(session != nullptr, what + ": the session opens " + failure.text);
+    run.layout = session->Layout();
+    run.start = session->InitialState();
+    std::string error;
+    if (start) Check(session->LoadInitialState(*start, error), what + ": the starting state is accepted " + error);
+    const std::vector<float> theta = Exchanged(run.layout, start ? *start : run.start);
+    cyxwiz::RoundBudget budget;
+    budget.max_steps = 1000;
+    SelectArrayFireCpu();
+    Check(session->TrainRound(1, theta, leases, budget, {}, run.outcome, failure), what + ": the round trains " + failure.text);
+    return run;
 }
 
 cyxwiz::GraphTrainingJobRequest Request(const std::string& graph, const fs::path& file) {
@@ -303,6 +344,45 @@ int main() {
                   failure.kind == cyxwiz::TrainingFailureKind::DataError,
               "a lease past the end of its file is refused");
         Check(!session->TrainRound(6, theta, all, cyxwiz::RoundBudget{}, {}, outcome, failure), "a round with no budget is refused");
+    }
+
+    std::cout << "a language model on token windows\n";
+    {
+        const fs::path root = CYXWIZ_SOURCE_ROOT;
+        const fs::path first = work / "windows_a.parquet";
+        const fs::path second = work / "windows_b.parquet";
+        Check(cyxwiz::test::WriteTokenWindows(root, first, 0, 8) && cyxwiz::test::WriteTokenWindows(root, second, 8, 2),
+              "two parts of token windows are written");
+        // The example has dropout and no model seed; a seed makes two workers comparable.
+        json example = cyxwiz::test::LoadTokenWindowGraph(root);
+        for (auto& node : example["nodes"]) {
+            if (node.value("type", -1) == static_cast<int>(gui::NodeType::DataLoader)) node["parameters"]["model_seed"] = "7";
+        }
+        const std::string language_graph = example.dump();
+
+        cyxwiz::RoundData whole;
+        whole.leases.push_back({first, 0, 0});
+        const LanguageRound one = TrainLanguageRound(language_graph, first, whole, nullptr, "worker one");
+        Check(one.layout.exchanged_count > 0 && one.outcome.delta.size() == one.layout.exchanged_count,
+              "the update covers the model's " + std::to_string(one.layout.exchanged_count) + " exchanged values");
+        Check(one.outcome.steps > 0 && one.outcome.samples == 8 && one.outcome.rows_done == std::vector<uint64_t>({8}),
+              "every window of the lease is trained once: " + std::to_string(one.outcome.steps) + " steps");
+        Check(std::any_of(one.outcome.delta.begin(), one.outcome.delta.end(), [](float value) { return value != 0.0f; }),
+              "training moved the model");
+
+        // Another worker, from the first one's starting state, on the same rows: the same update.
+        const LanguageRound two = TrainLanguageRound(language_graph, first, whole, &one.start, "worker two");
+        Check(two.layout.hash == one.layout.hash, "both workers build the same layout");
+        Check(two.outcome.delta == one.outcome.delta, "the same state and the same rows give the same update");
+
+        // Rows from two parts in one round; the tokenizer travels with the rows.
+        cyxwiz::RoundData mixed;
+        mixed.leases.push_back({first, 4, 4});
+        mixed.leases.push_back({second, 0, 0});
+        const LanguageRound three = TrainLanguageRound(language_graph, first, mixed, &one.start, "worker three");
+        Check(three.outcome.samples == 6 && three.outcome.rows_done == std::vector<uint64_t>({4, 2}),
+              "a round over two parts trains their 6 windows");
+        Check(three.outcome.delta != one.outcome.delta, "other rows give another update");
     }
 
     fs::remove_all(work, ec);

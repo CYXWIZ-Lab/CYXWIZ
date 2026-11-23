@@ -7575,6 +7575,7 @@ add_executable(test_round_training_session
 configure_training_executor_harness(test_round_training_session)
 target_compile_definitions(test_round_training_session PRIVATE
     CYXWIZ_ROUND_TRAINING_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/round_training_pytorch.json"
+    CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )
 add_test(NAME round_training_pytorch_parity COMMAND test_round_training_session)
 
