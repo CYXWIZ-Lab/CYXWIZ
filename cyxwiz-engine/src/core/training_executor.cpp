@@ -3090,8 +3090,11 @@ void TrainingExecutor::RunTrainingEpochSequence(
             TrainingTraceCollector::Instance().RecordStage(
                 TrainingTraceStage::BatchCallback, epoch, batch_num,
                 static_cast<int>(total_batches), batch_loss, current_acc);
+            // The epoch's running loss with its running accuracy, as the
+            // Arrow epoch reports them (the batch's own loss went here, beside
+            // the running accuracy: ORA-33).
             batch_cb(epoch, batch_num, static_cast<int>(total_batches),
-                     batch_loss, current_acc);
+                     current_loss, current_acc);
         }
 
         // Mid-epoch resume checkpoint (TOFIX118 P4e-2): every N optimizer
