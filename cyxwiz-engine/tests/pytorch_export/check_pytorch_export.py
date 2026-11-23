@@ -26,9 +26,35 @@ from pathlib import Path
 import torch
 
 
-# gui::NodeType values (cyxwiz-engine/src/core/graph_model.h).
-EMBEDDING = 21
-CONCATENATE = 46
+# gui::NodeType values (cyxwiz-engine/src/core/graph_model.h); a pattern
+# template names the type instead.
+EMBEDDING = (21, "Embedding")
+CONCATENATE = (46, "Concatenate")
+
+
+def load_graph(path: Path) -> dict:
+    """The graph's nodes and links in one form, from either file the Engine
+    opens: a saved graph (`nodes` / `links`, numeric types, `parameters`) or a
+    pattern template (`template` with `nodes` / `links`, type names, `params`
+    whose "$name" values are the template's parameter defaults)."""
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    if doc.get("nodes"):
+        return {"nodes": doc["nodes"], "links": doc.get("links", [])}
+    template = doc.get("template") or {}
+    if not template.get("nodes"):
+        raise ValueError("neither a saved graph nor a pattern template (no nodes)")
+    defaults = {p["name"]: str(p.get("default_value", "")) for p in doc.get("parameters", [])}
+
+    def value(v):
+        v = str(v)
+        return defaults.get(v[1:], v) if v.startswith("$") else v
+
+    nodes = [{"id": n["id"], "type": n.get("type"), "name": n.get("name", ""),
+              "parameters": {k: value(v) for k, v in (n.get("params") or n.get("parameters") or {}).items()}}
+             for n in template["nodes"]]
+    links = [{"from_node": l.get("from"), "to_node": l.get("to"),
+              "to_pin_index": l.get("to_pin", 0)} for l in template.get("links", [])]
+    return {"nodes": nodes, "links": links}
 
 
 def cyxwiz_parameter_count(compile_check: Path, graph: Path):
@@ -43,12 +69,12 @@ def word_pos_embeddings(graph_json: dict):
     address inputs by to_pin_index."""
     nodes = {n["id"]: n for n in graph_json.get("nodes", [])}
     for concat in nodes.values():
-        if concat.get("type") != CONCATENATE:
+        if concat.get("type") not in CONCATENATE:
             continue
         sources = {l.get("to_pin_index", 0): nodes.get(l["from_node"])
                    for l in graph_json.get("links", []) if l["to_node"] == concat["id"]}
         pair = (sources.get(0), sources.get(1))
-        if all(n is not None and n.get("type") == EMBEDDING for n in pair):
+        if all(n is not None and n.get("type") in EMBEDDING for n in pair):
             return pair
     return None
 
@@ -56,9 +82,7 @@ def word_pos_embeddings(graph_json: dict):
 def synthetic_input(graph_json: dict, batch: int = 2):
     """Token ids for graphs that start with an Embedding (shorter than every
     length limit in the graph), floats shaped like the Data Input otherwise."""
-    nodes = graph_json.get("nodes", [])
-    if not nodes:
-        raise ValueError("not a saved graph (no nodes)")
+    nodes = graph_json["nodes"]
     limits = [16]
     for node in nodes:
         for key in ("max_len", "max_length", "sequence_length", "max_sequence_length"):
@@ -114,7 +138,7 @@ def check(graph: Path, bin_dir: Path, work: Path):
         spec.loader.exec_module(module)
         torch.manual_seed(0)
         model = module.GeneratedModel()
-        x, vocab = synthetic_input(json.loads(graph.read_text(encoding="utf-8")))
+        x, vocab = synthetic_input(load_graph(graph))
         y = model(x)  # materializes lazy layers
         if vocab is not None and y.dim() == 3:
             loss = torch.nn.functional.cross_entropy(y.reshape(-1, y.shape[-1]), x.reshape(-1))
