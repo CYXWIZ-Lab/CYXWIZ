@@ -1,0 +1,145 @@
+{
+  "id": "dqn_cartpole",
+  "name": "DQN on CartPole-v1",
+  "description": "Deep Q-Network on the built-in CartPole-v1 with RL Zoo's settings: 1 copy, Q layers of 256 and 256 with ReLU, a replay buffer of 100,000 steps, learning from step 1,000, 128 gradient steps every 256 steps, the target network every 10 steps, epsilon falling from 1 to 0.04 over the first 8,000 steps, 50,000 steps (it stops early if the last 100 episodes average 475). About 1-2 minutes on an NVIDIA GPU with the CUDA GPU pack (a GTX 1050 Ti); the final mean return is around 130-250, as Stable-Baselines3's with the same settings (about 40-300). Open it, then Train (F5).",
+  "category": "Reinforcement Learning",
+  "tags": [
+    "dqn",
+    "deep q-network",
+    "q-learning",
+    "off-policy",
+    "reinforcement",
+    "rl",
+    "policy",
+    "cartpole"
+  ],
+  "template": {
+    "nodes": [
+      {
+        "id": "env",
+        "type": "RLEnvironment",
+        "name": "Environment",
+        "pos": [
+          0,
+          300
+        ],
+        "params": {
+          "environment": "cyxwiz.builtin:CartPole-v1",
+          "copies": "1"
+        }
+      },
+      {
+        "id": "q1",
+        "type": "Dense",
+        "name": "Q Dense 1",
+        "pos": [
+          220,
+          300
+        ],
+        "params": {
+          "units": "256"
+        }
+      },
+      {
+        "id": "qa1",
+        "type": "ReLU",
+        "name": "Q Activation 1",
+        "pos": [
+          400,
+          300
+        ]
+      },
+      {
+        "id": "q2",
+        "type": "Dense",
+        "name": "Q Dense 2",
+        "pos": [
+          580,
+          300
+        ],
+        "params": {
+          "units": "256"
+        }
+      },
+      {
+        "id": "qa2",
+        "type": "ReLU",
+        "name": "Q Activation 2",
+        "pos": [
+          760,
+          300
+        ]
+      },
+      {
+        "id": "qhead",
+        "type": "QHead",
+        "name": "Q Head",
+        "pos": [
+          940,
+          300
+        ]
+      },
+      {
+        "id": "dqn",
+        "type": "DQN",
+        "name": "DQN",
+        "pos": [
+          1160,
+          300
+        ],
+        "params": {
+          "total_timesteps": "50000",
+          "buffer_size": "100000",
+          "learning_starts": "1000",
+          "batch_size": "64",
+          "learning_rate": "0.0023",
+          "gamma": "0.99",
+          "train_freq": "256",
+          "gradient_steps": "128",
+          "target_update_interval": "10",
+          "tau": "1.0",
+          "max_grad_norm": "10",
+          "exploration_initial_eps": "1.0",
+          "exploration_final_eps": "0.04",
+          "exploration_fraction": "0.16",
+          "stop_at_return": "true",
+          "target_return": "475",
+          "normalize_observations": "false"
+        }
+      }
+    ],
+    "links": [
+      {
+        "from": "env",
+        "to": "q1"
+      },
+      {
+        "from": "q1",
+        "to": "qa1"
+      },
+      {
+        "from": "qa1",
+        "to": "q2"
+      },
+      {
+        "from": "q2",
+        "to": "qa2"
+      },
+      {
+        "from": "qa2",
+        "to": "qhead"
+      },
+      {
+        "from": "qhead",
+        "to": "dqn",
+        "to_pin": 0
+      },
+      {
+        "from": "env",
+        "from_pin": 1,
+        "to": "dqn",
+        "to_pin": 1
+      }
+    ]
+  }
+}

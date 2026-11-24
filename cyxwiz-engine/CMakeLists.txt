@@ -7955,6 +7955,7 @@ target_link_libraries(test_rl_graph_compile PRIVATE cyxwiz-training-core)
 target_compile_definitions(test_rl_graph_compile PRIVATE
     CYXWIZ_PPO_REFERENCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/rl_reference/ppo_sb3_curves.json"
     CYXWIZ_SAC_REFERENCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/rl_reference/sac_sb3_curves.json"
+    CYXWIZ_TD3_REFERENCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/rl_reference/td3_sb3_curves.json"
     CYXWIZ_DQN_REFERENCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/rl_reference/dqn_sb3_curves.json"
     CYXWIZ_RL_EXAMPLES_DIR="${CMAKE_SOURCE_DIR}/examples/cyxgraph/rl")
 if(MSVC)

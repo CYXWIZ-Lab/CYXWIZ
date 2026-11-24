@@ -1,0 +1,220 @@
+{
+  "id": "td3_half_cheetah",
+  "name": "TD3 on HalfCheetah-v5",
+  "description": "Twin Delayed DDPG on the MuJoCo Simulation plugin's HalfCheetah-v5 (load the plugin first), with RL Zoo's settings: 1 copy, actor and Q networks of layers of 400 and 300 with ReLU, Gaussian action noise of 0.1, a replay buffer of 1,000,000 steps, learning from step 10,000, 1,000,000 steps (no target stop). About 2 hours 20 minutes on an NVIDIA GPU with the CUDA GPU pack (a GTX 1050 Ti); the final mean return is around 8,900-9,800 (Stable-Baselines3 with the same settings: 10,275-10,355). Open it, then Train (F5).",
+  "category": "Reinforcement Learning",
+  "tags": [
+    "td3",
+    "twin delayed ddpg",
+    "off-policy",
+    "reinforcement",
+    "rl",
+    "policy",
+    "halfcheetah",
+    "mujoco"
+  ],
+  "template": {
+    "nodes": [
+      {
+        "id": "env",
+        "type": "RLEnvironment",
+        "name": "Environment",
+        "pos": [
+          0,
+          300
+        ],
+        "params": {
+          "environment": "com.cyxwiz.simulation.mujoco:HalfCheetah-v5",
+          "copies": "1"
+        }
+      },
+      {
+        "id": "p1",
+        "type": "Dense",
+        "name": "Actor Dense 1",
+        "pos": [
+          220,
+          100
+        ],
+        "params": {
+          "units": "400"
+        }
+      },
+      {
+        "id": "pa1",
+        "type": "ReLU",
+        "name": "Actor Activation 1",
+        "pos": [
+          400,
+          100
+        ]
+      },
+      {
+        "id": "p2",
+        "type": "Dense",
+        "name": "Actor Dense 2",
+        "pos": [
+          580,
+          100
+        ],
+        "params": {
+          "units": "300"
+        }
+      },
+      {
+        "id": "pa2",
+        "type": "ReLU",
+        "name": "Actor Activation 2",
+        "pos": [
+          760,
+          100
+        ]
+      },
+      {
+        "id": "phead",
+        "type": "PolicyHead",
+        "name": "Policy Head",
+        "pos": [
+          940,
+          100
+        ]
+      },
+      {
+        "id": "q1",
+        "type": "Dense",
+        "name": "Q Dense 1",
+        "pos": [
+          220,
+          500
+        ],
+        "params": {
+          "units": "400"
+        }
+      },
+      {
+        "id": "qa1",
+        "type": "ReLU",
+        "name": "Q Activation 1",
+        "pos": [
+          400,
+          500
+        ]
+      },
+      {
+        "id": "q2",
+        "type": "Dense",
+        "name": "Q Dense 2",
+        "pos": [
+          580,
+          500
+        ],
+        "params": {
+          "units": "300"
+        }
+      },
+      {
+        "id": "qa2",
+        "type": "ReLU",
+        "name": "Q Activation 2",
+        "pos": [
+          760,
+          500
+        ]
+      },
+      {
+        "id": "qhead",
+        "type": "QHead",
+        "name": "Q Head",
+        "pos": [
+          940,
+          500
+        ]
+      },
+      {
+        "id": "td3",
+        "type": "TD3",
+        "name": "TD3",
+        "pos": [
+          1160,
+          300
+        ],
+        "params": {
+          "total_timesteps": "1000000",
+          "buffer_size": "1000000",
+          "learning_starts": "10000",
+          "batch_size": "256",
+          "learning_rate": "0.001",
+          "gamma": "0.99",
+          "tau": "0.005",
+          "train_freq": "1",
+          "gradient_steps": "1",
+          "policy_delay": "2",
+          "action_noise": "normal",
+          "action_noise_std": "0.1",
+          "target_policy_noise": "0.2",
+          "target_noise_clip": "0.5",
+          "stop_at_return": "false",
+          "normalize_observations": "false"
+        }
+      }
+    ],
+    "links": [
+      {
+        "from": "env",
+        "to": "p1"
+      },
+      {
+        "from": "p1",
+        "to": "pa1"
+      },
+      {
+        "from": "pa1",
+        "to": "p2"
+      },
+      {
+        "from": "p2",
+        "to": "pa2"
+      },
+      {
+        "from": "pa2",
+        "to": "phead"
+      },
+      {
+        "from": "env",
+        "to": "q1"
+      },
+      {
+        "from": "q1",
+        "to": "qa1"
+      },
+      {
+        "from": "qa1",
+        "to": "q2"
+      },
+      {
+        "from": "q2",
+        "to": "qa2"
+      },
+      {
+        "from": "qa2",
+        "to": "qhead"
+      },
+      {
+        "from": "phead",
+        "to": "td3",
+        "to_pin": 0
+      },
+      {
+        "from": "env",
+        "from_pin": 1,
+        "to": "td3",
+        "to_pin": 1
+      },
+      {
+        "from": "qhead",
+        "to": "td3",
+        "to_pin": 2
+      }
+    ]
+  }
+}
