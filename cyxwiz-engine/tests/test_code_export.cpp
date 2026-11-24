@@ -214,13 +214,63 @@ void CheckRecurrentAndLoss() {
     Graph reshaped;
     const int flat = reshaped.Add(gui::NodeType::DatasetInput, "Data", {{"shape", "[18]"}});
     const int steps = reshaped.Add(gui::NodeType::Reshape, "Steps", {{"shape", "6,3"}});
+    const int over_steps = reshaped.Add(gui::NodeType::GRU, "Over the steps", {{"hidden_size", "4"}});
     reshaped.Connect(flat, steps);
+    reshaped.Connect(steps, over_steps);
     Check(Contains(PyTorchOf(reshaped), "x = x.reshape(x.size(0), *[6, 3])"),
           "Reshape: the per-sample shape, the batch first (it was left out of the forward)");
 
     const std::string focal = PyTorchOf(Recurrent(gui::NodeType::GRU, "false", gui::NodeType::FocalLoss));
     Check(Contains(focal, "criterion = None  # Loss: PyTorch has no built-in loss for it; write it here"),
           "focal loss: no built-in criterion, said so (not a silent cross-entropy)");
+}
+
+// The committed graphs' export (TOFIX233 A): the width a layer reads comes
+// from the graph, the frameworks' own spellings, and a graph with no model.
+void CheckWidthsAndNoModel() {
+    Graph text;
+    const int ids = text.Add(gui::NodeType::DatasetInput, "Ids");
+    const int embed = text.Add(gui::NodeType::Embedding, "Embed", {{"num_embeddings", "50"}, {"embedding_dim", "12"}});
+    const int drop = text.Add(gui::NodeType::Dropout, "Drop", {{"rate", "0.1"}});
+    const int norm = text.Add(gui::NodeType::LayerNorm, "Norm");
+    const int lstm = text.Add(gui::NodeType::LSTM, "Recurrent", {{"hidden_size", "5"}});
+    text.Connect(ids, embed);
+    text.Connect(embed, drop);
+    text.Connect(drop, norm);
+    text.Connect(norm, lstm);
+    const std::string pytorch = PyTorchOf(text);
+    Check(Contains(pytorch, "nn.LayerNorm(normalized_shape=[12], eps="),
+          "LayerNorm AUTO: the embedding's width, through Dropout");
+    Check(Contains(pytorch, "nn.LSTM(input_size=12, hidden_size=5,"),
+          "recurrent input_size: the width the graph gives it (the node has none)");
+    const std::string pycyxwiz =
+        cyxwiz::ExportGraphCode(text.nodes, text.links, cyxwiz::CodeFramework::PyCyxWiz).code;
+    Check(Contains(pycyxwiz, "cx.LSTM(input_size=12,") && Contains(pycyxwiz, "bidirectional=False"),
+          "PyCyxWiz: the same width, and a Python bool when bidirectional is not set");
+
+    Graph rows;
+    const int data = rows.Add(gui::NodeType::DatasetInput, "Data", {{"shape", "[8]"}});
+    const int rows_norm = rows.Add(gui::NodeType::LayerNorm, "Norm");
+    const int head = rows.Add(gui::NodeType::Dense, "Head", {{"units", "3"}});
+    rows.Connect(data, rows_norm);
+    rows.Connect(rows_norm, head);
+    const std::string lazy = PyTorchOf(rows);
+    Check(Contains(lazy, "LazyLayerNorm(eps=1e-5, elementwise_affine=True)") &&
+              Contains(lazy, "class LazyLayerNorm(nn.modules.lazy.LazyModuleMixin, nn.LayerNorm):"),
+          "LayerNorm AUTO on the data's width: read on the first forward pass, as nn.LazyLinear");
+
+    Graph simple;
+    const int steps = simple.Add(gui::NodeType::DatasetInput, "Steps", {{"shape", "[6,3]"}});
+    const int rnn = simple.Add(gui::NodeType::RNN, "RNN", {{"hidden_size", "4"}, {"nonlinearity", "Tanh"}});
+    simple.Connect(steps, rnn);
+    Check(Contains(PyTorchOf(simple), "nonlinearity='tanh'"), "an RNN's activation in the case torch takes");
+
+    Graph analysis;
+    const int table = analysis.Add(gui::NodeType::DatasetInput, "Table", {{"shape", "[4]"}});
+    const int pca = analysis.Add(gui::NodeType::PCANode, "PCA");
+    analysis.Connect(table, pca);
+    Check(Contains(PyTorchOf(analysis), "raise ValueError('the graph has no model layers"),
+          "a data or analysis pipeline: no model to write, said so (not an empty model and a failing optimizer)");
 }
 
 // Branches and image layers (ORA-20, ORA-26): a residual block, a pool.
@@ -279,6 +329,7 @@ int main() {
         CheckRefusals();
         CheckRecurrentAndLoss();
         CheckBranchesAndImages();
+        CheckWidthsAndNoModel();
     } catch (const std::exception& e) {
         std::cout << "  FAIL exception: " << e.what() << "\n";
         ++g_failures;

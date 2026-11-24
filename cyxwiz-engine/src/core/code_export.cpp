@@ -137,6 +137,16 @@ std::string RecurrentLastStepLine(const MLNode& node) {
     return "        x = x[:, -1, :]  # return_sequences=false: the last time step\n";
 }
 
+// A simple RNN's activation as the frameworks spell it ('tanh' or 'relu');
+// the node may say "Tanh".
+std::string RecurrentNonlinearity(const MLNode& node) {
+    std::string value = GetParamOrDefault(node, "nonlinearity", "tanh");
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
 // The example loop's criterion: its setup line and its call's arguments.
 struct PyTorchCriterion {
     std::string setup;
@@ -250,10 +260,16 @@ private:
     std::string GenerateRLCode(const std::vector<int>& sorted_ids) const;
 
     std::string NodeTypeToPythonLayer(const MLNode& node);
-    // Output width of the layer feeding `node` (embedding dim, recurrent
-    // hidden size - doubled when bidirectional - or dense units); empty when
-    // it cannot be read from the graph (TOFIX112 export harness).
+    // Width (last axis) of what reaches `node`'s first input, read from the
+    // graph: back through layers that keep it (activations, Dropout,
+    // normalization, Add) to the layer that sets it (embedding dim, dense
+    // units, recurrent hidden size - doubled when bidirectional - or the
+    // attention / transformer width). Empty when the data sets it (unknown
+    // until the data is loaded).
     std::string InferredInputWidth(const MLNode& node) const;
+    // A recurrent layer's input_size: the graph's width, else the node's own
+    // setting, else 512.
+    std::string RecurrentInputSize(const MLNode& node) const;
     // True when `node` reads a feature map (a convolution or pool before it,
     // or rows reshaped to an image, through shape-keeping layers).
     bool ReadsFeatureMap(const MLNode& node) const;
@@ -357,11 +373,12 @@ std::string GraphCodeExporter::GenerateRLCode(const std::vector<int>& /*sorted_i
     cyxwiz::GraphCompiler compiler;
     const cyxwiz::TrainingConfiguration config = compiler.Compile(nodes_, links_);
     if (!config.rl) {
-        std::string code = "# The RL graph does not compile yet:\n";
+        std::string reasons;
         for (const auto& issue : config.issues)
             if (issue.level == cyxwiz::IssueLevel::Error)
-                code += "#   " + (issue.node_name.empty() ? "" : issue.node_name + ": ") + issue.message + "\n";
-        return code;
+                reasons += (reasons.empty() ? "" : "; ") + (issue.node_name.empty() ? "" : issue.node_name + ": ") +
+                           issue.message;
+        return BlockedCodegenConfiguration("PyTorch", "the RL graph does not compile yet: " + reasons);
     }
     const auto& rl = *config.rl;
     const auto& c = rl.ppo;
@@ -687,6 +704,25 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
     code += "        x = self.norm1(x + self.dropout1(attend(x)))\n";
     code += "        return self.norm2(x + self.dropout3(self._ffn(x)))\n";
     code += "\n";
+    code += "class LazyLayerNorm(nn.modules.lazy.LazyModuleMixin, nn.LayerNorm):\n";
+    code += "    # LayerNorm over the last axis, its width read on the first forward pass (as nn.LazyLinear)\n";
+    code += "    cls_to_become = nn.LayerNorm\n\n";
+    code += "    def __init__(self, eps=1e-5, elementwise_affine=True):\n";
+    code += "        super().__init__(0, eps=eps, elementwise_affine=False)\n";
+    code += "        self.elementwise_affine = elementwise_affine\n";
+    code += "        if elementwise_affine:\n";
+    code += "            self.weight = nn.UninitializedParameter()\n";
+    code += "            self.bias = nn.UninitializedParameter()\n\n";
+    code += "    def reset_parameters(self):\n";
+    code += "        if not self.has_uninitialized_params():\n";
+    code += "            super().reset_parameters()\n\n";
+    code += "    def initialize_parameters(self, input):\n";
+    code += "        self.normalized_shape = (input.shape[-1],)\n";
+    code += "        if self.has_uninitialized_params():\n";
+    code += "            with torch.no_grad():\n";
+    code += "                self.weight.materialize(self.normalized_shape)\n";
+    code += "                self.bias.materialize(self.normalized_shape)\n";
+    code += "        self.reset_parameters()\n\n";
     code += "class LearnedPositionalEncoding(nn.Module):\n";
     code += "    # GPT-2 learned absolute positions: x + weight[:seq_len]\n";
     code += "    def __init__(self, d_model, max_len=512):\n";
@@ -733,6 +769,12 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
             }
             layer_idx++;
         }
+    }
+    // A data or analysis pipeline (PCA, K-Means, a solver...) has no layers.
+    if (layer_idx == 0) {
+        return BlockedCodegenConfiguration(
+            "PyTorch", "the graph has no model layers (it is a data or analysis pipeline): there is no PyTorch "
+                       "model to write; run it in Studio");
     }
 
     code += "\n";
@@ -1554,12 +1596,12 @@ std::string GraphCodeExporter::GeneratePyCyxWizCode(const std::vector<int>& sort
                    "until a BatchNorm1D module binding owns this contract.')\n";
         }
         if (node && node->type == NodeType::LayerNorm &&
-            GetParamOrDefault(*node, "normalized_shape", "").empty()) {
+            GetParamOrDefault(*node, "normalized_shape", "AUTO") == "AUTO" && InferredInputWidth(*node).empty()) {
             return "# PyCyxWiz export is blocked for automatic Studio "
                    "LayerNorm shape.\n"
                    "raise NotImplementedError('Set normalized_shape explicitly "
                    "or use Engine/PyTorch; PyCyxWiz has no lazy LayerNorm "
-                   "constructor.')\n";
+                   "constructor and the width comes from the data.')\n";
         }
     }
 
@@ -2001,39 +2043,64 @@ bool GraphCodeExporter::ReadsFeatureMap(const MLNode& node) const {
 }
 
 std::string GraphCodeExporter::InferredInputWidth(const MLNode& node) const {
-    if (node.inputs.empty()) return {};
-    const int input_pin = node.inputs.front().id;
-    const MLNode* source = nullptr;
-    for (const auto& link : links_) {
-        if (link.to_node != node.id || link.to_pin != input_pin) continue;
-        for (const auto& other : nodes_) {
-            if (other.id == link.from_node) source = &other;
+    const MLNode* at = &node;
+    for (size_t guard = 0; guard < nodes_.size(); ++guard) {
+        if (at->inputs.empty()) return {};
+        const MLNode* source = nullptr;
+        for (const auto& link : links_)
+            if (link.to_node == at->id && link.to_pin == at->inputs.front().id) source = FindNodeById(link.from_node);
+        if (!source) return {};
+        const auto param = [source](std::initializer_list<const char*> keys) {
+            return GetParamOrAliases(*source, keys, "");
+        };
+        switch (source->type) {
+            case NodeType::Embedding:
+                return param({"embedding_dim"});
+            case NodeType::LSTM:
+            case NodeType::GRU:
+            case NodeType::RNN: {
+                const std::string hidden = param({"hidden_size"});
+                if (hidden.empty()) return {};
+                return PythonBoolLiteral(param({"bidirectional"})) == "True"
+                           ? std::to_string(2 * std::atoi(hidden.c_str()))
+                           : hidden;
+            }
+            case NodeType::Dense:
+            case NodeType::TimeDistributed:
+                return param({"units", "out_features"});
+            case NodeType::MultiHeadAttention:
+                return param({"embed_dim", "d_model"});
+            case NodeType::TransformerEncoder:
+            case NodeType::TransformerDecoder:
+                return param({"d_model", "embed_dim"});
+            case NodeType::PositionalEncoding: {
+                const std::string width = param({"d_model", "embed_dim"});
+                if (!width.empty()) return width;
+                break;  // it keeps the width it is given
+            }
+            case NodeType::LayerNorm: {
+                // A set shape's last entry; "AUTO" keeps the width it is given.
+                const std::string shape = param({"normalized_shape"});
+                if (!shape.empty() && shape != "AUTO") return TrimCopy(shape.substr(shape.find_last_of(',') + 1));
+                break;
+            }
+            case NodeType::BatchNorm:
+            case NodeType::Add:
+                break;
+            default:
+                if (!spatial::IsShapePreservingLayer(source->type)) return {};
+                break;
         }
+        at = source;
     }
-    if (!source) return {};
-    const auto param = [source](const char* key) {
-        const auto it = source->parameters.find(key);
-        return it == source->parameters.end() ? std::string{} : it->second;
-    };
-    switch (source->type) {
-        case NodeType::Embedding:
-            return param("embedding_dim");
-        case NodeType::LSTM:
-        case NodeType::GRU:
-        case NodeType::RNN: {
-            const std::string hidden = param("hidden_size");
-            const std::string bidirectional = param("bidirectional");
-            if (hidden.empty()) return {};
-            return (bidirectional == "true" || bidirectional == "True" || bidirectional == "1")
-                       ? std::to_string(2 * std::atoi(hidden.c_str()))
-                       : hidden;
-        }
-        case NodeType::Dense:
-        case NodeType::TimeDistributed:
-            return param("units");
-        default:
-            return {};
-    }
+    return {};
+}
+
+std::string GraphCodeExporter::RecurrentInputSize(const MLNode& node) const {
+    const std::string inferred = InferredInputWidth(node);
+    if (!inferred.empty()) return inferred;
+    const std::string own = GetParamOrDefault(node, "input_size", "");
+    return own.empty() || own == "0" ? "512" : own;
 }
 
 std::string GraphCodeExporter::NodeTypeToPythonLayer(const MLNode& node) {
@@ -2146,17 +2213,15 @@ std::string GraphCodeExporter::NodeTypeToPythonLayer(const MLNode& node) {
         }
 
         case NodeType::LayerNorm: {
-            const std::string normalized_shape =
-                GetParamOrDefault(node, "normalized_shape", "AUTO");
-            const std::string shape_literal = normalized_shape == "AUTO"
-                ? "AUTO"
-                : CsvToPythonListLiteral(normalized_shape, normalized_shape);
-            code = "nn.LayerNorm(normalized_shape=" + shape_literal +
-                   ", eps=" +
-                   GetParamOrAliases(node, {"eps", "epsilon"}, "1e-5") +
-                   ", elementwise_affine=" + PythonBoolLiteral(
-                       GetParamOrDefault(node, "elementwise_affine", "true")) +
-                   ")";
+            // AUTO: the width the graph gives it, else read on the first forward pass.
+            std::string shape = GetParamOrDefault(node, "normalized_shape", "AUTO");
+            if (shape == "AUTO") shape = InferredInputWidth(node);
+            const std::string settings = "eps=" + GetParamOrAliases(node, {"eps", "epsilon"}, "1e-5") +
+                                         ", elementwise_affine=" +
+                                         PythonBoolLiteral(GetParamOrDefault(node, "elementwise_affine", "true")) + ")";
+            code = shape.empty() ? "LazyLayerNorm(" + settings
+                                 : "nn.LayerNorm(normalized_shape=" + CsvToPythonListLiteral(shape, shape) + ", " +
+                                       settings;
             break;
         }
 
@@ -2261,98 +2326,23 @@ std::string GraphCodeExporter::NodeTypeToPythonLayer(const MLNode& node) {
         }
 
         // ===== RNN Layers =====
-        case NodeType::LSTM: {
-            std::string input_size = "512";
-            std::string hidden_size = "256";
-            std::string num_layers = "1";
-            std::string bidirectional = "False";
-            std::string dropout = "0.0";
-            auto normalize_bool = [](const std::string& value) -> std::string {
-                if (value == "true" || value == "1" || value == "True") {
-                    return "True";
-                }
-                if (value == "false" || value == "0" || value == "False") {
-                    return "False";
-                }
-                return value;
-            };
-            auto it = node.parameters.find("input_size");
-            if (it != node.parameters.end()) input_size = it->second;
-            if (input_size.empty() || input_size == "0") {
-                const std::string inferred = InferredInputWidth(node);
-                if (!inferred.empty()) input_size = inferred;
-            }
-            it = node.parameters.find("hidden_size");
-            if (it != node.parameters.end()) hidden_size = it->second;
-            it = node.parameters.find("num_layers");
-            if (it != node.parameters.end()) num_layers = it->second;
-            it = node.parameters.find("bidirectional");
-            if (it != node.parameters.end()) bidirectional = normalize_bool(it->second);
-            it = node.parameters.find("dropout");
-            if (it != node.parameters.end()) dropout = it->second;
-            code = "nn.LSTM(input_size=" + input_size + ", hidden_size=" + hidden_size +
-                   ", num_layers=" + num_layers + ", batch_first=True, bidirectional=" + bidirectional +
-                   ", dropout=" + dropout + ")";
+        case NodeType::LSTM:
+        case NodeType::GRU:
+            code = std::string(node.type == NodeType::LSTM ? "nn.LSTM" : "nn.GRU") +
+                   "(input_size=" + RecurrentInputSize(node) +
+                   ", hidden_size=" + GetParamOrDefault(node, "hidden_size", "256") +
+                   ", num_layers=" + GetParamOrDefault(node, "num_layers", "1") +
+                   ", batch_first=True, bidirectional=" +
+                   PythonBoolLiteral(GetParamOrDefault(node, "bidirectional", "false")) +
+                   ", dropout=" + GetParamOrDefault(node, "dropout", "0.0") + ")";
             break;
-        }
 
-        case NodeType::GRU: {
-            std::string input_size = "512";
-            std::string hidden_size = "256";
-            std::string num_layers = "1";
-            std::string bidirectional = "False";
-            std::string dropout = "0.0";
-            auto normalize_bool = [](const std::string& value) -> std::string {
-                if (value == "true" || value == "1" || value == "True") {
-                    return "True";
-                }
-                if (value == "false" || value == "0" || value == "False") {
-                    return "False";
-                }
-                return value;
-            };
-            auto it = node.parameters.find("input_size");
-            if (it != node.parameters.end()) input_size = it->second;
-            if (input_size.empty() || input_size == "0") {
-                const std::string inferred = InferredInputWidth(node);
-                if (!inferred.empty()) input_size = inferred;
-            }
-            it = node.parameters.find("hidden_size");
-            if (it != node.parameters.end()) hidden_size = it->second;
-            it = node.parameters.find("num_layers");
-            if (it != node.parameters.end()) num_layers = it->second;
-            it = node.parameters.find("bidirectional");
-            if (it != node.parameters.end()) bidirectional = normalize_bool(it->second);
-            it = node.parameters.find("dropout");
-            if (it != node.parameters.end()) dropout = it->second;
-            code = "nn.GRU(input_size=" + input_size + ", hidden_size=" + hidden_size +
-                   ", num_layers=" + num_layers + ", batch_first=True, bidirectional=" + bidirectional +
-                   ", dropout=" + dropout + ")";
+        case NodeType::RNN:
+            code = "nn.RNN(input_size=" + RecurrentInputSize(node) +
+                   ", hidden_size=" + GetParamOrDefault(node, "hidden_size", "256") +
+                   ", num_layers=" + GetParamOrDefault(node, "num_layers", "1") +
+                   ", nonlinearity='" + RecurrentNonlinearity(node) + "', batch_first=True)";
             break;
-        }
-
-        case NodeType::RNN: {
-            std::string input_size = "512";
-            std::string hidden_size = "256";
-            std::string num_layers = "1";
-            std::string nonlinearity = "tanh";
-            auto it = node.parameters.find("input_size");
-            if (it != node.parameters.end()) input_size = it->second;
-            if (input_size.empty() || input_size == "0") {
-                const std::string inferred = InferredInputWidth(node);
-                if (!inferred.empty()) input_size = inferred;
-            }
-            it = node.parameters.find("hidden_size");
-            if (it != node.parameters.end()) hidden_size = it->second;
-            it = node.parameters.find("num_layers");
-            if (it != node.parameters.end()) num_layers = it->second;
-            it = node.parameters.find("nonlinearity");
-            if (it != node.parameters.end() && !it->second.empty()) nonlinearity = it->second;
-            code = "nn.RNN(input_size=" + input_size + ", hidden_size=" + hidden_size +
-                   ", num_layers=" + num_layers + ", nonlinearity='" + nonlinearity +
-                   "', batch_first=True)";
-            break;
-        }
 
         case NodeType::PReLU:
             code = "nn.PReLU(num_parameters=" + GetParamOrDefault(node, "num_parameters", "1") +
@@ -2692,12 +2682,11 @@ std::string GraphCodeExporter::NodeTypeToPyCyxWizLayer(const MLNode& node) {
 
         // ===== Normalization Layers =====
         case NodeType::LayerNorm: {
-            const std::string normalized_shape =
-                GetParamOrDefault(node, "normalized_shape", "AUTO");
-            const std::string shape_literal = normalized_shape == "AUTO"
-                ? "[AUTO]"
-                : CsvToPythonListLiteral(normalized_shape, normalized_shape);
-            code = "cx.LayerNorm(normalized_shape=" + shape_literal +
+            // AUTO: the width the graph gives it (the export refuses before
+            // reaching here when the data gives it).
+            std::string normalized_shape = GetParamOrDefault(node, "normalized_shape", "AUTO");
+            if (normalized_shape == "AUTO") normalized_shape = InferredInputWidth(node);
+            code = "cx.LayerNorm(normalized_shape=" + CsvToPythonListLiteral(normalized_shape, normalized_shape) +
                    ", eps=" +
                    GetParamOrAliases(node, {"eps", "epsilon"}, "1e-5") +
                    ", elementwise_affine=" + PythonBoolLiteral(
@@ -2767,86 +2756,28 @@ std::string GraphCodeExporter::NodeTypeToPyCyxWizLayer(const MLNode& node) {
         }
 
         // ===== Recurrent Layers =====
-        case NodeType::LSTM: {
-            std::string input_size = "512";
-            std::string hidden_size = "256";
-            std::string num_layers = "1";
-            auto normalize_bool = [](const std::string& value) -> std::string {
-                if (value == "true" || value == "1" || value == "True") {
-                    return "True";
-                }
-                if (value == "false" || value == "0" || value == "False") {
-                    return "False";
-                }
-                return value;
-            };
-            auto it = node.parameters.find("input_size");
-            if (it != node.parameters.end()) input_size = it->second;
-            it = node.parameters.find("hidden_size");
-            if (it != node.parameters.end()) hidden_size = it->second;
-            it = node.parameters.find("num_layers");
-            if (it != node.parameters.end()) num_layers = it->second;
-            std::string bidirectional = "false";
-            std::string dropout = "0.0";
-            it = node.parameters.find("bidirectional");
-            if (it != node.parameters.end()) bidirectional = normalize_bool(it->second);
-            it = node.parameters.find("dropout");
-            if (it != node.parameters.end()) dropout = it->second;
-            code = "cx.LSTM(input_size=" + input_size + ", hidden_size=" + hidden_size +
-                   ", num_layers=" + num_layers + ", bidirectional=" + bidirectional +
-                   ", dropout=" + dropout + ")";
+        case NodeType::LSTM:
+            code = "cx.LSTM(input_size=" + RecurrentInputSize(node) +
+                   ", hidden_size=" + GetParamOrDefault(node, "hidden_size", "256") +
+                   ", num_layers=" + GetParamOrDefault(node, "num_layers", "1") +
+                   ", bidirectional=" + PythonBoolLiteral(GetParamOrDefault(node, "bidirectional", "false")) +
+                   ", dropout=" + GetParamOrDefault(node, "dropout", "0.0") + ")";
             break;
-        }
 
-        case NodeType::GRU: {
-            std::string input_size = "512";
-            std::string hidden_size = "256";
-            std::string num_layers = "1";
-            std::string bidirectional = "false";
-            auto normalize_bool = [](const std::string& value) -> std::string {
-                if (value == "true" || value == "1" || value == "True") {
-                    return "True";
-                }
-                if (value == "false" || value == "0" || value == "False") {
-                    return "False";
-                }
-                return value;
-            };
-            auto it = node.parameters.find("input_size");
-            if (it != node.parameters.end()) input_size = it->second;
-            it = node.parameters.find("hidden_size");
-            if (it != node.parameters.end()) hidden_size = it->second;
-            it = node.parameters.find("num_layers");
-            if (it != node.parameters.end()) num_layers = it->second;
-            it = node.parameters.find("bidirectional");
-            if (it != node.parameters.end()) bidirectional = normalize_bool(it->second);
-            code = "cx.GRU(input_size=" + input_size +
-                   ", hidden_size=" + hidden_size +
-                   ", num_layers=" + num_layers +
-                   ", batch_first=True, bidirectional=" + bidirectional + ")";
+        case NodeType::GRU:
+            code = "cx.GRU(input_size=" + RecurrentInputSize(node) +
+                   ", hidden_size=" + GetParamOrDefault(node, "hidden_size", "256") +
+                   ", num_layers=" + GetParamOrDefault(node, "num_layers", "1") +
+                   ", batch_first=True, bidirectional=" +
+                   PythonBoolLiteral(GetParamOrDefault(node, "bidirectional", "false")) + ")";
             break;
-        }
 
-        case NodeType::RNN: {
-            std::string input_size = "512";
-            std::string hidden_size = "256";
-            std::string num_layers = "1";
-            std::string nonlinearity = "tanh";
-            auto it = node.parameters.find("input_size");
-            if (it != node.parameters.end()) input_size = it->second;
-            it = node.parameters.find("hidden_size");
-            if (it != node.parameters.end()) hidden_size = it->second;
-            it = node.parameters.find("num_layers");
-            if (it != node.parameters.end()) num_layers = it->second;
-            it = node.parameters.find("nonlinearity");
-            if (it != node.parameters.end() && !it->second.empty()) nonlinearity = it->second;
-            code = "cx.RNN(input_size=" + input_size +
-                   ", hidden_size=" + hidden_size +
-                   ", num_layers=" + num_layers +
-                   ", batch_first=True, bidirectional=False, nonlinearity='" +
-                   nonlinearity + "')";
+        case NodeType::RNN:
+            code = "cx.RNN(input_size=" + RecurrentInputSize(node) +
+                   ", hidden_size=" + GetParamOrDefault(node, "hidden_size", "256") +
+                   ", num_layers=" + GetParamOrDefault(node, "num_layers", "1") +
+                   ", batch_first=True, bidirectional=False, nonlinearity='" + RecurrentNonlinearity(node) + "')";
             break;
-        }
 
         // Tensor shape/merge ops are emitted directly in forward(). They
         // are tensor methods/operators, not layer objects.
