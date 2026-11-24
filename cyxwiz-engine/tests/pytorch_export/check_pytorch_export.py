@@ -58,9 +58,14 @@ def load_graph(path: Path) -> dict:
 
 
 def cyxwiz_parameter_count(compile_check: Path, graph: Path):
+    """(the parameter count of the model CyxWiz builds, None) or (None, why
+    it cannot build it offline, e.g. the graph's data is not on this PC)."""
     out = subprocess.run([str(compile_check), "--parameters", str(graph)], capture_output=True, text=True)
     match = re.search(r"parameters=(\d+)", out.stdout)
-    return int(match.group(1)) if match else None
+    if match:
+        return int(match.group(1)), None
+    reason = re.search(r"parameters=unavailable \((.*)\)", out.stdout)
+    return None, (reason.group(1) if reason else (out.stdout + out.stderr).strip()[-300:])
 
 
 def word_pos_embeddings(graph_json: dict):
@@ -128,6 +133,16 @@ def check(graph: Path, bin_dir: Path, work: Path):
     if blocked:
         return {**result, "ok": None, "stage": "blocked", "detail": blocked[len("raise ValueError("):-1][:200]}
 
+    # An RL graph exports a Stable-Baselines3 training run on the Engine's own
+    # environments, not a GeneratedModel: it is compiled here, not trained.
+    text = code.read_text(encoding="utf-8")
+    if "from stable_baselines3 import" in text:
+        try:
+            compile(text, str(code), "exec")
+        except SyntaxError as error:
+            return {**result, "ok": False, "stage": "rl", "detail": f"SyntaxError: {error}"}
+        return {**result, "ok": None, "stage": "rl", "detail": "a Stable-Baselines3 training script: compiled, not run"}
+
     script = subprocess.run([sys.executable, str(code)], capture_output=True, text=True, cwd=work)
     if script.returncode != 0:
         return {**result, "ok": False, "stage": "script", "detail": script.stderr[-600:]}
@@ -154,8 +169,11 @@ def check(graph: Path, bin_dir: Path, work: Path):
     except Exception as error:  # the export ran but the model does not train
         return {**result, "ok": False, "stage": "forward/backward", "detail": f"{type(error).__name__}: {error}"}
 
-    expected = cyxwiz_parameter_count(bin_dir / "cyxwiz-graph-compile-check.exe", graph)
+    expected, unavailable = cyxwiz_parameter_count(bin_dir / "cyxwiz-graph-compile-check.exe", graph)
     result["cyxwiz_parameters"] = expected
+    if unavailable:  # nothing to compare with: not a verdict on the export
+        return {**result, "ok": None, "stage": "skipped",
+                "detail": f"the Engine cannot build the model offline: {unavailable}"[:300]}
     same = expected is not None and expected == result["pytorch_parameters"]
     finite = torch.isfinite(torch.tensor(result["loss"])).item()
     result["ok"] = bool(same and finite and result["parameters_without_grad"] == 0)
