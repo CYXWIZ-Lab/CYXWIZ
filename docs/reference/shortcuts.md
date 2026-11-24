@@ -7,7 +7,7 @@ audience: user
 status: stable
 since: 1.0.7
 owner: main-window
-last_reviewed: 2026-11-24
+last_reviewed: 2026-11-25
 related:
   - ../main-window/preferences.md
   - ../main-window/menus.md
@@ -25,7 +25,8 @@ The Engine lists the same table in **Help > Keyboard Shortcuts...**, which
 opens **File > Preferences... > Shortcuts**. There you can filter by window and
 search with **Search actions or keys**. You can't change the keys today.
 
-This page is hand-checked against the code; it is not generated yet.
+This page is checked by hand against the code. It is one page on purpose,
+so that a search for a key finds every place it works.
 
 ## How shortcuts are handled
 
@@ -126,9 +127,8 @@ moves the focus into this box; click it. See
 | **Ctrl+O** | Open a project |
 | **Enter** | Open the selected recent project |
 
-These differ from the main window, where **Ctrl+N** and **Ctrl+O** are New
-Script and Open Script, and projects use **Ctrl+Shift+N** and
-**Ctrl+Shift+O**.
+In the main window the project keys are **Ctrl+Shift+N** and
+**Ctrl+Shift+O** (see [Same key, different action](#same-key-different-action)).
 
 ## Script Editor
 

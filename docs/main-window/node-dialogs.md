@@ -1,15 +1,16 @@
 ---
 title: Node dialogs
-description: The windows that set up nodes which read, preview or prepare data, tab by tab.
+description: The windows that set up nodes which read, preview or prepare data, the buttons they share, and where each dialog is described.
 type: reference
 area: graph-editor
 audience: user
 status: stable
 since: 1.0.7
 owner: graph-editor
-last_reviewed: 2026-11-24
+last_reviewed: 2026-11-25
 related:
   - properties.md
+  - data-input-dialog.md
   - ../user-guide/graph-editor/node-properties.md
   - ../user-guide/graph-editor/compile-and-run.md
 redirect_from:
@@ -21,332 +22,46 @@ own; the rest are set in the [Properties panel](properties.md). Open a
 node's dialog by double-clicking the node, right-clicking it and choosing
 **Configure...**, or clicking **Open Dialog...** at the top of Properties
 (Data Studio has **Open dialog**). The node's settings are saved into the
-graph when you press **Apply** or **OK**.
+graph when you press **Apply** or **OK**. Double-clicking any other node
+only selects it.
 
-| Node | Dialog title |
-| --- | --- |
-| Data Input | **Data Input** |
-| Data Output | **Data Output** |
-| Data Convert | **Data Convert** |
-| Data Loader | **Data Loader** |
-| Data Split | **Data Split** |
-| Tokenizer | **Text Tokenizer Configuration** |
-| Vocabulary, Padding (older graphs) | **Text Vocabulary Configuration**, **Text Padding Configuration** |
-| Embedding | **Embedding Configuration** |
-| Row Filter | **Row Filter** |
-| SQL Query | **SQL Workbench** (see [SQL Workbench](../usage/sql-workbench.md)) |
-| Quality Analyzer | **Quality Analyzer** (see [Quality Analyzer](../usage/quality_analyzer.md)) |
-| Word Embeddings | **Word Embeddings** (see [Word embeddings](../usage/word_embeddings.md)) |
+## The dialogs
 
-Double-click on any other node only selects it.
+| Node | Dialog title | Described in |
+| --- | --- | --- |
+| Data Input | **Data Input** | [Data Input dialog](data-input-dialog.md), [Data Input formats](data-input-formats.md) |
+| Data Split | **Data Split** | [Data Split and Data Loader dialogs](data-split-and-loader-dialogs.md) |
+| Data Loader | **Data Loader** | [Data Split and Data Loader dialogs](data-split-and-loader-dialogs.md) |
+| Tokenizer | **Text Tokenizer Configuration** | [Text Tokenizer and Embedding dialogs](text-node-dialogs.md) |
+| Vocabulary, Padding (older graphs) | **Text Vocabulary Configuration**, **Text Padding Configuration** | [Text Tokenizer and Embedding dialogs](text-node-dialogs.md) |
+| Embedding | **Embedding Configuration** | [Text Tokenizer and Embedding dialogs](text-node-dialogs.md) |
+| Row Filter | **Row Filter** | [Row Filter dialog](row-filter-dialog.md) |
+| Data Output | **Data Output** | [Data Output and Data Convert dialogs](data-output-and-convert-dialogs.md) |
+| Data Convert | **Data Convert** | [Data Output and Data Convert dialogs](data-output-and-convert-dialogs.md) |
+| SQL Query | **SQL Workbench** | [SQL Workbench](../user-guide/data-studio/sql-workbench.md) |
+| Quality Analyzer | **Quality Analyzer** | [Quality Analyzer](../user-guide/data-studio/quality-analyzer.md) |
+| Word Embeddings | **Word Embeddings** | [Word embeddings](../usage/word_embeddings.md) |
+
+The Plot and Dashboard nodes open windows of their own instead (**Open Plot
+window**, **Open Dashboard**); see
+[Visualization nodes](../reference/nodes/categories/visualization.md).
 
 ## The buttons every dialog shares
 
-- **Cancel** puts back the settings the node had when the dialog opened and
-  closes it. It is always available, also while the dialog is loading.
-- **Apply** saves the settings and keeps the dialog open.
-- **OK** saves and closes.
+| Button | Does |
+| --- | --- |
+| **Cancel** | Puts back the settings the node had when the dialog opened and closes it. Always available, also while the dialog is loading. |
+| **Apply** | Saves the settings and keeps the dialog open. |
+| **OK** | Saves and closes. |
 
 While a dialog is loading or running something (a Data Input load, a Data
-Convert run), Apply and OK are off; hover them to see why. Dialogs that know
-when you changed something (Embedding, Word Embeddings) keep Apply off until
-you do ("Nothing changed").
+Convert run), Apply and OK are off; hover them to see why. Dialogs that
+know when you changed something (Embedding, Word Embeddings) keep Apply off
+until you do ("Nothing changed").
 
 A file field is a path box with a browse button beside it (**Browse
 file...**, **Browse folder...**, **Browse...** or **Save as...**); typing a
 path works as well as browsing.
-
-## Data Input
-
-Data Input reads a file or a folder: a table (CSV, TSV, JSON Lines, Parquet,
-Feather, Arrow / IPC, a ZIP of text documents, a dataset in an HDF5 file),
-text, a token-tagging table, a time series, a folder of images or a folder of
-audio. Databases come in through Data Studio's SQL Workbench, not through Data
-Input.
-
-### Formats from plugins
-
-A plugin can add a table format (for example ARFF, with the example plugin
-*Example Data Formats*). While the plugin is loaded, its formats are in the
-**Format** list as *&lt;name&gt; (plugin)*, in **Browse...**'s file types,
-and picked by the file's extension, so a file of such a format behaves like
-any table: Preview after Apply, Data Studio, SQL, training. A format the
-Engine reads itself wins over a plugin's for the same extension; choose the
-plugin's in **Format** to use it instead.
-
-On Apply the Engine reads the file through the plugin once and keeps a
-Parquet copy in the project's cache; it reads that copy again until the file
-or the plugin's version changes. Large files stay on disk like a large
-Parquet file. A graph that uses such a format needs the plugin: without it,
-Apply says *This format comes from a plugin that is not loaded*. Remote
-training receives the loaded table, so the remote computer does not need the
-plugin.
-
-### Table format options
-
-- **Quote character** (default `"`): a value inside it may hold the
-  delimiter and line breaks; a doubled quote inside is one quote. Leave it
-  empty to read quotes as ordinary text. Preview, Apply and pipeline runs use
-  the same character.
-- Files are read as UTF-8; a byte order mark at the start is skipped.
-- The **Rows and columns** tab sets which columns load (**Include all
-  columns**, or pick them), **Skip first N source rows:** and **Limit
-  dataset rows** (Apply loads at most that many rows; only those are
-  split and trained on). To keep only some rows by value, filter them in
-  Data Studio's Prepare step or with a Row Filter or SQL Query node.
-
-### HDF5 files
-
-An HDF5 file (`.h5`, `.hdf5`, `.hdf`) holds groups and datasets; Data Input
-loads one numeric dataset as a table. The Source tab shows the file's
-hierarchy (name, shape, type; open a group to go into it, the arrow goes back
-up). With **Data** chosen above it, click the dataset to load; with
-**Labels**, the dataset of class labels (optional). The paths are also in
-**Data path** and **Label path (optional)**, to type. **Preview** shows the
-selected rows, a page at a time. Apply stays unavailable until a dataset is
-chosen ("Choose the dataset to load in the HDF5 hierarchy").
-
-- The data is a rank-1 dataset (one column, named `value`) or a rank-2 one
-  (rows x columns, named `col_0`, `col_1`, ...), of integers or float32 /
-  float64. The labels are a rank-1 dataset with one value per row; they are
-  the last column, `label`, and the node's label column.
-- Apply reads the dataset into memory, at most 256 MB; a larger one is
-  refused with the estimate. Training and graph runs read the same dataset
-  from the node's settings, so a reopened project needs no new Apply.
-- Not loaded (refused with the reason): rank 3 and up (image stacks such as
-  N x H x W x C), strings and compound types, virtual or external storage,
-  and labels whose row count differs from the data's.
-
-Example: `examples/datasets/metric_blobs.h5` holds the `metric_blobs.csv`
-table, the features in `/blobs/features` (480 x 8, float32) and the class in
-`/blobs/labels`; `make_metric_blobs_h5.py` beside it writes it with h5py.
-The template `examples/cyxgraph/blobs_hdf5_classifier.cyxgraph` trains a
-classifier from it.
-
-### Text needs a node that turns it into numbers
-
-Data Input loads text and its label; a node after it turns the text into
-numbers: a **Text Tokenizer** (word ids), a **TF-IDF** or **Count**
-vectorizer, or **Word Embeddings**. Compile refuses a text input that reaches
-the model without one (*CW-C-0203*, "gives text, and nothing turns it into
-numbers") and offers **Add a Text Tokenizer**: it adds the node after the
-Data Input, takes over its links, fills in the text and label columns and
-opens its dialog.
-
-Data Input's Text options set only the layout and the text and label
-columns. Under **Preprocessing (done by nodes)** the dialog names the nodes
-after it that turn the text into numbers (*Tokenized by Tokenizer (word),
-vocabulary sentiment_analysis_vocab.txt, 64 ids per row*), with **Open it**
-and **Show on canvas**, or offers **Add a Text Tokenizer**. A new Text
-Tokenizer takes its text and label columns from the Data Input before it.
-Apply reads the texts (an empty text is not a sample) and builds no
-vocabulary: the sentiment CSV loads in about 3 s (52,681 samples, 7
-classes, 30.4 MB).
-
-### Images need a Resize, audio a feature node
-
-Data Input only loads images and audio. A **Resize** after the Data Loader
-sets the size every image is decoded at; Compile refuses an image graph
-without one (*CW-C-0204*) and offers **Add a Resize**. Audio features come
-from a **Mel Spectrogram**, **Spectrogram** or **MFCC** node after the Data
-Loader; Compile refuses an audio graph without one (*CW-C-0205*) and offers
-the three. The added node goes after the Data Loader's data output (the
-labels keep their link) and opens its settings.
-
-Data Input's Image options set only the layout, the folder and (flat
-layout) the labels CSV; its Audio options the layout, folder, labels CSV,
-sample rate and length ("seconds, padded or cut"). Audio is always mixed to
-mono. Under **Preprocessing (done by nodes)** the dialog names the Resize
-(*Resized by Resize 64x64, 64 x 64*) and Normalize nodes, or the audio
-feature node, with **Show on canvas** (and **Open it** for nodes with a
-dialog); when one is missing it offers **Add a Resize**, **Add Normalize**
-(after the Resize) or **Add Mel Spectrogram / Spectrogram / MFCC**. An image
-folder holds nothing in memory: when training starts the images are decoded
-once at the Resize size into cache/images (see [Image transforms](../usage/image_transforms.md)).
-
-### The data strip and the tabs
-
-Above Data Input's tabs a strip says what the node loads and how far it got,
-on every tab: the file or folder, its state (*Not loaded*, *Loading: ...*
-with the seconds so far, *Loaded in 1.79 s as sentiment_mental_health
-(text)*, or a red *Not loaded* with the reason and what to do), the counts
-(*52,681 samples, 7 classes, 30.0 MB on disk*) and how the data is held
-(*30.4 MB in memory*, *kept on disk (Parquet ...)*, *decoded once at
-the Resize size into cache/images when training starts*). When an Apply fails while an earlier load stays, the
-strip keeps the earlier load and says the last Apply failed.
-
-The tabs are **Source**, **Preview**, **Profile**, **Rows and columns**
-(which columns to load, then the rows to skip and the row limit; not shown
-for an image or audio folder, which has no rows to read), **Memory** and
-**Audit**. An image folder's Source tab has **Class names** once it is
-loaded: a row per class (its label in the CSV, or its folder) with a name to
-type and a **suggested** one, the file-name prefix every file of the class
-shares (*cat* for `cat.1.jpg`, *dog* for `dog.1.jpg`) when each class has its
-own. **Use suggested** fills them in; Apply saves them with the node (an
-empty name keeps the label) and every screen and the index's label_name use
-them at once, without loading the images again. Class indices do not change:
-they follow the labels, sorted (numbers as numbers).
-For an image folder, **Preview** shows its first 24 images with
-their class once it is loaded (Explore > Images in Data Studio shows them
-all), and **Profile** shows the image profile (counts, classes, sizes,
-prepared sets; see Data Studio > Profile).
-
-### The Memory and Audit tabs
-
-- **Memory** shows **Current Status:** (*In Memory*, *On disk (Parquet)*,
-  *Lazy-loaded*, *On Disk (streaming)* or *Not Loaded*), the rows and
-  columns, and **Unload from memory**. Under **Advanced**, **Force
-  disk-backed cache** keeps even a small table on disk instead of in
-  memory. See [Loaded data](../usage/loaded_data.md) and
-  [Big data](../usage/big_data.md).
-- **Audit** (**Dataset audit**) checks the loaded dataset: *Failed*,
-  *Warnings* or *Passed*, with the dataset name, rows, columns, what read
-  it, and a table of errors and warnings. Before a load it says "Click
-  Apply to load data and run the audit."
-
-### Source: the file or folder, then how its rows are used
-
-**1. Source** has one field, **File or folder**, with **Browse file...**
-and **Browse folder...**. Under it, **Detected** says what it is:
-
-- a file: its format and columns (*CSV table, 30.0 MB, 3 columns: (unnamed),
-  statement, status*), with **Format options** (format, delimiter, header
-  row, decimal separator, quote character, missing values; a ZIP's member
-  list). Change the format only when the extension is wrong.
-- a folder: what its files are (*Image folder: flat folder, 25,000 images*,
-  or *2 class folders (cat, dog)*), with **Scan again**.
-
-**2. Use the rows as** offers only the uses that fit the source. A table
-file can be used as **Table** (a label column; every other column is an
-input feature), **Text** (a text column and a label column), **Token
-tagging** (token, tag, POS and sentence columns) or **Time series** (a
-label column and a **Time column**: the rows are put in that column's order
-on load, missing times last, so windows and a chronological split follow
-time; a column named date, time, timestamp, datetime or ds is offered with
-**Use it**; with none the rows keep the file's order; the strip then reads
-*as sales (time series by date)*; a table kept on disk cannot be put in
-order and the load says so). A folder of images is used as images (**Labels from**: class folders, or a
-flat folder and a labels CSV), a folder of audio as audio (labels, sample
-rate, length), a folder of text files as text. Training, validation and
-test roles come from the graph's Data Split, not from this node.
-
-## Text Tokenizer
-
-The **Tokenizer** node opens **Text Tokenizer Configuration**. The tabs are named by what you decide:
-
-- **Words**: the text and label columns, **Split into** (Spaces, Words,
-  Characters, WordPiece, Byte BPE; Byte BPE adds its starting units and
-  space handling) and **Lowercase first**. A vocabulary card shows the file
-  the node uses (*sentiment_analysis_vocab.txt, 5000 tokens, min frequency
-  5*), warns when entries are broken bytes from before 2026-10-16 (rebuild
-  it), and has **Build and save vocabulary** and **Inspect file**.
-- **Vocabulary**: source CSV, text column, minimum frequency, maximum size,
-  the file and "build and save it when the file is missing".
-- **Length**: the output (padded token columns, causal document windows,
-  decode token IDs, round-trip check), maximum length, pad value, pad and
-  cut.
-- **Try it**: type a sample; its tokens show as you type ([UNK] in orange,
-  hover for the id) with the count against the maximum length, and the ids
-  and round trip under a disclosure.
-
-Help for each field is the hover text on its label.
-
-## Data Split
-
-A bar shows the three parts with their rows from the graph's data (*train 80%
-about 42,145, val 5,268, test 5,268*), above the **Train**, **Validation** and
-**Test** sliders and their sum (Apply scales them to 1.00). **Seed** sets the
-shuffled order the parts are cut from; **Stratified: keep each class's share in every part** does what it says. *From the graph* names the dataset and its samples, with
-**Refresh from graph**; **Details** holds the resolved manifest (origins,
-schemas, policy, source ids, leakage checks). An old graph using Data
-Boundary v1 shows a caution and **Migrate graph to Dataset v2**.
-
-## Data Loader
-
-Six tabs: **Training** (epochs, validate every, batch size with about how
-many batches an epoch has, seed, model seed, shuffle, drop the last short
-batch), **Batches** (gradient accumulation, prefetch), **Balance** (class
-balancing for training batches: mode, target per class, seed),
-**Checkpoints** (best validation checkpoint, early stop patience, checkpoint
-folder, start from an earlier checkpoint), **Generation** (samples the model
-writes during training: prompts, chat template, stop texts, decoding, when;
-see [Generation previews](../usage/generation_previews.md)) and **Advanced** (worker
-threads, pin memory, report interval). The Data Loader is the one place
-batching is set.
-
-## Embedding
-
-The **Embedding** node opens **Embedding Configuration**, with the tabs
-**Shape** (vocabulary size and vector size), **Weights** (start from
-pretrained word vectors) and **Advanced**. Apply stays off until you change
-something ("Nothing changed"). See [Word embeddings](../usage/word_embeddings.md).
-
-## Row Filter
-
-**Keep the rows where** lists the conditions as rows: a column, an operator
-in words (*is*, *is not*, *is more than*, *is less than*, *is at least*, *is
-at most*, *is empty*, *is not empty*) and a value. *is empty* matches a
-missing value, and for text also an empty string (a CSV's empty cell); the
-two empty tests take no value. Rows after the first join with **and** or **or**
-(*and* binds first: `a and b or c` keeps rows matching both a and b, or c).
-**Add condition** adds a row; **Remove** takes one away (a filter keeps at
-least one).
-
-Once the step's input is known (the pipeline ran it, or it is a loaded Data
-Input), the column is picked by name from its columns, each shown with what it holds (numbers, text, true/false),
-and the value follows the column: a number box, a text box, or a true / false
-choice. Text and true/false columns compare only with *is* / *is not* (and the
-empty tests). Columns holding dates or lists are counted but cannot be
-compared; a column with no name (a CSV's index column) is listed as
-*(unnamed)* and cannot be picked. Before the
-first run the column is typed by name, and the value's type is read from what
-is typed (`5` is a number, `true` a true/false, anything else text).
-
-**Runs as** shows the condition the step runs, for example
-`"status" != 'Normal' AND "statement" IS NOT EMPTY`, and after a run how
-many rows passed (*36,338 of 53,043 rows pass (last run)*, while the
-condition is the one that ran); OK and Apply stay off, with the reason on hover,
-until every row can run (a column picked, a number where the column holds
-numbers, a column the input has). Reopening the dialog shows the saved
-condition as rows again. A condition written by hand with brackets in
-Properties does not fit rows: the dialog shows it as text to edit, with
-**Start over with rows**.
-
-## Data Output
-
-**File** is the file the step writes, with **Browse...**; left empty, the
-step writes to the project's exports folder, named after the table it reads.
-**Format** is CSV or Parquet; switching it also switches the file's
-extension. A relative file path shows **Relative to**: the project folder
-(like Data Input paths) or the exports folder. **Writes to** shows the full
-path the run will write, and after a run **Last run** shows the file it wrote
-and when, or why it failed.
-
-## Data Convert
-
-Converts a table file to another format once, with an optional sidecar
-manifest. Six tabs:
-
-- **Source**: the input file with **Browse...** and its format (*Auto* reads
-  it from the extension). An XLSX input adds the worksheet (blank is the
-  first) and the start column; Plain Text notes that it gives one column
-  named `text`.
-- **Output**: the output file with **Save as...**, **Use the input's name
-  with this format's extension**, the format (picking one switches the
-  file's extension; a mismatch is flagged), and **When writing**: overwrite
-  an existing file, create missing folders, write a conversion manifest
-  beside it.
-- **Options**: *Reading the input* (delimiter, detected or typed; decimal
-  separator; header; line breaks inside quoted values; skip rows) and
-  *Writing Parquet* (compression, row group size). Settings that do not apply
-  to the chosen formats are dimmed with the reason.
-- **Preview**: **Preview schema** reads the input in the background and shows
-  its rows, columns, each column's type and whether it can be missing, and
-  sample rows.
-- **Run**: **Run conversion** (the tab's main button, with its progress), then
-  the output path, rows written, columns, size and manifest. The write
-  finishes even if the dialog closes; the footer's Apply saves the settings.
-- **Log**: the messages of this dialog session, with **Clear**.
 
 ## Related
 

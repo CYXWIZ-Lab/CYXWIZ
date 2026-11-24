@@ -43,7 +43,7 @@ change the value in Properties; rename the node if that confuses you.
 
 **Create Data Input** in the Asset Browser only sets the file. It does not
 load the data: open the node's dialog and click **Apply**. See
-[Node dialogs](../../main-window/node-dialogs.md).
+[Data Input dialog](../../main-window/data-input-dialog.md).
 
 ## Find a node by name
 
