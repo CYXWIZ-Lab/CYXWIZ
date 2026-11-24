@@ -99,6 +99,12 @@ redirect_from: []
    limits. Bugs go to `known-issues.md` and the issue tracker, not into the
    description of how something works.
 
+7. **Know where the docs ended.** `sync.yaml` records, per area, the commit the
+   area's docs were last checked against. `python scripts/docs/docs_drift.py`
+   lists every commit since then that touches the area's code: that list is
+   what the docs may need to catch up with. After updating an area, set its
+   `synced_at` to the commit you checked.
+
 Run the check before you hand in a change:
 
 ```bash

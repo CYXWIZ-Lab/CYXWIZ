@@ -81,6 +81,13 @@ and understand how it works inside, without reading the code.
     shortcuts, SDK and Python API) are never edited by hand. Change the code
     or the generator under `scripts/docs/`.
 
+20a. **Keep the sync marker true.** `docs/sync.yaml` records, per area, the commit
+    its docs were last checked against (`synced_at`). Run
+    `python scripts/docs/docs_drift.py --files` to see what changed since; after
+    updating an area's pages against the code, set its `synced_at` to the commit
+    you checked (on the integration branch; on a feature branch, at merge).
+    Never bump it without checking.
+
 ## Moving and removing
 
 20. **Move with a redirect.** Add the old path to `redirect_from`, fix every
