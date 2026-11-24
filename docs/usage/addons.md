@@ -30,7 +30,8 @@ opens the installer with the add-on ticked.
 | Optional / Selected | Offered by the signed catalog; ticked or not |
 | Installed | The Engine loads it at start. To turn it off for a while, use Apps > Plugin Manager |
 | Update available | A newer signed package exists; tick the add-on to install it |
-| Update blocked | The catalog offers an older or conflicting package; the installed one stays |
+| Update blocked | The catalog offers an older or conflicting package, or one built for another CyxWiz Engine release; the installed one stays |
+| Comes with the Engine update | The CPU Engine update in this installation reinstalls it for the new release; nothing to tick |
 | Needs Engine update | It is built for another CyxWiz Engine release: update the CPU Engine first, then add it |
 | Needs reinstall | It was installed for another CyxWiz Engine release, so the Engine no longer loads it. Tick it to install the version for this release, or uninstall it |
 | Unavailable | Its signed details could not be verified, or the release does not offer it |
@@ -45,10 +46,12 @@ the plugin id, the CPU Engine it is built for and the licence files.
 ## When the CPU Engine is updated
 
 An add-on is built for one CPU Engine release. An update of the CPU Engine
-also installs the new release's version of every installed add-on, and the
-installation summary says so. When the new release has no version of an
-add-on yet, the summary warns that the Engine will stop loading it; its card
-then shows **Needs reinstall** and keeps **Uninstall add-on**.
+also installs the new release's version of every installed add-on: the
+installation summary lists it as reinstalled for the new CPU Engine, and its
+card reads **Comes with the Engine update**. When the new release has no
+version of an add-on yet, a warning at the top of the summary and on its card
+says the Engine will stop loading it; after the update its card shows
+**Needs reinstall** and keeps **Uninstall add-on**.
 
 ## Uninstalling one
 

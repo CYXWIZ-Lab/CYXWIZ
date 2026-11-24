@@ -42,25 +42,34 @@ std::string AddOnCount(std::size_t count) {
   return std::to_string(count) + (count == 1 ? " add-on" : " add-ons");
 }
 
-// What a base update does to the installed add-ons: kept ones are reinstalled
-// for the new base; lost ones have no pack for it yet.
-std::string BaseUpdateAddOnNote(std::size_t kept, std::size_t lost) {
-  std::string note;
-  if (kept > 0) {
-    note += ". " + std::to_string(kept) + " installed add-on" +
-            (kept == 1 ? " is" : "s are") +
-            " reinstalled for the new base, so you keep " +
-            (kept == 1 ? "it" : "them");
-  }
-  if (lost > 0) {
-    const char *object = lost == 1 ? "it" : "them";
-    note += ". Warning: " + std::to_string(lost) + " installed add-on" +
-            (lost == 1 ? " has" : "s have") +
-            " no version for the new base yet. The Engine stops loading " +
-            object + " until one is published; you can uninstall " + object +
-            " under Add-ons";
-  }
-  return note;
+// What a base update does to the installed add-ons it keeps: they are
+// reinstalled for the new base.
+std::string KeptAddOnNote(std::size_t kept) {
+  if (kept == 0)
+    return {};
+  return ". " + std::to_string(kept) + " installed add-on" +
+         (kept == 1 ? " is" : "s are") +
+         " reinstalled for the new base, so you keep " +
+         (kept == 1 ? "it" : "them");
+}
+
+// The add-ons a base update loses: they have no pack for the new base yet.
+std::string LostAddOnWarning(std::size_t lost) {
+  if (lost == 0)
+    return {};
+  const char *object = lost == 1 ? "it" : "them";
+  return std::to_string(lost) + " installed add-on" +
+         (lost == 1 ? " has" : "s have") +
+         " no version for the new CPU Engine yet. The Engine stops loading " +
+         object + " until one is published; you can uninstall " + object +
+         " under Add-ons.";
+}
+
+// A CPU base update the installer can deliver from verified metadata.
+bool IsDeliverableBase(const BackendPackManagerRecord &record) {
+  return !record.pack_id.empty() &&
+         record.catalog_support == BackendPackCatalogSupport::Supported &&
+         record.delivery_metadata_available;
 }
 
 BackendPackActionDecision
@@ -270,6 +279,35 @@ bool IsBackendPackRecommended(const BackendPackManagerRecord &record) {
              runtime::BackendPackInstallRecommendation::Recommended;
 }
 
+const BackendPackManagerRecord *
+FindBaseUpdate(const std::vector<BackendPackManagerRecord> &records) {
+  const BackendPackManagerRecord *base = nullptr;
+  for (const auto &record : records) {
+    if (record.backend != "cpu" || !record.update_available)
+      continue;
+    if (base != nullptr)
+      return nullptr;
+    base = &record;
+  }
+  return base && IsDeliverableBase(*base) ? base : nullptr;
+}
+
+const BackendPackManagerRecord *
+FindAddOnPackForBase(const std::vector<BackendPackManagerRecord> &records,
+                     const std::string &plugin_id,
+                     const std::string &base_pack_id) {
+  const auto match = std::find_if(
+      records.begin(), records.end(), [&](const auto &candidate) {
+        return IsPluginRecord(candidate) && candidate.plugin_id == plugin_id &&
+               !candidate.pack_id.empty() && !base_pack_id.empty() &&
+               candidate.companion_base_id == base_pack_id &&
+               candidate.catalog_support ==
+                   BackendPackCatalogSupport::Supported &&
+               candidate.delivery_metadata_available;
+      });
+  return match == records.end() ? nullptr : &*match;
+}
+
 BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     const BackendPackInstallerSelection &selection,
     const std::vector<BackendPackManagerRecord> &catalog_records,
@@ -320,9 +358,7 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
       base = &record;
     }
     if (base) {
-      if (base->pack_id.empty() ||
-          base->catalog_support != BackendPackCatalogSupport::Supported ||
-          !base->delivery_metadata_available) {
+      if (!IsDeliverableBase(*base)) {
         plan.message = "The available CyxWiz Engine update is not "
                        "deliverable from verified metadata";
         return plan;
@@ -401,18 +437,9 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
       }
     }
     for (const auto &plugin_id : installed_add_ons) {
-      const auto match = std::find_if(
-          catalog_records.begin(), catalog_records.end(),
-          [&](const auto &candidate) {
-            return IsPluginRecord(candidate) &&
-                   candidate.plugin_id == plugin_id &&
-                   !candidate.pack_id.empty() &&
-                   candidate.companion_base_id == base->pack_id &&
-                   candidate.catalog_support ==
-                       BackendPackCatalogSupport::Supported &&
-                   candidate.delivery_metadata_available;
-          });
-      if (match == catalog_records.end()) {
+      const auto *match =
+          FindAddOnPackForBase(catalog_records, plugin_id, base->pack_id);
+      if (!match) {
         ++lost_add_ons;
         continue;
       }
@@ -452,7 +479,8 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     }
     plan.message += add_ons;
     plan.message += "; the new base activates CPU-only before optional packs";
-    plan.message += BaseUpdateAddOnNote(kept_add_ons, lost_add_ons);
+    plan.message += KeptAddOnNote(kept_add_ons);
+    plan.warning = LostAddOnWarning(lost_add_ons);
   } else if (!plan.deactivate_backends.empty()) {
     plan.message = std::to_string(plan.deactivate_backends.size()) +
                    " optional backend route(s) will be deactivated; package "

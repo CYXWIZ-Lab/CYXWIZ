@@ -83,6 +83,21 @@ void ApplyUpdatePolicy(BackendPackManagerRecord& record,
         runtime::BackendPackUpdateDisposition::Upgrade;
 }
 
+// An installed add-on the catalog does not list: its version, base and
+// licences come from the signed manifest kept when it was installed.
+void ApplyInstalledManifest(BackendPackManagerRecord& record,
+    const runtime::VerifiedBackendPackCatalogSnapshot& snapshot) {
+    const auto manifest = std::find_if(snapshot.installed_manifests.begin(),
+        snapshot.installed_manifests.end(), [&](const auto& candidate) {
+            return candidate.pack_id == record.installed_pack_id;
+        });
+    if (manifest == snapshot.installed_manifests.end()) return;
+    record.package_version = manifest->package_version;
+    record.runtime_set_id = manifest->runtime_set_id;
+    record.companion_base_id = manifest->companion_base_id;
+    record.licenses = manifest->licenses;
+}
+
 runtime::BackendPackCompatibilityContext BuildDefaultCompatibilityContext(
     const runtime::VerifiedBackendPackCatalogSnapshot& catalog,
     const runtime::ActiveRuntimeState& active_runtime) {
@@ -291,6 +306,7 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
             record.installed_pack_id = installed.pack_id;
             record.installed = true;
             record.active = true;
+            ApplyInstalledManifest(record, catalog);
             records.push_back(std::move(record));
         }
     }
@@ -308,6 +324,7 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
             record.plugin_id = installed.plugin_id;
             record.pack_id = installed.pack_id;
             record.installed_pack_id = installed.pack_id;
+            ApplyInstalledManifest(record, catalog);
             record.companion_base_id = active_plugins.base_pack_id;
             record.installed = true;
             record.installed_for_other_base = true;

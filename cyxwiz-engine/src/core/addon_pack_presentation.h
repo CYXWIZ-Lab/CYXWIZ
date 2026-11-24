@@ -24,6 +24,7 @@ enum class AddOnCardStatus {
     UpdateBlocked,
     NeedsEngineUpdate,  // built for another CyxWiz Engine release
     NeedsReinstall,     // installed for another CPU base: no longer loaded
+    WithEngineUpdate,   // installed; the CPU base update reinstalls it
     Unavailable,        // not offered by the signed catalog, or unverifiable
     NotPublished        // a known add-on with no pack for this platform
 };
@@ -39,13 +40,15 @@ struct AddOnCardView {
     std::string facts;               // "Version 1  |  3.2 MiB  |  Requires: ..."
     std::string explanation;         // what happens next, in words
     std::string licence;             // third-party licences in the pack
-    std::string action_hint;         // a warning line (an update to select)
+    std::string action_hint;         // a warning line (an update to select, a loss)
     std::string error;               // why signed metadata could not be read
     AddOnCardStatus status = AddOnCardStatus::Optional;
     std::string status_text;
     InstallerPackPresentationTone tone = InstallerPackPresentationTone::Neutral;
     bool checked = false;            // the card's checkbox
     bool can_select = false;         // the checkbox can change
+    // Why the checkbox cannot change, shown on the card in muted text; empty
+    // when the explanation already says why.
     std::string select_disabled_reason;
     bool can_install = false;        // Engine: Install add-on... (opens the installer)
     bool can_uninstall = false;      // Uninstall add-on
@@ -67,6 +70,13 @@ std::string AddOnTitle(const std::string& plugin_id);
 std::vector<AddOnCardView> BuildAddOnCards(
     const std::vector<BackendPackManagerRecord>& records,
     const std::set<std::string>& selected_pack_ids);
+
+// The installer summary's lines for the add-ons a plan installs: each one's
+// name, and what happens to it when it is installed already ("Simulation
+// (MuJoCo), reinstalled for the new CPU Engine"). Plan order.
+std::vector<std::string> PlannedAddOnLines(
+    const BackendPackInstallerPlan& plan,
+    const std::vector<BackendPackManagerRecord>& records);
 
 // The pack the installer ticks for `--select <id>`: an add-on named by its
 // plugin id or pack id follows its card (the pack the card offers, when its

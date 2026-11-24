@@ -64,6 +64,9 @@ struct InstallerViewState {
   // scroll is applied for a few frames, while auto-sized cards measure.
   std::string focus_pack_id;
   int focus_frames = 0;
+  // The summary footer's height (buttons and notes) as drawn last frame: the
+  // summary details take the rest of the column. 0 before the first frame.
+  float summary_footer_height = 0.0f;
 };
 
 InstallerViewAction RenderInstallerView(

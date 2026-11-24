@@ -91,7 +91,9 @@ void AddDetail(std::vector<AddOnDetail>& details, std::string key,
     if (!value.empty()) details.emplace_back(std::move(key), std::move(value));
 }
 
-std::string Facts(const BackendPackManagerRecord& record) {
+// Version, size and the Engine it needs: this release, or the CPU Engine
+// update the plan installs with it.
+std::string Facts(const BackendPackManagerRecord& record, bool for_base_update) {
     std::string facts = "Version " + (record.package_version.empty()
                                           ? std::string("unavailable")
                                           : record.package_version);
@@ -99,7 +101,8 @@ std::string Facts(const BackendPackManagerRecord& record) {
         facts += "  |  " + FormatBackendPackByteSize(record.download_size_bytes);
     }
     if (!record.companion_base_id.empty()) {
-        facts += "  |  Requires: CPU Engine (this release)";
+        facts += for_base_update ? "  |  Requires: the CPU Engine update"
+                                 : "  |  Requires: CPU Engine (this release)";
     }
     return facts;
 }
@@ -113,6 +116,35 @@ bool BuiltForAnotherEngine(const BackendPackManagerRecord& record) {
             record.compatibility->rule ==
                 runtime::BackendPackCompatibilityRule::RuntimeSet);
 }
+
+// The installed add-on against the catalog's pack, in add-on words (the
+// update policy's own messages speak of backend packs).
+std::string AddOnUpdateWords(const BackendPackManagerRecord& record) {
+    if (!record.update_decision) return {};
+    using Disposition = runtime::BackendPackUpdateDisposition;
+    switch (record.update_decision->disposition) {
+        case Disposition::SamePackage:
+            return "This version is installed.";
+        case Disposition::Upgrade:
+            return "A newer signed version is available.";
+        case Disposition::Downgrade:
+            return "The catalog offers an older version, so the installed "
+                   "version stays.";
+        case Disposition::Ambiguous:
+        case Disposition::Unknown:
+            break;
+    }
+    if (BuiltForAnotherEngine(record)) {
+        return "The catalog's version is built for a different CyxWiz Engine "
+               "release, so the installed version stays until the CPU Engine "
+               "is updated.";
+    }
+    return "The catalog's version cannot be compared safely with the "
+           "installed one, so the installed version stays.";
+}
+
+constexpr const char* kInstalledReason =
+    "Installed. Use Uninstall add-on to remove it.";
 
 void Status(AddOnCardView& card, AddOnCardStatus status, std::string text,
             InstallerPackPresentationTone tone) {
@@ -128,7 +160,6 @@ void BuildReinstallCard(AddOnCardView& card,
                         const BackendPackManagerRecord& record,
                         const BackendPackManagerRecord& stale,
                         const std::set<std::string>& selected_pack_ids) {
-    card.installed_pack_id = stale.installed_pack_id;
     card.can_uninstall = true;
     card.checked = false;
     card.can_select = false;
@@ -136,7 +167,6 @@ void BuildReinstallCard(AddOnCardView& card,
     card.action_hint.clear();
     const bool own_record = &record == &stale;
     if (!own_record) {
-        AddDetail(card.details, "Installed pack", stale.installed_pack_id);
         AddDetail(card.details, "Installed for CPU Engine",
                   stale.companion_base_id);
     }
@@ -152,8 +182,6 @@ void BuildReinstallCard(AddOnCardView& card,
             "Installed for another CyxWiz Engine release, so the Engine no "
             "longer loads it. No version for this release is published yet; "
             "Uninstall add-on removes its files.";
-        card.select_disabled_reason =
-            "No version for this CyxWiz Engine release is published yet";
         return;
     }
     const bool picked = selected_pack_ids.contains(record.pack_id);
@@ -162,16 +190,47 @@ void BuildReinstallCard(AddOnCardView& card,
            picked ? InstallerPackPresentationTone::Accent
                   : InstallerPackPresentationTone::Warning);
     card.explanation =
-        "Installed for another CyxWiz Engine release, so the Engine no "
-        "longer loads it. Select it to install the version for this release.";
+        picked ? "Installed for another CyxWiz Engine release, so the Engine "
+                 "no longer loads it. The version for this release installs "
+                 "with the other changes."
+               : "Installed for another CyxWiz Engine release, so the Engine "
+                 "no longer loads it. Select it to install the version for "
+                 "this release.";
     card.checked = picked;
     card.can_select = true;
     card.can_install = true;
 }
 
+// An installed add-on the plan's CPU base update reinstalls (the catalog has
+// its pack for the new base): it goes with the update, nothing to tick.
+void BuildBaseUpdateCard(AddOnCardView& card) {
+    Status(card, AddOnCardStatus::WithEngineUpdate,
+           "Comes with the Engine update",
+           InstallerPackPresentationTone::Accent);
+    card.explanation = "Reinstalled for the new CPU Engine with this update.";
+    card.checked = true;
+    card.can_select = false;
+    card.can_install = false;
+    card.can_uninstall = true;
+}
+
+void BuildInstalledCard(AddOnCardView& card) {
+    Status(card, AddOnCardStatus::Installed, "Installed",
+           InstallerPackPresentationTone::Success);
+    card.explanation =
+        "Loaded by the Engine at start. Turn it off for a while in "
+        "Apps > Plugin Manager.";
+    card.checked = true;
+    card.select_disabled_reason = kInstalledReason;
+    card.can_uninstall = true;
+}
+
+// base_update: the CPU base update the plan applies, or nullptr.
 AddOnCardView BuildCard(const std::string& plugin_id,
                         const BackendPackManagerRecord* record,
                         const BackendPackManagerRecord* stale,
+                        const BackendPackManagerRecord* base_update,
+                        const std::vector<BackendPackManagerRecord>& records,
                         const std::set<std::string>& selected_pack_ids) {
     AddOnCardView card;
     card.key = plugin_id;
@@ -190,19 +249,27 @@ AddOnCardView BuildCard(const std::string& plugin_id,
             "No signed " +
             (identity ? std::string(identity->short_name) : card.title) +
             " add-on is published for this platform and release.";
-        card.select_disabled_reason =
-            "Not published for this platform and release";
         return card;
     }
 
+    // The installed pack, and the pack a CPU base update in the plan
+    // installs in its place: the card then shows that one.
+    const BackendPackManagerRecord* installed =
+        stale ? stale : (record->installed ? record : nullptr);
+    const BackendPackManagerRecord* next =
+        base_update && installed
+            ? FindAddOnPackForBase(records, plugin_id, base_update->pack_id)
+            : nullptr;
+    if (next) record = next;
+
     card.pack_id = record->pack_id;
-    if (record->installed) card.installed_pack_id = record->installed_pack_id;
-    card.facts = Facts(*record);
+    if (installed) card.installed_pack_id = installed->installed_pack_id;
+    card.facts = Facts(*record, next != nullptr);
     card.licence = LicenceLine(record->licenses);
     card.error = record->delivery_metadata_error;
     AddDetail(card.details, "Pack", record->pack_id);
-    if (record->installed && record->installed_pack_id != record->pack_id) {
-        AddDetail(card.details, "Installed pack", record->installed_pack_id);
+    if (installed && installed->installed_pack_id != record->pack_id) {
+        AddDetail(card.details, "Installed pack", installed->installed_pack_id);
     }
     AddDetail(card.details, "Version", record->package_version);
     if (record->download_size_bytes > 0) {
@@ -213,13 +280,25 @@ AddOnCardView BuildCard(const std::string& plugin_id,
     AddDetail(card.details, "Signed catalog",
               BackendPackCatalogSupportName(record->catalog_support));
     AddDetail(card.details, "Licence files", Join(record->licenses, ", "));
-    if (record->installed && record->update_decision) {
-        AddDetail(card.details, "Update", record->update_decision->message);
+    if (!next && record->installed) {
+        AddDetail(card.details, "Update", AddOnUpdateWords(*record));
     }
     AddDetail(card.details, "Signed metadata", record->delivery_metadata_error);
 
+    if (next) {
+        BuildBaseUpdateCard(card);
+        return card;
+    }
     if (stale) {
         BuildReinstallCard(card, *record, *stale, selected_pack_ids);
+        return card;
+    }
+    // The base update has no pack of this add-on for the new base.
+    if (base_update && installed) {
+        BuildInstalledCard(card);
+        card.action_hint =
+            "The CPU Engine update stops loading this add-on until a version "
+            "for the new Engine is published. You can uninstall it.";
         return card;
     }
 
@@ -233,9 +312,9 @@ AddOnCardView BuildCard(const std::string& plugin_id,
             runtime::BackendPackUpdateDisposition::SamePackage) {
         Status(card, AddOnCardStatus::UpdateBlocked, "Update blocked",
                InstallerPackPresentationTone::Warning);
-        card.explanation = record->update_decision->message;
+        card.explanation = AddOnUpdateWords(*record);
         card.checked = true;
-        card.select_disabled_reason = record->update_decision->message;
+        card.select_disabled_reason = kInstalledReason;
         card.can_uninstall = true;
         return card;
     }
@@ -258,15 +337,7 @@ AddOnCardView BuildCard(const std::string& plugin_id,
         return card;
     }
     if (record->installed) {
-        Status(card, AddOnCardStatus::Installed, "Installed",
-               InstallerPackPresentationTone::Success);
-        card.explanation =
-            "Loaded by the Engine at start. Turn it off for a while in "
-            "Apps > Plugin Manager.";
-        card.checked = true;
-        card.select_disabled_reason =
-            "Installed. Use Uninstall add-on to remove it.";
-        card.can_uninstall = true;
+        BuildInstalledCard(card);
         return card;
     }
     if (BuiltForAnotherEngine(*record)) {
@@ -276,8 +347,6 @@ AddOnCardView BuildCard(const std::string& plugin_id,
         card.explanation =
             "This add-on is built for a different CyxWiz Engine release. "
             "Update the CPU Engine first, then add it.";
-        card.select_disabled_reason =
-            "Built for a different CyxWiz Engine release";
         return card;
     }
     if (!selectable) {
@@ -296,7 +365,6 @@ AddOnCardView BuildCard(const std::string& plugin_id,
             card.explanation =
                 "The current signed release does not offer this add-on.";
         }
-        card.select_disabled_reason = card.explanation;
         return card;
     }
     if (picked) {
@@ -343,6 +411,7 @@ std::vector<AddOnCardView> BuildAddOnCards(
             plugin_ids.push_back(record.plugin_id);
         }
     }
+    const auto* base_update = FindBaseUpdate(records);
     std::vector<AddOnCardView> cards;
     cards.reserve(plugin_ids.size());
     for (const auto& plugin_id : plugin_ids) {
@@ -359,9 +428,40 @@ std::vector<AddOnCardView> BuildAddOnCards(
             }
         }
         cards.push_back(BuildCard(plugin_id, PickRecord(candidates), stale,
-                                  selected_pack_ids));
+                                  base_update, records, selected_pack_ids));
     }
     return cards;
+}
+
+std::vector<std::string> PlannedAddOnLines(
+    const BackendPackInstallerPlan& plan,
+    const std::vector<BackendPackManagerRecord>& records) {
+    std::vector<std::string> lines;
+    for (const auto& pack_id : plan.plugin_pack_ids) {
+        const auto record = std::find_if(
+            records.begin(), records.end(), [&](const auto& candidate) {
+                return IsAddOn(candidate) && candidate.pack_id == pack_id;
+            });
+        if (record == records.end()) {
+            lines.push_back(pack_id);
+            continue;
+        }
+        std::string line = AddOnTitle(record->plugin_id);
+        const auto installed = std::find_if(
+            records.begin(), records.end(), [&](const auto& candidate) {
+                return IsAddOn(candidate) &&
+                       candidate.plugin_id == record->plugin_id &&
+                       candidate.installed;
+            });
+        if (installed != records.end()) {
+            line += plan.update_base ? ", reinstalled for the new CPU Engine"
+                    : installed->installed_for_other_base
+                        ? ", reinstalled for this CPU Engine"
+                        : ", updated";
+        }
+        lines.push_back(std::move(line));
+    }
+    return lines;
 }
 
 std::string ResolvePackToSelect(

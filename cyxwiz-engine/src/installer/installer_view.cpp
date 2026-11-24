@@ -131,6 +131,30 @@ void EnterCustomSelection(InstallerViewState &state,
   state.choice = BackendPackInstallChoice::Custom;
 }
 
+// A component card's checkbox, the same on compute and add-on cards. The
+// theme's field fill is a step off the canvas, about the card's own tone, so
+// the box takes the button fills of the card (theme tokens) and reads as a
+// box. One that cannot change keeps its whole box and shows its mark in the
+// muted text colour instead of fading out.
+bool CardCheckbox(bool *value, bool enabled) {
+  const auto &t = cyxwiz::ui::CurrentTokens();
+  ImVec4 fill, hover, active;
+  cyxwiz::ui::ButtonFills(ImGui::GetStyleColorVec4(ImGuiCol_ChildBg), &fill,
+                          &hover, &active);
+  ImGui::PushStyleColor(ImGuiCol_FrameBg, fill);
+  ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, enabled ? hover : fill);
+  ImGui::PushStyleColor(ImGuiCol_FrameBgActive, enabled ? active : fill);
+  if (!enabled)
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, t.text_dim);
+  ImGui::PushStyleVar(ImGuiStyleVar_DisabledAlpha, 1.0f);
+  ImGui::BeginDisabled(!enabled);
+  const bool changed = ImGui::Checkbox("##selected", value);
+  ImGui::EndDisabled();
+  ImGui::PopStyleVar();
+  ImGui::PopStyleColor(enabled ? 3 : 4);
+  return changed;
+}
+
 void CenteredDisabledWrappedText(const char *text, float wrap_width,
                                  float area_width) {
   if (!text || *text == '\0')
@@ -276,28 +300,26 @@ void RenderAddOnCard(InstallerViewState &state,
                         ImGuiChildFlags_AlwaysUseWindowPadding,
                     ImGuiWindowFlags_NoScrollbar);
   bool checked = card.checked;
-  ImGui::BeginDisabled(!card.can_select || operation_running);
-  if (ImGui::Checkbox("##selected", &checked)) {
+  if (CardCheckbox(&checked, card.can_select && !operation_running)) {
     EnterCustomSelection(state, catalog);
     if (checked)
       state.custom_selection.insert(card.pack_id);
     else
       state.custom_selection.erase(card.pack_id);
   }
-  ImGui::EndDisabled();
-  if (!card.can_select && !card.select_disabled_reason.empty() &&
-      ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", card.select_disabled_reason.c_str());
-  }
   const float indent = ImGui::GetItemRectSize().x + style.ItemSpacing.x;
   ImGui::SameLine();
   ImGui::TextColored(t.accent_text, "%s", ICON_FA_CUBE);
   ImGui::SameLine();
   ImGui::TextUnformatted(card.title.c_str());
-  // The status sits in the page's status column, never over the name.
+  // The status sits in the page's status column, never over the name; a
+  // longer status ends at the card's right edge instead of running past it.
   ImGui::SameLine();
-  ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
-                                ImGui::GetWindowWidth() - kStatusColumnFromRight));
+  const float status_width = ImGui::CalcTextSize(card.status_text.c_str()).x;
+  ImGui::SetCursorPosX(std::max(
+      ImGui::GetCursorPosX(),
+      std::min(ImGui::GetWindowWidth() - kStatusColumnFromRight,
+               ImGui::GetWindowWidth() - style.WindowPadding.x - status_width)));
   ImGui::TextColored(cyxwiz::ui::PackToneColour(card.tone), "%s",
                      card.status_text.c_str());
 
@@ -317,6 +339,9 @@ void RenderAddOnCard(InstallerViewState &state,
     if (warn)
       ImGui::PopStyleColor();
   }
+  // Why the checkbox cannot change, on the card rather than in a tooltip.
+  if (!card.can_select && !card.select_disabled_reason.empty())
+    ImGui::TextDisabled("%s", card.select_disabled_reason.c_str());
   if (!card.licence.empty())
     ImGui::TextDisabled("%s", card.licence.c_str());
   if (!card.action_hint.empty()) {
@@ -396,15 +421,13 @@ void RenderComponents(InstallerViewState &state,
                     state.custom_selection.contains(record.pack_id);
     const bool can_select = selectable &&
                             (!record.installed || record.update_available);
-    ImGui::BeginDisabled(!can_select || operation_running);
-    if (ImGui::Checkbox("##selected", &selected)) {
+    if (CardCheckbox(&selected, can_select && !operation_running)) {
       EnterCustomSelection(state, catalog);
       if (selected)
         state.custom_selection.insert(record.pack_id);
       else
         state.custom_selection.erase(record.pack_id);
     }
-    ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextColored(kAccent, "%s", BackendIcon(record.backend));
     ImGui::SameLine();
@@ -483,9 +506,7 @@ void RenderComponents(InstallerViewState &state,
                       ImVec2(0.0f, component_height),
                       ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
     bool selected = false;
-    ImGui::BeginDisabled();
-    ImGui::Checkbox("##selected", &selected);
-    ImGui::EndDisabled();
+    CardCheckbox(&selected, false);
     ImGui::SameLine();
     ImGui::TextColored(kAccent, "%s", BackendIcon(backend));
     ImGui::SameLine();
@@ -872,35 +893,58 @@ void RenderSummary(InstallerViewState &state,
       catalog.mode == CyxWizInstallerMode::Maintenance;
   const bool recovery = catalog.mode == CyxWizInstallerMode::RecoveryRequired;
   const bool show_launch = !recovery && (maintenance || state.install_completed);
+  // The footer's height as drawn last frame, so the details take the rest of
+  // the column; the estimate serves the first frame only.
   const float footer_height =
-      (maintenance ? (has_changes ? 246.0f : 202.0f)
-                   : (state.install_completed ? 160.0f : 116.0f)) +
-      (apply_block_reason.empty() ? 0.0f : 44.0f);
+      state.summary_footer_height > 0.0f
+          ? state.summary_footer_height
+          : (maintenance ? (has_changes ? 246.0f : 202.0f)
+                         : (state.install_completed ? 160.0f : 116.0f)) +
+                (apply_block_reason.empty() ? 0.0f : 44.0f);
+  const auto &t = cyxwiz::ui::CurrentTokens();
 
-  // Details scroll on their own; the footer below always stays visible.
+  // Details scroll on their own; the footer below always stays visible. A
+  // plan warning comes first, so it is never scrolled out of sight.
   ImGui::BeginChild("summary-details", ImVec2(0.0f, -footer_height),
                     ImGuiChildFlags_None);
   ImGui::TextColored(kAccent, "%s Installation summary", ICON_FA_CUBES);
-  ImGui::Spacing();
+  if (!plan.warning.empty()) {
+    ImGui::PushStyleColor(ImGuiCol_Text, t.warning);
+    ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION,
+                       plan.warning.c_str());
+    ImGui::PopStyleColor();
+  }
+  // Label and value on one row where the value is short, so the whole plan
+  // fits the column at the default window size.
   ImGui::TextDisabled("Profile");
+  ImGui::SameLine();
   ImGui::TextUnformatted(
       state.choice == BackendPackInstallChoice::Recommended ? "Recommended"
       : state.choice == BackendPackInstallChoice::CpuOnly   ? "CPU only"
                                                             : "Custom");
-  ImGui::Spacing();
   ImGui::TextDisabled("Components");
-  ImGui::BulletText("%s", plan.update_base
-                                  ? "CPU Engine (update available)"
-                                  : "CPU Engine (required)");
+  // A bulleted line that wraps under its own first word.
+  const auto component = [](const std::string &line) {
+    ImGui::Bullet();
+    ImGui::BeginGroup();
+    ImGui::TextWrapped("%s", line.c_str());
+    ImGui::EndGroup();
+  };
+  component(plan.update_base ? "CPU Engine (update available)"
+                             : "CPU Engine (required)");
   for (const auto &pack_id : selection.pack_ids) {
     const auto record =
         std::find_if(catalog.records.begin(), catalog.records.end(),
                      [&](const BackendPackManagerRecord &candidate) {
                        return candidate.pack_id == pack_id;
                      });
-    if (record != catalog.records.end()) {
-      ImGui::BulletText("%s", RecordName(*record).c_str());
+    // Add-ons are listed from the plan below, with what happens to each.
+    if (record != catalog.records.end() && !IsAddOn(*record)) {
+      component(RecordName(*record));
     }
+  }
+  for (const auto &line : PlannedAddOnLines(plan, catalog.records)) {
+    component(line);
   }
   if (const auto optional = OptionalPacksForThisComputer(catalog.records, selection.pack_ids);
       !optional.empty()) {
@@ -913,16 +957,14 @@ void RenderSummary(InstallerViewState &state,
                        ICON_FA_CIRCLE_INFO, names.c_str());
     ImGui::PopStyleColor();
   }
-  ImGui::Spacing();
   ImGui::TextDisabled("Required download");
+  ImGui::SameLine();
   const auto size = FormatBackendPackByteSize(plan.download_size_bytes);
   ImGui::TextUnformatted(plan.download_size_bytes == 0 ? "No download required"
                                                        : size.c_str());
-  ImGui::Spacing();
   ImGui::TextDisabled("Install location");
   const auto root = install_location.install_root.u8string();
   ImGui::TextWrapped("%s", reinterpret_cast<const char *>(root.c_str()));
-  ImGui::Spacing();
   ImGui::TextWrapped("%s", plan.message.c_str());
 
   if (operation_running) {
@@ -981,6 +1023,7 @@ void RenderSummary(InstallerViewState &state,
     ImGui::TextWrapped("%s", operation_message.c_str());
   }
   ImGui::EndChild();
+  const float footer_top = ImGui::GetCursorPosY();
 
   if (state.install_completed && !recovery) {
     ImGui::TextColored(kSuccess, "%s Installation complete",
@@ -1054,6 +1097,7 @@ void RenderSummary(InstallerViewState &state,
   if (ImGui::Button("Close", ImVec2(-1.0f, 32.0f))) {
     action.kind = InstallerViewActionKind::Close;
   }
+  state.summary_footer_height = ImGui::GetCursorPosY() - footer_top;
 }
 
 void RenderCloseConfirmation(InstallerViewState &state,
@@ -1134,17 +1178,13 @@ void RenderReviewPopup(InstallerViewState &state,
   }
   if (!state.pending_plan.plugin_pack_ids.empty()) {
     ImGui::Text("Install add-ons (no device check):");
-    for (const auto &pack_id : state.pending_plan.plugin_pack_ids) {
-      const auto record = std::find_if(
-          catalog.records.begin(), catalog.records.end(),
-          [&](const BackendPackManagerRecord &candidate) {
-            return candidate.pack_id == pack_id;
-          });
-      ImGui::BulletText("%s", record != catalog.records.end()
-                                  ? RecordName(*record).c_str()
-                                  : pack_id.c_str());
+    const auto lines =
+        PlannedAddOnLines(state.pending_plan, catalog.records);
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+      ImGui::BulletText("%s", lines[index].c_str());
       ImGui::SameLine();
-      ImGui::TextDisabled("%s", pack_id.c_str());
+      ImGui::TextDisabled("%s",
+                          state.pending_plan.plugin_pack_ids[index].c_str());
     }
   }
   if (!state.pending_plan.deactivate_backends.empty()) {
@@ -1152,6 +1192,12 @@ void RenderReviewPopup(InstallerViewState &state,
     for (const auto &backend : state.pending_plan.deactivate_backends) {
       ImGui::BulletText("%s", backend.c_str());
     }
+  }
+  if (!state.pending_plan.warning.empty()) {
+    ImGui::PushStyleColor(ImGuiCol_Text, cyxwiz::ui::CurrentTokens().warning);
+    ImGui::TextWrapped("%s %s", ICON_FA_TRIANGLE_EXCLAMATION,
+                       state.pending_plan.warning.c_str());
+    ImGui::PopStyleColor();
   }
   const auto size =
       FormatBackendPackByteSize(state.pending_plan.download_size_bytes);

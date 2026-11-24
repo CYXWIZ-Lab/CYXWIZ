@@ -1168,6 +1168,28 @@ void TestMaintenanceBaseUpdateKeepsAddOns() {
             "CPU-only before optional packs. 1 installed add-on is reinstalled for the new "
             "base, so you keep it",
         "The plan says the add-on is kept: " + kept.message);
+  Check(kept.warning.empty(), "Nothing is lost when every add-on is kept");
+
+  // The lookups the add-on cards share with the plan.
+  const std::vector lookups{base, old_add_on, new_add_on};
+  Check(cyxwiz::FindBaseUpdate(lookups) == &lookups[0],
+        "The deliverable CPU base update is found");
+  Check(cyxwiz::FindAddOnPackForBase(lookups, "com.example.sim", "base-v2") == &lookups[2] &&
+            cyxwiz::FindAddOnPackForBase(lookups, "com.example.sim", "base-v1") == &lookups[1] &&
+            cyxwiz::FindAddOnPackForBase(lookups, "com.example.sim", "base-v3") == nullptr &&
+            cyxwiz::FindAddOnPackForBase(lookups, "com.example.other", "base-v2") == nullptr &&
+            cyxwiz::FindAddOnPackForBase(lookups, "com.example.sim", "") == nullptr,
+        "An add-on's pack is found by plugin id and the base it is built for");
+  auto second_update = base;
+  second_update.pack_id = "base-v3";
+  auto undeliverable = base;
+  undeliverable.delivery_metadata_available = false;
+  auto current = base;
+  current.update_available = false;
+  Check(cyxwiz::FindBaseUpdate(std::vector{base, second_update}) == nullptr &&
+            cyxwiz::FindBaseUpdate(std::vector{undeliverable}) == nullptr &&
+            cyxwiz::FindBaseUpdate(std::vector{current}) == nullptr,
+        "Two updates, an undeliverable one or none: no base update");
 
   auto diagnostic = new_add_on;
   diagnostic.catalog_support = cyxwiz::BackendPackCatalogSupport::Diagnostic;
@@ -1180,10 +1202,12 @@ void TestMaintenanceBaseUpdateKeepsAddOns() {
           "No supported pack for the new base: nothing is queued");
     Check(lost.message ==
               "Update the signed CyxWiz Engine/CPU base; the new base activates CPU-only "
-              "before optional packs. Warning: 1 installed add-on has no version for the new "
-              "base yet. The Engine stops loading it until one is published; you can "
-              "uninstall it under Add-ons",
-          "The plan warns that the add-on stops loading: " + lost.message);
+              "before optional packs",
+          "The plan message leaves the loss to the warning: " + lost.message);
+    Check(lost.warning ==
+              "1 installed add-on has no version for the new CPU Engine yet. The Engine stops "
+              "loading it until one is published; you can uninstall it under Add-ons.",
+          "The plan warns that the add-on stops loading: " + lost.warning);
   }
 
   // Without a base update, installed add-ons are left as they are.
@@ -1191,7 +1215,8 @@ void TestMaintenanceBaseUpdateKeepsAddOns() {
   const auto unchanged = cyxwiz::BuildBackendPackInstallerPlan(
       selection, std::vector{base, old_add_on, new_add_on},
       cyxwiz::CyxWizInstallerMode::Maintenance);
-  Check(unchanged.valid && !unchanged.update_base && unchanged.plugin_pack_ids.empty(),
+  Check(unchanged.valid && !unchanged.update_base && unchanged.plugin_pack_ids.empty() &&
+            unchanged.warning.empty(),
         "Add-ons are queued only with a base update");
 }
 

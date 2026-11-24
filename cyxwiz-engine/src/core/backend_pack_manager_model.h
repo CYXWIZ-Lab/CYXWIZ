@@ -121,6 +121,10 @@ struct BackendPackInstallerPlan {
   std::vector<std::string> deactivate_backends;
   std::uint64_t download_size_bytes = 0;
   std::string message;
+  // What the user loses by applying the plan, shown apart from the message
+  // in the warning tone (a base update leaves an installed add-on with no
+  // version for the new base). Empty when nothing is lost.
+  std::string warning;
 };
 
 BackendPackActionDecision
@@ -140,6 +144,19 @@ bool IsBackendPackSelectableForInstaller(
     const BackendPackManagerRecord &record);
 
 bool IsBackendPackRecommended(const BackendPackManagerRecord &record);
+
+// The CPU base update an installation's plan applies: the catalog's one CPU
+// base with an update, when it can be delivered. nullptr when there is none,
+// more than one, or it cannot be delivered (the plan then refuses it).
+const BackendPackManagerRecord *
+FindBaseUpdate(const std::vector<BackendPackManagerRecord> &records);
+
+// The catalog's pack of an add-on built for a CPU base, as a base update
+// installs it (supported, with verified metadata). nullptr when there is none.
+const BackendPackManagerRecord *
+FindAddOnPackForBase(const std::vector<BackendPackManagerRecord> &records,
+                     const std::string &plugin_id,
+                     const std::string &base_pack_id);
 
 BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     const BackendPackInstallerSelection &selection,
