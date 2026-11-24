@@ -370,6 +370,11 @@ private:
     void RenderSearchPreferences();
     void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
     bool RenderBackendManagerSection(bool training_active);
+    // Installed packs > Add-ons: the add-on cards (toolbar_backend_addons.cpp).
+    void RenderBackendAddOns(const std::vector<BackendPackManagerRecord>& records,
+                             const std::filesystem::path& installer,
+                             const std::filesystem::path& runtime_root,
+                             bool installer_available);
     // Compute devices: one card per physical device (tofix119 C).
     struct ComputeDeviceCardsContext {
         bool training_active = false;

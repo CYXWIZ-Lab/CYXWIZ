@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -30,6 +31,16 @@
 
 namespace cyxwiz {
 namespace {
+
+// The device type of an active backend pack; none for a name this build
+// does not know (never a guess).
+std::optional<DeviceType> PackDeviceType(const std::string& backend) {
+    if (backend == "cpu") return DeviceType::CPU;
+    if (backend == "cuda") return DeviceType::CUDA;
+    if (backend == "opencl") return DeviceType::OPENCL;
+    if (backend == "oneapi") return DeviceType::ONEAPI;
+    return std::nullopt;
+}
 
 std::string PackBackendId(DeviceType type) {
     switch (type) {
@@ -194,19 +205,43 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
         if (backend_pack_lifecycle_service_ &&
             backend_pack_lifecycle_service_->ReadCatalogSnapshot(
                 CurrentUtc(), snapshot, catalog_error)) {
+            // Add-ons (plugin packs) are active in their own state file; a
+            // broken file reads as none installed, with its reason below.
+            runtime::ActivePluginsState active_plugins;
+            std::string plugins_error;
+            runtime::LoadActivePluginsState(
+                runtime_root / runtime::kActivePluginsFileName,
+                active_plugins, plugins_error);
+            backend_pack_lifecycle_service_->ReadInstalledMetadata(
+                runtime_root, next_runtime, snapshot);
             backend_pack_catalog_records_ = BuildBackendPackCatalogRecords(
-                snapshot, next_runtime);
+                snapshot, next_runtime, active_plugins);
             backend_pack_catalog_available_ = true;
             // Count only optional packs for this computer; the catalog also
             // lists the CPU base of every platform.
             const auto optional_packs = std::count_if(
                 backend_pack_catalog_records_.begin(),
                 backend_pack_catalog_records_.end(),
-                [](const auto& record) { return record.backend != "cpu"; });
+                [](const auto& record) {
+                    return record.backend != "cpu" &&
+                           record.pack_kind == BackendPackRecordKind::Compute;
+                });
+            const auto add_ons = std::count_if(
+                backend_pack_catalog_records_.begin(),
+                backend_pack_catalog_records_.end(),
+                [](const auto& record) {
+                    return record.pack_kind == BackendPackRecordKind::Plugin;
+                });
             backend_pack_catalog_message_ =
                 "Signed catalog " + snapshot.catalog.catalog_id +
                 " verified; " + std::to_string(optional_packs) +
-                " optional pack(s) for this computer.";
+                " optional pack(s) and " + std::to_string(add_ons) +
+                (add_ons == 1 ? " add-on" : " add-ons") +
+                " for this computer.";
+            if (!plugins_error.empty()) {
+                backend_pack_catalog_message_ +=
+                    " Installed add-ons could not be read: " + plugins_error;
+            }
         } else {
             backend_pack_catalog_message_ = catalog_error.empty()
                 ? "No current signed backend-pack catalog is available."
@@ -243,12 +278,9 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
         };
         add_record(DeviceType::CPU, next_runtime.base_pack_id);
         for (const auto& pack : next_runtime.packs) {
-            const auto type = pack.backend == "cuda"
-                ? DeviceType::CUDA
-                : pack.backend == "opencl"
-                    ? DeviceType::OPENCL
-                    : DeviceType::ONEAPI;
-            add_record(type, pack.pack_id);
+            if (const auto type = PackDeviceType(pack.backend)) {
+                add_record(*type, pack.pack_id);
+            }
         }
     }
     if (evidence_matches_runtime) {
@@ -387,6 +419,8 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
         ImGui::TableSetupColumn("##actions", ImGuiTableColumnFlags_WidthFixed,
                                 ui::ButtonWidth("Actions", ui::ButtonSize::Small));
         for (const auto& record : records) {
+            // Add-ons have their own cards below the table.
+            if (record.pack_kind == BackendPackRecordKind::Plugin) continue;
             ImGui::PushID(record.pack_id.c_str());
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
@@ -524,6 +558,10 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             ImGui::PopID();
         }
         ImGui::EndTable();
+    }
+    if (backend_pack_catalog_available_) {
+        RenderBackendAddOns(records, installer_manager, runtime_root,
+                            installer_manager_available);
     }
 
     ImGui::Spacing();

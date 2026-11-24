@@ -291,6 +291,7 @@ set(ENGINE_SOURCES
     src/core/async_task_manager.cpp
     src/core/backend_pack_catalog_adapter.cpp
     src/core/backend_pack_manager_model.cpp
+    src/core/addon_pack_presentation.cpp  # add-on cards (Installer + Backend Manager)
     src/core/runtime_console_commands.cpp
     src/core/runtime_truth_query.cpp
     src/core/runtime_log_filter.cpp
@@ -629,6 +630,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_preferences_search.cpp
     src/gui/panels/toolbar_preferences_servers.cpp
     src/gui/panels/toolbar_backend_manager.cpp
+    src/gui/panels/toolbar_backend_addons.cpp
     src/gui/panels/toolbar_compute_devices.cpp
     src/gui/dataset_picker.cpp
     src/gui/dataset_source.cpp
