@@ -7,6 +7,12 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Closing while a node is being made asks first, then waits.** A Check
+  or Create still running in Make a Python node or Create node from script
+  is listed in the close dialog under **Making a node**. Close waits for
+  it, with the window still drawn ("Closing when the node step
+  finishes..."), and **Keep working** takes the close back. Before, the
+  Engine closed straight into an unexplained wait.
 - **The Pattern Browser, redesigned.** Category chips that wrap (they ran off
   the panel's edge), with counts and a new Reinforcement learning category
   (PPO was filed under Custom); search across every category; a card per
