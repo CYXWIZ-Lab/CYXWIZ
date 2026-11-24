@@ -243,13 +243,14 @@ void CheckWidthsAndNoModel() {
           "LayerNorm AUTO: the embedding's width, through Dropout");
     Check(Contains(pytorch, "nn.LSTM(input_size=12, hidden_size=5,"),
           "recurrent input_size: the width the graph gives it (the node has none)");
+    Check(!Contains(pytorch, "LazyLayerNorm"), "no lazy LayerNorm helper where every width is known (the text as before)");
     const std::string pycyxwiz =
         cyxwiz::ExportGraphCode(text.nodes, text.links, cyxwiz::CodeFramework::PyCyxWiz).code;
     Check(Contains(pycyxwiz, "cx.LSTM(input_size=12,") && Contains(pycyxwiz, "bidirectional=False"),
           "PyCyxWiz: the same width, and a Python bool when bidirectional is not set");
 
     Graph rows;
-    const int data = rows.Add(gui::NodeType::DatasetInput, "Data", {{"shape", "[8]"}});
+    const int data = rows.Add(gui::NodeType::DatasetInput, "Data");  // its width set by preprocessing
     const int rows_norm = rows.Add(gui::NodeType::LayerNorm, "Norm");
     const int head = rows.Add(gui::NodeType::Dense, "Head", {{"units", "3"}});
     rows.Connect(data, rows_norm);
@@ -261,9 +262,14 @@ void CheckWidthsAndNoModel() {
 
     Graph simple;
     const int steps = simple.Add(gui::NodeType::DatasetInput, "Steps", {{"shape", "[6,3]"}});
-    const int rnn = simple.Add(gui::NodeType::RNN, "RNN", {{"hidden_size", "4"}, {"nonlinearity", "Tanh"}});
+    const int rnn = simple.Add(gui::NodeType::RNN, "RNN",
+                               {{"hidden_size", "4"}, {"nonlinearity", "Tanh"}, {"bidirectional", "true"}});
     simple.Connect(steps, rnn);
-    Check(Contains(PyTorchOf(simple), "nonlinearity='tanh'"), "an RNN's activation in the case torch takes");
+    const std::string rnn_code = PyTorchOf(simple);
+    Check(Contains(rnn_code, "nn.RNN(input_size=3, hidden_size=4,"),
+          "recurrent input_size from the data's shape: [steps, features]");
+    Check(Contains(rnn_code, "nonlinearity='tanh'"), "an RNN's activation in the case torch takes");
+    Check(Contains(rnn_code, "bidirectional=True)"), "a bidirectional RNN stays bidirectional");
 
     Graph analysis;
     const int table = analysis.Add(gui::NodeType::DatasetInput, "Table", {{"shape", "[4]"}});

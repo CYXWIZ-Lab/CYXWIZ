@@ -704,25 +704,6 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
     code += "        x = self.norm1(x + self.dropout1(attend(x)))\n";
     code += "        return self.norm2(x + self.dropout3(self._ffn(x)))\n";
     code += "\n";
-    code += "class LazyLayerNorm(nn.modules.lazy.LazyModuleMixin, nn.LayerNorm):\n";
-    code += "    # LayerNorm over the last axis, its width read on the first forward pass (as nn.LazyLinear)\n";
-    code += "    cls_to_become = nn.LayerNorm\n\n";
-    code += "    def __init__(self, eps=1e-5, elementwise_affine=True):\n";
-    code += "        super().__init__(0, eps=eps, elementwise_affine=False)\n";
-    code += "        self.elementwise_affine = elementwise_affine\n";
-    code += "        if elementwise_affine:\n";
-    code += "            self.weight = nn.UninitializedParameter()\n";
-    code += "            self.bias = nn.UninitializedParameter()\n\n";
-    code += "    def reset_parameters(self):\n";
-    code += "        if not self.has_uninitialized_params():\n";
-    code += "            super().reset_parameters()\n\n";
-    code += "    def initialize_parameters(self, input):\n";
-    code += "        self.normalized_shape = (input.shape[-1],)\n";
-    code += "        if self.has_uninitialized_params():\n";
-    code += "            with torch.no_grad():\n";
-    code += "                self.weight.materialize(self.normalized_shape)\n";
-    code += "                self.bias.materialize(self.normalized_shape)\n";
-    code += "        self.reset_parameters()\n\n";
     code += "class LearnedPositionalEncoding(nn.Module):\n";
     code += "    # GPT-2 learned absolute positions: x + weight[:seq_len]\n";
     code += "    def __init__(self, d_model, max_len=512):\n";
@@ -731,6 +712,34 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
     code += "\n";
     code += "    def forward(self, x):\n";
     code += "        return x + self.weight[:x.size(1)]\n\n";
+    // Only where a LayerNorm's width comes from the data (other exports keep
+    // their text). Weights a checkpoint loaded before the first forward stay.
+    const bool lazy_layer_norm = std::any_of(sorted_ids.begin(), sorted_ids.end(), [this](int id) {
+        const MLNode* node = FindNodeById(id);
+        return node && node->type == NodeType::LayerNorm &&
+               GetParamOrDefault(*node, "normalized_shape", "AUTO") == "AUTO" && InferredInputWidth(*node).empty();
+    });
+    if (lazy_layer_norm) {
+        code += "class LazyLayerNorm(nn.modules.lazy.LazyModuleMixin, nn.LayerNorm):\n";
+        code += "    # LayerNorm over the last axis, its width read on the first forward pass (as nn.LazyLinear)\n";
+        code += "    cls_to_become = nn.LayerNorm\n\n";
+        code += "    def __init__(self, eps=1e-5, elementwise_affine=True):\n";
+        code += "        super().__init__(0, eps=eps, elementwise_affine=False)\n";
+        code += "        self.elementwise_affine = elementwise_affine\n";
+        code += "        if elementwise_affine:\n";
+        code += "            self.weight = nn.UninitializedParameter()\n";
+        code += "            self.bias = nn.UninitializedParameter()\n\n";
+        code += "    def reset_parameters(self):\n";
+        code += "        if not self.has_uninitialized_params():\n";
+        code += "            super().reset_parameters()\n\n";
+        code += "    def initialize_parameters(self, input):\n";
+        code += "        self.normalized_shape = (input.shape[-1],)\n";
+        code += "        if self.has_uninitialized_params():\n";
+        code += "            with torch.no_grad():\n";
+        code += "                self.weight.materialize(self.normalized_shape)\n";
+        code += "                self.bias.materialize(self.normalized_shape)\n";
+        code += "                self.reset_parameters()\n\n";
+    }
 
     // Model class
     code += "class GeneratedModel(nn.Module):\n";
@@ -740,6 +749,7 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
     // Generate layer definitions
     int layer_idx = 0;
     int embedding_layer_idx = -1;  // for tie_embedding on a TimeDistributed head
+    bool plugin_code = false;      // an extension node wrote its own code
     for (int node_id : sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
@@ -752,7 +762,9 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
         }
 
         if (node->type == NodeType::PluginCustom) {
-            code += cyxwiz::SimulationNodeCodeComment(*node, "pytorch", "        ");
+            const std::string comment = cyxwiz::SimulationNodeCodeComment(*node, "pytorch", "        ");
+            plugin_code = plugin_code || !comment.empty();
+            code += comment;
             continue;
         }
         std::string layer_code = NodeTypeToPythonLayer(*node);
@@ -770,8 +782,9 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
             layer_idx++;
         }
     }
-    // A data or analysis pipeline (PCA, K-Means, a solver...) has no layers.
-    if (layer_idx == 0) {
+    // A data or analysis pipeline (PCA, K-Means, a solver...) has no layers;
+    // an extension node's own code is still written.
+    if (layer_idx == 0 && !plugin_code) {
         return BlockedCodegenConfiguration(
             "PyTorch", "the graph has no model layers (it is a data or analysis pipeline): there is no PyTorch "
                        "model to write; run it in Studio");
@@ -2053,21 +2066,39 @@ std::string GraphCodeExporter::InferredInputWidth(const MLNode& node) const {
         const auto param = [source](std::initializer_list<const char*> keys) {
             return GetParamOrAliases(*source, keys, "");
         };
+        // The writers' own defaults where a setting is empty, so the width
+        // matches the layer they write.
+        const auto or_default = [](const std::string& value, const char* fallback) {
+            return value.empty() ? std::string(fallback) : value;
+        };
         switch (source->type) {
+            case NodeType::DatasetInput:
+            case NodeType::Reshape:
+            case NodeType::View: {
+                // Rows [features] or a sequence [steps, features]: the last
+                // entry. An image's channels move first in the export: none.
+                std::string shape = param({"shape"});
+                shape.erase(std::remove_if(shape.begin(), shape.end(),
+                                           [](char c) { return c == '[' || c == ']' || c == ' '; }),
+                            shape.end());
+                if (shape.empty() || std::count(shape.begin(), shape.end(), ',') > 1) return {};
+                const std::string last = shape.substr(shape.find_last_of(',') + 1);
+                return std::atoi(last.c_str()) > 0 ? last : std::string{};
+            }
             case NodeType::Embedding:
-                return param({"embedding_dim"});
+                return or_default(param({"embedding_dim"}), "512");
             case NodeType::LSTM:
             case NodeType::GRU:
             case NodeType::RNN: {
-                const std::string hidden = param({"hidden_size"});
-                if (hidden.empty()) return {};
+                const std::string hidden = or_default(param({"hidden_size"}), "256");
                 return PythonBoolLiteral(param({"bidirectional"})) == "True"
                            ? std::to_string(2 * std::atoi(hidden.c_str()))
                            : hidden;
             }
             case NodeType::Dense:
+                return or_default(param({"units"}), "64");
             case NodeType::TimeDistributed:
-                return param({"units", "out_features"});
+                return or_default(param({"units", "out_features"}), "128");
             case NodeType::MultiHeadAttention:
                 return param({"embed_dim", "d_model"});
             case NodeType::TransformerEncoder:
@@ -2341,7 +2372,8 @@ std::string GraphCodeExporter::NodeTypeToPythonLayer(const MLNode& node) {
             code = "nn.RNN(input_size=" + RecurrentInputSize(node) +
                    ", hidden_size=" + GetParamOrDefault(node, "hidden_size", "256") +
                    ", num_layers=" + GetParamOrDefault(node, "num_layers", "1") +
-                   ", nonlinearity='" + RecurrentNonlinearity(node) + "', batch_first=True)";
+                   ", nonlinearity='" + RecurrentNonlinearity(node) + "', batch_first=True, bidirectional=" +
+                   PythonBoolLiteral(GetParamOrDefault(node, "bidirectional", "false")) + ")";
             break;
 
         case NodeType::PReLU:
@@ -2776,7 +2808,9 @@ std::string GraphCodeExporter::NodeTypeToPyCyxWizLayer(const MLNode& node) {
             code = "cx.RNN(input_size=" + RecurrentInputSize(node) +
                    ", hidden_size=" + GetParamOrDefault(node, "hidden_size", "256") +
                    ", num_layers=" + GetParamOrDefault(node, "num_layers", "1") +
-                   ", batch_first=True, bidirectional=False, nonlinearity='" + RecurrentNonlinearity(node) + "')";
+                   ", batch_first=True, bidirectional=" +
+                   PythonBoolLiteral(GetParamOrDefault(node, "bidirectional", "false")) + ", nonlinearity='" +
+                   RecurrentNonlinearity(node) + "')";
             break;
 
         // Tensor shape/merge ops are emitted directly in forward(). They

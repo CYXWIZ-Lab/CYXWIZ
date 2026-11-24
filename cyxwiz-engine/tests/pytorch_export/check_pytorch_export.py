@@ -57,15 +57,27 @@ def load_graph(path: Path) -> dict:
     return {"nodes": nodes, "links": links}
 
 
+# Why the Engine's headless tool cannot count a model's parameters, when the
+# reason is this PC and not the graph: nothing to compare the export with.
+OFFLINE_REASONS = (
+    ("could not open", "a file the model needs is not on this PC"),
+    ("the graph has no nodes and links arrays", "the headless loader does not read pattern templates yet"),
+)
+
+
 def cyxwiz_parameter_count(compile_check: Path, graph: Path):
-    """(the parameter count of the model CyxWiz builds, None) or (None, why
-    it cannot build it offline, e.g. the graph's data is not on this PC)."""
+    """(count, None) for the model CyxWiz builds; (None, why) when it cannot
+    build it: `why` names an OFFLINE_REASONS case, or starts with "FAIL" for
+    any other reason (the Engine refuses or cannot build the graph)."""
     out = subprocess.run([str(compile_check), "--parameters", str(graph)], capture_output=True, text=True)
     match = re.search(r"parameters=(\d+)", out.stdout)
     if match:
         return int(match.group(1)), None
-    reason = re.search(r"parameters=unavailable \((.*)\)", out.stdout)
-    return None, (reason.group(1) if reason else (out.stdout + out.stderr).strip()[-300:])
+    text = (out.stdout + out.stderr).strip()
+    for marker, why in OFFLINE_REASONS:
+        if marker in text:
+            return None, why
+    return None, "FAIL " + text[-300:]
 
 
 def word_pos_embeddings(graph_json: dict):
@@ -171,9 +183,12 @@ def check(graph: Path, bin_dir: Path, work: Path):
 
     expected, unavailable = cyxwiz_parameter_count(bin_dir / "cyxwiz-graph-compile-check.exe", graph)
     result["cyxwiz_parameters"] = expected
-    if unavailable:  # nothing to compare with: not a verdict on the export
+    if unavailable and unavailable.startswith("FAIL "):
+        return {**result, "ok": False, "stage": "parameters",
+                "detail": f"the Engine cannot build the model: {unavailable[5:]}"[:400]}
+    if unavailable:  # this PC, not the graph: nothing to compare with
         return {**result, "ok": None, "stage": "skipped",
-                "detail": f"the Engine cannot build the model offline: {unavailable}"[:300]}
+                "detail": f"the Engine's parameter count is not available here: {unavailable}"}
     same = expected is not None and expected == result["pytorch_parameters"]
     finite = torch.isfinite(torch.tensor(result["loss"])).item()
     result["ok"] = bool(same and finite and result["parameters_without_grad"] == 0)
