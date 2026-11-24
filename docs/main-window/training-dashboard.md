@@ -1,11 +1,31 @@
-# The Training Dashboard
+---
+title: Training Dashboard
+description: The panel that follows a training run: its state, the cards and charts, how it ended, the active model and the runs of the session.
+type: reference
+area: training
+audience: user
+status: stable
+since: 1.0.7
+owner: training
+last_reviewed: 2026-11-25
+related:
+  - ../user-guide/training/train-and-watch.md
+  - ../user-guide/training/checkpoints-and-early-stopping.md
+  - ../user-guide/training/studio-debugger.md
+  - toolbar.md
+redirect_from:
+  - ../usage/training_dashboard.md
+---
 
-The Training Dashboard follows a model's training run: where it is, how the
-curves go, how it ended and which model the Engine holds after it. Open it
-with **Train > Training Dashboard** or the **Training** button in the
-sidebar; it also opens by itself when you press **Train**. It sits beside the
-Console by default and can have a window of its own (right-click its tab:
-**Move to its own window**; see [Windows of their own](../main-window/layouts-and-docking.md#windows-of-their-own)).
+The **Training Dashboard** follows a model's training run: where it is, how
+the curves go, how it ended and which model the Engine holds after it. Open
+it with **Train > Training Dashboard** or the **Training** button in the
+sidebar; it also opens by itself when you press **Train**. By default it
+sits at the bottom right, beside the Studio Debugger, and it can have a
+window of its own (right-click its tab: **Move to its own window**; see
+[Windows of their own](layouts-and-docking.md#windows-of-their-own)).
+For the steps of a training run, see
+[Train a model and watch it](../user-guide/training/train-and-watch.md).
 
 ## The header
 
@@ -42,7 +62,7 @@ The first card says what the run is doing, in plain words.
     Cannot-start-training report (Fill these columns, Drop these rows, Drop
     rows without a label, Undo, Show on canvas), then **Train again**; its
     stop code is `missing_values` (see
-    [the compile report](../user-guide/graph-editor/fix-missing-values.md));
+    [Fix missing values before training](../user-guide/graph-editor/fix-missing-values.md));
   - the active model, the one the Engine keeps for testing and export: "the
     best validation checkpoint, epoch 10 (validation loss 0.2554, accuracy
     92.61%)", or "the final state of the run" when no checkpoint was kept;
@@ -140,3 +160,15 @@ then says where it saved, or why it could not, under the menu you used.
   dashboard; the Runs table and the trained model stay. **Clear runs...**
   removes the rows of the Runs table; the charts and the model stay. Both
   ask first.
+
+## Changes
+
+- Changed in 1.0.8: the *Waiting for the GPU* state, **Export runs (CSV)...**,
+  and the **Key columns** / **All columns** views of the Runs table.
+
+## Related
+
+- [Train a model and watch it](../user-guide/training/train-and-watch.md)
+- [Checkpoints, early stopping and resume](../user-guide/training/checkpoints-and-early-stopping.md)
+- [The Studio Debugger](../user-guide/training/studio-debugger.md)
+- [The Studio bar](toolbar.md)
