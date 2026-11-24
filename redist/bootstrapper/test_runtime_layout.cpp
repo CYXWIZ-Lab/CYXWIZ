@@ -66,7 +66,8 @@ bool Expect(bool condition, const std::string& message) {
 int RunBootstrapper(
     const std::filesystem::path& bootstrapper,
     const std::filesystem::path& runtime_root,
-    bool installer = false) {
+    bool installer = false,
+    const std::wstring& arguments = {}) {
     const auto output_path = runtime_root / "bootstrapper-test-output.txt";
     SECURITY_ATTRIBUTES security{
         sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
@@ -80,6 +81,7 @@ int RunBootstrapper(
     std::wstring command = L"\"" + bootstrapper.native() +
                            L"\" --runtime-root \"" + runtime_root.native() + L"\"";
     if (installer) command += L" --installer";
+    command += arguments;
     std::vector<wchar_t> mutable_command(command.begin(), command.end());
     mutable_command.push_back(L'\0');
     STARTUPINFOW startup{};
@@ -282,6 +284,43 @@ int main() {
                     "CyxWiz could not start") != std::string::npos,
             "an Engine that dies at launch must be logged with its exit code and meaning; exit=" +
                 std::to_string(missing_dll_exit) + " log=" + missing_dll_log);
+
+        // cyxwiz-cli plugin-check: a check Windows ends at launch is reported
+        // in the plugin check's own words; its ordinary failure (exit code 1)
+        // is in its output already and adds no exit-code line.
+        const auto cli = binary_directory / "cyxwiz-cli.exe";
+        std::filesystem::copy_file(
+            child,
+            fixture.root / "base" / "base-v1" /
+                std::string(cyxwiz::runtime::CurrentPluginCheckExecutableName()),
+            std::filesystem::copy_options::overwrite_existing);
+        const auto log_path = fixture.root / "bootstrapper.log";
+        std::filesystem::remove(log_path);
+        ::SetEnvironmentVariableW(L"CYXWIZ_TEST_CHILD_EXIT_CODE", L"0xC0000135");
+        const int check_dll_exit =
+            RunBootstrapper(cli, fixture.root, false, L" plugin-check plugin");
+        const auto check_dll_output = ReadText(fixture.root / "bootstrapper-test-output.txt");
+        const auto check_dll_log = ReadText(log_path);
+        std::filesystem::remove(log_path);
+        ::SetEnvironmentVariableW(L"CYXWIZ_TEST_CHILD_EXIT_CODE", L"1");
+        const int check_failed_exit =
+            RunBootstrapper(cli, fixture.root, false, L" plugin-check plugin");
+        const auto check_failed_log = ReadText(log_path);
+        ::SetEnvironmentVariableW(L"CYXWIZ_TEST_CHILD_EXIT_CODE", nullptr);
+        failures += !Expect(
+            static_cast<DWORD>(check_dll_exit) == 0xC0000135UL &&
+                check_dll_log.find("plugin check exited with code 0xC0000135") !=
+                    std::string::npos &&
+                check_dll_output.find("The plugin check could not start: ") != std::string::npos &&
+                check_dll_output.find("CyxWiz could not start") == std::string::npos,
+            "a plugin check that dies at launch must say so in its own words; exit=" +
+                std::to_string(check_dll_exit) + " output=" + check_dll_output);
+        failures += !Expect(
+            check_failed_exit == 1 &&
+                check_failed_log.find("launched plugin check") != std::string::npos &&
+                check_failed_log.find("exited with code") == std::string::npos,
+            "a plugin check that reports failed plugins must not log an exit code; exit=" +
+                std::to_string(check_failed_exit) + " log=" + check_failed_log);
     }
     {
         Fixture fixture;

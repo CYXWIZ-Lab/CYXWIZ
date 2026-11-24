@@ -177,13 +177,17 @@ ChildExitExplanation ExplainChildExit(DWORD exit_code) {
 }
 
 // A child that ends with an error code is logged with the code, how soon it
-// ended and, for the codes Windows itself sets, what the code means.
+// ended and, for the codes Windows itself sets, what the code means. The
+// plugin check's own results (1: a plugin failed, 2: usage) are already in
+// its output and are not logged.
 void ReportChildExit(
     const std::filesystem::path& runtime_root,
-    const char* child,
+    bool plugin_check,
     DWORD exit_code,
     ULONGLONG elapsed_ms) {
+    if (exit_code == 0 || (plugin_check && (exit_code == 1 || exit_code == 2))) return;
     constexpr ULONGLONG kRightAfterLaunchMs = 10000;
+    const char* child = plugin_check ? "plugin check" : "engine";
     char code[16] = {};
     std::snprintf(code, sizeof(code), "0x%08lX", static_cast<unsigned long>(exit_code));
     const auto explanation = ExplainChildExit(exit_code);
@@ -197,7 +201,9 @@ void ReportChildExit(
         line += "; repair or reinstall CyxWiz with the CyxWiz Installer";
     cyxwiz::runtime::AppendBootstrapDiagnostic(runtime_root, line);
     if (explanation.start_up_failure) {
-        std::cerr << "CyxWiz could not start: " << line << '\n';
+        std::cerr << (plugin_check ? "The plugin check could not start: "
+                                   : "CyxWiz could not start: ")
+                  << line << '\n';
         std::cerr << "Diagnostic log: " << (runtime_root / "bootstrapper.log").string() << '\n';
     }
 }
@@ -440,10 +446,8 @@ int wmain(int argc, wchar_t** argv) {
     DWORD exit_code = 78;
     if (wait_result == WAIT_OBJECT_0) {
         ::GetExitCodeProcess(process.hProcess, &exit_code);
-        if (exit_code != 0) {
-            ReportChildExit(runtime.runtime_root, plugin_check_mode ? "plugin check" : "engine",
-                            exit_code, ::GetTickCount64() - launched_at);
-        }
+        ReportChildExit(runtime.runtime_root, plugin_check_mode, exit_code,
+                        ::GetTickCount64() - launched_at);
     } else {
         cyxwiz::runtime::AppendBootstrapDiagnostic(
             runtime.runtime_root,

@@ -404,6 +404,7 @@ if(CYXWIZ_BUILD_TESTS)
     )
     add_dependencies(test_runtime_bootstrapper
         cyxwiz-runtime-bootstrapper
+        cyxwiz-cli
         test_runtime_bootstrapper_child
     )
     add_test(NAME runtime_bootstrapper_contract COMMAND test_runtime_bootstrapper)
