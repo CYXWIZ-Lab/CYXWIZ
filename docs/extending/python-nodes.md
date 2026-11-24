@@ -551,6 +551,10 @@ again. A Python error while reading the script shows its message and
 traceback in the dialog. The dialog imports the file afresh each time, so
 an edited file needs no restart.
 
+In the Engine, **Nodes > Make a Python node...** writes such a file for
+you from a form (one node per file, in `<project>/nodes_src/`) and creates
+its bundle: see [Make a Python node](../usage/extension_nodes.md#make-a-python-node).
+
 ## 12. Speed
 
 Each batch a Python node takes the interpreter lock and calls your Python

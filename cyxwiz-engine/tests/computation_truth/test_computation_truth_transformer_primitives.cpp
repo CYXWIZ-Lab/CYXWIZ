@@ -1,3 +1,4 @@
+#include "../oracle/oracle_test.h"
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/layers/attention.h>
 #include <cyxwiz/layers/transformer.h>
@@ -2593,7 +2594,7 @@ void TestFullyBlockedAttentionRows() {
                         (tensor.Shape().size() == 2 && i / 4 == i % 4 ? 1.0f : 0.0f);
             }
             layer.SetParameters(params);
-            Tensor q({2, 3, 4}), k({2, 4, 4}), v({2, 4, 4});
+            Tensor q(std::vector<size_t>{2, 3, 4}), k(std::vector<size_t>{2, 4, 4}), v(std::vector<size_t>{2, 4, 4});
             for (Tensor* tensor : {&q, &k, &v}) {
                 auto* p = tensor->MutableData<float>();
                 for (size_t i = 0; i < tensor->NumElements(); ++i)
@@ -3022,6 +3023,7 @@ void TestTiedEmbeddingLibTorchParity() {
 
 int main() {
     try {
+        if (!cyxwiz::test::BeginOracleTest("test_computation_truth_transformer_primitives")) return 1;
         TestNearRejectsNonfinite();
         TestFullyBlockedAttentionRows();
         TestEmbeddingForwardAndGradientParity();

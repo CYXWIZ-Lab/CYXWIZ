@@ -25,6 +25,7 @@ To write your own nodes in Python or C++, see
 | --- | --- |
 | [Adding nodes](node_palette.md) | The Nodes panel, search and the right-click menu |
 | [Node dialogs](node_dialogs.md) | Configuring a node in its dialog |
+| [Patterns](patterns.md) | Ready-made full graphs and blocks, what data each expects, the ones not usable yet |
 | [Branched graphs](branched_graphs.md) | Split and merge inside a model |
 | [Groups, frames and names](canvas_groups_frames.md) | Grouping and naming nodes, frames, copy and paste, renaming |
 | [Your own nodes](extension_nodes.md) | Python node bundles and C++ plugins in the Engine: install, approve, use |

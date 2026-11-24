@@ -1,6 +1,7 @@
 {
   "id": "ppo_mlp",
   "name": "PPO (MLP 64-64)",
+  "kind": "graph",
   "description": "Proximal Policy Optimization as in Stable-Baselines3's MlpPolicy: an Environment, separate policy and value networks of two Dense layers with Tanh, a Policy Head and a Value Head that size their outputs from the environment, and PPO. Pick the environment on the Environment node and press Tuned for on PPO to load tuned settings, then Train.",
   "category": "Reinforcement Learning",
   "tags": ["ppo", "reinforcement", "rl", "policy", "cartpole", "mujoco"],

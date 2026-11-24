@@ -1,5 +1,6 @@
 #include "test_executor.h"
 #include "execution_device_context.h"
+#include "run_execution_device.h"
 #include "metric_learning_evaluation.h"
 #include "metric_learning_sampling.h"
 #include "spatial_batch_layout.h"
@@ -7,6 +8,8 @@
 #include "classification_decision.h"
 #include "model_builder.h"
 #include "training_batcher_setup.h"
+#include "training_trace_collector.h"
+#include <cyxwiz/neural_provider_dispatch.h>
 
 #include <arrayfire.h>
 
@@ -219,19 +222,26 @@ void TestExecutor::Test(
                     static_cast<int>(owner->type), owner->device_id, activation.message));
             }
         }
-        const auto policy = config_.strict_execution
-            ? ExecutionPolicy::Strict
-            : ExecutionPolicy::Compatibility;
+        // The policy a training run resolves too (the queued next-run policy,
+        // else the graph's): a test after a Strict training run is Strict.
+        const auto policy = ResolveRunExecutionPolicy(config_.strict_execution, "TestExecutor");
         const auto context = CaptureCurrentExecutionDeviceContext(policy);
         if (!context.valid) {
             throw std::runtime_error("Run Test execution context is invalid: " + context.error);
         }
+        RecordRunExecutionDeviceBind(context, std::string(), "TestExecutor");
         if (!model_) {
             if (const auto* current = Device::GetCurrentDevice()) {
                 model_device_ = ProcessDeviceSelection{current->GetType(), current->GetDeviceId()};
             }
         }
         ScopedExecutionDeviceContext binding(context);
+        // As in training: under Strict a provider failure stops the test
+        // instead of changing its route (TOFIX232).
+        const ScopedNeuralDispatchObserver provider_observer(&RecordNeuralDispatchForActiveTrace);
+        const ScopedNeuralProviderFailurePolicy provider_policy(
+            policy == ExecutionPolicy::Strict ? NeuralProviderFailurePolicy::Fail
+                                              : NeuralProviderFailurePolicy::FallBack);
         spdlog::info(
             "TestExecutor: model device activated; owner={}:{} effective={}:{} "
             "device='{}' execution_policy={} selection_fallback=false",

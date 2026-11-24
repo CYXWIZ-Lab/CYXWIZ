@@ -1,5 +1,6 @@
 #include "cyxwiz/layers/recurrent.h"
 #include "cyxwiz/neural_provider.h"
+#include "cyxwiz/neural_provider_dispatch.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_recurrent_utils.h"
 
@@ -33,20 +34,10 @@ Tensor GRULayer::Backward(const Tensor& grad_output) {
 
 bool GRULayer::TryProviderBackward(const Tensor& grad_output, Tensor& grad_input) {
     const auto& in_shape = cached_input_.Shape();
-    NeuralOpRequest provider_request;
-    provider_request.target = CaptureCurrentNeuralDeviceTarget();
-    provider_request.op = NeuralOp::GruBackward;
-    provider_request.training = true;
-    provider_request.dtype = DataType::Float32;
-    provider_request.batch = in_shape[0];
-    provider_request.seq = in_shape[1];
-    provider_request.input = in_shape[2];
-    provider_request.hidden = static_cast<size_t>(hidden_size_);
-    provider_request.layers = static_cast<size_t>(num_layers_);
-    auto provider = NeuralProviderRegistry::Instance().FindSupporting(provider_request);
-    if (!provider) {
-        return false;
-    }
+    const NeuralOpRequest provider_request = RecurrentProviderRequest(
+        NeuralOp::GruBackward, CaptureCurrentNeuralDeviceTarget(),
+        {in_shape[0], in_shape[1], in_shape[2], static_cast<size_t>(hidden_size_),
+         static_cast<size_t>(num_layers_)});
     const size_t gate_width = static_cast<size_t>(3 * hidden_size_);
     const size_t hidden = static_cast<size_t>(hidden_size_);
     Tensor result(in_shape);
@@ -68,11 +59,9 @@ bool GRULayer::TryProviderBackward(const Tensor& grad_output, Tensor& grad_input
         buffers.gradients.push_back(&grad_b_ih_[l]);
         buffers.gradients.push_back(&grad_b_hh_[l]);
     }
-    const auto status = provider->Execute(provider_request, buffers);
-    if (!status.ok) {
-        spdlog::warn("GRULayer::Backward: native provider failed (reason={}), "
-                     "recomputing on the ArrayFire recurrence: {}",
-                     BackendFallbackReasonName(status.reason), status.detail);
+    if (!DispatchNeuralProviderOp(provider_request, "GRU", [&](INeuralNetworkProvider& provider) {
+            return provider.Execute(provider_request, buffers);
+        })) {
         return false;
     }
     grad_input = result;

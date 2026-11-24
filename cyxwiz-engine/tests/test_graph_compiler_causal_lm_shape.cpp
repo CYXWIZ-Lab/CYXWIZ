@@ -153,7 +153,7 @@ int main() {
           "causal LM graph should compile without shape errors: " +
               config.error_message);
     Check(config.input_shape == std::vector<size_t>({7, 4}),
-          "causal LM DatasetInput should preserve [seq, features] shape");
+          "causal LM DataInput should preserve [seq, features] shape");
     Check(config.input_size == 4,
           "causal LM input_size should be per-token feature width");
     Check(config.layers.size() == 2,

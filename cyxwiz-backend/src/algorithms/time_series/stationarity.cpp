@@ -13,6 +13,7 @@
 #include "cyxwiz/statistical_tests.h"
 #include "mackinnon.h"
 #include "series_device.h"
+#include "../device_matvec.h"
 
 #include <arrayfire.h>
 
@@ -115,7 +116,7 @@ int AdfAutolag(const std::vector<double>& x, const std::vector<double>& xdiff, i
     }
     for (size_t a = 0; a < blocks.size(); ++a) {
         const int a0 = static_cast<int>(a) * kBlock;
-        const std::vector<double> gy = series_detail::ToHost(af::matmulTN(blocks[a], y), "TimeSeries ADF autolag");
+        const std::vector<double> gy = series_detail::ToHost(DeviceMatVec(blocks[a], y, true), "TimeSeries ADF autolag");
         for (size_t i = 0; i < gy.size(); ++i) g[static_cast<size_t>(a0) + i] = gy[i];
         for (size_t b = a; b < blocks.size(); ++b) {
             const int b0 = static_cast<int>(b) * kBlock;

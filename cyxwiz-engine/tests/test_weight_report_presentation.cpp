@@ -4,6 +4,7 @@
 #include "core/weight_report_presentation.h"
 
 #include <iostream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -135,6 +136,57 @@ int main() {
     Check(crowded.fresh_lines.size() == 4 && crowded.fresh_lines[3] == "and 2 more (see the match report)",
           "a long list of fresh layers is cut after three");
     Check(crowded.loaded_line == "1 of 6 layers take their weights", "one loaded: " + crowded.loaded_line);
+
+    // Recurrent layers (TOFIX228 1.5b): torch's names for the same layout, a
+    // two-layer GRU and a bidirectional LSTM's reverse direction.
+    cyxwiz::weight_file::WeightFile recurrent;
+    recurrent.format = "PyTorch state-dict";
+    recurrent.entries = {Entry("gru.weight_ih_l0", {15, 3}), Entry("gru.weight_hh_l0", {15, 5}),
+                         Entry("gru.bias_ih_l0", {15}),      Entry("gru.bias_hh_l0", {15}),
+                         Entry("gru.weight_ih_l1", {15, 5}), Entry("gru.weight_hh_l1", {15, 5}),
+                         Entry("gru.bias_ih_l1", {15}),      Entry("gru.bias_hh_l1", {15}),
+                         Entry("lstm.weight_ih_l0", {8, 4}),  Entry("lstm.weight_hh_l0", {8, 2}),
+                         Entry("lstm.bias_ih_l0", {8}),       Entry("lstm.bias_hh_l0", {8}),
+                         Entry("lstm.weight_ih_l0_reverse", {8, 4}), Entry("lstm.weight_hh_l0_reverse", {8, 2}),
+                         Entry("lstm.bias_ih_l0_reverse", {8}),      Entry("lstm.bias_hh_l0_reverse", {8})};
+    const auto rnn = Match(recurrent, {
+        Slot("gru", gui::NodeType::GRU, "GRU", "layer0.",
+             {{"layer0_W_ih", {15, 3}}, {"layer0_W_hh", {15, 5}}, {"layer0_b_ih", {15}}, {"layer0_b_hh", {15}},
+              {"layer1_W_ih", {15, 5}}, {"layer1_W_hh", {15, 5}}, {"layer1_b_ih", {15}}, {"layer1_b_hh", {15}}}),
+        Slot("lstm", gui::NodeType::LSTM, "LSTM", "layer1.",
+             {{"layer0.forward.W_ih", {8, 4}}, {"layer0.forward.W_hh", {8, 2}}, {"layer0.forward.b_ih", {8}},
+              {"layer0.forward.b_hh", {8}}, {"layer0.reverse.W_ih", {8, 4}}, {"layer0.reverse.W_hh", {8, 2}},
+              {"layer0.reverse.b_ih", {8}}, {"layer0.reverse.b_hh", {8}}}),
+    });
+    Check(rnn.loaded == 2 && rnn.fresh == 0 && rnn.unused.empty(),
+          "a GRU and a bidirectional LSTM take torch's weight_ih_l0 / ..._reverse entries: " + rnn.Summary());
+    Check(rnn.tensors.size() == 16, "every recurrent tensor is set, values as stored (the same layout)");
+
+    // A transformer block as nn.TransformerEncoderLayer names it: the query,
+    // key and value projections packed in in_proj_weight [3d, d] (d = 2 here).
+    cyxwiz::weight_file::WeightFile block;
+    block.format = "PyTorch state-dict";
+    block.entries = {Entry("enc.self_attn.in_proj_weight", {6, 2}), Entry("enc.self_attn.in_proj_bias", {6}),
+                     Entry("enc.self_attn.out_proj.weight", {2, 2}), Entry("enc.self_attn.out_proj.bias", {2}),
+                     Entry("enc.linear1.weight", {3, 2}), Entry("enc.linear1.bias", {3}),
+                     Entry("enc.norm1.weight", {2}), Entry("enc.norm1.bias", {2})};
+    const auto attention = Match(block, {Slot("enc", gui::NodeType::TransformerEncoder, "TransformerEncoder", "layer0.",
+                                              {{"self_attn.W_q", {2, 2}}, {"self_attn.W_k", {2, 2}},
+                                               {"self_attn.W_v", {2, 2}}, {"self_attn.b_q", {2}},
+                                               {"self_attn.b_k", {2}}, {"self_attn.b_v", {2}},
+                                               {"self_attn.W_o", {2, 2}}, {"self_attn.b_o", {2}},
+                                               {"linear1.weights", {3, 2}}, {"linear1.bias", {3}},
+                                               {"norm1.gamma", {2}}, {"norm1.beta", {2}}})});
+    Check(attention.loaded == 1 && attention.unused.empty(), "a transformer block takes torch's names: " +
+                                                                attention.Summary());
+    std::map<std::string, std::vector<float>> by_key;
+    for (const auto& tensor : attention.tensors) by_key[tensor.key] = tensor.values;
+    // in_proj_weight's values are 0..11 row-major: W_q rows 0-1, W_k rows 2-3, W_v rows 4-5.
+    Check(by_key["layer0.self_attn.W_q"] == std::vector<float>({0, 1, 2, 3}) &&
+              by_key["layer0.self_attn.W_k"] == std::vector<float>({4, 5, 6, 7}) &&
+              by_key["layer0.self_attn.W_v"] == std::vector<float>({8, 9, 10, 11}) &&
+              by_key["layer0.self_attn.b_v"] == std::vector<float>({4, 5}),
+          "W_q / W_k / W_v and their biases are in_proj's three row blocks, in order");
 
     if (failures) {
         std::cerr << failures << " of " << checks << " checks failed\n";

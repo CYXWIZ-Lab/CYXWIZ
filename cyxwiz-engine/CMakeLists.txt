@@ -280,6 +280,7 @@ set(ENGINE_SOURCES
     src/core/preparation_recipe.cpp  # TOFIX101 package B recipe lowering
     src/core/node_palette.cpp  # TOFIX157 palette curation
     src/core/nodes_panel_presentation.cpp  # TOFIX129 the Nodes panel's model
+    src/core/pattern_browser_presentation.cpp  # TOFIX178 4e the Pattern Browser's model
     src/core/prepared_data_cache.cpp
     src/core/training_input_preparation.cpp
     src/core/prepared_step_run.cpp
@@ -473,6 +474,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor_freeze.cpp
     src/gui/node_editor_io.cpp
     src/gui/node_editor_subgraph.cpp
+    src/gui/node_editor_save_pattern.cpp
     src/gui/subgraph_document.cpp
     src/gui/subgraph_presentation.cpp
     src/gui/node_type_import_registry.cpp
@@ -538,6 +540,7 @@ set(ENGINE_SOURCES
     src/core/extension_properties_presentation.cpp
     src/core/plugin_presentation.cpp
     src/core/python_bundle_presentation.cpp
+    src/core/python_node_maker.cpp
     src/plugin/plugin_session.cpp
     src/core/start_page_presentation.cpp
     src/core/python_setup_presentation.cpp
@@ -649,6 +652,7 @@ set(ENGINE_SOURCES
     src/gui/panels/asset_browser.cpp
     src/gui/file_browser_launch.cpp
     src/gui/python_bundle_ui.cpp
+    src/gui/python_node_calls.cpp
     src/gui/panels/create_node_dialog.cpp
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/training_plot_panel.cpp
@@ -718,7 +722,7 @@ set(ENGINE_SOURCES
     # Annotation Editor Panel (Phase 2 - UI Consolidation)
     src/gui/panels/annotation_editor_panel.cpp
     src/gui/panels/task_progress_panel.cpp
-    src/gui/panels/custom_node_editor.cpp
+    src/gui/panels/python_node_maker_panel.cpp
     src/gui/panels/theme_editor.cpp
     src/gui/panels/monitor_panel.cpp
     src/gui/panels/monitor_panel_loaded_data.cpp
@@ -775,10 +779,12 @@ set(ENGINE_SOURCES
     src/gui/tutorial/tutorial_system.cpp
     src/gui/panels/query_console.cpp
     src/gui/patterns/pattern_library.cpp
+    src/core/recycle_bin.cpp
     src/gui/query/cyxql_types.cpp
     src/gui/query/cyxql_lexer.cpp
     src/gui/query/cyxql_parser.cpp
     src/gui/query/cyxql_executor.cpp
+    src/gui/query/cyxql_examples.cpp
     src/data/data_table.cpp
     src/data/arrow_data_table.cpp
     src/data/table_text_export.cpp
@@ -1021,7 +1027,7 @@ set(ENGINE_HEADERS
     # Interactive annotation tools (Phase 4)
     src/gui/annotation/annotation_tools.h
     src/gui/panels/task_progress_panel.h
-    src/gui/panels/custom_node_editor.h
+    src/gui/panels/python_node_maker_panel.h
     src/gui/panels/theme_editor.h
     src/gui/panels/monitor_panel.h
     src/gui/panels/pattern_browser.h
@@ -1063,6 +1069,7 @@ set(ENGINE_HEADERS
     src/gui/query/cyxql_lexer.h
     src/gui/query/cyxql_parser.h
     src/gui/query/cyxql_executor.h
+    src/gui/query/cyxql_examples.h
     src/data/data_table.h
     src/scripting/python_engine.h
     src/scripting/script_manager.h
@@ -2431,8 +2438,6 @@ if(WIN32)
     target_compile_definitions(test_transformer_constructor PRIVATE NOMINMAX)
 endif()
 set_target_properties(test_transformer_constructor PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-# CPU only here (machines without a GPU); run cuda / opencl directly (TOFIX140 G).
-add_test(NAME transformer_constructor_cpu COMMAND test_transformer_constructor cpu)
 
 # ===== Test: Transformer Dropout Gradients and Device Residency =====
 add_executable(test_transformer_dropout
@@ -2444,8 +2449,6 @@ if(WIN32)
     target_compile_definitions(test_transformer_dropout PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
 set_target_properties(test_transformer_dropout PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-add_test(NAME transformer_dropout_cpu
-    COMMAND test_transformer_dropout cpu ${CMAKE_BINARY_DIR}/transformer_dropout_cpu.json)
 
 # ===== Test: Computation Truth - Transformer Primitive Parity =====
 add_executable(test_computation_truth_transformer_primitives
@@ -3149,6 +3152,12 @@ set_target_properties(test_extension_node_registry PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: graph code export, GUI-free (TOFIX228 1.5a) =====
+add_executable(test_code_export tests/test_code_export.cpp)
+target_link_libraries(test_code_export PRIVATE cyxwiz-training-core)
+set_target_properties(test_code_export PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME code_export COMMAND test_code_export)
+
 # ===== Test: Extension node identity and creation (TOFIX125) =====
 add_executable(test_extension_node_factory
     tests/test_extension_node_factory.cpp
@@ -3658,10 +3667,45 @@ set_target_properties(test_pipeline_run_release PROPERTIES
 )
 add_test(NAME pipeline_run_release COMMAND test_pipeline_run_release)
 
+# ===== Test: Make a Python node =====
+# The form behind Make a Python node: every starter is valid, Generate and
+# Read round-trip each kind and every setting type, validation in plain words.
+add_executable(test_python_node_maker
+    tests/test_python_node_maker.cpp
+    src/core/python_node_maker.cpp
+)
+target_include_directories(test_python_node_maker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+set_target_properties(test_python_node_maker PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME python_node_maker COMMAND test_python_node_maker)
+
+# ===== Test: CyxQL parser =====
+# Every example query the Query Console offers parses, and function words
+# (type, count, size...) work as aliases and property names.
+add_executable(test_cyxql_parser
+    tests/test_cyxql_parser.cpp
+    src/gui/query/cyxql_types.cpp
+    src/gui/query/cyxql_lexer.cpp
+    src/gui/query/cyxql_parser.cpp
+    src/gui/query/cyxql_examples.cpp
+)
+target_include_directories(test_cyxql_parser PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+set_target_properties(test_cyxql_parser PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME cyxql_parser COMMAND test_cyxql_parser)
+
 # ===== Test: Pattern Template Guard =====
 add_executable(test_pattern_template_guard
     tests/test_pattern_template_guard.cpp
     src/gui/patterns/pattern_library.cpp
+    src/core/recycle_bin.cpp
+    src/core/pattern_browser_presentation.cpp
     src/gui/node_type_import_registry.cpp
 )
 target_link_libraries(test_pattern_template_guard PRIVATE cyxwiz-training-core)
@@ -3973,6 +4017,32 @@ set_target_properties(test_recurrent_backend_placement PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME recurrent_backend_placement COMMAND test_recurrent_backend_placement)
+
+# ===== Test: Provider routes under Strict (TOFIX232) =====
+# Stub providers serve the CPU platform, so it runs on ArrayFire CPU only and
+# is registered below with the oracle tests (one cpu entry).
+add_executable(test_provider_route
+    tests/test_provider_route.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+)
+target_link_libraries(test_provider_route PRIVATE
+    cyxwiz-training-core
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+target_include_directories(test_provider_route PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_compile_definitions(test_provider_route PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_provider_route PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Recurrent ArrayFire Profile Smoke =====
 add_executable(test_recurrent_af_profile_smoke
@@ -4843,7 +4913,6 @@ if(WIN32)
     target_compile_definitions(test_arrow_batcher_resident PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
 set_target_properties(test_arrow_batcher_resident PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-add_test(NAME arrow_batcher_resident COMMAND test_arrow_batcher_resident)
 
 # Feature values do not depend on the table's chunking, for every numeric type (TOFIX223 0.1).
 add_executable(test_arrow_batcher_chunking tests/test_arrow_batcher_chunking.cpp)
@@ -4855,7 +4924,6 @@ if(WIN32)
     target_compile_definitions(test_arrow_batcher_chunking PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
 set_target_properties(test_arrow_batcher_chunking PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-add_test(NAME arrow_batcher_chunking COMMAND test_arrow_batcher_chunking)
 
 # A batcher refuses what it cannot train on: no empty batch for an error, no
 # all-zero target row for a label outside the width (TOFIX223 0.2, 0.4).
@@ -5097,7 +5165,6 @@ if(WIN32)
     target_compile_definitions(test_device_random PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
 set_target_properties(test_device_random PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-add_test(NAME device_random COMMAND test_device_random)
 # Every draw in the Engine, backend and server node source is one of the
 # portable ones above (std::shuffle, std distributions, rand, af::randn and
 # non-Philox engines differ between platforms or devices).
@@ -5859,6 +5926,25 @@ function(configure_training_executor_harness target_name)
     )
 endfunction()
 
+# ===== Test: shipped patterns insert, compile and train (TOFIX178 4b) =====
+add_executable(test_shipped_patterns
+    tests/test_shipped_patterns.cpp
+    src/gui/patterns/pattern_library.cpp
+    src/core/recycle_bin.cpp
+    src/core/pattern_browser_presentation.cpp
+    src/gui/node_type_import_registry.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
+)
+configure_training_executor_harness(test_shipped_patterns)
+target_link_libraries(test_shipped_patterns PRIVATE OpenSSL::Crypto imgui::imgui)
+add_test(NAME shipped_patterns COMMAND test_shipped_patterns)
+
 # Regression: checkpoint weights retain their owner across testing workers.
 add_executable(test_testing_device_handoff
     tests/test_testing_device_handoff.cpp
@@ -6326,6 +6412,19 @@ endif()
 set_target_properties(test_nodes_panel_presentation PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME test_nodes_panel_presentation COMMAND test_nodes_panel_presentation)
 
+# ===== Test: the Pattern Browser's model (chips, list, insert words, Save selection; TOFIX178 4e) =====
+add_executable(test_pattern_browser_presentation
+    tests/test_pattern_browser_presentation.cpp
+    src/core/pattern_browser_presentation.cpp
+)
+target_include_directories(test_pattern_browser_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_pattern_browser_presentation PRIVATE nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_pattern_browser_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_pattern_browser_presentation PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME test_pattern_browser_presentation COMMAND test_pattern_browser_presentation)
+
 # ===== Test: Saved Text Smoke Graph Patterns =====
 add_executable(test_text_smoke_graph_patterns
     tests/test_text_smoke_graph_patterns.cpp
@@ -6490,7 +6589,6 @@ endif()
 set_target_properties(test_computation_truth_spatial_layers PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-add_test(NAME spatial_layers_pytorch_parity COMMAND test_computation_truth_spatial_layers)
 
 # ===== Test: LSTM / GRU modules against PyTorch (TOFIX140 recurrent on the device) =====
 set(CYXWIZ_RECURRENT_PYTORCH_FIXTURE
@@ -6525,7 +6623,6 @@ endif()
 set_target_properties(test_computation_truth_recurrent PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-add_test(NAME recurrent_pytorch_parity COMMAND test_computation_truth_recurrent)
 
 # ===== Test: dataset picker wording (TOFIX140 A, one data entry point) =====
 add_executable(test_dataset_picker_presentation
@@ -6876,7 +6973,6 @@ endif()
 set_target_properties(test_computation_truth_linear_algebra PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-add_test(NAME linear_algebra_pytorch_parity COMMAND test_computation_truth_linear_algebra)
 
 # ===== Test: DataTransform against PyTorch references of scikit-learn / scipy (TOFIX140 data transforms on the device) =====
 set(CYXWIZ_DATA_TRANSFORM_PYTORCH_FIXTURE
@@ -6911,7 +7007,6 @@ endif()
 set_target_properties(test_computation_truth_data_transform PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-add_test(NAME data_transform_pytorch_parity COMMAND test_computation_truth_data_transform)
 
 # cyxwiz::StatisticalTests against scipy / statsmodels (TOFIX129 D3).
 set(CYXWIZ_STATISTICAL_TESTS_FIXTURE
@@ -6945,7 +7040,6 @@ endif()
 set_target_properties(test_computation_truth_statistical_tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-add_test(NAME statistical_tests_scipy_parity COMMAND test_computation_truth_statistical_tests)
 
 # ===== Test: ROC / precision-recall curves against scikit-learn (TOFIX140 ROC / PR on the device) =====
 set(CYXWIZ_ROC_PR_SKLEARN_FIXTURE
@@ -6980,7 +7074,6 @@ endif()
 set_target_properties(test_computation_truth_roc_pr PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-add_test(NAME roc_pr_sklearn_parity COMMAND test_computation_truth_roc_pr)
 
 # ===== Test: Clustering against PyTorch / scipy references (TOFIX140 clustering on the device) =====
 set(CYXWIZ_CLUSTERING_PYTORCH_FIXTURE
@@ -7002,7 +7095,6 @@ target_compile_definitions(test_computation_truth_time_series PRIVATE
     CYXWIZ_TIME_SERIES_FIXTURE="${CYXWIZ_TIME_SERIES_FIXTURE}"
 )
 set_target_properties(test_computation_truth_time_series PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-add_test(NAME ComputationTruthTimeSeries COMMAND test_computation_truth_time_series)
 
 # Signal processing against numpy.fft / scipy.signal / PyWavelets (TOFIX129 D7).
 set(CYXWIZ_SIGNAL_FIXTURE
@@ -7021,7 +7113,6 @@ target_compile_definitions(test_computation_truth_signal PRIVATE
     CYXWIZ_SIGNAL_FIXTURE="${CYXWIZ_SIGNAL_FIXTURE}"
 )
 set_target_properties(test_computation_truth_signal PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-add_test(NAME ComputationTruthSignal COMMAND test_computation_truth_signal)
 
 # Tools > Utilities against hashlib, json, re, numpy and the exact unit
 # definitions (TOFIX129 D12).
@@ -7041,7 +7132,6 @@ target_compile_definitions(test_computation_truth_utilities PRIVATE
     CYXWIZ_UTILITIES_FIXTURE="${CYXWIZ_UTILITIES_FIXTURE}"
 )
 set_target_properties(test_computation_truth_utilities PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-add_test(NAME ComputationTruthUtilities COMMAND test_computation_truth_utilities)
 
 # Expressions, calculus, LP / QP and the optimizer paths against sympy / scipy /
 # torch (TOFIX129 D10).
@@ -7061,7 +7151,6 @@ target_compile_definitions(test_computation_truth_optimization PRIVATE
     CYXWIZ_OPTIMIZATION_FIXTURE="${CYXWIZ_OPTIMIZATION_FIXTURE}"
 )
 set_target_properties(test_computation_truth_optimization PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-add_test(NAME ComputationTruthOptimization COMMAND test_computation_truth_optimization)
 
 # The word rule, stop words, Porter and VADER against Python / sklearn / NLTK /
 # vaderSentiment (TOFIX129 D8).
@@ -7081,7 +7170,6 @@ target_compile_definitions(test_computation_truth_text PRIVATE
     CYXWIZ_TEXT_FIXTURE="${CYXWIZ_TEXT_FIXTURE}"
 )
 set_target_properties(test_computation_truth_text PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-add_test(NAME ComputationTruthText COMMAND test_computation_truth_text)
 
 add_executable(test_computation_truth_clustering
     tests/computation_truth/test_computation_truth_clustering.cpp
@@ -7112,7 +7200,6 @@ endif()
 set_target_properties(test_computation_truth_clustering PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-add_test(NAME clustering_parity COMMAND test_computation_truth_clustering)
 
 # ===== Test: classic ML against scikit-learn (TOFIX145 Group C, classic ML on the device) =====
 set(CYXWIZ_CLASSIC_ML_SKLEARN_FIXTURE
@@ -7147,7 +7234,6 @@ endif()
 set_target_properties(test_computation_truth_classic_ml PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-add_test(NAME classic_ml_sklearn_parity COMMAND test_computation_truth_classic_ml)
 
 # Word vector files and vocabulary alignment against gensim (TOFIX152).
 set(CYXWIZ_WORD_EMBEDDINGS_FIXTURE_DIR
@@ -7193,7 +7279,6 @@ endif()
 set_target_properties(test_computation_truth_word_embeddings PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-add_test(NAME word_embeddings_gensim_parity COMMAND test_computation_truth_word_embeddings)
 
 # ===== Test: PCA / t-SNE / UMAP against PyTorch / scipy references (TOFIX140 dimensionality reduction on the device) =====
 set(CYXWIZ_DIMENSIONALITY_REDUCTION_PYTORCH_FIXTURE
@@ -7228,7 +7313,6 @@ endif()
 set_target_properties(test_computation_truth_dimensionality_reduction PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-add_test(NAME dimensionality_reduction_parity COMMAND test_computation_truth_dimensionality_reduction)
 
 # ===== Test: a CNN graph compiles, builds and runs (TOFIX140 A1) =====
 add_executable(test_cnn_graph_training
@@ -7273,7 +7357,6 @@ target_compile_definitions(test_cnn_graph_training PRIVATE
     CYXWIZ_CNN_GRAPH_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/cnn_graph_pytorch.json"
     CYXWIZ_WEIGHT_FILE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/weight_files"
 )
-add_test(NAME cnn_graph_training_contract COMMAND test_cnn_graph_training)
 
 # ===== Test: weight files (PyTorch state-dict, safetensors) read without PyTorch (TOFIX178 1.9c) =====
 add_executable(test_weight_file
@@ -7361,7 +7444,6 @@ add_custom_target(copy_test_branch_graph_training_fixture
     VERBATIM
 )
 add_dependencies(test_branch_graph_training copy_test_branch_graph_training_fixture)
-add_test(NAME branch_graph_pytorch_parity COMMAND test_branch_graph_training)
 
 # ===== Test: Cross Attention graphs vs PyTorch (TOFIX140 Group C) =====
 set(CYXWIZ_CROSS_ATTENTION_GRAPH_PYTORCH_FIXTURE
@@ -7418,7 +7500,6 @@ add_custom_target(copy_test_cross_attention_graph_training_fixture
     VERBATIM
 )
 add_dependencies(test_cross_attention_graph_training copy_test_cross_attention_graph_training_fixture)
-add_test(NAME cross_attention_graph_pytorch_parity COMMAND test_cross_attention_graph_training)
 
 # ===== Test: Linear Attention vs PyTorch (TOFIX140 Group C) =====
 set(CYXWIZ_LINEAR_ATTENTION_PYTORCH_FIXTURE
@@ -7475,7 +7556,6 @@ add_custom_target(copy_test_linear_attention_training_fixture
     VERBATIM
 )
 add_dependencies(test_linear_attention_training copy_test_linear_attention_training_fixture)
-add_test(NAME linear_attention_pytorch_parity COMMAND test_linear_attention_training)
 
 set(CYXWIZ_CONV3D_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/conv3d_pytorch.json"
@@ -7531,7 +7611,6 @@ add_custom_target(copy_test_conv3d_training_fixture
     VERBATIM
 )
 add_dependencies(test_conv3d_training copy_test_conv3d_training_fixture)
-add_test(NAME conv3d_pytorch_parity COMMAND test_conv3d_training)
 
 set(CYXWIZ_IMAGE_TRANSFORMS_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/image_transforms_torchvision.json"
@@ -7562,7 +7641,6 @@ add_custom_target(copy_test_image_transforms_fixture
     VERBATIM
 )
 add_dependencies(test_image_transforms copy_test_image_transforms_fixture)
-add_test(NAME image_transforms_torchvision_parity COMMAND test_image_transforms)
 
 set(CYXWIZ_IMAGE_QUALITY_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/image_quality_opencv.json"
@@ -7767,7 +7845,6 @@ add_custom_target(copy_test_scheduler_node_training_fixture
     VERBATIM
 )
 add_dependencies(test_scheduler_node_training copy_test_scheduler_node_training_fixture)
-add_test(NAME scheduler_node_pytorch_parity COMMAND test_scheduler_node_training)
 
 # ===== Test: the learning rate range test vs PyTorch (TOFIX129 D11) =====
 set(CYXWIZ_LEARNING_RATE_RANGE_PYTORCH_FIXTURE
@@ -7823,7 +7900,6 @@ add_custom_target(copy_test_regularization_node_training_fixture
     VERBATIM
 )
 add_dependencies(test_regularization_node_training copy_test_regularization_node_training_fixture)
-add_test(NAME regularization_node_pytorch_parity COMMAND test_regularization_node_training)
 
 # ===== Test: PPO math (cyxwiz/rl/ppo.h) vs PyTorch / Stable-Baselines3 (TOFIX195 S4.1) =====
 set(CYXWIZ_PPO_PYTORCH_FIXTURE
@@ -7842,7 +7918,6 @@ add_custom_target(copy_test_computation_truth_ppo_fixture
     VERBATIM
 )
 add_dependencies(test_computation_truth_ppo copy_test_computation_truth_ppo_fixture)
-add_test(NAME ppo_pytorch_parity COMMAND test_computation_truth_ppo)
 
 # ===== Test: gradient clipping (host, device, fused Adam) vs torch clip_grad_norm_ + Adam (TOFIX206) =====
 set(CYXWIZ_GRADIENT_CLIPPING_PYTORCH_FIXTURE
@@ -7862,7 +7937,27 @@ add_custom_target(copy_test_computation_truth_gradient_clipping_fixture
     VERBATIM
 )
 add_dependencies(test_computation_truth_gradient_clipping copy_test_computation_truth_gradient_clipping_fixture)
-add_test(NAME gradient_clipping_pytorch_parity COMMAND test_computation_truth_gradient_clipping)
+
+# ===== Test: 50-step optimizer trajectories in which epsilon matters, vs PyTorch (TOFIX228 1.4, ORA-03) =====
+set(CYXWIZ_OPTIMIZER_TRAJECTORY_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/optimizer_trajectory_pytorch.json")
+add_executable(test_computation_truth_optimizer_trajectory
+    tests/computation_truth/test_computation_truth_optimizer_trajectory.cpp)
+target_link_libraries(test_computation_truth_optimizer_trajectory PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json)
+target_include_directories(test_computation_truth_optimizer_trajectory PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+target_compile_definitions(test_computation_truth_optimizer_trajectory PRIVATE
+    CYXWIZ_OPTIMIZER_TRAJECTORY_FIXTURE="${CYXWIZ_OPTIMIZER_TRAJECTORY_PYTORCH_FIXTURE}" NOMINMAX)
+set_target_properties(test_computation_truth_optimizer_trajectory PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# ===== Test: BatchNorm 1D over several training batches, vs PyTorch (TOFIX228 1.4) =====
+add_executable(test_computation_truth_batchnorm1d tests/computation_truth/test_computation_truth_batchnorm1d.cpp)
+target_link_libraries(test_computation_truth_batchnorm1d PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json)
+target_include_directories(test_computation_truth_batchnorm1d PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+target_compile_definitions(test_computation_truth_batchnorm1d PRIVATE
+    CYXWIZ_BATCHNORM1D_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/batchnorm1d_pytorch.json"
+    NOMINMAX)
+set_target_properties(test_computation_truth_batchnorm1d PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: observation/reward normalisation vs Stable-Baselines3's VecNormalize (TOFIX195 S4.3a) =====
 add_executable(test_computation_truth_vec_normalize
@@ -7872,7 +7967,6 @@ add_executable(test_computation_truth_vec_normalize
 target_link_libraries(test_computation_truth_vec_normalize PRIVATE nlohmann_json::nlohmann_json)
 target_compile_definitions(test_computation_truth_vec_normalize PRIVATE
     CYXWIZ_VEC_NORMALIZE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/vec_normalize_sb3.json")
-add_test(NAME vec_normalize_sb3_parity COMMAND test_computation_truth_vec_normalize)
 
 # ===== Test: the PPO trainer learns CartPole (and InvertedPendulum with the MuJoCo plugin) (TOFIX195 S4.2) =====
 add_executable(test_ppo_trainer
@@ -8051,7 +8145,6 @@ add_custom_target(copy_test_metric_graph_training_fixture
     VERBATIM
 )
 add_dependencies(test_metric_graph_training copy_test_metric_graph_training_fixture)
-add_test(NAME metric_graph_pytorch_parity COMMAND test_metric_graph_training)
 
 # ===== Test: Conv1D graphs vs PyTorch (TOFIX140) =====
 set(CYXWIZ_CONV1D_GRAPH_PYTORCH_FIXTURE
@@ -8081,7 +8174,29 @@ add_custom_target(copy_test_conv1d_graph_training_fixture
     VERBATIM
 )
 add_dependencies(test_conv1d_graph_training copy_test_conv1d_graph_training_fixture)
-add_test(NAME conv1d_graph_pytorch_parity COMMAND test_conv1d_graph_training)
+
+# ===== Oracle level 2: a model trained a few steps against PyTorch running
+# the Engine's own export of the graph (TOFIX228 1.5b). Fixtures and the
+# committed exports: tests/computation_truth/fixtures/train_trajectory/.
+add_executable(test_oracle_train
+    tests/oracle/test_oracle_train.cpp
+)
+configure_training_executor_harness(test_oracle_train)
+
+# ===== Oracle level 3: tabular data end to end against Python (TOFIX228 1.6):
+# CSV -> Data Input -> StandardScaler with the training split -> the Arrow
+# batchers -> TrainingExecutor. Fixtures: tests/computation_truth/fixtures/
+# data_parity/ and data_parity_tabular_pytorch.json.
+add_executable(test_oracle_data
+    tests/oracle/test_oracle_data.cpp
+    ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+    src/core/audio_dataset_batcher.cpp
+    src/core/image_dataset_batcher.cpp
+    src/core/prepared_image_set.cpp
+    src/core/formats/audio_dataset.cpp
+)
+configure_training_executor_harness(test_oracle_data)
+target_link_libraries(test_oracle_data PRIVATE duckdb cyxwiz-image-cv ${OpenCV_LIBS})
 
 # ===== Benchmark: Conv2D provider vs ArrayFire/native (TOFIX140 A1b), not a ctest =====
 add_executable(benchmark_conv2d_provider
@@ -8113,7 +8228,6 @@ set_target_properties(test_fused_mlp PROPERTIES
 if(WIN32)
     target_compile_definitions(test_fused_mlp PRIVATE NOMINMAX)
 endif()
-add_test(NAME fused_mlp_parity COMMAND test_fused_mlp)
 
 # ===== Test: one Adam step for several optimizers against the existing path (TOFIX206 3.2 C) =====
 add_executable(test_fused_adam
@@ -8131,7 +8245,6 @@ set_target_properties(test_fused_adam PROPERTIES
 if(WIN32)
     target_compile_definitions(test_fused_adam PRIVATE NOMINMAX)
 endif()
-add_test(NAME fused_adam_parity COMMAND test_fused_adam)
 
 # ===== Test: PPO's provider kernels against the ArrayFire path (TOFIX206 3.2 B) =====
 add_executable(test_fused_ppo
@@ -8501,7 +8614,7 @@ set_target_properties(test_large_text_file PROPERTIES
 foreach(data_convert_target IN ITEMS cyxwiz-engine test_data_convert_service
         test_excel_table_adapter test_data_convert_reload
         test_data_convert_pipeline_input test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins
-        test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_portfolio_weights bench_linear_steps cyxwiz-bench-out-of-core test_pipeline_run_release
+        test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_oracle_data test_portfolio_weights bench_linear_steps cyxwiz-bench-out-of-core test_pipeline_run_release
         test_text_arrow_materializer test_text_arrow_training_launch test_text_gui_training_launch)
     cyxwiz_target_data_convert(${data_convert_target})
 endforeach()
@@ -8558,7 +8671,7 @@ target_compile_features(test_archive_text_source PRIVATE cxx_std_20)
 target_include_directories(test_archive_text_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_archive_text_source PRIVATE Arrow::arrow_shared LibArchive::LibArchive cyxwiz-backend)
 foreach(archive_input_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
-        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_portfolio_weights bench_linear_steps
+        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_oracle_data test_portfolio_weights bench_linear_steps
         cyxwiz-bench-out-of-core test_text_arrow_materializer test_text_arrow_training_launch
         test_text_gui_training_launch)
     target_sources(${archive_input_target} PRIVATE src/core/archive_text_source.cpp)
@@ -8568,7 +8681,7 @@ set_target_properties(test_archive_text_source PROPERTIES RUNTIME_OUTPUT_DIRECTO
 
 # Optional HTML provider is shared by all executables owning pipeline execution.
 foreach(html_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
-        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_portfolio_weights bench_linear_steps
+        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_oracle_data test_portfolio_weights bench_linear_steps
         cyxwiz-bench-out-of-core test_text_arrow_materializer test_text_arrow_training_launch
         test_text_gui_training_launch)
     cyxwiz_target_html_parser(${html_target})
@@ -9322,6 +9435,169 @@ cyxwiz_enable_pch(test_cnn_image_training_smoke)
 cyxwiz_enable_pch(test_prepared_data_cache)
 cyxwiz_enable_pch(test_engine_node_parity)
 cyxwiz_enable_pch(test_trial_runner)
+
+# ===== Oracle tests (Engine 2.0 core Phase 1, TOFIX228) =====
+# The tests that compare the Engine with PyTorch (or another reference) and
+# the training contracts they rest on. Each one starts with
+# tests/oracle/oracle_test.h (BeginOracleTest / BeginTrainingOracleTest): it
+# prints the commit it was built from (cyxwiz-build-info) and runs on exactly
+# the device CYXWIZ_TEST_ARRAYFIRE_BACKEND asks for. Run them all from the
+# build folder with: ctest -C Release -L oracle (one device: -L oracle -L cpu).
+include(${CMAKE_SOURCE_DIR}/cmake/CyxWizBuildInfo.cmake)
+set(CYXWIZ_ORACLE_TESTS
+    test_oracle_train
+    test_oracle_data
+    test_computation_truth_batchnorm1d
+    test_computation_truth_classic_ml
+    test_computation_truth_clustering
+    test_computation_truth_cross_validation
+    test_computation_truth_data_transform
+    test_computation_truth_dimensionality_reduction
+    test_computation_truth_gradient_clipping
+    test_computation_truth_linear_algebra
+    test_computation_truth_optimization
+    test_computation_truth_optimizer_trajectory
+    test_computation_truth_ppo
+    test_computation_truth_recurrent
+    test_computation_truth_roc_pr
+    test_computation_truth_signal
+    test_computation_truth_spatial_layers
+    test_computation_truth_statistical_tests
+    test_computation_truth_text
+    test_computation_truth_text_vectorizers
+    test_computation_truth_tfidf_loss
+    test_computation_truth_time_series
+    test_computation_truth_transformer_primitives
+    test_computation_truth_utilities
+    test_computation_truth_vec_normalize
+    test_computation_truth_word_embeddings
+    test_device_random
+    test_transformer_constructor
+    test_transformer_dropout
+    test_fused_adam
+    test_fused_mlp
+    test_image_transforms
+    test_arrow_batcher_resident
+    test_arrow_batcher_chunking
+    test_branch_graph_training
+    test_cnn_graph_training
+    test_conv1d_graph_training
+    test_conv3d_training
+    test_cross_attention_graph_training
+    test_linear_attention_training
+    test_metric_graph_training
+    test_regularization_node_training
+    test_scheduler_node_training
+    test_engine_node_parity
+    test_graph_training_job
+    test_modality_batcher_drop_last
+    test_sparse_feature_dataset_batcher
+    test_sparse_training_executor
+    test_training_batcher_setup
+    test_training_executor_arrow_parquet
+)
+
+# The tests that use no ArrayFire device (BeginHostOracleTest): one ctest
+# entry, labelled cpu and host.
+set(CYXWIZ_ORACLE_HOST_TESTS
+    test_computation_truth_text
+    test_computation_truth_utilities
+    test_computation_truth_vec_normalize
+)
+
+# The devices every other oracle test is registered for. CPU by default (the
+# per-push job has no GPU); a machine with GPUs adds them, e.g.
+# -DCYXWIZ_ORACLE_DEVICES="cpu;cuda;opencl", and runs one device with
+# ctest -L oracle -L cuda.
+set(CYXWIZ_ORACLE_DEVICES "cpu" CACHE STRING
+    "Devices the oracle tests are registered for (cpu, cuda, opencl, oneapi)")
+foreach(_oracle_device IN LISTS CYXWIZ_ORACLE_DEVICES)
+    if(NOT _oracle_device MATCHES "^(cpu|cuda|opencl|oneapi)$")
+        message(FATAL_ERROR "CYXWIZ_ORACLE_DEVICES: unknown device '${_oracle_device}' (cpu, cuda, opencl or oneapi)")
+    endif()
+endforeach()
+
+# Links the commit, passes the source root (tests read examples/ and fixtures
+# from it, not from the working directory: ORA-10) and registers one ctest
+# entry per device: oracle_<test>_<device>, labels "oracle;<device>", with
+# CYXWIZ_TEST_ARRAYFIRE_BACKEND set to that device. GPU entries take a lock
+# per device, so a parallel ctest runs one test at a time on each GPU.
+function(cyxwiz_oracle_test target)
+    target_link_libraries(${target} PRIVATE cyxwiz-build-info)
+    get_target_property(_defs ${target} COMPILE_DEFINITIONS)
+    if(NOT _defs MATCHES "CYXWIZ_SOURCE_ROOT")
+        target_compile_definitions(${target} PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+    endif()
+
+    string(REGEX REPLACE "^test_" "" _short "${target}")
+    if(target IN_LIST CYXWIZ_ORACLE_HOST_TESTS)
+        add_test(NAME oracle_${_short} COMMAND ${target})
+        set_tests_properties(oracle_${_short} PROPERTIES LABELS "oracle;cpu;host")
+        return()
+    endif()
+
+    foreach(_device IN LISTS CYXWIZ_ORACLE_DEVICES)
+        set(_args)
+        if(target STREQUAL "test_transformer_dropout")
+            # Its device is an argument, and it writes the cases the PyTorch
+            # driver (verify_transformer_dropout.py) compares; no oneAPI path.
+            if(_device STREQUAL "oneapi")
+                continue()
+            endif()
+            set(_args ${_device} "${CMAKE_BINARY_DIR}/oracle/transformer_dropout_${_device}.json")
+        endif()
+        set(_name oracle_${_short}_${_device})
+        add_test(NAME ${_name} COMMAND ${target} ${_args})
+        set_tests_properties(${_name} PROPERTIES
+            LABELS "oracle;${_device}"
+            ENVIRONMENT "CYXWIZ_TEST_ARRAYFIRE_BACKEND=${_device}")
+        if(NOT _device STREQUAL "cpu")
+            set_tests_properties(${_name} PROPERTIES RESOURCE_LOCK "arrayfire_${_device}")
+        endif()
+    endforeach()
+endfunction()
+
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/oracle")
+# Builds only the oracle tests (and what they need): the per-push job
+# (.github/workflows/oracle-cpu.yml) builds this, not the whole Engine.
+add_custom_target(cyxwiz-oracle-tests)
+foreach(_oracle_test IN LISTS CYXWIZ_ORACLE_TESTS)
+    if(NOT TARGET ${_oracle_test})
+        message(FATAL_ERROR "CYXWIZ_ORACLE_TESTS names ${_oracle_test}, which is not a target")
+    endif()
+    cyxwiz_oracle_test(${_oracle_test})
+    add_dependencies(cyxwiz-oracle-tests ${_oracle_test})
+endforeach()
+# The oracle's own checks (Python only, no torch): every public component has
+# an oracle row whose evidence exists (ORA-09), and every committed fixture
+# matches the generator that wrote it. The interpreter is found here too when
+# Python scripting is off (the per-push job).
+if(NOT Python3_EXECUTABLE)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+endif()
+if(Python3_EXECUTABLE)
+    add_test(NAME oracle_coverage
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/checks/check_oracle_coverage.py" "${CMAKE_SOURCE_DIR}")
+    add_test(NAME oracle_fixture_manifest
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/checks/check_oracle_fixtures.py" "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(oracle_coverage oracle_fixture_manifest PROPERTIES LABELS "oracle;cpu;host")
+else()
+    message(WARNING "No Python interpreter: the oracle coverage and fixture checks are not registered")
+endif()
+# Provider routes (TOFIX232): its stub providers serve the CPU platform, so
+# one cpu entry whatever CYXWIZ_ORACLE_DEVICES lists.
+target_link_libraries(test_provider_route PRIVATE cyxwiz-build-info)
+target_compile_definitions(test_provider_route PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+add_test(NAME oracle_provider_route_cpu COMMAND test_provider_route)
+set_tests_properties(oracle_provider_route_cpu PROPERTIES
+    LABELS "oracle;cpu"
+    ENVIRONMENT "CYXWIZ_TEST_ARRAYFIRE_BACKEND=cpu")
+add_dependencies(cyxwiz-oracle-tests test_provider_route)
+foreach(_oracle_test IN LISTS CYXWIZ_ORACLE_HOST_TESTS)
+    if(NOT _oracle_test IN_LIST CYXWIZ_ORACLE_TESTS)
+        message(FATAL_ERROR "CYXWIZ_ORACLE_HOST_TESTS names ${_oracle_test}, which is not in CYXWIZ_ORACLE_TESTS")
+    endif()
+endforeach()
 
 # Tests write their run records (training traces, crash envelopes, Studio
 # Debugger runs) under the build tree, never into the user's own debug-run

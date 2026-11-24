@@ -1,4 +1,5 @@
 #include "audio_dataset.h"
+#include "../datasets/class_order.h"
 #include "cyxwiz/portable_random.h"
 #include <filesystem>
 #include <fstream>
@@ -173,6 +174,25 @@ void AudioDataset::ScanDirectory(const std::string& directory) {
         return ext == ".wav" || ext == ".flac" || ext == ".ogg" || ext == ".aiff" || ext == ".aif";
     };
 
+    // The audio files under `folder`, by path.
+    const auto sorted_audio_files = [&](const fs::path& folder) {
+        // Ordered by the path inside the folder with "/" separators, so a
+        // class folder with subfolders orders the same on every platform.
+        std::vector<std::pair<std::string, std::string>> found;  // (relative generic path, path)
+        for (const auto& entry : fs::recursive_directory_iterator(folder)) {
+            if (!entry.is_regular_file()) continue;
+            std::string ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (is_audio(ext))
+                found.emplace_back(entry.path().lexically_relative(folder).generic_string(), entry.path().string());
+        }
+        std::sort(found.begin(), found.end());
+        std::vector<std::string> files;
+        files.reserve(found.size());
+        for (auto& [key, path] : found) files.push_back(std::move(path));
+        return files;
+    };
+
     if (config_.labeled_subdirs) {
         // Each subdirectory is a class
         std::vector<std::string> subdirs;
@@ -181,34 +201,26 @@ void AudioDataset::ScanDirectory(const std::string& directory) {
                 subdirs.push_back(entry.path().filename().string());
             }
         }
-        std::sort(subdirs.begin(), subdirs.end());
+        // Class ids and file order as the image folders give them (sorted
+        // names, "2" before "10"; files by path), so the same folder gives
+        // the same clips, ids and split on every platform: the listing order
+        // of a directory is the file system's (TOFIX228 1.6).
+        SortClassNames(subdirs);
         class_names_ = subdirs;
 
         for (int cls = 0; cls < static_cast<int>(subdirs.size()); cls++) {
-            fs::path cls_dir = fs::path(directory) / subdirs[cls];
-            for (const auto& entry : fs::recursive_directory_iterator(cls_dir)) {
-                if (entry.is_regular_file()) {
-                    std::string ext = entry.path().extension().string();
-                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                    if (is_audio(ext)) {
-                        file_paths_.push_back(entry.path().string());
-                        labels_.push_back(cls);
-                    }
-                }
+            const std::vector<std::string> files = sorted_audio_files(fs::path(directory) / subdirs[cls]);
+            for (const auto& file : files) {
+                file_paths_.push_back(file);
+                labels_.push_back(cls);
             }
         }
     } else {
         // Flat directory, no labels
         class_names_ = {"audio"};
-        for (const auto& entry : fs::recursive_directory_iterator(directory)) {
-            if (entry.is_regular_file()) {
-                std::string ext = entry.path().extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                if (is_audio(ext)) {
-                    file_paths_.push_back(entry.path().string());
-                    labels_.push_back(0);
-                }
-            }
+        for (const auto& file : sorted_audio_files(directory)) {
+            file_paths_.push_back(file);
+            labels_.push_back(0);
         }
     }
 

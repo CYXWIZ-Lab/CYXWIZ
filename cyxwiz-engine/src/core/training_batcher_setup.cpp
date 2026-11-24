@@ -136,12 +136,16 @@ std::string FormatFloatVector(const std::vector<float>& values) {
 // 0 (their two-way rule), so that slice is the Test holdout and the Test
 // slice is empty: the caller swaps the two.
 // The shared split rule (split_partitioning.h, TOFIX178 S0-g1) marks each
-// row's partition: a stratified split, or any Data Split that shuffles (a
+// row's partition for every Data Split: a stratified one, one that shuffles (a
 // seeded shuffle over its three shares, like scikit-learn's
-// train_test_split). Without a Data Split, or for time series, the rows keep
-// the contiguous two-way slices.
+// train_test_split), and one that does not (contiguous slices in row order,
+// with the rule's largest-remainder counts). Without a Data Split, or for time
+// series, the rows keep the contiguous two-way slices. An unshuffled Data
+// Split once took the batchers' floor slicing instead, so 53 rows at
+// 0.7 / 0.15 / 0.15 split 37 / 7 / 9 there and 37 / 8 / 8 when a pipeline run
+// had marked them (TOFIX228 1.6, the level 3 oracle).
 bool UsesSharedSplitRule(const TrainingConfiguration& config) {
-    return !config.is_time_series && (config.stratified || (config.has_data_split && config.shuffle));
+    return !config.is_time_series && (config.stratified || config.has_data_split);
 }
 
 bool HoldoutIsTestOnly(const TrainingConfiguration& config) {
@@ -445,7 +449,7 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
             : std::array<double, 3>{config.train_ratio, effective_val_ratio, 0.0};
         {
             std::string split_error;
-            auto split = BuildParquetRowSplit(*dataset, stratify, shares, shared_rule && config.shuffle,
+            auto split = BuildParquetRowSplit(*dataset, stratify, shares, config.shuffle, shared_rule,
                                               static_cast<uint32_t>(std::max(0, config.split_seed)), split_error);
             if (!split) throw std::runtime_error("Parquet split: " + split_error);
             spdlog::info("TrainingExecutor: Parquet row split{} train={} val={} test={} ({} in memory)",

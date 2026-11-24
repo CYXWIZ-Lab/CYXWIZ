@@ -5,6 +5,7 @@
 // (generate_conv3d_fixtures.py). Cases cover one and several channels,
 // 'same' and 'valid' padding, stride 2, a 1x1x1 kernel and two stacked
 // Conv3D layers. Also: the compiler's refusals (the volume section rules).
+#include "oracle/oracle_test.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_node_factory.h"
@@ -260,6 +261,7 @@ std::filesystem::path FixturePath(const char* argv0) {
 }  // namespace
 
 int main(int, char** argv) {
+    if (!cyxwiz::test::BeginOracleTest("test_conv3d_training")) return 1;
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
     cyxwiz::SetGraphCompilerDatasetHooks(hooks);

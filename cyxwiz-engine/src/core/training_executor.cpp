@@ -20,6 +20,7 @@
 #include "training_profile_fence.h"
 #include <cyxwiz/debug_hooks.h>
 #include <cyxwiz/neural_provider.h>
+#include <cyxwiz/neural_provider_dispatch.h>
 #include <cyxwiz/utilities.h>
 #include "execution_device_context.h"
 #include "execution_device_preferences.h"
@@ -898,6 +899,11 @@ void TrainingExecutor::Train(
                     execution_placement_plan.summary));
     const ScopedArrayFireHostSyncObserver host_sync_observer(
         &RecordArrayFireHostSyncForActiveTrace);
+    // Every provider dispatch goes into the trace; under Strict a provider
+    // failure stops the run instead of changing its route (TOFIX232).
+    const ScopedNeuralDispatchObserver provider_observer(&RecordNeuralDispatchForActiveTrace);
+    const ScopedNeuralProviderFailurePolicy provider_policy(
+        config_.strict_execution ? NeuralProviderFailurePolicy::Fail : NeuralProviderFailurePolicy::FallBack);
     training_trace.RecordRuntimeEvent(
         "TrainingDevicePolicy",
         std::string("Execution policy: ") +
@@ -1914,7 +1920,8 @@ void TrainingExecutor::Train(
                         100.0 * static_cast<double>(sampler.RowsLeftOut()) /
                             static_cast<double>(std::max<size_t>(sampler.RowsSeen(), 1)));
                 }
-                active_train_ibatcher->Reset();
+                // The Train batcher is reset at the start of the next epoch
+                // (RunTrainingEpochArrow), with that epoch's seed.
                 if (active_val_ibatcher != active_train_ibatcher) {
                     active_val_ibatcher->Reset();
                 }
@@ -3083,8 +3090,11 @@ void TrainingExecutor::RunTrainingEpochSequence(
             TrainingTraceCollector::Instance().RecordStage(
                 TrainingTraceStage::BatchCallback, epoch, batch_num,
                 static_cast<int>(total_batches), batch_loss, current_acc);
+            // The epoch's running loss with its running accuracy, as the
+            // Arrow epoch reports them (the batch's own loss went here, beside
+            // the running accuracy: ORA-33).
             batch_cb(epoch, batch_num, static_cast<int>(total_batches),
-                     batch_loss, current_acc);
+                     current_loss, current_acc);
         }
 
         // Mid-epoch resume checkpoint (TOFIX118 P4e-2): every N optimizer
@@ -3293,6 +3303,13 @@ void TrainingExecutor::RunTrainingEpochArrow(
     // it impossible to tell "alive but slow" from "hung". This is
     // the fix for the tofix.md entry "Training logs silent mid-epoch".
     const auto epoch_start_time = std::chrono::steady_clock::now();
+
+    // The epoch's order comes from its own seed (set just before, from
+    // (run seed, epoch)), as in RunTrainingEpochSequence. Without this Reset
+    // the seed took effect only at the epoch's end: epoch 1 trained in the
+    // batcher's construction order and epoch k in epoch k-1's, so a resumed
+    // run did not replay its data order (TOFIX228 1.6, the level 3 oracle).
+    batcher.Reset();
 
     spdlog::debug("RunTrainingEpochArrow: Entering batch loop");
     while (!batcher.IsEpochComplete()) {

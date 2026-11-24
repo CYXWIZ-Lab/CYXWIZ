@@ -20,6 +20,7 @@
 
 #include "../core/legacy_dataset_batchers.h"
 #include "../core/training_export_metadata.h"
+#include "../core/graph_training_prep.h"
 #include "main_window.h"
 #include "appearance_settings.h"
 #include "panel_memory.h"
@@ -73,7 +74,8 @@
 #include "panels/task_progress_panel.h"
 #include "panels/pattern_browser.h"
 #include "panels/query_console.h"
-#include "panels/custom_node_editor.h"
+#include "panels/python_node_maker_panel.h"
+#include "patterns/pattern_library.h"
 #include "panels/theme_editor.h"
 #include "panels/monitor_panel.h"
 #include "panels/variable_explorer.h"
@@ -258,54 +260,6 @@ uint64_t HashGraphStructure(const std::vector<MLNode>& nodes,
         HashFnvMix(h, std::string(1, '>'));
     }
     return h;
-}
-
-std::string FindTestingLabelColumn(
-    const std::vector<MLNode>& nodes,
-    const std::string& dataset_name,
-    int data_source_node_id) {
-
-    const MLNode* fallback_data_input = nullptr;
-    for (const auto& node : nodes) {
-        if (node.type != NodeType::DataInput) {
-            continue;
-        }
-
-        if (node.id == data_source_node_id) {
-            auto label_it = node.parameters.find("label_column");
-            if (label_it != node.parameters.end() && !label_it->second.empty()) {
-                return label_it->second;
-            }
-            return {};
-        }
-
-        if (!fallback_data_input) {
-            fallback_data_input = &node;
-        }
-
-        auto dataset_it = node.parameters.find("dataset_name");
-        if (dataset_it == node.parameters.end() || dataset_it->second.empty()) {
-            dataset_it = node.parameters.find("dataset");
-        }
-        if (!dataset_name.empty() &&
-            dataset_it != node.parameters.end() &&
-            dataset_it->second == dataset_name) {
-            auto label_it = node.parameters.find("label_column");
-            if (label_it != node.parameters.end() && !label_it->second.empty()) {
-                return label_it->second;
-            }
-            return {};
-        }
-    }
-
-    if (fallback_data_input) {
-        auto label_it = fallback_data_input->parameters.find("label_column");
-        if (label_it != fallback_data_input->parameters.end() &&
-            !label_it->second.empty()) {
-            return label_it->second;
-        }
-    }
-    return {};
 }
 
 std::string JsonEscape(const std::string& value) {
@@ -631,9 +585,25 @@ MainWindow::MainWindow()
         training_plot_panel_->SetVisible(true);
         ::gui::BringToFront(training_plot_panel_->GetName());
     });
+    // My patterns live with the user's settings, whatever folder the Engine starts in.
+    // A folder whose name the system code page cannot spell leaves My patterns
+    // off; it does not stop the Engine starting.
+    try {
+        ::gui::patterns::PatternLibrary::Instance().SetUserPatternsDirectory(
+            (cyxwiz::core::EngineConfig::Instance().GetUserConfigDir() / "patterns").string());
+    } catch (const std::system_error& e) {
+        spdlog::warn("My patterns are off: the settings folder's name cannot be used ({})", e.what());
+    }
     pattern_browser_ = std::make_unique<cyxwiz::PatternBrowserPanel>();
     query_console_ = std::make_unique<cyxwiz::QueryConsolePanel>();
-    custom_node_editor_ = std::make_unique<gui::CustomNodeEditorPanel>();
+    python_node_maker_ = std::make_unique<cyxwiz::PythonNodeMakerPanel>();
+    python_node_maker_->SetScriptingEngine(scripting_engine_);
+    python_node_maker_->SetOpenInScriptEditorCallback([this](const std::string& path) {
+        if (!script_editor_) return;
+        script_editor_->OpenFile(path);
+        script_editor_->SetVisible(true);
+        ::gui::BringToFront(script_editor_->GetName());
+    });
     theme_editor_ = std::make_unique<gui::ThemeEditorPanel>();
     monitor_panel_ = std::make_unique<cyxwiz::MonitorPanel>();
     variable_explorer_ = std::make_unique<cyxwiz::VariableExplorerPanel>();
@@ -812,6 +782,9 @@ MainWindow::MainWindow()
     });
     // A dashboard's "Edit roles in Data Studio" (TOFIX134 P3.8).
     if (node_editor_) {
+        node_editor_->SetOpenPatternCallback([this](const std::string& pattern_id) {
+            if (pattern_browser_) pattern_browser_->OpenWithPattern(pattern_id);
+        });
         node_editor_->SetOpenDataStudioProfileCallback([this](const std::string& dataset) {
             if (data_studio_panel_) data_studio_panel_->ShowProfile(dataset);
         });
@@ -844,17 +817,11 @@ MainWindow::MainWindow()
         },
         [this]() { return marked_launch_.has_value(); });
 
-    // Set pattern browser callback to insert patterns into node editor
-    pattern_browser_->SetInsertCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
-        if (node_editor_) {
-            node_editor_->InsertPattern(nodes, links);
-        }
-    });
-    // The Nodes panel's Examples insert as the Pattern Browser does, with
-    // each pattern's default parameters.
+    // An example in the Nodes panel opens in the Pattern Browser, where its
+    // settings, the question before it replaces a graph and its result are.
     if (node_browser_panel_) {
-        node_browser_panel_->SetExampleInsertCallback([this](const std::string& pattern_id) {
-            if (pattern_browser_) pattern_browser_->InsertPattern(pattern_id, {});
+        node_browser_panel_->SetExampleOpenCallback([this](const std::string& pattern_id) {
+            if (pattern_browser_) pattern_browser_->OpenWithPattern(pattern_id);
         });
     }
 
@@ -1258,12 +1225,9 @@ MainWindow::MainWindow()
         }
     });
 
-    // Open the Custom Node Editor panel from the Studio toolbar
-    node_editor_->SetOpenCustomNodeEditorCallback([this]() {
-        if (custom_node_editor_) {
-            custom_node_editor_->Show();
-            spdlog::info("Opened Custom Node Editor panel from Studio toolbar");
-        }
+    // Make a Python node, from the Studio toolbar's More menu
+    node_editor_->SetOpenPythonNodeMakerCallback([this]() {
+        if (python_node_maker_) python_node_maker_->Open();
     });
 
     // Set up callbacks in the toolbar
@@ -1831,12 +1795,9 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up Custom Node Editor callback
-    toolbar_->SetOpenCustomNodeEditorCallback([this]() {
-        if (custom_node_editor_) {
-            custom_node_editor_->Show();
-            spdlog::info("Opened Custom Node Editor panel");
-        }
+    // Nodes > Make a Python node...
+    toolbar_->SetOpenPythonNodeMakerCallback([this]() {
+        if (python_node_maker_) python_node_maker_->Open();
     });
 
     // Set up Node Editor operation callbacks (Nodes menu)
@@ -2275,7 +2236,11 @@ MainWindow::MainWindow()
 
     // Edit > Find / Replace: the Script Editor's inline widget (TOFIX133 P2).
     toolbar_->SetOpenFindCallback([this](bool replace) {
-        if (script_editor_) script_editor_->OpenFind(replace);
+        if (!replace && KeyboardShortcutManager::Instance().GetActiveContext() == KeyboardContext::NodeEditor) {
+            if (node_editor_) node_editor_->RunEditCommand(NodeEditor::EditCommand::Find);
+        } else if (script_editor_) {
+            script_editor_->OpenFind(replace);
+        }
     });
     // Replace in Files: editor state (TOFIX129 G3)
     toolbar_->SetFileHasUnsavedChangesCallback([this](const std::string& path) {
@@ -2285,48 +2250,26 @@ MainWindow::MainWindow()
         if (script_editor_) script_editor_->ReloadOpenFile(path);
     });
 
-    // Set up edit operation callbacks
-    toolbar_->SetUndoCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Undo();
-        }
-    });
-
-    toolbar_->SetRedoCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Redo();
-        }
-    });
-
-    toolbar_->SetCutCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Cut();
-        }
-    });
-
-    toolbar_->SetCopyCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Copy();
-        }
-    });
-
-    toolbar_->SetPasteCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Paste();
-        }
-    });
-
-    toolbar_->SetDeleteCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Delete();
-        }
-    });
-
-    toolbar_->SetSelectAllCallback([this]() {
-        if (script_editor_) {
-            script_editor_->SelectAll();
-        }
-    });
+    // Edit menu: the focused editor, the Studio canvas or the Script Editor
+    // (the menu's "Editing:" line names it).
+    const auto edit = [this](NodeEditor::EditCommand command, void (cyxwiz::ScriptEditorPanel::*script)()) {
+        return [this, command, script]() {
+            if (KeyboardShortcutManager::Instance().GetActiveContext() == KeyboardContext::NodeEditor) {
+                if (node_editor_) node_editor_->RunEditCommand(command);
+            } else if (script_editor_) {
+                (script_editor_.get()->*script)();
+            }
+        };
+    };
+    using Edit = NodeEditor::EditCommand;
+    using Script = cyxwiz::ScriptEditorPanel;
+    toolbar_->SetUndoCallback(edit(Edit::Undo, &Script::Undo));
+    toolbar_->SetRedoCallback(edit(Edit::Redo, &Script::Redo));
+    toolbar_->SetCutCallback(edit(Edit::Cut, &Script::Cut));
+    toolbar_->SetCopyCallback(edit(Edit::Copy, &Script::Copy));
+    toolbar_->SetPasteCallback(edit(Edit::Paste, &Script::Paste));
+    toolbar_->SetDeleteCallback(edit(Edit::Delete, &Script::Delete));
+    toolbar_->SetSelectAllCallback(edit(Edit::SelectAll, &Script::SelectAll));
 
     // Set up comment toggle callbacks
     toolbar_->SetToggleLineCommentCallback([this]() {
@@ -2623,8 +2566,8 @@ MainWindow::~MainWindow() {
     monitor_panel_.reset();
     spdlog::info("~MainWindow: theme_editor_");
     theme_editor_.reset();
-    spdlog::info("~MainWindow: custom_node_editor_");
-    custom_node_editor_.reset();
+    spdlog::info("~MainWindow: python_node_maker_");
+    python_node_maker_.reset();
     spdlog::info("~MainWindow: query_console_");
     query_console_.reset();
     spdlog::info("~MainWindow: pattern_browser_");
@@ -3008,7 +2951,7 @@ void MainWindow::Render() {
     TimedRender("task progress", task_progress_panel_);
     TimedRender("pattern browser", pattern_browser_);
     TimedRender("query console", query_console_);
-    TimedRender("custom node editor", custom_node_editor_);
+    TimedRender("python node maker", python_node_maker_);
     TimedRender("theme editor", theme_editor_);
     TimedRender("Monitor", monitor_panel_);
     cyxwiz::VariablesView::PollAll(scripting_engine_.get());  // results for every Variables view
@@ -3498,7 +3441,7 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (task_progress_panel_) task_progress_panel_->SetVisible(false);
     if (pattern_browser_) pattern_browser_->SetVisible(false);
     if (query_console_) query_console_->SetVisible(false);
-    if (custom_node_editor_) custom_node_editor_->SetVisible(false);
+    if (python_node_maker_) python_node_maker_->SetVisible(false);
     if (theme_editor_) theme_editor_->SetVisible(false);
     if (monitor_panel_) monitor_panel_->SetVisible(false);
     if (variable_explorer_) variable_explorer_->SetVisible(false);
@@ -6007,7 +5950,7 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
             label_column);
     }
     if (label_column.empty()) {
-        label_column = FindTestingLabelColumn(
+        label_column = cyxwiz::FindGraphLabelColumn(
             nodes, dataset_name, test_source_node_id);
     }
     if (dataset_name.empty()) {

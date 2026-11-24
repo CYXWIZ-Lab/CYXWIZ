@@ -40,10 +40,10 @@ public:
     void SetExtensionSelectCallback(std::function<void(const std::string&)> callback) {
         on_extension_select_ = std::move(callback);
     }
-    // An example double-clicked under Examples: inserted as the Pattern
-    // Browser inserts it.
-    void SetExampleInsertCallback(std::function<void(const std::string&)> callback) {
-        on_example_insert_ = std::move(callback);
+    // An example double-clicked under Examples: opened in the Pattern Browser
+    // (its settings, the question before it replaces a graph, its result).
+    void SetExampleOpenCallback(std::function<void(const std::string&)> callback) {
+        on_example_open_ = std::move(callback);
     }
 
     void Render();
@@ -105,7 +105,20 @@ private:
     cyxwiz::nodes_panel::Filter filter_ = cyxwiz::nodes_panel::Filter::All;
     std::string provider_filter_;  // the Plugins group shows only this provider
     bool scroll_to_plugins_ = false;  // Apps > a plugin: bring the Plugins group into view
-    int examples_count_ = -1;         // the pattern library's size, counted once
+    // The shipped examples by category (My patterns stay in the Pattern
+    // Browser), rebuilt when the pattern library changes, not every frame.
+    struct ExampleEntry {
+        std::string id;
+        std::string name;
+        std::string description;
+    };
+    struct ExampleCategory {
+        std::string label;
+        std::vector<ExampleEntry> entries;
+    };
+    std::vector<ExampleCategory> examples_;
+    size_t examples_count_ = 0;
+    size_t examples_revision_ = static_cast<size_t>(-1);
 
     // Saved with the Engine settings (EngineConfig nodes_panel).
     bool settings_loaded_ = false;
@@ -120,7 +133,7 @@ private:
     std::function<void(cyxwiz::NodeType)> on_node_select_;
     std::function<void(const std::string&)> on_extension_hover_;
     std::function<void(const std::string&)> on_extension_select_;
-    std::function<void(const std::string&)> on_example_insert_;
+    std::function<void(const std::string&)> on_example_open_;
     cyxwiz::NodeType pinned_node_type_ = cyxwiz::NodeType::Unknown;
     std::string pinned_extension_id_;
 

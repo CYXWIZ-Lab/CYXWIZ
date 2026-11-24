@@ -21,7 +21,7 @@ namespace gui {
 namespace {
 
 bool IsGraphInputNode(NodeType type) {
-    return type == NodeType::DataInput || type == NodeType::DatasetInput;
+    return type == NodeType::DataInput;
 }
 
 } // namespace
@@ -316,23 +316,6 @@ void NodeEditor::ResolveDynamicPins(int node_id, bool record_undo) {
 
     spdlog::info("ResolveDynamicPins: node {} rebuilt with {} inputs, {} outputs",
                  node->name, node->inputs.size(), node->outputs.size());
-}
-
-void NodeEditor::UpdateDatasetNodeName(const std::string& dataset_name) {
-    // Find the first DatasetInput node and update its name
-    for (auto& node : nodes_) {
-        if (node.type == NodeType::DatasetInput) {
-            // Use dataset name if provided, otherwise default to "DataInput"
-            if (dataset_name.empty()) {
-                node.name = "DataInput";
-            } else {
-                node.name = dataset_name;
-            }
-            node.parameters["dataset_name"] = dataset_name;
-            spdlog::info("Updated DatasetInput node name to: {}", node.name);
-            break;
-        }
-    }
 }
 
 bool NodeEditor::HasCycle() {

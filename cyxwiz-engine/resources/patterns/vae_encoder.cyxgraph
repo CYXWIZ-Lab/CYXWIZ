@@ -1,6 +1,8 @@
 {
   "id": "vae_encoder",
   "name": "VAE Encoder",
+  "kind": "graph",
+  "needs": "VAE sampling and the KL term are not built yet.",
   "description": "Variational Autoencoder encoder block. Outputs mean and log-variance for the latent distribution. Use with VAE Decoder for complete VAE.",
   "category": "Generative",
   "tags": ["vae", "variational", "encoder", "generative", "latent"],
@@ -32,7 +34,6 @@
   ],
   "template": {
     "nodes": [
-      {"id": "input", "type": "DatasetInput", "name": "Input", "pos": [0, 200]},
       {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [200, 200]},
       {"id": "enc1", "type": "Dense", "name": "Encoder Dense 1", "pos": [400, 200], "params": {"units": "$hidden_size"}},
       {"id": "act1", "type": "ReLU", "name": "ReLU 1", "pos": [600, 200]},
@@ -44,7 +45,6 @@
       {"id": "output_logvar", "type": "Output", "name": "Log Var Output", "pos": [1400, 300]}
     ],
     "links": [
-      {"from": "input", "to": "flatten"},
       {"from": "flatten", "to": "enc1"},
       {"from": "enc1", "to": "act1"},
       {"from": "act1", "to": "enc2"},

@@ -3012,7 +3012,7 @@ void TestOperatorTraceProducerContract() {
                   cyxwiz::errors::Runtime::InputDatasetMissing,
           "missing data source issue should expose missing-input code");
     Check(missing_source_traces[0].payload["message"].get<std::string>().find(
-              "no DataInput or DatasetInput") != std::string::npos,
+              "no DataInput source node") != std::string::npos,
           "missing data source warning should explain skipped trace");
 
     const auto mismatched_source_traces = producer.TracePreprocessingGraph(
@@ -3041,7 +3041,7 @@ void TestOperatorTraceProducerContract() {
               "wanted_dataset",
           "mismatched dataset source warning should preserve requested dataset");
     Check(mismatched_source_traces[0].payload["message"].get<std::string>().find(
-              "does not match any DataInput/DatasetInput") != std::string::npos,
+              "does not match any DataInput node") != std::string::npos,
           "mismatched dataset source warning should explain skipped trace");
     auto second_tokenizer = tokenizer;
     second_tokenizer.id = 6;

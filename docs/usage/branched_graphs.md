@@ -69,7 +69,7 @@ A branched graph trains through the graph executable model: every layer
 runs once, tensors are kept per output pin, and gradients flow back to each
 pin separately. A Split's backward pass concatenates its two branch
 gradients. The data steps before the layers (Data Split, Data Loader) hand
-the batch on unchanged. The results match PyTorch (`branch_graph_pytorch_parity`,
+the batch on unchanged. The results match PyTorch (`oracle_branch_graph_training_cpu`,
 including a Data Loader feeding three branches).
 
 ## Example: multi-branch classifier

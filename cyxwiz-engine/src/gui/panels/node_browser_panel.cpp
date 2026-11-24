@@ -604,29 +604,39 @@ void NodeBrowserPanel::RenderExamplesGroup() {
     const ui::Tokens& t = ui::CurrentTokens();
     auto& library = patterns::PatternLibrary::Instance();
     if (!library.IsInitialized()) library.Initialize();
-    const auto categories = library.GetAvailableCategories();
-    if (examples_count_ < 0) {  // GetByCategory copies the patterns: count once, not every frame
+    if (examples_revision_ != library.Revision()) {
+        examples_revision_ = library.Revision();
+        examples_.clear();
         examples_count_ = 0;
-        for (auto category : categories) examples_count_ += static_cast<int>(library.GetByCategory(category).size());
+        for (auto category : library.GetAvailableCategories()) {
+            ExampleCategory group;
+            group.label = std::string(patterns::GetPatternCategoryIcon(category)) + " " +
+                          patterns::PatternCategoryToString(category);
+            for (const auto& pattern : library.GetByCategory(category)) {
+                if (pattern.user) continue;
+                group.entries.push_back({pattern.id, pattern.name, pattern.description});
+            }
+            if (group.entries.empty()) continue;
+            examples_count_ += group.entries.size();
+            examples_.push_back(std::move(group));
+        }
     }
     if (examples_count_ == 0 ||
-        !FoldHeader(kExamples, static_cast<size_t>(examples_count_), t.text_faint, "small graphs to start from"))
+        !FoldHeader(kExamples, examples_count_, t.text_faint, "small graphs to start from"))
         return;
-    for (auto category : categories) {
-        const std::string label =
-            std::string(patterns::GetPatternCategoryIcon(category)) + " " + patterns::PatternCategoryToString(category);
-        if (!ImGui::TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth)) continue;
-        for (const auto& pattern : library.GetByCategory(category)) {
+    for (const auto& group : examples_) {
+        if (!ImGui::TreeNodeEx(group.label.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth)) continue;
+        for (const auto& pattern : group.entries) {
             ImGui::PushID(pattern.id.c_str());
             ImGui::Selectable(pattern.name.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick);
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && on_example_insert_)
-                on_example_insert_(pattern.id);
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && on_example_open_)
+                on_example_open_(pattern.id);
             if (ImGui::IsItemHovered()) {
                 ImGui::BeginTooltip();
                 ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
                 ImGui::TextColored(t.text_bright, "%s", pattern.name.c_str());
                 if (!pattern.description.empty()) ImGui::TextUnformatted(pattern.description.c_str());
-                ImGui::TextColored(t.text_dim, "Double-click to add it to the canvas");
+                ImGui::TextColored(t.text_dim, "Double-click to open it in the Pattern Browser");
                 ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();
             }

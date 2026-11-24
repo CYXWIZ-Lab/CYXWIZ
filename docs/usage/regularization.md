@@ -64,7 +64,7 @@ TensorFlow and Keras exports do not write it yet.
 
 ## Checked against PyTorch
 
-`regularization_node_pytorch_parity` first checks that the Engine's model_seed
+`oracle_regularization_node_training_cpu` first checks that the Engine's model_seed
 52 initialisation of a Dense(2 -> 1) model is the fixture's start, then trains
 a compiled graph per node (none, L1, L2, Elastic Net) for 6 SGD steps and
 compares every parameter with torch's

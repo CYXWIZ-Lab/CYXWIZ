@@ -1,3 +1,4 @@
+#include "oracle/oracle_test.h"
 #include "core/prefetch_batcher.h"
 #include "core/sparse_feature_dataset.h"
 #include "core/sparse_feature_dataset_batcher.h"
@@ -348,6 +349,7 @@ void TestPickedRows() {
 }
 
 int main() {
+    if (!cyxwiz::test::BeginOracleTest("test_sparse_feature_dataset_batcher")) return 1;
     TestDenseBatchAndLabelModes();
     TestSplitsDropLastShuffleAndBalancing();
     TestMemoryAndFailurePropagation();

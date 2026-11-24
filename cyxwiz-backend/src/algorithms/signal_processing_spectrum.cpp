@@ -5,6 +5,7 @@
 #include <cyxwiz/signal_processing.h>
 
 #include "signal_device.h"
+#include "device_fft.h"
 
 #include <algorithm>
 #include <cmath>
@@ -57,7 +58,7 @@ SpectrumResult SignalProcessing::Spectrum(const std::vector<double>& signal, dou
     try {
         af::array x = ToDevice(signal);
         if (remove_mean) x = x - af::mean<double>(x);
-        const af::array spectrum = af::fft(x * ToDevice(w));
+        const af::array spectrum = DeviceFft(x * ToDevice(w));
         const dim_t bins = n / 2 + 1;
         af::array amplitude = af::abs(spectrum)(af::seq(0, static_cast<double>(bins - 1))) * (2.0 / SumOf(w));
         amplitude(0) /= 2.0;
@@ -103,7 +104,7 @@ SpectrumResult SignalProcessing::Welch(const std::vector<double>& signal, double
         const dim_t segments = frames.dims(1);
         frames = frames - af::tile(af::mean(frames, 0), nperseg, 1);
         frames = frames * af::tile(ToDevice(w), 1, static_cast<unsigned>(segments));
-        const af::array spectrum = af::fft(frames);
+        const af::array spectrum = DeviceFft(frames);
         const af::array density = OneSidedDensity(spectrum, nperseg, sample_rate, SumOfSquares(w));
         result.psd = ToHost(af::mean(density, 1), "SignalProcessing::Welch");
         result.segments = static_cast<int>(segments);
@@ -153,7 +154,7 @@ SpectrogramResult SignalProcessing::ComputeSpectrogram(
         af::array frames = af::unwrap(ToDevice(signal), window_size, 1, hop_size, 1, 0, 0, true);
         const dim_t num_frames = frames.dims(1);
         frames = frames * af::tile(ToDevice(w), 1, static_cast<unsigned>(num_frames));
-        const af::array density = OneSidedDensity(af::fft(frames), window_size, sample_rate, SumOfSquares(w));
+        const af::array density = OneSidedDensity(DeviceFft(frames), window_size, sample_rate, SumOfSquares(w));
         const dim_t bins = window_size / 2 + 1;
         const std::vector<double> values = ToHost(density, "SignalProcessing::Spectrogram");  // column-major: bin fastest
         result.spectrogram.assign(static_cast<size_t>(num_frames), std::vector<double>(static_cast<size_t>(bins)));

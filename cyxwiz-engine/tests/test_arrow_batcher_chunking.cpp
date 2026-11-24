@@ -12,7 +12,7 @@
 
 #include "core/arrow_dataset.h"
 #include "core/dataset_batcher.h"
-#include "computation_truth/test_device_selection.h"
+#include "oracle/oracle_test.h"
 
 #include <arrow/api.h>
 
@@ -114,7 +114,7 @@ std::vector<T> Values(int64_t low, int64_t high, int64_t step) {
 }  // namespace
 
 int main() {
-    if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) {
+    if (!cyxwiz::test::BeginOracleTest("test_arrow_batcher_chunking")) {
         std::cerr << "the requested device could not be activated\n";
         return 1;
     }

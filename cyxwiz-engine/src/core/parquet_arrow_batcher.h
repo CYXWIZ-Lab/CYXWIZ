@@ -27,17 +27,20 @@ struct ParquetRowSplit {
     std::array<size_t, 3> counts{};     // rows per split
 };
 
-// ratios: train, validation, test. Unstratified (empty stratify_column):
-// Train is the first floor(rows * train) rows, Validation the next
-// floor(rows * validation) (every other row when its ratio is 0), Test the
-// rest. Stratified: two passes over the column a row group at a time, one to
-// count each class, one to give each row a split from what its class still
-// needs (in file order, or a seeded draw when shuffle). Null with `error`
-// set when the column cannot be read.
+// ratios: train, validation, test. With `shared_rule` (a Data Split) the
+// rows split by the shared rule (split_partitioning.h), in file order or a
+// seeded draw when shuffle, one class or, stratified, each class: two passes
+// over the column a row group at a time, one to count each class, one to give
+// each row a split from what its class still needs. Without it (no Data
+// Split) the batchers' two-way slices: Train is the first floor(rows * train)
+// rows, Validation the next floor(rows * validation) (every other row when its
+// ratio is 0), Test the rest. Null with `error` set when the column cannot be
+// read.
 std::shared_ptr<const ParquetRowSplit> BuildParquetRowSplit(const ParquetBackedDataset& dataset,
                                                             const std::string& stratify_column,
                                                             const std::array<double, 3>& ratios,
-                                                            bool shuffle, uint32_t seed, std::string& error);
+                                                            bool shuffle, bool shared_rule, uint32_t seed,
+                                                            std::string& error);
 
 /**
  * ParquetArrowBatcher - Training batcher for disk-backed Parquet datasets.

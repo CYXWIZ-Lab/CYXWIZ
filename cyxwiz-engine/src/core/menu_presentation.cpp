@@ -589,7 +589,7 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                                     Opts{on_canvas})}));
         }
         i.push_back(Sep());
-        i.push_back(Action(f, "nodes.custom_node_editor", "Custom Node Editor...", "Create or edit your own node type."));
+        i.push_back(Action(f, "nodes.python_node_maker", "Make a Python node...", "Write a node in Python; it appears in the Nodes panel."));
         model.menus.push_back(std::move(m));
     }
 

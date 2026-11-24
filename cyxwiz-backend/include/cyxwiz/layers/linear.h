@@ -6,8 +6,9 @@
 #include "linear_sparse_csr.h"
 #include "../tensor.h"
 #include "../api_export.h"
-#include <string>
 #include <map>
+#include <memory>
+#include <string>
 
 namespace cyxwiz {
 
@@ -118,6 +119,14 @@ private:
 
     // Cache for backward pass
     Tensor input_cache_;  // Cached input from forward pass
+
+    // The forward's device CSR batch, which the backward of the same batch
+    // reuses: one upload of the batch per step, not two (ORA-32).
+    struct SparseCsrDevice;
+    std::shared_ptr<SparseCsrDevice> sparse_device_;
+    // The forward uploads its batch (fresh: a batcher may refill the same
+    // buffers); the backward reuses that upload when it is the same view.
+    SparseCsrDevice& SparseCsrFor(const LinearSparseCsrBatchView& input, bool reuse);
 };
 
 /**

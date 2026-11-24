@@ -63,8 +63,8 @@ From the top:
 - At the end, folded: **Plugins** (the nodes loaded plugins and Python
   bundles add; Apps > a plugin opens this group narrowed to it), **Advanced
   operations**, **Can't run yet** and **Examples** (small graphs to start
-  from; double-click one to add it to the canvas, as the Pattern Browser's
-  Insert does).
+  from; double-click one to open it in the Pattern Browser, where you set
+  it up and insert it).
 
 Hover a node for what it does, its inputs and outputs (with what each
 carries) and one line on where it runs ("Runs in training", "Runs as a data

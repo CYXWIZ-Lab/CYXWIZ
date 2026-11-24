@@ -48,6 +48,13 @@ af::array FeatureRow(const Tensor& vector) {
     return af::moddims(values, 1, values.elements());
 }
 
+// The statistics and their gradients are accumulated in float64 where the
+// device has it (ORA-16): float32 sums of a batch whose variance is near eps
+// lose the digits the input gradient is made of. Results return as float32.
+af::dtype StatisticsType() {
+    return af::isDoubleAvailable(af::getDevice()) ? f64 : f32;
+}
+
 }  // namespace
 
 // Per-feature statistics over the batch, on the semantic (row-major)
@@ -63,18 +70,24 @@ Tensor BatchNormModule::Forward(const Tensor& input) {
     }
     try {
         const size_t batch_size = shape[0];
-        const af::array x = input.GetSemanticArray();
+        const af::dtype wide = StatisticsType();
+        const af::array x = input.GetSemanticArray().as(wide);
         const af::dim4 down(static_cast<dim_t>(batch_size));
-        af::array mean = FeatureRow(running_mean_);
-        af::array var = FeatureRow(running_var_);
+        af::array mean = FeatureRow(running_mean_).as(wide);
+        af::array var = FeatureRow(running_var_).as(wide);
         if (is_training_) {
             mean = af::mean(x, 0);
             const af::array centered = x - af::tile(mean, down);
             var = af::mean(centered * centered, 0);
         }
-        const af::array inverse = 1.0f / af::sqrt(var + eps_);
-        const af::array normalized = (x - af::tile(mean, down)) * af::tile(inverse, down);
-        const af::array y = normalized * af::tile(FeatureRow(gamma_), down) + af::tile(FeatureRow(beta_), down);
+        const af::array inverse_wide = 1.0 / af::sqrt(var + static_cast<double>(eps_));
+        const af::array normalized_wide = (x - af::tile(mean, down)) * af::tile(inverse_wide, down);
+        const af::array y = (normalized_wide * af::tile(FeatureRow(gamma_).as(wide), down) +
+                             af::tile(FeatureRow(beta_).as(wide), down)).as(f32);
+        const af::array normalized = normalized_wide.as(f32);
+        const af::array inverse = inverse_wide.as(f32);
+        mean = mean.as(f32);
+        var = var.as(f32);
         af::eval(y, normalized);
         // Publish state only once every device result exists.
         if (is_training_) {
@@ -107,21 +120,23 @@ Tensor BatchNormModule::Backward(const Tensor& grad_output) {
         throw std::invalid_argument("BatchNormModule: backward requires a matching forward pass");
     }
     try {
-        const af::array dy = grad_output.GetSemanticArray();
-        const af::array normalized = normalized_.GetSemanticArray();
+        const af::dtype wide = StatisticsType();
+        const af::array dy = grad_output.GetSemanticArray().as(wide);
+        const af::array normalized = normalized_.GetSemanticArray().as(wide);
         const af::dim4 down(static_cast<dim_t>(shape[0]));
-        const float count = static_cast<float>(shape[0]);
-        const af::array weighted = dy * af::tile(FeatureRow(gamma_), down);
+        const double count = static_cast<double>(shape[0]);
+        const af::array weighted = dy * af::tile(FeatureRow(gamma_).as(wide), down);
         // Batch statistics depend on every row; running ones (eval) are
         // constants, so the input gradient is only the per-feature scale, as
         // BatchNorm2DLayer does. The mode is the one the forward ran in.
-        const af::array dx = forward_training_
-            ? af::tile(FeatureRow(std_inv_), down) / count *
+        const af::array std_inv = FeatureRow(std_inv_).as(wide);
+        const af::array dx = (forward_training_
+            ? af::tile(std_inv, down) / count *
                   (count * weighted - af::tile(af::sum(weighted, 0), down) -
                    normalized * af::tile(af::sum(weighted * normalized, 0), down))
-            : weighted * af::tile(FeatureRow(std_inv_), down);
-        const af::array grad_gamma = af::flat(af::sum(dy * normalized, 0));
-        const af::array grad_beta = af::flat(af::sum(dy, 0));
+            : weighted * af::tile(std_inv, down)).as(f32);
+        const af::array grad_gamma = af::flat(af::sum(dy * normalized, 0)).as(f32);
+        const af::array grad_beta = af::flat(af::sum(dy, 0)).as(f32);
         dx.eval();
         af::eval(grad_gamma, grad_beta);
         const std::vector<size_t> feature_shape{num_features_};

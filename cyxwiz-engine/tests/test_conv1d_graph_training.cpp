@@ -6,6 +6,7 @@
 // (fixtures/conv1d_graph_pytorch.json, generate_conv1d_graph_fixtures.py).
 // Also: compiled shapes, the time-series row layout, the compiler's refusals,
 // and a Conv1D graph training with the TrainingExecutor.
+#include "oracle/training_oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/debug_run_paths.h"
 #include "../src/core/execution_device_context.h"
@@ -370,19 +371,6 @@ std::shared_ptr<arrow::Array> Floats(const std::vector<float>& values) {
     return array;
 }
 
-void SelectArrayFireCpu() {
-    const auto devices = cyxwiz::Device::GetAvailableDevices();
-    const auto cpu = std::find_if(devices.begin(), devices.end(), [](const cyxwiz::DeviceInfo& device) {
-        return device.type == cyxwiz::DeviceType::CPU;
-    });
-    Check(cpu != devices.end(), "an ArrayFire CPU route is required");
-    cyxwiz::test::InstallQualifiedRouteSnapshot(devices);
-    cyxwiz::ClearPendingExecutionDeviceSelection();
-    cyxwiz::SetPendingExecutionDeviceSelection(cyxwiz::DeviceType::CPU, cpu->device_id);
-    cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
-}
-
 // A Conv1D graph trains with the TrainingExecutor: 16 rows of 10 values, the
 // label is the mean of the first three; the loss falls.
 void CheckTraining(const std::filesystem::path& work_dir) {
@@ -421,7 +409,7 @@ void CheckTraining(const std::filesystem::path& work_dir) {
     config.log_interval = 0;
     config.checkpoint_dir = (work_dir / "checkpoints").string();
 
-    SelectArrayFireCpu();
+    cyxwiz::test::PinTrainingDevice();
     cyxwiz::TrainingExecutor executor(config, dataset, "label");
     cyxwiz::TrainingMetrics metrics;
     bool completed = false;
@@ -440,6 +428,7 @@ void CheckTraining(const std::filesystem::path& work_dir) {
 }  // namespace
 
 int main(int, char** argv) {
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_conv1d_graph_training")) return 1;
     namespace fs = std::filesystem;
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
@@ -455,11 +444,13 @@ int main(int, char** argv) {
     const json fixture = json::parse(in);
 
     CheckShapesAndRefusals();
-    SelectArrayFireCpu();
+    cyxwiz::test::PinTrainingDevice();
     CheckPyTorch(fixture);
     CheckTraining(work_dir);
 
     fs::remove_all(work_dir);
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     std::cout << "Conv1D graphs match PyTorch and train\n";
     return 0;
 }

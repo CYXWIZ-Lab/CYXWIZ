@@ -177,15 +177,6 @@ public:
         const std::vector<gui::NodeLink>& links
     );
 
-    /**
-     * Validate an architecture for training
-     * @return Pair of (is_valid, error_message)
-     */
-    static std::pair<bool, std::string> ValidateArchitecture(
-        const std::vector<gui::MLNode>& nodes,
-        const std::vector<gui::NodeLink>& links
-    );
-
     // Find trainable layers (indices into `nodes`)
     static std::vector<int> FindTrainableLayers(const std::vector<gui::MLNode>& nodes);
     // Indices of the trainable layers a mutation may remove, resize or swap:

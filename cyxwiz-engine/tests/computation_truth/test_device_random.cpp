@@ -3,7 +3,7 @@
 // dev PC's CPU backend and pass unchanged on CUDA, OpenCL and Linux CPU; run with
 // --print to print them, and CYXWIZ_TEST_ARRAYFIRE_BACKEND=cpu|cuda|opencl to
 // pick the device.
-#include "test_device_selection.h"
+#include "../oracle/oracle_test.h"
 
 #include "algorithms/arrayfire_backend_utils.h"
 #include "algorithms/device_random.h"
@@ -88,7 +88,7 @@ int main(int argc, char** argv) {
 }
 
 int RunChecks() {
-    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
+    Check(cyxwiz::test::BeginOracleTest("test_device_random"), "requested test device");
 
     // Philox uniforms: the same bits on every device.
     {

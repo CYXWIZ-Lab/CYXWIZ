@@ -2,20 +2,23 @@
 
 #include "../panel.h"
 #include "../patterns/pattern.h"
-#include "../patterns/pattern_library.h"
-#include <functional>
+#include "../../core/pattern_browser_presentation.h"
 #include <map>
+#include <optional>
 #include <string>
+#include <vector>
 
-// Forward declarations in global gui namespace
 namespace gui {
 class NodeEditor;
-struct MLNode;
-struct NodeLink;
 }
 
 namespace cyxwiz {
 
+// The Pattern Browser (TOFIX178 4e, approved mockup): category chips, search
+// across every category, a card per pattern with its kind, node count and
+// settings, Insert with its result or failure said under it, the question
+// before a full graph lands on a canvas that has nodes, and My patterns
+// (show in folder, delete). The words come from core/pattern_browser_presentation.
 class PatternBrowserPanel : public Panel {
 public:
     PatternBrowserPanel();
@@ -24,45 +27,51 @@ public:
     void Render() override;
     const char* GetIcon() const override { return ICON_FA_CUBES; }
 
-    // Set callback for pattern insertion
-    using InsertPatternCallback = std::function<void(
-        const std::vector<::gui::MLNode>& nodes,
-        const std::vector<::gui::NodeLink>& links
-    )>;
-    void SetInsertCallback(InsertPatternCallback callback) { insert_callback_ = std::move(callback); }
-
-    // Set node editor reference for direct insertion
+    // The canvas patterns go into.
     void SetNodeEditor(::gui::NodeEditor* editor) { node_editor_ = editor; }
 
-    // Open with specific pattern selected
+    // Shows the browser with this pattern's card open (a Nodes panel example,
+    // a pattern just saved).
     void OpenWithPattern(const std::string& pattern_id);
 
-    // Insert a pattern with these parameter values (missing ones take their
-    // defaults): the Insert button, and the Nodes panel's Examples.
-    void InsertPattern(const std::string& pattern_id, const std::map<std::string, std::string>& params);
-
 private:
-    void RenderSearchBar();
-    void RenderCategoryTabs();
-    void RenderPatternList();
-    void RenderPatternCard(const ::gui::patterns::Pattern& pattern);
-    void RenderParameterInputs(const ::gui::patterns::Pattern& pattern);
+    enum class Stage { None, Choose, ConfirmDelete, Done, Failed };
+    enum class Where { Below, Beside, Replace };
 
-    // UI State
-    char search_buffer_[256] = "";
-    ::gui::patterns::PatternCategory selected_category_ = ::gui::patterns::PatternCategory::Basic;
-    std::string selected_pattern_id_;
-    std::string expanded_pattern_id_;  // Pattern card that's expanded to show parameters
+    void RebuildEntries();
+    void RenderChips(const pattern_browser::ListView& view);
+    void RenderList(const pattern_browser::ListView& view);
+    void RenderCard(const ::gui::patterns::Pattern& pattern, const pattern_browser::Entry& entry);
+    void RenderSettings(const ::gui::patterns::Pattern& pattern);
+    void RenderInsertLine(const ::gui::patterns::Pattern& pattern, const pattern_browser::Entry& entry);
+    void RenderStage(const ::gui::patterns::Pattern& pattern, const pattern_browser::Entry& entry);
+    void RenderFolderLine();
 
-    // Parameter values for the expanded pattern
-    std::map<std::string, std::string> param_values_;
+    void Open(const ::gui::patterns::Pattern& pattern);
+    void Insert(const ::gui::patterns::Pattern& pattern, const pattern_browser::Entry& entry,
+                std::optional<Where> where);
+    void SetStage(const std::string& id, Stage stage, std::string text = {});
+    std::string GraphName() const;  // the canvas graph's name, empty when it has no file
 
-    // Callbacks
-    InsertPatternCallback insert_callback_;
     ::gui::NodeEditor* node_editor_ = nullptr;
 
-    // Category button colors
-    static constexpr int NUM_CATEGORIES = 7;
+    // The library's patterns as the model reads them, rebuilt when it changes.
+    std::vector<pattern_browser::Entry> entries_;
+    size_t entries_revision_ = static_cast<size_t>(-1);
+
+    char search_[256] = "";
+    std::string chip_ = "Basic";
+    std::string open_id_;                        // the card that is open
+    std::map<std::string, std::string> params_;  // its settings
+    bool scroll_to_open_ = false;
+
+    // What the open card says under its button.
+    std::string stage_id_;
+    Stage stage_ = Stage::None;
+    std::string stage_text_;
+    // The nodes on the canvas when Done was said: the line goes when they
+    // change (Undo, a delete), so it never describes a canvas that is gone.
+    size_t done_canvas_nodes_ = 0;
 };
 
-} // namespace cyxwiz
+}  // namespace cyxwiz

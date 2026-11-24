@@ -94,11 +94,11 @@ bool IsExportCodeRequested(int argc, char** argv) {
 
 int RunExportCode(const std::string& framework_name, const std::filesystem::path& graph,
                   const std::filesystem::path& out) {
-    gui::CodeFramework framework;
-    if (framework_name == "pytorch") framework = gui::CodeFramework::PyTorch;
-    else if (framework_name == "tensorflow") framework = gui::CodeFramework::TensorFlow;
-    else if (framework_name == "keras") framework = gui::CodeFramework::Keras;
-    else if (framework_name == "pycyxwiz") framework = gui::CodeFramework::PyCyxWiz;
+    cyxwiz::CodeFramework framework;
+    if (framework_name == "pytorch") framework = cyxwiz::CodeFramework::PyTorch;
+    else if (framework_name == "tensorflow") framework = cyxwiz::CodeFramework::TensorFlow;
+    else if (framework_name == "keras") framework = cyxwiz::CodeFramework::Keras;
+    else if (framework_name == "pycyxwiz") framework = cyxwiz::CodeFramework::PyCyxWiz;
     else {
         std::cerr << "unknown framework '" << framework_name << "' (pytorch, tensorflow, keras, pycyxwiz)\n";
         return 2;

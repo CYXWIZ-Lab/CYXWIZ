@@ -1,3 +1,4 @@
+#include "oracle/oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/classification_decision.h"
 #include "../src/core/debug_run_paths.h"
@@ -16,6 +17,7 @@
 #include "../src/core/training_executor.h"
 #include "../src/core/training_failure.h"
 #include "../src/core/training_trace_collector.h"
+#include "../src/core/atomic_json_file.h"
 #include "../src/core/execution_device_context.h"
 #include "../src/core/execution_device_preferences.h"
 #include "../src/plugin/interfaces/i_training_hook.h"
@@ -2521,7 +2523,7 @@ void CheckHeldOutTestOfPhaseCountedSet(const std::shared_ptr<cyxwiz::ArrowDatase
                    [](int, float, float, float, float, float) {},
                    [&](const cyxwiz::TrainingMetrics& metrics) { final_metrics = metrics; });
     // It was skipped: the gate read the count outside the test phase (0).
-    Check(final_metrics.has_test_metrics && final_metrics.test_sample_count == 2,
+    Check(final_metrics.has_test_metrics && final_metrics.test_sample_count == 1,
           "a test set counted only in its phase is still scored after training");
 }
 
@@ -2609,9 +2611,12 @@ void CheckExternalResolvedRoleLifecycleCase(
         validation_epochs,
         static_cast<int>(expected_epochs.size()),
         case_name + " plugin epoch-end callback");
+    // The shared split rule's counts for 6 rows at 0.5 / 0.25 / 0.25:
+    // 3 / 2 / 1 (the half row left over goes to Validation first; TOFIX228
+    // 1.6, ORA-23: the batchers' floor slicing gave 3 / 1 / 2).
     Check(final_metrics.train_sample_count == 3 &&
-              final_metrics.val_sample_count == 1 &&
-              final_metrics.test_sample_count == 2,
+              final_metrics.val_sample_count == 2 &&
+              final_metrics.test_sample_count == 1,
           case_name + " should retain resolved external role sample counts");
     Check(final_metrics.last_executed_epoch == expected_epochs.back() &&
               final_metrics.loss_history.size() == expected_epochs.size() &&
@@ -2832,9 +2837,10 @@ void CheckSharedPhaseExternalLifecycleCase(
         validation_epochs,
         static_cast<int>(expected_epochs.size()),
         case_name + " plugin epoch-end callback");
+    // One Train reset per epoch started, at its start with its seed
+    // (TOFIX228 1.6, ORA-21; it was at each epoch's end).
     Check(phase_tracking_batcher->TrainResetCount() ==
-              static_cast<int>(expected_epochs.size()) -
-                  (expected_terminal_status == "early_stopped" ? 1 : 0) &&
+              static_cast<int>(expected_epochs.size()) &&
               phase_tracking_batcher->ValResetCount() ==
                   expected_val_batches,
           case_name + " must reset once per executed semantic boundary");
@@ -3153,9 +3159,10 @@ void CheckParquetLifecycleCase(
         validation_epochs,
         static_cast<int>(expected_epochs.size()),
         case_name + " plugin epoch-end callback");
+    // The shared split rule on disk as in memory: 3 / 2 / 1 (ORA-23).
     Check(final_metrics.train_sample_count == 3 &&
-              final_metrics.val_sample_count == 1 &&
-              final_metrics.test_sample_count == 2 &&
+              final_metrics.val_sample_count == 2 &&
+              final_metrics.test_sample_count == 1 &&
               final_metrics.has_test_metrics &&
               std::isfinite(final_metrics.test_loss) &&
               final_metrics.test_accuracy >= 0.0f &&
@@ -3596,7 +3603,19 @@ void CheckPausedControlCase(
     if (!pause_requested.load() || !executor->IsPaused()) {
         executor->Stop();
         training_thread.join();
-        Check(false, label + " should reach the paused state after batch one");
+        std::string why = "after " + std::to_string(batch_callback_count.load()) + " batch callback(s)";
+        if (training_error) {
+            try {
+                std::rethrow_exception(training_error);
+            } catch (const std::exception& e) {
+                why += "; training threw: " + std::string(e.what());
+            } catch (...) {
+                why += "; training threw";
+            }
+        } else if (!executor->GetMetrics().terminal_reason.empty()) {
+            why += "; training ended: " + executor->GetMetrics().terminal_reason;
+        }
+        Check(false, label + " should reach the paused state after batch one (" + why + ")");
     }
     const auto paused_metrics = executor->GetMetrics();
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -4894,13 +4913,15 @@ void TestRegressionTargetTransform(
           "target scaler order error should explain the mismatch");
 }
 
+// Read as the Engine's readers do: on Windows the open fails for a moment
+// while the writer swaps the file in, and the shared reader retries it.
 nlohmann::json ReadPersistedTrainingTrace(const std::filesystem::path& path) {
-    std::ifstream input(path);
-    if (!input) {
+    auto trace = cyxwiz::ReadJsonFileWithRetry(path);
+    if (!trace) {
         throw std::runtime_error(
             "persisted training trace should be readable: " + path.string());
     }
-    return nlohmann::json::parse(input);
+    return *trace;
 }
 
 void TestTrainingTracePersistenceCoalescing() {
@@ -5053,6 +5074,9 @@ int main(int argc, char** argv) {
     fs::create_directories(work_dir);
     const cyxwiz::ScopedDebugRunRootOverrideForTesting debug_root(
         work_dir / "debug_runs");
+    // The requested device when one is asked. Not pinned for every run: the
+    // route tests here set, clear and check the device selection themselves.
+    if (!cyxwiz::test::BeginOracleTest("test_training_executor_arrow_parquet")) return 1;
     cyxwiz::test::InstallQualifiedRouteSnapshot();
 
     if (argc >= 2 &&

@@ -1,3 +1,4 @@
+#include "oracle/training_oracle_test.h"
 #include "core/sparse_feature_dataset.h"
 #include "core/debug_run_paths.h"
 #include "core/training_batcher_setup.h"
@@ -79,13 +80,13 @@ cyxwiz::TrainingConfiguration MakeConfig(
 } // namespace
 
 int main() {
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_sparse_training_executor")) return 1;
     namespace fs = std::filesystem;
     const fs::path work_dir =
         fs::temp_directory_path() / "cyxwiz_sparse_training_executor";
     fs::create_directories(work_dir);
     const cyxwiz::ScopedDebugRunRootOverrideForTesting debug_root(
         work_dir / "debug_runs");
-    cyxwiz::test::InstallQualifiedRouteSnapshot();
 
     auto config = MakeConfig(work_dir / "checkpoints");
     auto batchers = cyxwiz::BuildSparseTrainingBatchers(
@@ -137,6 +138,8 @@ int main() {
     Check(saw_sparse_forward && saw_sparse_backward,
           "training trace must prove sparse first-layer forward/backward use");
 
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     std::cout << "Sparse TrainingExecutor lifecycle tests passed\n";
     return 0;
 }

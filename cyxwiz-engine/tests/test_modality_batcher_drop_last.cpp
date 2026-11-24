@@ -1,3 +1,4 @@
+#include "oracle/oracle_test.h"
 #include "../src/core/audio_dataset_batcher.h"
 #include "../src/core/image_dataset_batcher.h"
 #include "../src/core/image_utils.h"
@@ -581,6 +582,7 @@ void TestAudioBatcher(const fs::path& root) {
 } // namespace
 
 int main() {
+    if (!cyxwiz::test::BeginOracleTest("test_modality_batcher_drop_last")) return 1;
     const auto root = fs::temp_directory_path() /
         "cyxwiz_modality_batcher_drop_last";
     fs::remove_all(root);

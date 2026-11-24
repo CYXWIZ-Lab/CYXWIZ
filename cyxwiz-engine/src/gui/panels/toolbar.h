@@ -92,7 +92,7 @@ public:
     // Nodes > Freeze: the command is one of NodeEditor::RunFreezeCommand's.
     void SetFreezeNodesCallback(std::function<void(const std::string&)> cb) { freeze_nodes_callback_ = cb; }
 
-    void SetOpenCustomNodeEditorCallback(std::function<void()> callback) { open_custom_node_editor_callback_ = callback; }
+    void SetOpenPythonNodeMakerCallback(std::function<void()> callback) { open_python_node_maker_callback_ = callback; }
     void SetOpenThemeEditorCallback(std::function<void()> callback) { open_theme_editor_callback_ = callback; }
     void SetOpenProfilerCallback(std::function<void()> callback) { open_profiler_callback_ = callback; }
     // Tools > Monitoring opens the Monitor window on a tab ("system", "memory", "loaded_data", "frames").
@@ -447,7 +447,7 @@ private:
     std::function<void()> ungroup_nodes_callback_;
     std::function<void(const std::string&)> freeze_nodes_callback_;
 
-    std::function<void()> open_custom_node_editor_callback_;
+    std::function<void()> open_python_node_maker_callback_;
     std::function<void()> open_theme_editor_callback_;
     std::function<void()> open_profiler_callback_;
     std::function<void(const std::string&)> open_monitor_callback_;

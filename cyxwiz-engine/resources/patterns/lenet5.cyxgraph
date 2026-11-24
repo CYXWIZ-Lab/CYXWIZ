@@ -1,7 +1,9 @@
 {
   "id": "lenet5",
   "name": "LeNet-5",
-  "description": "Classic LeNet-5 architecture by Yann LeCun (1998). The original CNN that proved deep learning works for image recognition. Designed for 32x32 grayscale images (MNIST).",
+  "kind": "graph",
+  "description": "LeNet-5 (LeCun et al. 1998): Conv2D / Tanh / AvgPool twice, then three Dense layers. Expects an image folder with one subfolder per class (resized to 32 x 32). Double-click Data Input, point it at your data and click Apply, then Train.",
+  "sample_shape": "[32, 32, 3]",
   "category": "CNN",
   "tags": ["lenet", "classic", "mnist", "digits", "cnn", "historical"],
   "parameters": [
@@ -16,24 +18,33 @@
   ],
   "template": {
     "nodes": [
-      {"id": "input", "type": "DatasetInput", "name": "Input (32x32)", "pos": [0, 200]},
-      {"id": "conv1", "type": "Conv2D", "name": "C1: Conv 5x5", "pos": [200, 200], "params": {"filters": "6", "kernel_size": "5", "padding": "valid"}},
-      {"id": "act1", "type": "Tanh", "name": "Tanh 1", "pos": [400, 200]},
-      {"id": "pool1", "type": "AvgPool2D", "name": "S2: AvgPool 2x2", "pos": [600, 200], "params": {"pool_size": "2", "stride": "2"}},
-      {"id": "conv2", "type": "Conv2D", "name": "C3: Conv 5x5", "pos": [800, 200], "params": {"filters": "16", "kernel_size": "5", "padding": "valid"}},
-      {"id": "act2", "type": "Tanh", "name": "Tanh 2", "pos": [1000, 200]},
-      {"id": "pool2", "type": "AvgPool2D", "name": "S4: AvgPool 2x2", "pos": [1200, 200], "params": {"pool_size": "2", "stride": "2"}},
-      {"id": "conv3", "type": "Conv2D", "name": "C5: Conv 5x5", "pos": [1400, 200], "params": {"filters": "120", "kernel_size": "5", "padding": "valid"}},
-      {"id": "act3", "type": "Tanh", "name": "Tanh 3", "pos": [1600, 200]},
-      {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [1800, 200]},
-      {"id": "fc1", "type": "Dense", "name": "F6: Dense 84", "pos": [2000, 200], "params": {"units": "84"}},
-      {"id": "act4", "type": "Tanh", "name": "Tanh 4", "pos": [2200, 200]},
-      {"id": "fc2", "type": "Dense", "name": "Output", "pos": [2400, 200], "params": {"units": "$num_classes"}},
-      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [2600, 200]},
-      {"id": "output", "type": "Output", "name": "Output", "pos": [2800, 200]}
+      {"id": "data_input", "type": "DataInput", "name": "Data Input", "pos": [0, 260], "params": {"source_type": "folder", "file_category": "image", "image_layout": "0"}},
+      {"id": "data_split", "type": "DataSplit", "name": "Data Split", "pos": [220, 260], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1", "seed": "42", "stratified": "true"}},
+      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [440, 260], "params": {"batch_size": "64", "epochs": "10", "shuffle": "true", "seed": "42", "validation_freq": "1"}},
+      {"id": "resize", "type": "Resize", "name": "Resize 32", "pos": [660, 260], "params": {"width": "32", "height": "32", "mode": "exact"}},
+      {"id": "normalize", "type": "Normalize", "name": "Normalize", "pos": [880, 260], "params": {"statistics": "same", "mean": "0.5", "std": "0.5"}},
+      {"id": "conv1", "type": "Conv2D", "name": "C1: Conv 5x5", "pos": [1100, 260], "params": {"filters": "6", "kernel_size": "5", "padding": "valid"}},
+      {"id": "act1", "type": "Tanh", "name": "Tanh 1", "pos": [1300, 260]},
+      {"id": "pool1", "type": "AvgPool2D", "name": "S2: AvgPool 2x2", "pos": [1500, 260], "params": {"pool_size": "2", "stride": "2"}},
+      {"id": "conv2", "type": "Conv2D", "name": "C3: Conv 5x5", "pos": [1700, 260], "params": {"filters": "16", "kernel_size": "5", "padding": "valid"}},
+      {"id": "act2", "type": "Tanh", "name": "Tanh 2", "pos": [1900, 260]},
+      {"id": "pool2", "type": "AvgPool2D", "name": "S4: AvgPool 2x2", "pos": [2100, 260], "params": {"pool_size": "2", "stride": "2"}},
+      {"id": "conv3", "type": "Conv2D", "name": "C5: Conv 5x5", "pos": [2300, 260], "params": {"filters": "120", "kernel_size": "5", "padding": "valid"}},
+      {"id": "act3", "type": "Tanh", "name": "Tanh 3", "pos": [2500, 260]},
+      {"id": "flatten", "type": "Flatten", "name": "Flatten", "pos": [2700, 260]},
+      {"id": "fc1", "type": "Dense", "name": "F6: Dense 84", "pos": [2900, 260], "params": {"units": "84"}},
+      {"id": "act4", "type": "Tanh", "name": "Tanh 4", "pos": [3100, 260]},
+      {"id": "fc2", "type": "Dense", "name": "Output", "pos": [3300, 260], "params": {"units": "$num_classes"}},
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy", "pos": [3520, 320]},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [3740, 320], "params": {"learning_rate": "0.001", "beta1": "0.9", "beta2": "0.999", "epsilon": "1e-8"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [3960, 320], "params": {"num_classes": "$num_classes"}}
     ],
     "links": [
-      {"from": "input", "to": "conv1"},
+      {"from": "data_input", "to": "data_split", "from_pin": 0, "to_pin": 0},
+      {"from": "data_split", "to": "data_loader", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "resize", "from_pin": 0, "to_pin": 0},
+      {"from": "resize", "to": "normalize", "from_pin": 0, "to_pin": 0},
+      {"from": "normalize", "to": "conv1", "from_pin": 0, "to_pin": 0},
       {"from": "conv1", "to": "act1"},
       {"from": "act1", "to": "pool1"},
       {"from": "pool1", "to": "conv2"},
@@ -45,8 +56,10 @@
       {"from": "flatten", "to": "fc1"},
       {"from": "fc1", "to": "act4"},
       {"from": "act4", "to": "fc2"},
-      {"from": "fc2", "to": "softmax"},
-      {"from": "softmax", "to": "output"}
+      {"from": "fc2", "to": "loss", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "optimizer", "from_pin": 0, "to_pin": 0},
+      {"from": "optimizer", "to": "output", "from_pin": 0, "to_pin": 0}
     ]
   }
 }

@@ -5,6 +5,7 @@
 #include <cyxwiz/signal_processing.h>
 
 #include "signal_device.h"
+#include "device_fft.h"
 
 #include <cmath>
 #include <complex>
@@ -32,7 +33,7 @@ FFTResult SignalProcessing::FFT(const std::vector<double>& signal, double sample
     const int n = static_cast<int>(signal.size());
     result.n = n;
     try {
-        const af::array spectrum = af::fft(ToDevice(signal));
+        const af::array spectrum = DeviceFft(ToDevice(signal));
         result.complex_output = ComplexToHost(spectrum, "SignalProcessing::FFT");
         result.magnitude = ToHost(af::abs(spectrum), "SignalProcessing::FFT");
         result.phase = ToHost(af::arg(spectrum), "SignalProcessing::FFT");
@@ -68,7 +69,7 @@ FFT2DResult SignalProcessing::FFT2D(const std::vector<std::vector<double>>& imag
         }
         // Row-major on the host is column-major [cols, rows] on the device: transpose.
         const af::array img = af::transpose(af::moddims(ToDevice(flat), cols, rows));
-        const af::array spectrum = af::fft2(img);
+        const af::array spectrum = DeviceFft2(img);
         const std::vector<std::complex<double>> values = ComplexToHost(af::transpose(spectrum), "SignalProcessing::FFT2D");
         result.complex_output.assign(rows, std::vector<std::complex<double>>(cols));
         result.magnitude.assign(rows, std::vector<double>(cols));
@@ -92,7 +93,7 @@ std::vector<double> SignalProcessing::IFFT(const std::vector<std::complex<double
     if (spectrum.empty()) return {};
     const dim_t n = static_cast<dim_t>(spectrum.size());
     try {
-        const af::array back = af::ifftNorm(ComplexToDevice(spectrum), 1.0 / static_cast<double>(n));
+        const af::array back = DeviceIfftNorm(ComplexToDevice(spectrum), 1.0 / static_cast<double>(n));
         return ToHost(af::real(back), "SignalProcessing::IFFT");
     } catch (const af::exception& e) {
         static_cast<void>(DeviceError("SignalProcessing::IFFT", e));  // the vector API has no place for the message
@@ -127,7 +128,7 @@ std::vector<std::vector<double>> SignalProcessing::IFFT2D(
             for (int j = 0; j < cols; ++j) flat[static_cast<size_t>(i) * cols + j] = spectrum[i][j];
         }
         const af::array spec = af::transpose(af::moddims(ComplexToDevice(flat), cols, rows));
-        const af::array back = af::ifft2Norm(spec, 1.0 / static_cast<double>(static_cast<dim_t>(rows) * cols));
+        const af::array back = DeviceIfft2Norm(spec, 1.0 / static_cast<double>(static_cast<dim_t>(rows) * cols));
         const std::vector<double> values = ToHost(af::real(af::transpose(back)), "SignalProcessing::IFFT2D");
         std::vector<std::vector<double>> out(rows, std::vector<double>(cols));
         for (int i = 0; i < rows; ++i)

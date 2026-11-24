@@ -5,7 +5,7 @@
 // Runs on the active ArrayFire backend (CYXWIZ_TEST_ARRAYFIRE_BACKEND=
 // cuda|opencl|cpu). Decompositions with free signs are checked through
 // reconstruction, orthonormality and PyTorch's sign-free values.
-#include "test_device_selection.h"
+#include "../oracle/oracle_test.h"
 
 #include <cyxwiz/linear_algebra.h>
 
@@ -222,7 +222,7 @@ void RunCase(const json& c, const std::string& name) {
 }  // namespace
 
 int main(int, char** argv) {
-    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
+    Check(cyxwiz::test::BeginOracleTest("test_computation_truth_linear_algebra"), "requested test device");
     std::ifstream in(FixturePath(argv[0]));
     Check(static_cast<bool>(in), "cannot open the linear algebra fixture");
     const json fixture = json::parse(in);

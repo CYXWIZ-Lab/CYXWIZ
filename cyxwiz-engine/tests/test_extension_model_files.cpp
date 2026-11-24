@@ -411,7 +411,7 @@ int main() {
             const std::string vocabulary = std::to_string(trained_parameters.at("layer0.weight").Shape()[0]);
             for (auto& node : exported_graph["nodes"]) {
                 auto& params = node["parameters"];
-                for (const char* key : {"sequence_vocab_size", "num_embeddings", "vocab_size", "num_classes"})
+                for (const char* key : {"num_embeddings", "vocab_size", "num_classes"})
                     if (params.contains(key)) params[key] = vocabulary;
                 if (node.value("id", 0) == kDenseNodeId) params["units"] = vocabulary;
             }

@@ -4,6 +4,7 @@
 // differ), ModelBuilder sizes each Dense from the pin that feeds it, and the
 // GraphExecutableModel's forward pass and per-pin backward match
 // fixtures/branch_graph_pytorch.json (generate_branch_graph_fixtures.py).
+#include "oracle/training_oracle_test.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_document.h"
@@ -532,6 +533,25 @@ void CheckGraphPackageRoundTrip() {
     Check(!as_stack.success && as_stack.error_message.find("graph with branches") != std::string::npos,
           "as a layer stack the package is refused: " + as_stack.error_message);
 
+    // A package whose graph has no pin indices (an older export) is read by
+    // the importer's own path: a retired node in it is refused by name there
+    // too, not passed to the compiler as an unknown node.
+    {
+        const json pinless = {
+            {"nodes", json::array({{{"id", 1}, {"type", static_cast<int>(gui::NodeType::DatasetInput)},
+                                    {"name", "Old data"}, {"parameters", json::object()}}})},
+            {"links", json::array()}};
+        const auto old_path = dir / "pinless.cyxmodel";
+        std::filesystem::remove(old_path);
+        const auto old_export = exporter.ExportCyxModel(*trained, nullptr, nullptr, pinless.dump(),
+                                                        old_path.string(), cyxwiz::ExportOptions{});
+        Check(old_export.success, "the pinless package exports: " + old_export.error_message);
+        std::shared_ptr<cyxwiz::IExecutableModel> old_loaded;
+        const auto old_import = importer.ImportExecutableModel(old_path.string(), old_loaded, cyxwiz::ImportOptions{});
+        Check(!old_import.success && old_import.error_message.find("Data Input node replaced") != std::string::npos,
+              "a pinless graph with a Dataset Input is refused naming Data Input: " + old_import.error_message);
+    }
+
     // A checkpoint of the graph model loads into the model its graph builds
     // (Load Checkpoint for Testing does the same): the same outputs.
     cyxwiz::CheckpointManager saving((dir / "checkpoints").string());
@@ -605,7 +625,7 @@ void CheckGraphTrainingKeepsBestCheckpoint() {
     config.num_workers = 0;
     config.log_interval = 0;
 
-    cyxwiz::test::InstallQualifiedRouteSnapshot();  // a test run trains on this PC's devices
+    cyxwiz::test::PinTrainingDevice();  // the test device, qualified, Strict
     cyxwiz::TrainingExecutor executor(config, dataset, "label");
     cyxwiz::TrainingMetrics final_metrics;
     executor.Train(config.epochs, config.batch_size, nullptr, nullptr,
@@ -864,6 +884,7 @@ std::filesystem::path FixturePath(const char* argv0) {
 }  // namespace
 
 int main(int, char** argv) {
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_branch_graph_training")) return 1;
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
     cyxwiz::SetGraphCompilerDatasetHooks(hooks);
@@ -928,6 +949,20 @@ int main(int, char** argv) {
         Check(!config.is_valid, "Concatenate on a dim outside the rows is refused");
     }
 
+    // Dataset Input is retired (Data Input replaced it): a saved graph with one
+    // fails to load with a message naming Data Input.
+    {
+        const json saved = {
+            {"nodes", json::array({{{"id", 1}, {"type", static_cast<int>(gui::NodeType::DatasetInput)},
+                                    {"name", "Old data"}, {"parameters", json::object()}}})},
+            {"links", json::array()}};
+        cyxwiz::GraphDocument graph;
+        std::string error;
+        Check(!cyxwiz::ParseGraphDocument(saved.dump(), graph, error) &&
+                  error.find("Data Input node replaced") != std::string::npos,
+              "a saved Dataset Input node is refused with a message naming Data Input: " + error);
+    }
+
     // Tensor Reshape is retired (Reshape replaced it): a saved graph with one
     // fails to load with a message naming Reshape.
     {
@@ -977,6 +1012,8 @@ int main(int, char** argv) {
               std::string("a saved ") + name + " node is refused with a message naming its replacement: " + error);
     }
 
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     std::cout << "Branched graphs match PyTorch: " << fixture.at("cases").size() << " cases\n";
     return 0;
 }

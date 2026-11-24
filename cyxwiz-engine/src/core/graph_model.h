@@ -46,7 +46,7 @@ enum class NodeCategory {
 
     // Data Processing
     Preprocessing,    // Normalize, Scale, Encode (existing nodes)
-    DataPipeline,     // DatasetInput, DataLoader, Augmentation
+    DataPipeline,     // DataLoader, DataSplit, image and text steps
     TextProcessing,   // Tokenizer, Vocabulary, Padding
     TimeSeries,       // Window, Features, Split
     Audio,            // AudioInput, Spectrogram, MFCC
@@ -218,7 +218,7 @@ enum class NodeType {
     SignalScope,        // Real-time signal plotter (input visualization)
 
     // ===== Data Pipeline Nodes =====
-    DatasetInput,       // Load dataset from DataRegistry
+    DatasetInput,       // Retired 2026-03-26 (replaced by DataInput); kept so later type numbers stay
     DataLoader,         // Batch iterator with shuffle/drop_last
     Augmentation,  // Retired (the image transform nodes and Augmentation Preset replaced it): the slot stays so later ids
                    // do not move; a saved graph with one fails to load.

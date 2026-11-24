@@ -1,6 +1,7 @@
 // Headless graph training (TOFIX118 P2): trains the tracked causal-LM example
 // graph through RunGraphTrainingJob, linked against cyxwiz-training-core only
 // (what a Server Node links), and checks the fail-closed refusals.
+#include "oracle/training_oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/data_budget.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
@@ -142,6 +143,7 @@ nlohmann::json& NodeNamed(nlohmann::json& graph, int id) {
 }  // namespace
 
 int main() {
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_graph_training_job")) return 1;
     const fs::path root = CYXWIZ_SOURCE_ROOT;
     const fs::path work = fs::temp_directory_path() / "cyxwiz_graph_training_job_test";
     std::error_code ec;
@@ -153,10 +155,6 @@ int main() {
         std::cerr << "could not write the Parquet fixture\n";
         return EXIT_FAILURE;
     }
-
-    // The executor's route preflight refuses unqualified devices; qualify the
-    // inventory as a verified host would have.
-    cyxwiz::test::InstallQualifiedRouteSnapshot();
 
     // A host catalog the job must restore afterwards.
     bool host_catalog_called = false;
@@ -669,6 +667,8 @@ int main() {
 
     fs::remove_all(work, ec);
     cyxwiz::SetGraphDatasetCatalog({});
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     if (g_failures > 0) {
         std::cout << g_failures << " check(s) failed\n";
         return EXIT_FAILURE;

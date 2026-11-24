@@ -1,7 +1,9 @@
 {
   "id": "transformer_decoder",
-  "name": "Causal Decoder Starter (CPU-backed)",
-  "description": "Small decoder-only causal transformer starter using the tested CPU-backed path. Useful for controlled next-token/logit-head experiments; full GPT-style text generation controls are still roadmap work.",
+  "name": "Transformer Decoder (next token)",
+  "kind": "graph",
+  "description": "Two Transformer Decoder blocks (causal self-attention) over token embeddings; the last layer predicts the next token. Expects a CSV of token ids: sequence_length token columns and a 'next' column (the token that follows). Double-click Data Input, point it at your data and click Apply, then Train.",
+  "sample_shape": "[$sequence_length]",
   "category": "Transformer",
   "tags": ["transformer", "attention", "decoder", "causal", "gpt", "language-model", "cpu-backed"],
   "parameters": [
@@ -44,33 +46,48 @@
       "description": "Dropout rate",
       "min_value": "0.0",
       "max_value": "0.5"
+    },
+    {
+      "name": "sequence_length",
+      "type": "int",
+      "default_value": "16",
+      "description": "Tokens per row (the CSV's token columns)",
+      "min_value": "2",
+      "max_value": "4096"
     }
   ],
   "template": {
     "nodes": [
-      {"id": "input", "type": "DatasetInput", "name": "Token Input", "pos": [0, 200]},
-      {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [220, 200], "params": {"num_embeddings": "$vocab_size", "embedding_dim": "$d_model"}},
-      {"id": "pos_enc", "type": "PositionalEncoding", "name": "Positional Encoding", "pos": [440, 200], "params": {"d_model": "$d_model"}},
-      {"id": "dropout1", "type": "Dropout", "name": "Dropout", "pos": [660, 200], "params": {"rate": "$dropout_rate"}},
-      {"id": "dec1", "type": "TransformerDecoder", "name": "Causal Decoder 1", "pos": [880, 200], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "dim_feedforward": "$ff_dim", "dropout": "$dropout_rate"}},
-      {"id": "dec2", "type": "TransformerDecoder", "name": "Causal Decoder 2", "pos": [1100, 200], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "dim_feedforward": "$ff_dim", "dropout": "$dropout_rate"}},
-      {"id": "ln", "type": "LayerNorm", "name": "Layer Norm", "pos": [1320, 200]},
-      {"id": "flatten", "type": "Flatten", "name": "Flatten Sequence", "pos": [1540, 200]},
-      {"id": "output_layer", "type": "Dense", "name": "Logit Head", "pos": [1760, 200], "params": {"units": "$vocab_size"}},
-      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [1980, 200]},
-      {"id": "output", "type": "Output", "name": "Output", "pos": [2200, 200]}
+      {"id": "data_input", "type": "DataInput", "name": "Token rows", "pos": [0, 260], "params": {"source_type": "file", "file_category": "tabular", "file_type": "csv", "has_header": "true", "label_column": "next"}},
+      {"id": "data_split", "type": "DataSplit", "name": "Data Split", "pos": [220, 260], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1", "seed": "42", "stratified": "false"}},
+      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [440, 260], "params": {"batch_size": "32", "epochs": "10", "shuffle": "true", "seed": "42", "validation_freq": "1"}},
+      {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [660, 260], "params": {"num_embeddings": "$vocab_size", "embedding_dim": "$d_model", "padding_idx": "0"}},
+      {"id": "pos_enc", "type": "PositionalEncoding", "name": "Positional Encoding", "pos": [860, 260], "params": {"d_model": "$d_model", "max_sequence_length": "$sequence_length"}},
+      {"id": "dropout1", "type": "Dropout", "name": "Dropout", "pos": [1060, 260], "params": {"rate": "$dropout_rate"}},
+      {"id": "dec1", "type": "TransformerDecoder", "name": "Causal Decoder 1", "pos": [1260, 260], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "dim_feedforward": "$ff_dim", "dropout": "$dropout_rate"}},
+      {"id": "dec2", "type": "TransformerDecoder", "name": "Causal Decoder 2", "pos": [1460, 260], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "dim_feedforward": "$ff_dim", "dropout": "$dropout_rate"}},
+      {"id": "ln", "type": "LayerNorm", "name": "Layer Norm", "pos": [1660, 260]},
+      {"id": "flatten", "type": "Flatten", "name": "Flatten Sequence", "pos": [1860, 260]},
+      {"id": "output_layer", "type": "Dense", "name": "Logit Head", "pos": [2060, 260], "params": {"units": "$vocab_size"}},
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy", "pos": [2280, 320]},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [2500, 320], "params": {"learning_rate": "0.001", "beta1": "0.9", "beta2": "0.999", "epsilon": "1e-8"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [2720, 320], "params": {"num_classes": "$vocab_size"}}
     ],
     "links": [
-      {"from": "input", "to": "embed"},
-      {"from": "embed", "to": "pos_enc"},
-      {"from": "pos_enc", "to": "dropout1"},
-      {"from": "dropout1", "to": "dec1"},
-      {"from": "dec1", "to": "dec2"},
-      {"from": "dec2", "to": "ln"},
-      {"from": "ln", "to": "flatten"},
-      {"from": "flatten", "to": "output_layer"},
-      {"from": "output_layer", "to": "softmax"},
-      {"from": "softmax", "to": "output"}
+      {"from": "data_input", "to": "data_split", "from_pin": 0, "to_pin": 0},
+      {"from": "data_split", "to": "data_loader", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "embed", "from_pin": 0, "to_pin": 0},
+      {"from": "embed", "to": "pos_enc", "from_pin": 0, "to_pin": 0},
+      {"from": "pos_enc", "to": "dropout1", "from_pin": 0, "to_pin": 0},
+      {"from": "dropout1", "to": "dec1", "from_pin": 0, "to_pin": 0},
+      {"from": "dec1", "to": "dec2", "from_pin": 0, "to_pin": 0},
+      {"from": "dec2", "to": "ln", "from_pin": 0, "to_pin": 0},
+      {"from": "ln", "to": "flatten", "from_pin": 0, "to_pin": 0},
+      {"from": "flatten", "to": "output_layer", "from_pin": 0, "to_pin": 0},
+      {"from": "output_layer", "to": "loss", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "optimizer", "from_pin": 0, "to_pin": 0},
+      {"from": "optimizer", "to": "output", "from_pin": 0, "to_pin": 0}
     ]
   }
 }

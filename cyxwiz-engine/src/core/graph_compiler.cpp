@@ -1,4 +1,5 @@
 #include "graph_compiler.h"
+#include "loss_node_types.h"
 #include "rl_graph_compile.h"
 #include "column_list.h"
 #include <tuple>
@@ -12,6 +13,7 @@
 #include "error_codes.h"
 #include "backend_placement_capabilities.h"
 #include "execution_placement_plan.h"
+#include "provider_placement.h"
 #include "extension_node_registry.h"
 #include "guarded_extension_module.h"
 #include "data_registry.h"
@@ -27,6 +29,7 @@
 #include "worker_defaults.h"
 #include "node_metadata_registry.h"
 #include "pipeline_runtime_capabilities.h"
+#include "recurrent_configuration_policy.h"
 #include "cyxwiz/recurrent_cuda_placement.h"
 #include "graph_compiler_dataset_hooks.h"
 #include "../gui/node_import_guardrails.h"
@@ -93,8 +96,7 @@ void AddIssue(TrainingConfiguration& config, IssueLevel level,
 }
 
 bool IsDatasetSourceType(gui::NodeType type) {
-    return type == gui::NodeType::DataInput ||
-           type == gui::NodeType::DatasetInput;
+    return type == gui::NodeType::DataInput;
 }
 
 std::string DatasetNameFromNode(const gui::MLNode& node) {
@@ -847,24 +849,6 @@ void SuggestSparseFeatureOutput(
              vectorizer->id, vectorizer->name);
 }
 
-bool IsBuiltInLossNodeType(gui::NodeType type) {
-    return type == gui::NodeType::MSELoss ||
-           type == gui::NodeType::CrossEntropyLoss ||
-           type == gui::NodeType::FocalLoss ||
-           type == gui::NodeType::BCELoss ||
-           type == gui::NodeType::BCEWithLogits ||
-           type == gui::NodeType::L1Loss ||
-           type == gui::NodeType::SmoothL1Loss ||
-           type == gui::NodeType::HuberLoss ||
-           type == gui::NodeType::NLLLoss ||
-           type == gui::NodeType::SoftDiceLoss ||
-           type == gui::NodeType::TverskyLoss ||
-           type == gui::NodeType::JaccardLoss ||
-           type == gui::NodeType::TripletLoss ||
-           type == gui::NodeType::ContrastiveLoss ||
-           type == gui::NodeType::CosineEmbeddingLoss;
-}
-
 // A loss node from a plugin or a Python bundle (TOFIX125 P7). One that is
 // not installed keeps the pins it was saved with: a Loss output says it was
 // a loss, so the graph is refused for the missing node, not for "no loss".
@@ -1283,8 +1267,7 @@ bool LooksLikeSequenceBatchContract(const gui::MLNode& node,
         return true;
     }
 
-    if (node.type == gui::NodeType::DataInput ||
-        node.type == gui::NodeType::DatasetInput) {
+    if (node.type == gui::NodeType::DataInput) {
         const char* category_keys[] = {
             "file_category",
             "dataset_category",
@@ -1360,8 +1343,7 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
                                           SequenceBatchConfig& sequence) {
     const auto& params = node.parameters;
 
-    if (node.type == gui::NodeType::DataInput ||
-        node.type == gui::NodeType::DatasetInput) {
+    if (node.type == gui::NodeType::DataInput) {
         auto copy_param = [&params](const char* from, std::string& to) {
             auto it = params.find(from);
             if (it != params.end() && !it->second.empty()) {
@@ -2123,15 +2105,12 @@ size_t ParseSizeParam(const std::map<std::string, std::string>& params,
     }
 }
 
-size_t EstimateSequenceLength(const CompiledLayer& layer) {
-    if (!layer.input_shape.empty()) {
-        return layer.input_shape[0];
-    }
-    return 0;
-}
-
 void AddBackendPlacementReports(TrainingConfiguration& config) {
-    for (const auto& layer : config.layers) {
+    // The Compile report asks the providers about the device active now; the
+    // executable plan asks again for the device the run binds.
+    const NeuralDeviceTarget compile_target = CaptureCurrentNeuralDeviceTarget();
+    for (size_t layer_index = 0; layer_index < config.layers.size(); ++layer_index) {
+        const auto& layer = config.layers[layer_index];
         if (layer.type == gui::NodeType::PluginCustom) {
             config.backend_placements.push_back(
                 backend_placement::BuildExtensionPlacement(layer));
@@ -2143,6 +2122,8 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
             {
                 auto placement =
                     backend_placement::BuildArrayFireTensorPlacement(layer);
+                // Conv2D and attention ask a provider at run time too.
+                ApplyProviderPlacement(placement, ProviderRequestsForLayer(config, layer_index, compile_target));
                 config.backend_placements.push_back(placement);
                 if (placement.status == BackendPlacementStatus::Cpu) {
                     AddIssue(config, IssueLevel::Warning,
@@ -2189,8 +2170,6 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
         // LSTM / GRU / RNN run on the device: the native provider op where it
         // serves the run's device and the exact tuple, else the ArrayFire
         // per-timestep plan (every backend, CUDA included; no CPU path).
-        const size_t hidden_size =
-            ParseSizeParam(layer.parameters, "hidden_size", 128);
         const bool bidirectional =
             ParseBoolParam(layer.parameters, "bidirectional", false);
         BackendPlacementEntry placement =
@@ -2200,40 +2179,12 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
         backend_placement::StampDeclaredExecutionMode(
             placement,
             DeclaredGpuExecutionMode(GpuOperationFamily::Recurrent));
-        NeuralOpRequest provider_request;
-        provider_request.target = CaptureCurrentNeuralDeviceTarget();
-        provider_request.op = layer.type == gui::NodeType::GRU   ? NeuralOp::GruForward
-                            : layer.type == gui::NodeType::RNN ? NeuralOp::RnnForward
-                                                               : NeuralOp::LstmForward;
-        if (layer.type == gui::NodeType::RNN) {
-            const auto nonlinearity = layer.parameters.find("nonlinearity");
-            provider_request.activation =
-                nonlinearity != layer.parameters.end() && nonlinearity->second == "relu"
-                    ? NeuralActivation::Relu
-                    : NeuralActivation::Tanh;
-        }
-        provider_request.training = true;  // this is the training path
-        provider_request.dtype = DataType::Float32;
-        provider_request.batch = static_cast<size_t>(std::max(1, config.batch_size));
-        provider_request.seq = EstimateSequenceLength(layer);
-        provider_request.input =
-            layer.input_shape.size() >= 2 ? layer.input_shape[1] : 0;
-        provider_request.hidden = hidden_size;
-        // Bidirectional layers run each direction and level as a
-        // single-direction, single-layer child, so that is what the provider
-        // is asked about (first level shown; deeper levels have input
-        // 2*hidden).
-        provider_request.layers = bidirectional
-            ? 1
-            : ParseSizeParam(layer.parameters, "num_layers", 1);
-        provider_request.directions = 1;
         if (bidirectional) {
             placement.explanation +=
                 " Bidirectional runs as split forward/reverse branches; "
-                "the native provider verdict below applies per branch "
-                "(first level).";
+                "the native provider verdict below applies per branch.";
         }
-        backend_placement::ApplyNativeProviderPlacement(placement, provider_request);
+        ApplyProviderPlacement(placement, ProviderRequestsForLayer(config, layer_index, compile_target));
         config.backend_placements.push_back(placement);
     }
 
@@ -4424,7 +4375,7 @@ TrainingConfiguration GraphCompiler::Compile(
     // Collect all structural errors at once (the old ValidateGraph stopped
     // at the first one). is_valid is determined at the end of Compile by
     // checking whether config.issues contains any Error-level entries.
-    const gui::MLNode* dataset_node = FindDatasetInputNode(nodes, links);
+    const gui::MLNode* dataset_node = FindDataInputNode(nodes, links);
     timing("dataset_topology");
     const std::unordered_set<int> dataset_reachable =
         dataset_node
@@ -4467,7 +4418,7 @@ TrainingConfiguration GraphCompiler::Compile(
     } else {
         if (!dataset_node) {
             AddIssue(config, IssueLevel::Error,
-                     "Graph must have a DataInput or DatasetInput node",
+                     "Graph must have a DataInput node",
                      -1,
                      "",
                      errors::Compiler::MissingTrainingPathNode);
@@ -4532,10 +4483,9 @@ TrainingConfiguration GraphCompiler::Compile(
     timing("structural_validation");
     // Extract dataset configuration
     if (dataset_node) {
-        // dataset_name parameter is what DataInputDialog::Apply writes when
-        // a dataset is loaded. The legacy "dataset" key was used by the
-        // older DatasetInput dialog and is now obsolete — fall back to it
-        // only if dataset_name is empty, so older project files still load.
+        // dataset_name is what DataInputDialog::Apply writes when a dataset
+        // is loaded; the older "dataset" key is still read (Properties shows
+        // it as an alias).
         config.dataset_name = DatasetNameFromNode(*dataset_node);
         config.dataset_roles.train = DatasetSourceFromNode(
             *dataset_node, /*externally_supplied=*/true);
@@ -6500,8 +6450,23 @@ TrainingConfiguration GraphCompiler::Compile(
     // before a convolution or pooling reads each row as an image (a CSV of
     // pixel columns: MNIST's 784 as 28 x 28 x 1). Rows are already in
     // height, width, channel order, so the Reshape is the data's shape.
+    // A branched graph (a residual Add) does the same when the Reshape alone
+    // reads the Data node's rows (another reader of the rows would then get
+    // images): the graph plan's edges out of it start at the data pin (ORA-27).
     const bool layer_stack = config.graph_op_node_ids.empty() && config.multi_input_layer_node_ids.empty();
-    if (!config.HasErrors() && layer_stack && config.layers.size() >= 2) {
+    const auto reads_data_rows = [&config](const CompiledLayer& layer) {
+        const auto& plan = config.graph_plan;
+        if (!plan.available) return false;
+        bool fed_by_data = false;
+        size_t data_readers = 0;
+        for (const auto& edge : plan.edges) {
+            const bool from_data = edge.from_node_id == plan.data_node_id && edge.from_pin_id == plan.data_pin_id;
+            if (from_data) ++data_readers;
+            if (edge.to_node_id == layer.node_id && from_data) fed_by_data = true;
+        }
+        return fed_by_data && data_readers == 1;
+    };
+    if (!config.HasErrors() && config.layers.size() >= 2 && (layer_stack || reads_data_rows(config.layers.front()))) {
         const CompiledLayer first = config.layers.front();
         const gui::NodeType next = config.layers[1].type;
         const auto elements = [](const std::vector<size_t>& shape) {
@@ -6518,6 +6483,20 @@ TrainingConfiguration GraphCompiler::Compile(
             config.input_shape = first.output_shape;
             config.input_size = elements(first.output_shape);
             config.layers.erase(config.layers.begin());
+            if (!layer_stack) {
+                auto& plan = config.graph_plan;
+                plan.nodes.erase(std::remove_if(plan.nodes.begin(), plan.nodes.end(),
+                                                [&](const CompiledGraphNode& node) { return node.node_id == first.node_id; }),
+                                 plan.nodes.end());
+                plan.edges.erase(std::remove_if(plan.edges.begin(), plan.edges.end(),
+                                                [&](const CompiledGraphEdge& edge) { return edge.to_node_id == first.node_id; }),
+                                 plan.edges.end());
+                for (auto& edge : plan.edges) {
+                    if (edge.from_node_id != first.node_id) continue;
+                    edge.from_node_id = plan.data_node_id;
+                    edge.from_pin_id = plan.data_pin_id;
+                }
+            }
             AddIssue(config, IssueLevel::Info,
                      first.name + " reads each row of " + std::to_string(elements(first.output_shape)) + " values as a [" +
                          ShapeListText(first.output_shape) + "] image (height, width, channel order)",
@@ -6644,8 +6623,8 @@ bool GraphCompiler::ValidateGraph(
     }
 
     // Check for dataset input
-    if (!FindDatasetInputNode(nodes, links)) {
-        error = "Graph must have a DatasetInput node";
+    if (!FindDataInputNode(nodes, links)) {
+        error = "Graph must have a DataInput node";
         return false;
     }
 
@@ -6759,7 +6738,7 @@ std::vector<int> GraphCompiler::GetInputNodes(
     return inputs;
 }
 
-const gui::MLNode* GraphCompiler::FindDatasetInputNode(
+const gui::MLNode* GraphCompiler::FindDataInputNode(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links) const {
     // Modern graphs assign the Training role exclusively through the named

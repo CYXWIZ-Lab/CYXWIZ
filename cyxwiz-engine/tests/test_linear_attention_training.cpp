@@ -6,6 +6,7 @@
 // (generate_linear_attention_fixtures.py). Cases cover elu + 1 and relu,
 // causal and not, one to four heads, with and without bias. Also: the
 // compiler's refusals.
+#include "oracle/oracle_test.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_node_factory.h"
@@ -237,6 +238,7 @@ std::filesystem::path FixturePath(const char* argv0) {
 }  // namespace
 
 int main(int, char** argv) {
+    if (!cyxwiz::test::BeginOracleTest("test_linear_attention_training")) return 1;
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
     cyxwiz::SetGraphCompilerDatasetHooks(hooks);

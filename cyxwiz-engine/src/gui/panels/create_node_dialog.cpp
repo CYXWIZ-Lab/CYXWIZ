@@ -1,20 +1,15 @@
 #include "create_node_dialog.h"
 
 #include "../python_bundle_ui.h"
+#include "../python_node_calls.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
-#include "../../extension/python/python_node_provider.h"
 #include "../../scripting/scripting_engine.h"
 
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
-
-#ifdef CYXWIZ_HAS_PYTHON
-#include <pybind11/embed.h>
-namespace py = pybind11;
-#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -27,33 +22,6 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr const char* kPopup = "Create node from script###CreateNodeFromScript";
-
-using CallResult = std::pair<bool, std::string>;
-
-// pycyxwiz.nodes.<function>(script, extra...) on a worker thread, under the
-// interpreter lock (the Engine releases it after starting Python).
-std::future<CallResult> CallNodes(const char* function, std::string script, std::string folder = {},
-                                  std::string name = {}) {
-    return std::async(std::launch::async, [function, script, folder, name]() -> CallResult {
-#ifdef CYXWIZ_HAS_PYTHON
-        if (!Py_IsInitialized()) return {false, "Python is not running"};
-        py::gil_scoped_acquire gil;
-        try {
-            py::object nodes = py::module_::import("pycyxwiz.nodes");
-            py::object out = folder.empty() ? nodes.attr(function)(script)
-                                            : nodes.attr(function)(script, folder, name);
-            return {true, py::str(out).cast<std::string>()};
-        } catch (py::error_already_set& e) {
-            return {false, e.what()};
-        } catch (const std::exception& e) {
-            return {false, e.what()};
-        }
-#else
-        (void)function;
-        return {false, "Python is not available in this build of CyxWiz"};
-#endif
-    });
-}
 
 std::vector<CreateNodeFound> ParseFound(const std::string& text) {
     std::vector<CreateNodeFound> found;
@@ -110,13 +78,13 @@ void CreateNodeDialog::Open(const fs::path& script, std::shared_ptr<scripting::S
 void CreateNodeDialog::StartInspect() {
     inputs_.stage = CreateNodeStage::Inspecting;
     call_ = Call::Inspect;
-    pending_ = CallNodes("_engine_inspect", script_.string());
+    pending_ = python_calls::CallNodes("_engine_inspect", script_.string());
 }
 
 void CreateNodeDialog::StartCheck() {
     inputs_.stage = CreateNodeStage::Checking;
     call_ = Call::Check;
-    pending_ = CallNodes("_engine_check", script_.string());
+    pending_ = python_calls::CallNodes("_engine_check", script_.string());
 }
 
 void CreateNodeDialog::StartWrite() {
@@ -124,7 +92,8 @@ void CreateNodeDialog::StartWrite() {
     call_ = Call::Write;
     std::error_code ec;
     fs::create_directories(inputs_.project_nodes, ec);
-    pending_ = CallNodes("_engine_bundle", script_.string(), inputs_.project_nodes.string(), inputs_.bundle_name);
+    pending_ = python_calls::CallNodes("_engine_bundle", script_.string(), inputs_.project_nodes.string(),
+                                       inputs_.bundle_name);
 }
 
 void CreateNodeDialog::Collect() {
@@ -154,16 +123,12 @@ void CreateNodeDialog::Collect() {
             }
             inputs_.stage = CreateNodeStage::Checked;
         } else if (call == Call::Write) {
-            PythonBundle bundle;
             std::string error;
-            if (!ReadPythonBundle(fs::path(text), bundle, error)) {
+            if (!python_calls::FinishCreatedBundle(fs::path(text), &error)) {
                 inputs_.stage = CreateNodeStage::Failed;
-                inputs_.error = "The bundle was written but cannot be read: " + error;
+                inputs_.error = error;
                 return;
             }
-            // The user wrote this code: approved as created (decision D6).
-            PythonNodeApprovals::User().Approve(MakePythonNodeApproval(bundle, "created", TodayIsoDate()), &error);
-            if (auto* provider = python_ui::Provider()) provider->Rescan();
             inputs_.written_folder = text;
             inputs_.stage = CreateNodeStage::Written;
             spdlog::info("Created Python node bundle {} from {}", text, inputs_.script_name);

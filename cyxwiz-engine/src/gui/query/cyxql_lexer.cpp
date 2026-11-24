@@ -4,6 +4,16 @@
 
 namespace cyxwiz::query {
 
+namespace {
+// Keywords match in any case. The char goes through unsigned char: toupper of
+// a negative char is undefined, and its int result narrows back explicitly.
+std::string Upper(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return text;
+}
+}  // namespace
+
 // Static keyword map
 const std::unordered_map<std::string, TokenType> Lexer::keywords_ = {
     // Main clauses
@@ -389,10 +399,7 @@ Token Lexer::scanIdentifier() {
                 advance();
             }
             std::string next = input_.substr(withStart, pos_ - withStart);
-            std::string nextUpper = next;
-            std::transform(nextUpper.begin(), nextUpper.end(), nextUpper.begin(), ::toupper);
-
-            if (nextUpper == "WITH") {
+            if (Upper(next) == "WITH") {
                 // It's "STARTS WITH" or "ENDS WITH"
                 return makeToken(type, text + " " + next);
             } else {
@@ -406,11 +413,7 @@ Token Lexer::scanIdentifier() {
 }
 
 TokenType Lexer::identifierType(const std::string& text) const {
-    // Convert to uppercase for keyword matching
-    std::string upper = text;
-    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-
-    auto it = keywords_.find(upper);
+    auto it = keywords_.find(Upper(text));
     if (it != keywords_.end()) {
         return it->second;
     }

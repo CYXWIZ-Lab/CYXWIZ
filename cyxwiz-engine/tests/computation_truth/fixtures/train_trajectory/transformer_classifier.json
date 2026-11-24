@@ -1,0 +1,23 @@
+{
+  "batch_size": 8,
+  "classes": 3,
+  "image_rows": false,
+  "input_shape": [
+    48
+  ],
+  "model": "transformer_classifier",
+  "modules": [
+    {
+      "module": "layer0",
+      "node": "Encoder"
+    },
+    {
+      "module": "layer1",
+      "node": "Head"
+    }
+  ],
+  "rows": 40,
+  "summary": "Reshape 6 x 8, transformer encoder (d 8, 2 heads, ff 16), Flatten, Dense 3; cross-entropy; AdamW, warm-up + cosine per update, clip",
+  "task": "classification",
+  "token_ids": 0
+}

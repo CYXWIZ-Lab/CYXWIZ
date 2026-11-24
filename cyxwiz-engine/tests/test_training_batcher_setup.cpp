@@ -1,3 +1,4 @@
+#include "oracle/oracle_test.h"
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/split_partitioning.h"
 #include "../src/core/classification_decision.h"
@@ -591,7 +592,7 @@ void CheckOneSplitRule(const std::shared_ptr<arrow::Table>& table, const cyxwiz:
     for (const bool stratified : {true, false}) {
         const std::string kind = stratified ? "stratified" : "unstratified";
         std::string error;
-        auto disk = cyxwiz::BuildParquetRowSplit(dataset, stratified ? "label" : "", {0.8, 0.1, 0.1}, true, 17, error);
+        auto disk = cyxwiz::BuildParquetRowSplit(dataset, stratified ? "label" : "", {0.8, 0.1, 0.1}, true, true, 17, error);
         Check(disk != nullptr, kind + " shuffled row split builds: " + error);
         auto memory = cyxwiz::AddSplitPartitionColumn(
             table, cyxwiz::SplitPartitionOptions{"label", 0.8f, 0.1f, 0.1f, true, 17, stratified, "split rule test"});
@@ -640,7 +641,7 @@ void TestParquetRowSplit(const std::filesystem::path& work_dir) {
 
     std::string error;
     // Stratified, unshuffled: each class in file order (the in-memory rows).
-    auto split = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, false, 17, error);
+    auto split = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, false, true, 17, error);
     Check(split != nullptr, "row split builds: " + error);
     bool ordered = true;
     for (int i = 0; i < kRows; ++i) {
@@ -651,7 +652,7 @@ void TestParquetRowSplit(const std::filesystem::path& work_dir) {
     Check(ordered, "unshuffled, each class fills train, validation, test in file order");
     // Shuffled: CountsFor's sizes per class (floor train, floor val, the
     // rest test), drawn by the seed.
-    auto shuffled = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, 17, error);
+    auto shuffled = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, true, 17, error);
     Check(shuffled != nullptr, "shuffled row split builds: " + error);
     std::array<std::array<int, 3>, 2> per_class{};
     for (int i = 0; i < kRows; ++i) ++per_class[labels[i]][shuffled->bucket[i]];
@@ -659,17 +660,17 @@ void TestParquetRowSplit(const std::filesystem::path& work_dir) {
     Check(per_class[1] == std::array<int, 3>{240, 30, 30}, "class 1 splits 240 / 30 / 30");
     Check(shuffled->counts == std::array<size_t, 3>{800, 100, 100}, "split totals 800 / 100 / 100");
     Check(shuffled->bucket != split->bucket, "a shuffled split draws other rows than file order");
-    auto again = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, 17, error);
+    auto again = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, true, 17, error);
     Check(again && again->bucket == shuffled->bucket, "the same seed draws the same rows");
-    auto other = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, 18, error);
+    auto other = cyxwiz::BuildParquetRowSplit(*dataset, "label", {0.8, 0.1, 0.1}, true, true, 18, error);
     Check(other && other->bucket != shuffled->bucket, "another seed draws other rows");
-    // Unstratified, unshuffled: ArrowDatasetBatcher's contiguous slices.
-    auto plain = cyxwiz::BuildParquetRowSplit(*dataset, "", {0.8, 0.1, 0.1}, false, 17, error);
+    // Unstratified, unshuffled: the shared rule in file order, contiguous slices.
+    auto plain = cyxwiz::BuildParquetRowSplit(*dataset, "", {0.8, 0.1, 0.1}, false, true, 17, error);
     bool contiguous = plain != nullptr;
     for (int i = 0; contiguous && i < kRows; ++i) contiguous = plain->bucket[i] == (i < 800 ? 0 : i < 900 ? 1 : 2);
     Check(contiguous, "unstratified, unshuffled: rows 0-799 train, 800-899 validation, 900-999 test");
     CheckOneSplitRule(table, *dataset);
-    Check(!cyxwiz::BuildParquetRowSplit(*dataset, "missing", {0.8, 0.1, 0.1}, false, 17, error) &&
+    Check(!cyxwiz::BuildParquetRowSplit(*dataset, "missing", {0.8, 0.1, 0.1}, false, true, 17, error) &&
               error.find("missing") != std::string::npos,
           "a missing column is refused with its name");
 
@@ -1015,6 +1016,7 @@ void TestLabelClassCount() {
 }
 
 int main(int argc, char** argv) {
+    if (!cyxwiz::test::BeginOracleTest("test_training_batcher_setup")) return 1;
     namespace fs = std::filesystem;
 
     const auto training_core_fixture = LoadTrainingCoreFixture(
@@ -1131,12 +1133,16 @@ int main(int argc, char** argv) {
         MakeMultiGroupDataset(),
         "label",
         /*batch_size=*/2);
+    // The shared split rule's counts (TOFIX228 1.6, ORA-23): 6 rows at
+    // 0.5 / 0.25 / 0.25 are 3 / 1.5 / 1.5, and the half row left over goes to
+    // Validation first (its tie order), as a pipeline-marked run splits them;
+    // the batchers' floor slicing once gave 3 / 1 / 2.
     Check(explicit_split_batchers.num_train_samples == 3,
           "explicit Arrow DataSplit train split should contain 3 samples");
-    Check(explicit_split_batchers.num_val_samples == 1,
-          "explicit Arrow DataSplit val split should contain 1 sample");
-    Check(explicit_split_batchers.num_test_samples == 2,
-          "explicit Arrow DataSplit test split should contain 2 held-out samples");
+    Check(explicit_split_batchers.num_val_samples == 2,
+          "explicit Arrow DataSplit val split should contain 2 samples");
+    Check(explicit_split_batchers.num_test_samples == 1,
+          "explicit Arrow DataSplit test split should contain 1 held-out sample");
 
     // Validation 0 with a Test share (TOFIX157): the rows after Train are
     // the Test set, and Validation is empty.

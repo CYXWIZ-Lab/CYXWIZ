@@ -1,4 +1,5 @@
 #include "audio_dataset_batcher.h"
+#include "batch_uploads.h"
 #include "classification_decision.h"
 #include "class_label_range.h"
 #include "cyxwiz/portable_random.h"
@@ -311,24 +312,19 @@ Batch AudioDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_si
 
     const size_t used = kept.size();
     if (flatten_) {
-        batch.data = Tensor({used, sample_dim},
-                            batch_data.data(), DataType::Float32);
+        batch.data = HostBatchTensor("AudioDatasetBatcher", "features", {used, sample_dim}, batch_data.data());
     } else {
-        batch.data = Tensor({used,
-                             static_cast<size_t>(feature_rows_),
-                             static_cast<size_t>(feature_cols_)},
-                            batch_data.data(), DataType::Float32);
+        batch.data = HostBatchTensor("AudioDatasetBatcher", "features",
+                                     {used, static_cast<size_t>(feature_rows_), static_cast<size_t>(feature_cols_)},
+                                     batch_data.data());
     }
 
     if (!scalar_label_mode_ && do_onehot_ && num_classes_ > 0) {
-        batch.labels = Tensor({used, num_classes_},
-                              batch_labels.data(), DataType::Float32);
+        batch.labels = HostBatchTensor("AudioDatasetBatcher", "labels", {used, num_classes_}, batch_labels.data());
     } else if (scalar_label_mode_) {
-        batch.labels = Tensor({used, 1},
-                              batch_labels.data(), DataType::Float32);
+        batch.labels = HostBatchTensor("AudioDatasetBatcher", "labels", {used, 1}, batch_labels.data());
     } else {
-        batch.labels = Tensor({used},
-                              batch_labels.data(), DataType::Float32);
+        batch.labels = HostBatchTensor("AudioDatasetBatcher", "labels", {used}, batch_labels.data());
     }
 
     // Clip numbers in the dataset: test results name the clips with them.
@@ -343,6 +339,10 @@ void AudioDatasetBatcher::Reset() {
     // validation and test metrics are reproducible across epochs.
     epoch_order_ = Part(current_phase_);
     if (current_phase_ == BatcherPhase::Train && dataset_) dataset_->SetAugmentationRound(++augmentation_round_);
+    if (current_phase_ == BatcherPhase::Train && pending_epoch_seed_) {
+        rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_));
+        pending_epoch_seed_.reset();
+    }
     if (current_phase_ == BatcherPhase::Train && shuffle_) cyxwiz::portable::Shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
     current_idx_ = 0;
 }

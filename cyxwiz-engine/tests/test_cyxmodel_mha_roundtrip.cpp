@@ -91,11 +91,10 @@ std::string BuildMhaGraphJson() {
 
     graph["nodes"].push_back({
         {"id", 1},
-        {"type", static_cast<int>(gui::NodeType::DatasetInput)},
+        {"type", static_cast<int>(gui::NodeType::DataInput)},
         {"name", "Input"},
         {"parameters", {
             {"dataset_name", "mha_roundtrip_dataset"},
-            {"dataset", "mha_roundtrip_dataset"},
             {"shape", "[4]"}
         }}
     });

@@ -382,6 +382,12 @@ public:
      */
     Optimizer* GetOptimizer() { return optimizer_.get(); }
 
+    // The built model (sequential or with branches) and where each of its
+    // modules comes from, while Train runs: read on the training thread (the
+    // batch callback), e.g. by the training oracle after each step.
+    IExecutableModel* GetExecutableModel() { return model_.get(); }
+    const std::vector<BuiltModuleProvenance>& GetModuleProvenance() const { return module_provenance_; }
+
     /**
      * Release ownership of the trained model (transfers ownership to caller):
      * a sequential model or a graph with branches (TOFIX157), for Test and,

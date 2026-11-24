@@ -401,6 +401,16 @@ gui::NodeType NextConsumerType(const TrainingConfiguration& config, size_t i) {
     return gui::NodeType::Unknown;
 }
 
+// The feature width a sequence layer (LSTM, GRU, RNN, attention, transformer)
+// reads: the last dimension of its compiled [sequence, features] input, else
+// the running width. After a Reshape the running width is still the whole row
+// (18 for a [6, 3] reshape), so these layers were built for 18 features and
+// failed on the first batch (TOFIX228 1.5b, the level 2 oracle).
+size_t SequenceInputFeatures(const CompiledLayer& layer, size_t running_width) {
+    return layer.input_shape.size() >= 2 && layer.input_shape.back() > 0 ? layer.input_shape.back() : running_width;
+}
+
+
 // Populate `model` with modules per config.layers. Returns false if
 // config produced zero layers. Logging is identical to the pre-extraction
 // path so existing training regression tests still match on log output.
@@ -706,6 +716,7 @@ bool BuildSequential(
                 if (hidden_size < 1) hidden_size = 1;
                 if (num_layers < 1) num_layers = 1;
 
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 model.Add<LSTMModule>(current_input_size, hidden_size,
                                       num_layers, bidirectional,
                                       return_sequences);
@@ -751,6 +762,7 @@ bool BuildSequential(
                 if (hidden_size < 1) hidden_size = 1;
                 if (num_layers < 1) num_layers = 1;
 
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 model.Add<GRUModule>(current_input_size, hidden_size,
                                      num_layers, bidirectional,
                                      return_sequences);
@@ -797,14 +809,11 @@ bool BuildSequential(
                     return_sequences = (rs_it->second == "true" ||
                                         rs_it->second == "1");
                 }
-                auto act_it = layer_cfg.parameters.find("nonlinearity");
-                if (act_it != layer_cfg.parameters.end() &&
-                    !act_it->second.empty()) {
-                    nonlinearity = act_it->second;
-                }
+                nonlinearity = RnnNonlinearity(layer_cfg.parameters);
                 if (hidden_size < 1) hidden_size = 1;
                 if (num_layers < 1) num_layers = 1;
 
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 model.Add<RNNModule>(current_input_size, hidden_size,
                                      num_layers, return_sequences,
                                      nonlinearity, bidirectional);
@@ -822,6 +831,7 @@ bool BuildSequential(
             }
 
             case gui::NodeType::TransformerEncoder: {
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 const size_t d_model = current_input_size > 0
                     ? current_input_size
                     : transformer_configuration.model_width;
@@ -940,6 +950,7 @@ bool BuildSequential(
             }
 
             case gui::NodeType::MultiHeadAttention: {
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 const size_t embed_dim = current_input_size > 0
                     ? current_input_size
                     : transformer_configuration.model_width;
@@ -986,6 +997,7 @@ bool BuildSequential(
             }
 
             case gui::NodeType::PositionalEncoding: {
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 const size_t d_model = current_input_size > 0
                     ? current_input_size
                     : transformer_configuration.model_width;
@@ -1012,6 +1024,7 @@ bool BuildSequential(
             }
 
             case gui::NodeType::TransformerDecoder: {
+                current_input_size = SequenceInputFeatures(layer_cfg, current_input_size);
                 const size_t d_model = current_input_size > 0
                     ? current_input_size
                     : transformer_configuration.model_width;
@@ -1428,6 +1441,11 @@ bool BuildSequential(
                     break;
                 }
                 model.Add<ReshapeModule>(layer_cfg.output_shape);
+                // A [sequence, features] result: the sequence layers after it
+                // size their outputs from its length (SequenceInputFeatures
+                // gives them its width).
+                if (layer_cfg.output_shape.size() == 2 && layer_cfg.output_shape[0] > 0)
+                    current_sequence_length = layer_cfg.output_shape[0];
                 CYXWIZ_BUILDER_INFO("  [{}] ShapeOp({} dims)", i, layer_cfg.output_shape.size());
                 break;
             }
@@ -1665,7 +1683,6 @@ bool BuildSequential(
             }
 
             // Skip non-layer nodes (preprocessing, loss functions, optimizers)
-            case gui::NodeType::DatasetInput:
             case gui::NodeType::DataLoader:
             case gui::NodeType::DataSplit:
             case gui::NodeType::Normalize:
