@@ -1,0 +1,11 @@
+# Private details that must never be committed to this public repository.
+# Copy this file to config/private-patterns.local.txt (git ignores it) and
+# replace the examples with your own: one regular expression per line.
+# Then run: python scripts/check_private_details.py
+#
+# Lab machine addresses (one line per machine, or a range)
+\b192\.168\.123\.45\b
+# Lab machine names and remote-login (ssh) aliases
+\bmy-gpu-box\b
+# Personal folders and account names
+[A-Za-z]:.Users.your-name
