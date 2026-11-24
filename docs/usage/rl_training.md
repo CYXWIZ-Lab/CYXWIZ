@@ -218,7 +218,9 @@ With **Code Gen** selected, **Generate** writes the same run as a Python
 script: Stable-Baselines3's PPO on the Engine's own environments
 (`pycyxwiz.rl`, the same physics), with the graph's layer widths,
 activation and settings (and VecNormalize when normalising). Layers SB3's
-MlpPolicy cannot express are named in a comment.
+MlpPolicy cannot express are named in a comment. When the graph does not
+compile (for example its environment comes from a plugin that is not
+loaded), the script stops at its first line with the reasons.
 
 ## How well it learns
 
