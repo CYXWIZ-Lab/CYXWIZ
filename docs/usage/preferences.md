@@ -41,11 +41,15 @@ Save) and when the Engine closes.
 ### Closing
 
 - **Ask before closing**: **When something would be lost** (the default) or
-  **Always**. Unsaved scripts, an unsaved graph, a running script or data in
-  memory always bring up the close dialog, which lists them under **Unsaved
-  work**, **Running script** and **Datasets in memory**, with **Save and
-  close**, **Close without saving** and **Keep working**. **Always** shows it
-  also when nothing is open.
+  **Always**. Unsaved scripts, an unsaved graph, a running script, a node
+  being made (a Check or Create in Make a Python node or Create node from
+  script) or data in memory always bring up the close dialog, which lists
+  them under **Unsaved work**, **Running script**, **Making a node** and
+  **Datasets in memory**, with **Save and close**, **Close without saving**
+  and **Keep working**. **Always** shows it also when nothing is open.
+  A node step cannot be stopped midway: closing then waits for it ("Closing
+  when the node step finishes...") and the Engine closes when it is done;
+  **Keep working** still takes the close back.
 
 ### Logs, Windows, Data
 

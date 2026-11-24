@@ -131,6 +131,10 @@ public:
     // Check if a script is currently running
     bool IsScriptRunning() const;
 
+    // Python steps that make a node (Make a Python node, Create node from
+    // script) still running: closing waits for them.
+    std::vector<std::string> NodeStepsRunning() const;
+
     // Stop any running script
     void StopRunningScript();
 

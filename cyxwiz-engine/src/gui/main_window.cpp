@@ -2756,6 +2756,19 @@ void MainWindow::StartJobMonitoring(const std::string& job_id) {
     }
 }
 
+std::vector<std::string> MainWindow::NodeStepsRunning() const {
+    std::vector<std::string> steps;
+    if (python_node_maker_) {
+        if (std::string step = python_node_maker_->RunningStep(); !step.empty())
+            steps.push_back(step + " (Make a Python node)");
+    }
+    if (script_editor_) {
+        if (std::string step = script_editor_->CreateNodeStepRunning(); !step.empty())
+            steps.push_back(step + " (Create node from script)");
+    }
+    return steps;
+}
+
 bool MainWindow::IsScriptRunning() const {
     if (scripting_engine_) {
         return scripting_engine_->IsScriptRunning();

@@ -50,6 +50,10 @@ void ScriptEditorPanel::SetFontScale(float scale) {
     font_scale_ = gui::CodeFontScale();
 }
 
+std::string ScriptEditorPanel::CreateNodeStepRunning() const {
+    return create_node_dialog_ ? create_node_dialog_->RunningStep() : std::string();
+}
+
 std::string ScriptEditorPanel::CreateNodeDisabledReason() const {
 #ifndef CYXWIZ_HAS_PYTHON
     return "Python is not available in this build of CyxWiz";

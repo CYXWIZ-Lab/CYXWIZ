@@ -558,6 +558,7 @@ int CyxWizApp::Run() {
             // data) is listed in one dialog; otherwise close at once.
             // Something would be lost, or Preferences > General asks every time
             if (ShouldPreventClose() || HasUnsavedWork() || HasLoadedData() ||
+                (main_window_ && !main_window_->NodeStepsRunning().empty()) ||
                 cyxwiz::core::EngineConfig::Instance().AskBeforeClosingAlways()) {
                 glfwSetWindowShouldClose(window_, GLFW_FALSE);
                 show_close_dialog_ = true;
@@ -627,11 +628,13 @@ void CyxWizApp::HandleCloseRequest() {
 
     const std::vector<std::string> unsaved = main_window_ ? main_window_->GetUnsavedFileNames() : std::vector<std::string>{};
     const bool script_running = main_window_ && main_window_->IsScriptRunning();
+    const std::vector<std::string> node_steps =
+        main_window_ ? main_window_->NodeStepsRunning() : std::vector<std::string>{};
     auto& registry = cyxwiz::DataRegistry::Instance();
     const std::vector<std::string> datasets = registry.GetDatasetNames();
 
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 600.0f);
-    const bool nothing_open = unsaved.empty() && !script_running && datasets.empty();
+    const bool nothing_open = unsaved.empty() && !script_running && node_steps.empty() && datasets.empty();
     ImGui::TextUnformatted(nothing_open ? "Nothing is unsaved." : "Some work is still open. Choose what happens to it.");
     ImGui::Spacing();
 
@@ -648,6 +651,11 @@ void CyxWizApp::HandleCloseRequest() {
     if (script_running) {
         section("Running script", {"A Python script is running. Closing stops it."}, nullptr);
     }
+    if (!node_steps.empty()) {
+        section("Making a node", node_steps,
+                close_after_node_steps_ ? "Closing when it finishes..."
+                                        : "A Python step cannot be stopped midway: Close waits for it to finish.");
+    }
     if (!datasets.empty()) {
         const auto stats = registry.GetMemoryStats();
         std::string names;
@@ -663,6 +671,11 @@ void CyxWizApp::HandleCloseRequest() {
     ImGui::Spacing();
 
     auto close_now = [&]() {
+        // A node step finishing writes its files: close once it is done.
+        if (!node_steps.empty()) {
+            close_after_node_steps_ = true;
+            return;
+        }
         if (script_running && main_window_) main_window_->StopRunningScript();
         registry.UnloadAll();
         show_close_dialog_ = false;
@@ -671,7 +684,10 @@ void CyxWizApp::HandleCloseRequest() {
         ImGui::CloseCurrentPopup();
     };
 
-    if (!unsaved.empty()) {
+    if (close_after_node_steps_ && node_steps.empty()) close_now();
+    if (close_after_node_steps_) {
+        StatusText(Status::Verifying, "Closing when the node step finishes...");
+    } else if (!unsaved.empty()) {
         if (PrimaryButton("Save and close")) {
             main_window_->SaveAllFiles();
             if (main_window_->HasUnsavedFiles()) {
@@ -690,6 +706,7 @@ void CyxWizApp::HandleCloseRequest() {
     ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - keep_w);
     if (SecondaryButton("Keep working", true, nullptr, ButtonSize::Regular) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         show_close_dialog_ = false;
+        close_after_node_steps_ = false;
         close_error_.clear();
         ImGui::CloseCurrentPopup();
     }

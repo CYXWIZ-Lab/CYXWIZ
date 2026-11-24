@@ -218,6 +218,11 @@ bool PythonNodeMakerPanel::WriteSource(fs::path& written, std::string& error) {
     return true;
 }
 
+std::string PythonNodeMakerPanel::RunningStep() const {
+    if (!pending_.valid() || pending_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) return {};
+    return (call_ == Call::Create ? "Creating " : "Checking ") + form_.class_name;
+}
+
 void PythonNodeMakerPanel::StartCheck() {
     std::string error;
     if (!engine_ || !engine_->StartPython(&error)) {

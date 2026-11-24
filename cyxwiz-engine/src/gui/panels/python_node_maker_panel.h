@@ -40,6 +40,9 @@ public:
     void SetOpenInScriptEditorCallback(std::function<void(const std::string&)> callback) {
         open_in_script_editor_ = std::move(callback);
     }
+    // The Python step still running ("Checking Swish"), or empty. Read from
+    // the call itself, so it ends even while the window is not drawn.
+    std::string RunningStep() const;
 
 private:
     enum class Result { None, Busy, Passed, Failed, CheckError, Created, Error };

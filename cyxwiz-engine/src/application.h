@@ -78,6 +78,8 @@ private:
     bool show_close_dialog_ = false;  // the one close dialog (TOFIX129 A2-2)
     std::string close_error_;
     bool force_close_ = false;
+    // Close was chosen while a node step ran: the app closes when it ends.
+    bool close_after_node_steps_ = false;
 
     // Close confirmation handling
     void HandleCloseRequest();
