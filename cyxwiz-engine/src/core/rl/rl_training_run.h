@@ -70,7 +70,7 @@ public:
     std::shared_ptr<TrainedPolicy> Trained() const;
 
     // Watching the run while it trains (TOFIX212 P5), applied by the worker
-    // between updates (a SAC run: between reports). Preview: the policy is
+    // between updates (an off-policy run, SAC, TD3 or DQN: between reports). Preview: the policy is
     // copied every `every_updates` updates (reports) (and at the first one
     // after Preview is chosen) for a preview to play beside training; training
     // is not changed. RawCopy: the plugin's view follows copy 0 of the
@@ -95,7 +95,7 @@ public:
     ExecutionDeviceContext Device() const;
 
 private:
-    // A copy of the policy for the preview (PPO's policy or SAC's actor)
+    // A copy of the policy for the preview (PPO's policy, SAC's or TD3's actor, DQN's Q network)
     struct PreviewNetworks {
         std::map<std::string, Tensor> parameters;
         Tensor log_std;  // a continuous PPO policy's; empty otherwise

@@ -2,9 +2,11 @@
 
 #include "../optimizer_step.h"
 
+#include <cyxwiz/fused_mlp.h>
 #include <cyxwiz/optimizers/adam.h>
 #include <cyxwiz/optimizers/gradient_clipping.h>
 #include <cyxwiz/rl/sac.h>
+#include <cyxwiz/sequential.h>
 
 #include <arrayfire.h>
 #include <spdlog/spdlog.h>
@@ -20,21 +22,6 @@
 namespace cyxwiz::rl {
 
 namespace {
-
-// SplitMix64 for the loop's own draws (action, sample and noise seeds)
-class Random {
-public:
-    explicit Random(uint64_t seed) : state_(seed) {}
-    uint64_t Next() {
-        uint64_t z = (state_ += 0x9E3779B97F4A7C15ull);
-        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
-        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-        return z ^ (z >> 31);
-    }
-
-private:
-    uint64_t state_;
-};
 
 std::vector<float> Host(const Tensor& t) {
     const float* data = t.ReadData<float>();
@@ -189,7 +176,7 @@ bool OffPolicyLoop::Run(OffPolicyLearner& learner, const std::function<void(cons
     const size_t act_size = static_cast<size_t>(info.action_size);  // 1 for a choice of actions
     const bool discrete = info.discrete_actions;
     const size_t batch = static_cast<size_t>(s.batch_size);
-    Random random(s.seed ^ 0x5AC5AC5AC5ull);
+    SplitMix64 random(s.seed ^ 0x5AC5AC5AC5ull);
     const OffPolicyLearner::NextSeed next_seed = [&random]() { return random.Next(); };
 
     std::vector<float> obs(n * obs_size), final_obs(n * obs_size), rewards(n), env_actions(n * act_size);
@@ -204,7 +191,7 @@ bool OffPolicyLoop::Run(OffPolicyLearner& learner, const std::function<void(cons
 
     try {
         spdlog::info("{}: the networks run as {}", algorithm_, learner.NetworkPath());
-        ReplayBuffer buffer(s.buffer_size, obs_size, act_size);
+        ReplayBuffer buffer(s.buffer_size, obs_size, act_size, algorithm_);
         metrics.buffer_capacity = buffer.Capacity();
         metrics.buffer_bytes = buffer.Bytes();
         VecNormalizeSettings norm;

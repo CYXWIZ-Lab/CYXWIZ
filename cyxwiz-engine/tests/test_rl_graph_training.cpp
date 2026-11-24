@@ -545,7 +545,7 @@ void CheckSac(const rl_graph_test::Graph& ppo_graph) {
         Check(!reports.front().learning && last.learning && last.updates == 2500,
               "random steps first, then a gradient step a step: " + std::to_string(last.updates));
         Check(last.buffer_size == 2000 && last.buffer_capacity == 2000 &&
-                  last.buffer_bytes == cyxwiz::rl::ReplayBytes(2000, 4, 1),
+                  last.buffer_bytes == cyxwiz::rl::ReplayBuffer::BytesFor(2000, 4, 1),
               "the replay buffer fills to its size");
         Check(std::isfinite(last.critic_loss) && std::isfinite(last.actor_loss) && last.ent_coef > 0.0f &&
                   last.ent_coef < 1.0f,
@@ -597,6 +597,7 @@ void CheckSac(const rl_graph_test::Graph& ppo_graph) {
     Check(cyxwiz::rl::PolicyMismatch(*trained, *config).empty(), "the SAC policy fits its own graph");
     cyxwiz::GraphCompiler compiler;
     const auto ppo = compiler.Compile(ppo_graph.nodes, ppo_graph.links, true);
+    Check(ppo.rl != nullptr, "the PPO pattern compiles: " + ppo.error_message);
     if (ppo.rl)
         Check(cyxwiz::rl::PolicyMismatch(*trained, *ppo.rl).find("trained by SAC") != std::string::npos,
               "a PPO graph refuses the SAC policy: " + cyxwiz::rl::PolicyMismatch(*trained, *ppo.rl));
@@ -699,6 +700,7 @@ void CheckTd3(const rl_graph_test::Graph& ppo_graph) {
     Check(cyxwiz::rl::PolicyMismatch(*trained, *config).empty(), "the TD3 policy fits its own graph");
     cyxwiz::GraphCompiler compiler;
     const auto ppo = compiler.Compile(ppo_graph.nodes, ppo_graph.links, true);
+    Check(ppo.rl != nullptr, "the PPO pattern compiles: " + ppo.error_message);
     if (ppo.rl)
         Check(cyxwiz::rl::PolicyMismatch(*trained, *ppo.rl).find("trained by TD3") != std::string::npos,
               "a PPO graph refuses the TD3 policy: " + cyxwiz::rl::PolicyMismatch(*trained, *ppo.rl));
@@ -920,6 +922,7 @@ void CheckDqn() {
     const auto ppo_graph = rl_graph_test::Pattern(ppo_id);
     cyxwiz::GraphCompiler compiler;
     const auto ppo = compiler.Compile(ppo_graph.nodes, ppo_graph.links, true);
+    Check(ppo.rl != nullptr, "the PPO pattern compiles: " + ppo.error_message);
     if (ppo.rl)
         Check(cyxwiz::rl::PolicyMismatch(*trained, *ppo.rl).find("trained by DQN") != std::string::npos,
               "a PPO graph refuses the DQN policy: " + cyxwiz::rl::PolicyMismatch(*trained, *ppo.rl));

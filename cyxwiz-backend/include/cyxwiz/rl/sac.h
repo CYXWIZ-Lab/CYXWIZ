@@ -17,7 +17,7 @@
 //
 // The actor's distribution is SB3's SquashedDiagGaussian: u = mean + std *
 // noise with log std clamped to [-20, 2] and taken from the state, a =
-// tanh(u), log pi(a) = sum(N(u; mean, std)) - sum(log(1 - a^2 + 1e-6)).
+// tanh(u), log pi(a) = sum(log N(u; mean, std)) - sum(log(1 - a^2 + 1e-6)).
 // Actions are in [-1, 1]; scaling to the environment's bounds is the
 // trainer's.
 
@@ -35,7 +35,7 @@ inline constexpr float kSacSquashEpsilon = 1e-6f;
 
 // Standard normal noise [rows, actions]: the same draws for a seed on every device.
 CYXWIZ_API Tensor SacNoise(size_t rows, size_t actions, uint64_t seed);
-// Uniform actions in [-1, 1] [rows, actions] (the random steps before learning starts).
+// Uniform actions in [-1, 1) [rows, actions] (the random steps before learning starts).
 CYXWIZ_API Tensor SacUniformActions(size_t rows, size_t actions, uint64_t seed);
 
 // The actor's two outputs, mean [B, A] and log std [B, A] (raw, before the

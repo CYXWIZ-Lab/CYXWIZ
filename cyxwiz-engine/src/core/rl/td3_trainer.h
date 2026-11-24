@@ -18,10 +18,6 @@
 #include <string>
 #include <vector>
 
-namespace cyxwiz {
-class FusedMlp;
-}
-
 namespace cyxwiz::rl {
 
 // The actor gives actions in [-1, 1] [B, A] (it ends in tanh); each critic
@@ -115,37 +111,14 @@ struct Td3TrainedState {
     std::map<std::string, OptimizerState> optimizers;
 };
 
-// The loop's settings of a TD3 config
-OffPolicySettings LoopSettings(const Td3Config& config);
-
-class Td3Trainer {
+class Td3Trainer : public OffPolicyTrainer<Td3Learner, Td3Networks, Td3Config, Td3TrainedState> {
 public:
     // The environment's actions must be continuous and bounded.
     Td3Trainer(TrainingEnvironment environment, Td3Networks networks, Td3Config config);
-    ~Td3Trainer();
-
-    // Runs to total_timesteps, or until Stop. False with the reason on an
-    // environment or device failure (the replay buffer not fitting included).
-    bool Train(const std::function<void(const OffPolicyUpdateMetrics&)>& on_report, std::string& error);
-
-    void Stop() { loop_.Stop(); }
-    void Pause() { loop_.Pause(); }
-    void Resume() { loop_.Resume(); }
-    // Its loop (a run stops, pauses and resumes it there)
-    OffPolicyLoop& Loop() { return loop_; }
-
-    // Moves out what Train left (once, after Train). False with the reason.
-    bool TakeTrained(Td3TrainedState& out, std::string& error);
-    // A copy of the actor now. Call from on_report, on the thread that trains.
-    bool CopyPolicy(ActorCopy& out, std::string& error);
 
 private:
-    bool CheckSetup(std::string& error) const;
-
-    OffPolicyLoop loop_;
-    Td3Networks networks_;  // until Train hands them to the learner
-    Td3Config config_;
-    std::unique_ptr<Td3Learner> learner_;
+    bool CheckSetup(std::string& error) const override;
+    std::unique_ptr<Td3Learner> MakeLearner(Td3Networks networks) override;
 };
 
 }  // namespace cyxwiz::rl

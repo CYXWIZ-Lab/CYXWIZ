@@ -1,5 +1,7 @@
 #include "cyxwiz/rl/td3.h"
 
+#include "rl_common.h"
+
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -19,32 +21,19 @@ namespace cyxwiz::rl {
 
 namespace {
 
-af::array Array(const Tensor& t) { return t.GetSemanticArray(); }
+using detail::Array;
+using detail::Make;
+using detail::Require;
+using detail::Total;
 
-Tensor Make(const af::array& a, std::vector<size_t> shape) {
-    af::array evaluated = a;
-    evaluated.eval();
-    return Tensor::FromSemanticArray(evaluated, std::move(shape));
-}
+constexpr const char* kLearner = "TD3: ";
 
-void Require(bool ok, const std::string& what) {
-    if (!ok) throw std::invalid_argument(what);
-}
-
-// B values ([B] or [B, 1]) as an ArrayFire column of B rows
-af::array Column(const Tensor& t, size_t rows, const char* name) {
-    Require(t.NumElements() == rows,
-            std::string("TD3: ") + name + " needs " + std::to_string(rows) + " values, got " +
-                std::to_string(t.NumElements()));
-    return af::moddims(Array(t), static_cast<dim_t>(rows));
-}
+af::array Column(const Tensor& t, size_t rows, const char* name) { return detail::Column(t, rows, kLearner, name); }
 
 void RequireActions(const Tensor& actions, const Tensor& noise) {
     Require(actions.Shape().size() == 2, "TD3: the actions must be [B, A]");
     Require(noise.Shape() == actions.Shape(), "TD3: one noise value per action");
 }
-
-af::array Total(const af::array& a) { return af::sum(af::flat(a)); }
 
 }  // namespace
 
@@ -70,8 +59,7 @@ Tensor Td3Target(const Tensor& next_q1, const Tensor& next_q2, const Tensor& rew
     const size_t rows = next_q1.NumElements();
     Require(rows > 0, "TD3: the target needs at least one row");
     const af::array next_q = af::min(Column(next_q1, rows, "next Q1"), Column(next_q2, rows, "next Q2"));
-    const af::array y = Column(rewards, rows, "rewards") + (1.0f - Column(dones, rows, "dones")) * gamma * next_q;
-    return Make(af::moddims(y, static_cast<dim_t>(rows), 1), {rows, 1});
+    return detail::BellmanTarget(next_q, rewards, dones, gamma, rows, kLearner);
 }
 
 Td3CriticLoss Td3CriticLossAndGradients(const Tensor& q1, const Tensor& q2, const Tensor& target) {

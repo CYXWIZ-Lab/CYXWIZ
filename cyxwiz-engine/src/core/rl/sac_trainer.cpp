@@ -2,7 +2,6 @@
 
 #include <cyxwiz/fused_mlp.h>
 #include <cyxwiz/rl/sac.h>
-#include <cyxwiz/sequential.h>
 
 #include <spdlog/spdlog.h>
 
@@ -19,6 +18,7 @@ SacLearner::SacLearner(SacNetworks networks, size_t observation_size, size_t act
       config_(config) {
     if (!networks_.actor || !networks_.q1 || !networks_.q2 || !networks_.q1_target || !networks_.q2_target)
         throw std::invalid_argument("SAC needs an actor, two critics and their targets.");
+    if (config_.target_entropy_auto) config_.target_entropy = -static_cast<float>(action_size_);
     CopyParameters(*networks_.q1, *networks_.q1_target);
     CopyParameters(*networks_.q2, *networks_.q2_target);
     networks_.q1_target->SetTraining(false);
@@ -35,19 +35,11 @@ SacLearner::SacLearner(SacNetworks networks, size_t observation_size, size_t act
     // The five networks fused on the device's provider, or none of them (one
     // path to report)
     std::string why;
-    const auto fuse = [&why](IExecutableModel& model) -> std::unique_ptr<FusedMlp> {
-        SequentialModel* sequential = model.AsSequentialModel();
-        if (!sequential) {
-            why = "not a sequential network";
-            return nullptr;
-        }
-        return FusedMlp::For(*sequential, why);
-    };
-    actor_fused_ = fuse(*networks_.actor);
-    if (actor_fused_) q1_fused_ = fuse(*networks_.q1);
-    if (q1_fused_) q2_fused_ = fuse(*networks_.q2);
-    if (q2_fused_) q1_target_fused_ = fuse(*networks_.q1_target);
-    if (q1_target_fused_) q2_target_fused_ = fuse(*networks_.q2_target);
+    actor_fused_ = FuseNetwork(*networks_.actor, why);
+    if (actor_fused_) q1_fused_ = FuseNetwork(*networks_.q1, why);
+    if (q1_fused_) q2_fused_ = FuseNetwork(*networks_.q2, why);
+    if (q2_fused_) q1_target_fused_ = FuseNetwork(*networks_.q1_target, why);
+    if (q1_target_fused_) q2_target_fused_ = FuseNetwork(*networks_.q2_target, why);
     if (q2_target_fused_) {
         network_path_ = "fused small-network kernels (" + actor_fused_->ProviderId() + ")";
     } else {
@@ -322,27 +314,8 @@ void SacLearner::Report(OffPolicyUpdateMetrics& metrics) {
 
 // ---------------------------------------------------------------- SacTrainer
 
-OffPolicySettings LoopSettings(const SacConfig& c) {
-    OffPolicySettings s;
-    s.total_timesteps = c.total_timesteps;
-    s.buffer_size = c.buffer_size;
-    s.learning_starts = c.learning_starts;
-    s.batch_size = c.batch_size;
-    s.train_freq = c.train_freq;
-    s.gradient_steps = c.gradient_steps;
-    s.gamma = c.gamma;
-    s.seed = c.seed;
-    s.normalize_observations = c.normalize_observations;
-    s.target_return = c.target_return;
-    s.report_every = c.report_every;
-    return s;
-}
-
 SacTrainer::SacTrainer(TrainingEnvironment environment, SacNetworks networks, SacConfig config)
-    : loop_(std::move(environment), LoopSettings(config), "SAC"), networks_(std::move(networks)),
-      config_(std::move(config)) {}
-
-SacTrainer::~SacTrainer() = default;
+    : OffPolicyTrainer(std::move(environment), std::move(networks), std::move(config), "SAC", &SacNetworks::actor) {}
 
 bool SacTrainer::CheckSetup(std::string& error) const {
     const auto& c = config_;
@@ -358,44 +331,12 @@ bool SacTrainer::CheckSetup(std::string& error) const {
     return error.empty();
 }
 
-bool SacTrainer::TakeTrained(SacTrainedState& out, std::string& error) {
-    if (!learner_ || !loop_.Normalizer()) {
-        error = "SAC has not trained a policy.";
-        return false;
-    }
-    std::map<std::string, OptimizerState> optimizers;
-    if (!learner_->ExportOptimizers(optimizers, error)) return false;
-    out.optimizers = std::move(optimizers);
-    out.log_ent_coef = learner_->LogEntCoef();
-    out.networks = std::move(learner_->Networks());
-    out.normalizer = loop_.TakeNormalizer();
-    learner_.reset();
-    return true;
-}
-
-bool SacTrainer::CopyPolicy(ActorCopy& out, std::string& error) {
-    if (!learner_ || !loop_.Normalizer()) {
-        error = "SAC has no policy to copy yet.";
-        return false;
-    }
-    out.parameters.clear();
-    for (const auto& [name, tensor] : learner_->Networks().actor->GetParameters()) out.parameters[name] = tensor.Clone();
-    out.normalizer = std::make_unique<VecNormalize>(*loop_.Normalizer());
-    return true;
-}
-
-bool SacTrainer::Train(const std::function<void(const OffPolicyUpdateMetrics&)>& on_report, std::string& error) {
-    error.clear();
-    if (!CheckSetup(error)) return false;
+std::unique_ptr<SacLearner> SacTrainer::MakeLearner(SacNetworks networks) {
     const auto& info = loop_.Environment().info;
-    try {
-        learner_ = std::make_unique<SacLearner>(std::move(networks_), static_cast<size_t>(info.observation_size),
-                                                static_cast<size_t>(info.action_size), config_);
-    } catch (const std::exception& e) {
-        error = std::string("SAC training failed: ") + e.what();
-        return false;
-    }
-    return loop_.Run(*learner_, on_report, error);
+    return std::make_unique<SacLearner>(std::move(networks), static_cast<size_t>(info.observation_size),
+                                        static_cast<size_t>(info.action_size), config_);
 }
+
+void SacTrainer::TakeMore(SacLearner& learner, SacTrainedState& out) { out.log_ent_coef = learner.LogEntCoef(); }
 
 }  // namespace cyxwiz::rl

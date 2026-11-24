@@ -8,6 +8,7 @@
 #include <arrayfire.h>
 
 #include "../device_random.h"
+#include "rl_common.h"
 
 // Windows headers define these; ArrayFire's min/max must win.
 #ifdef max
@@ -21,27 +22,15 @@ namespace cyxwiz::rl {
 
 namespace {
 
-constexpr double kLogSqrtTwoPi = 0.91893853320467274178;  // log(sqrt(2 pi))
+using detail::kLogSqrtTwoPi;
+using detail::Array;
+using detail::Make;
+using detail::Require;
+using detail::Total;
 
-af::array Array(const Tensor& t) { return t.GetSemanticArray(); }
+constexpr const char* kLearner = "SAC: ";
 
-Tensor Make(const af::array& a, std::vector<size_t> shape) {
-    af::array evaluated = a;
-    evaluated.eval();
-    return Tensor::FromSemanticArray(evaluated, std::move(shape));
-}
-
-void Require(bool ok, const std::string& what) {
-    if (!ok) throw std::invalid_argument(what);
-}
-
-// B values ([B] or [B, 1]) as an ArrayFire column of B rows
-af::array Column(const Tensor& t, size_t rows, const char* name) {
-    Require(t.NumElements() == rows,
-            std::string("SAC: ") + name + " needs " + std::to_string(rows) + " values, got " +
-                std::to_string(t.NumElements()));
-    return af::moddims(Array(t), static_cast<dim_t>(rows));
-}
+af::array Column(const Tensor& t, size_t rows, const char* name) { return detail::Column(t, rows, kLearner, name); }
 
 // One value on the device as a [1] array
 af::array Scalar(const Tensor& t, const char* name) {
@@ -72,8 +61,6 @@ Squash Forward(const Tensor& mean, const Tensor& log_std, const Tensor& noise) {
     s.a = af::tanh(s.u);
     return s;
 }
-
-af::array Total(const af::array& a) { return af::sum(af::flat(a)); }
 
 // An optional input given (a default Tensor has no shape)
 bool Given(const Tensor& t) { return !t.Shape().empty() && t.NumElements() > 0; }
@@ -151,9 +138,7 @@ Tensor SacTarget(const Tensor& next_q1, const Tensor& next_q2, const Tensor& nex
     const af::array alpha = af::tile(Scalar(ent_coef, "the entropy weight"), static_cast<unsigned>(rows));
     const af::array next_q = af::min(Column(next_q1, rows, "next Q1"), Column(next_q2, rows, "next Q2")) -
                              alpha * Column(next_log_prob, rows, "next log pi");
-    const af::array y = Column(rewards, rows, "rewards") +
-                        (1.0f - Column(dones, rows, "dones")) * gamma * next_q;
-    return Make(af::moddims(y, static_cast<dim_t>(rows), 1), {rows, 1});
+    return detail::BellmanTarget(next_q, rewards, dones, gamma, rows, kLearner);
 }
 
 SacCriticLoss SacCriticLossAndGradients(const Tensor& q1, const Tensor& q2, const Tensor& target) {

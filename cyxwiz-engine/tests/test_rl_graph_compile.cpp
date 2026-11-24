@@ -18,6 +18,7 @@
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/core/rl_graph_compile.h"
 #include "../src/core/rl_graph_presentation.h"
+#include "../src/core/rl/replay_buffer.h"
 #include "../src/core/rl/rl_reference.h"
 #include "../src/gui/node_type_import_registry.h"
 #include "rl_graph_test_support.h"
@@ -26,6 +27,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <sstream>
 
@@ -419,6 +421,22 @@ void CheckTd3Reference() {
               !cyxwiz::rl::FindTd3Reference(text, "InvertedPendulum-v5", 1, louder).has_value() &&
               !cyxwiz::rl::FindTd3Reference(text, "InvertedPendulum-v5", 1, delayed).has_value(),
           "TD3: no noise, other noise or another policy delay has no reference");
+
+    // The recorded file: the pendulum at the TD3 node's defaults, HalfCheetah at RL Zoo's settings
+    const std::string recorded = ReadText(CYXWIZ_TD3_REFERENCE_FILE);
+    Check(!recorded.empty(), "TD3: the recorded SB3 curves are readable");
+    const auto pendulum_file = cyxwiz::rl::FindTd3Reference(recorded, "InvertedPendulum-v5", 1, defaults);
+    Check(pendulum_file && pendulum_file->seeds.size() == 3, "TD3: the pendulum's recorded reference, 3 seeds");
+    if (pendulum_file) {
+        const auto at = pendulum_file->At(130000.0);
+        Check(at && *at > 900.0 && *at <= 1000.0, "TD3: the pendulum's seeds' mean near 130,000 steps is above 900");
+    }
+    const auto cheetah_file = cyxwiz::rl::FindTd3Reference(recorded, "HalfCheetah-v5", 1, cheetah);
+    Check(cheetah_file && cheetah_file->seeds.size() == 3, "TD3: HalfCheetah's recorded reference, 3 seeds");
+    if (cheetah_file) {
+        const auto at = cheetah_file->At(1000000.0);
+        Check(at && *at > 5000.0, "TD3: HalfCheetah's seeds' mean at 1,000,000 steps is above 5,000");
+    }
 }
 
 // DQN's reference (TOFIX216 DQN V5): the recorded runs' settings must be the
@@ -464,6 +482,15 @@ void CheckDqnReference() {
     if (cartpole) {
         const auto at = cartpole->At(40000.0);
         Check(at && *at > 100.0 && *at < 500.0, "DQN: the seeds' mean at 40,000 steps is between 100 and 500");
+        // Recorded with Q layers of 256 and 256: the tuned 256-256 graph has it, the pattern's 64-64 does not
+        Check(cartpole->layers == std::vector<int>({256, 256}) && cyxwiz::rl::SameLayers(*cartpole, *config.rl),
+              "DQN: the reference's layers are the tuned graph's");
+        Graph narrow = DqnPattern(id, 64);
+        if (preset)
+            for (const auto& [k, v] : preset->learner) narrow.At(id.ppo).parameters[k] = v;
+        const auto narrow_config = Compile(narrow);
+        Check(narrow_config.rl && !cyxwiz::rl::SameLayers(*cartpole, *narrow_config.rl),
+              "DQN: a 64-64 graph gets no 256-256 reference");
     }
 }
 
@@ -510,9 +537,11 @@ bool LoadExample(const std::filesystem::path& path, Graph& g, std::string& error
 
 void CheckExamples() {
     int sac_examples = 0;
-    std::ifstream sac_file(CYXWIZ_SAC_REFERENCE_FILE, std::ios::binary);
-    std::ostringstream sac_reference;
-    sac_reference << sac_file.rdbuf();
+    int td3_examples = 0;
+    int dqn_examples = 0;
+    const std::string sac_reference = ReadText(CYXWIZ_SAC_REFERENCE_FILE);
+    const std::string td3_reference = ReadText(CYXWIZ_TD3_REFERENCE_FILE);
+    const std::string dqn_reference = ReadText(CYXWIZ_DQN_REFERENCE_FILE);
     for (const auto& entry : std::filesystem::directory_iterator(CYXWIZ_RL_EXAMPLES_DIR)) {
         if (entry.path().extension() != ".cyxgraph") continue;
         const std::string name = entry.path().filename().string();
@@ -521,9 +550,45 @@ void CheckExamples() {
         Check(LoadExample(entry.path(), g, error), name + " loads: " + error);
         const auto config = Compile(g);
         Check(config.is_valid && config.rl, name + " compiles:" + Issues(config));
-        if (!config.rl || config.rl->algorithm != cyxwiz::RLAlgorithm::SAC) continue;
-        ++sac_examples;
+        if (!config.rl) continue;
         const auto& rl = *config.rl;
+        if (rl.algorithm == cyxwiz::RLAlgorithm::DQN) {
+            ++dqn_examples;
+            const auto& d = rl.dqn;
+            // The gate's runs: one copy, RL Zoo's CartPole settings and Q layers of 256 and 256 with ReLU
+            Check(rl.copies == 1 && rl.q_layers.size() == 4 && rl.q_layers[0].units == 256 &&
+                      rl.q_layers[2].units == 256 && rl.q_layers[1].type == NodeType::ReLU && rl.policy_layers.empty(),
+                  name + ": one copy, Q layers of 256 and 256 with ReLU");
+            Check(rl.environment.id == "CartPole-v1" && d.total_timesteps == 50000 && d.learning_starts == 1000 &&
+                      d.train_freq == 256 && d.gradient_steps == 128 && d.target_update_interval == 10,
+                  name + ": RL Zoo's CartPole settings, 50,000 steps");
+            const auto ref = cyxwiz::rl::FindDqnReference(dqn_reference, rl.environment.id, rl.copies, d);
+            Check(ref && ref->seeds.size() == 3 && cyxwiz::rl::SameLayers(*ref, rl),
+                  name + " has the recorded SB3 reference on the dashboard, with its layers");
+            continue;
+        }
+        if (rl.algorithm == cyxwiz::RLAlgorithm::TD3) {
+            ++td3_examples;
+            const auto& t = rl.td3;
+            // The gate's runs: one copy, 400-300 ReLU, Gaussian noise of 0.1, InvertedPendulum at the
+            // defaults to 950 within 150,000 steps, HalfCheetah at RL Zoo's
+            Check(rl.copies == 1 && rl.policy_layers.size() == 4 && rl.q_layers.size() == 4 &&
+                      rl.policy_layers[0].units == 400 && rl.policy_layers[2].units == 300 &&
+                      rl.policy_layers[1].type == NodeType::ReLU && t.action_noise && t.action_noise_std == 0.1f,
+                  name + ": one copy, layers of 400 and 300 with ReLU, noise 0.1");
+            if (rl.environment.id == "InvertedPendulum-v5")
+                Check(t.total_timesteps == 150000 && t.target_return == 950.0f && t.learning_starts == 100,
+                      name + ": the defaults, stopping at 950 within 150,000 steps");
+            else
+                Check(rl.environment.id == "HalfCheetah-v5" && t.total_timesteps == 1000000 &&
+                          t.learning_starts == 10000 && std::isnan(t.target_return),
+                      name + ": RL Zoo's HalfCheetah settings, all 1,000,000 steps");
+            const auto ref = cyxwiz::rl::FindTd3Reference(td3_reference, rl.environment.id, rl.copies, t);
+            Check(ref && ref->seeds.size() == 3, name + " has the recorded SB3 reference on the dashboard");
+            continue;
+        }
+        if (rl.algorithm != cyxwiz::RLAlgorithm::SAC) continue;
+        ++sac_examples;
         const auto& c = rl.sac;
         // The stability gate's runs: one copy, 256-256 ReLU, InvertedPendulum
         // at the defaults to 950 within 150,000 steps, HalfCheetah at RL Zoo's
@@ -537,10 +602,11 @@ void CheckExamples() {
             Check(rl.environment.id == "HalfCheetah-v5" && c.total_timesteps == 1000000 &&
                       c.learning_starts == 10000 && std::isnan(c.target_return),
                   name + ": RL Zoo's HalfCheetah settings, all 1,000,000 steps");
-        const auto ref = cyxwiz::rl::FindSacReference(sac_reference.str(), rl.environment.id, rl.copies, c);
+        const auto ref = cyxwiz::rl::FindSacReference(sac_reference, rl.environment.id, rl.copies, c);
         Check(ref && ref->seeds.size() == 3, name + " has the recorded SB3 reference on the dashboard");
     }
-    Check(sac_examples == 2, "the two SAC examples are checked");
+    Check(sac_examples == 2 && td3_examples == 2 && dqn_examples == 1,
+          "the two SAC, the two TD3 and the DQN examples are checked");
 }
 
 void CheckSac() {
@@ -663,19 +729,20 @@ void CheckSac() {
     Check(squashed.size() == 3 && squashed[0].value == "Gaussian squashed by tanh, 1 action" &&
               squashed[1].value == "256 -> 1 mean and 256 -> 1 log std (added)",
           "a SAC Policy Head adds a mean and a log std per action");
-    Check(ReplayMemoryText(cyxwiz::rl::ReplayBytes(1000000, 17, 6)) == "about 168 MB" &&
-              ReplayMemoryText(cyxwiz::rl::ReplayBytes(10000000, 17, 6)) == "about 1.7 GB" &&
-              cyxwiz::rl::ReplayBytes(0, 17, 6) == 0,
+    Check(ReplayMemoryText(cyxwiz::rl::ReplayBuffer::BytesFor(1000000, 17, 6)) == "about 168 MB" &&
+              ReplayMemoryText(cyxwiz::rl::ReplayBuffer::BytesFor(10000000, 17, 6)) == "about 1.7 GB" &&
+              cyxwiz::rl::ReplayBuffer::BytesFor(0, 17, 6) == 0,
           "HalfCheetah's replay buffer of 1M steps is about 168 MB");
     {
         const uint64_t gpu = 4294967296ull;  // a 4 GiB card
-        const auto fits = ReplayFitText(cyxwiz::rl::ReplayBytes(1000000, 17, 6), "NVIDIA GeForce GTX 1050 Ti", gpu);
+        const auto fits =
+            ReplayFitText(cyxwiz::rl::ReplayBuffer::BytesFor(1000000, 17, 6), "NVIDIA GeForce GTX 1050 Ti", gpu);
         Check(fits.text == "about 168 MB, 4 % of the NVIDIA GeForce GTX 1050 Ti's 4.3 GB" && fits.advice.empty(),
               "the buffer against the device's memory");
-        const auto tight = ReplayFitText(cyxwiz::rl::ReplayBytes(20000000, 17, 6), "GPU", gpu);
+        const auto tight = ReplayFitText(cyxwiz::rl::ReplayBuffer::BytesFor(20000000, 17, 6), "GPU", gpu);
         Check(tight.text == "about 3.4 GB, 78 % of the GPU's 4.3 GB" && !tight.advice.empty(),
               "a buffer that leaves the networks little room says so");
-        const auto over = ReplayFitText(cyxwiz::rl::ReplayBytes(30000000, 17, 6), "", gpu);
+        const auto over = ReplayFitText(cyxwiz::rl::ReplayBuffer::BytesFor(30000000, 17, 6), "", gpu);
         Check(over.text == "about 5 GB, more than the training device's 4.3 GB" &&
                   over.advice == "The replay buffer does not fit the training device: lower Buffer size.",
               "a buffer the device cannot hold");
@@ -752,6 +819,13 @@ void CheckTd3() {
         const auto config = Compile(g);
         Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "TD3 learns continuous actions"),
               "TD3 on a choice of actions is refused:" + Issues(config));
+    }
+    for (const NodeType learner : {NodeType::SAC, NodeType::TD3}) {
+        Graph g = Pattern(id, 64, NodeType::ReLU, learner);
+        g.At(id.env).parameters["environment"] = "test.unbounded:Pendulum";
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "needs bounded actions"),
+              "an environment without action bounds is refused at Compile, as Train refuses it:" + Issues(config));
     }
     {
         Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::TD3);
@@ -943,7 +1017,7 @@ void CheckDqn() {
     const auto q = QHeadFacts(256, 2, NodeType::DQN);
     Check(q.size() == 3 &&
               q[0].value == "256 -> 2 (added): one Q value per choice of action, from the observation alone" &&
-              q[1].value == "1 Q network and a target copy (built by DQN, moved every Target every steps)",
+              q[1].value == "1 Q network and a target copy (built by DQN; it moves at each Target every)",
           "the Q Head under DQN gives one value per choice");
     Check(ExplorationScheduleText(1.0f, 0.04f, 0.16f, 50000) ==
                   "random 100 % of the time at first, down to 4 % after 8,000 steps (16 %)" &&
@@ -982,6 +1056,11 @@ int main() {
         }
         if (key == "test.continuous:HalfCheetah-v5") {
             info = Cheetah();
+            return true;
+        }
+        if (key == "test.unbounded:Pendulum") {  // an actuator without a control range
+            info = Pendulum();
+            info.action_high = {std::numeric_limits<float>::infinity()};
             return true;
         }
         if (key != "cyxwiz.builtin:CartPole-v1") return false;

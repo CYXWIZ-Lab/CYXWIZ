@@ -1,5 +1,7 @@
 #include "rl_graph_presentation.h"
 
+#include "rl_graph_compile.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -25,8 +27,11 @@ std::string Grouped(int64_t n) {
     return (n < 0 ? "-" : "") + digits;
 }
 
-// A share as a percentage, "4 %" or "2.5 %"
-std::string Percent(double share) { return Number(std::round(share * 1000.0) / 10.0) + " %"; }
+// A percentage as "4 %" or "2.5 %"
+std::string PercentText(double percent) { return Number(percent) + " %"; }
+
+// A share as a percentage to one decimal
+std::string Percent(double share) { return PercentText(std::round(share * 1000.0) / 10.0); }
 
 }  // namespace
 
@@ -97,7 +102,7 @@ std::vector<Fact> QHeadFacts(size_t features, size_t actions, gui::NodeType lear
     if (learner == gui::NodeType::DQN) {  // SB3 DQN's QNetwork: one value per choice, from the observation
         facts.push_back({"Output layer", from + (actions > 0 ? std::to_string(actions) + " (added)" : "one per choice (added)") +
                                              ": one Q value per choice of action, from the observation alone"});
-        facts.push_back({"Networks", "1 Q network and a target copy (built by DQN, moved every Target every steps)"});
+        facts.push_back({"Networks", "1 Q network and a target copy (built by DQN; it moves at each Target every)"});
         facts.push_back({"Policy", "the choice with the highest Q value; at random a share of the time while training"});
         return facts;
     }
@@ -149,9 +154,8 @@ ReplayFit ReplayFitText(uint64_t bytes, const std::string& device_name, uint64_t
         fit.advice = "The replay buffer does not fit the training device: lower Buffer size.";
         return fit;
     }
-    char percent[16];
-    std::snprintf(percent, sizeof(percent), "%.0f %%", std::max(1.0, std::round(100.0 * share)));
-    fit.text = ReplayMemoryText(bytes) + ", " + percent + " of " + device;
+    // A whole percent, at least 1 (share is at most 1 here)
+    fit.text = ReplayMemoryText(bytes) + ", " + PercentText(std::max(1.0, std::round(100.0 * share))) + " of " + device;
     if (share > 0.75)
         fit.advice = "The networks and their updates need room on the device too: a smaller Buffer size is safer.";
     return fit;
@@ -226,9 +230,7 @@ gui::NodeType LearnerFed(const std::vector<gui::MLNode>& nodes, const std::vecto
     for (const auto& l : links) {
         if (l.from_node != node_id) continue;
         const gui::MLNode* to = FindNode(nodes, l.to_node);
-        if (to && (to->type == gui::NodeType::PPO || to->type == gui::NodeType::SAC || to->type == gui::NodeType::TD3 ||
-                   to->type == gui::NodeType::DQN))
-            return to->type;
+        if (to && IsRLLearnerNode(to->type)) return to->type;
     }
     return gui::NodeType::Unknown;
 }

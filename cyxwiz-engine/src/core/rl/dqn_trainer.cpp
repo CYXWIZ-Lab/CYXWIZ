@@ -2,7 +2,6 @@
 
 #include <cyxwiz/fused_mlp.h>
 #include <cyxwiz/rl/dqn.h>
-#include <cyxwiz/sequential.h>
 
 #include <spdlog/spdlog.h>
 
@@ -13,18 +12,10 @@
 
 namespace cyxwiz::rl {
 
-namespace {
-
-// A seed's bits as a uniform draw in [0, 1)
-double Uniform(uint64_t bits) { return static_cast<double>(bits >> 11) * (1.0 / 9007199254740992.0); }
-
-}  // namespace
-
 // ---------------------------------------------------------------- DqnLearner
 
-DqnLearner::DqnLearner(DqnNetworks networks, size_t observation_size, size_t choices, const DqnConfig& config,
-                       int copies)
-    : networks_(std::move(networks)), observation_size_(observation_size), choices_(choices), config_(config) {
+DqnLearner::DqnLearner(DqnNetworks networks, size_t choices, const DqnConfig& config, int copies)
+    : networks_(std::move(networks)), choices_(choices), config_(config) {
     auto& n = networks_;
     if (!n.q || !n.q_target) throw std::invalid_argument("DQN needs a Q network and its target.");
     if (choices_ < 1) throw std::invalid_argument("DQN needs at least one choice.");
@@ -36,16 +27,8 @@ DqnLearner::DqnLearner(DqnNetworks networks, size_t observation_size, size_t cho
 
     // Both networks fused on the device's provider, or neither (one path to report)
     std::string why;
-    const auto fuse = [&why](IExecutableModel& model) -> std::unique_ptr<FusedMlp> {
-        SequentialModel* sequential = model.AsSequentialModel();
-        if (!sequential) {
-            why = "not a sequential network";
-            return nullptr;
-        }
-        return FusedMlp::For(*sequential, why);
-    };
-    q_fused_ = fuse(*n.q);
-    if (q_fused_) q_target_fused_ = fuse(*n.q_target);
+    q_fused_ = FuseNetwork(*n.q, why);
+    if (q_fused_) q_target_fused_ = FuseNetwork(*n.q_target, why);
     if (q_target_fused_) {
         network_path_ = "fused small-network kernels (" + q_fused_->ProviderId() + ")";
     } else {
@@ -126,14 +109,17 @@ void DqnLearner::UpdateTarget() {
     ++target_updates_;
 }
 
+bool EpsilonGreedy(std::vector<float>& choices, float epsilon, size_t count, const std::function<uint64_t()>& next) {
+    if (!(UniformFromBits(next()) < epsilon)) return false;
+    for (auto& c : choices) c = static_cast<float>(next() % static_cast<uint64_t>(count));
+    return true;
+}
+
 Tensor DqnLearner::Explore(const Tensor& observations, const NextSeed& next_seed) {
-    // SB3's DQN.predict: one draw for the whole vector of copies
-    if (Uniform(next_seed()) < epsilon_) {
-        const size_t n = observations.Shape().at(0);
-        std::vector<float> choices(n);
-        for (auto& c : choices) c = static_cast<float>(next_seed() % static_cast<uint64_t>(choices_));
-        return Tensor({n}, choices.data());
-    }
+    // SB3's DQN.predict: one draw for the whole vector of copies; the greedy
+    // choices only when it keeps them
+    std::vector<float> choices(observations.Shape().at(0));
+    if (EpsilonGreedy(choices, epsilon_, choices_, next_seed)) return Tensor({choices.size()}, choices.data());
     return Act(observations);
 }
 
@@ -171,27 +157,8 @@ bool DqnLearner::ExportOptimizers(std::map<std::string, OptimizerState>& out, st
 
 // ---------------------------------------------------------------- DqnTrainer
 
-OffPolicySettings LoopSettings(const DqnConfig& c) {
-    OffPolicySettings s;
-    s.total_timesteps = c.total_timesteps;
-    s.buffer_size = c.buffer_size;
-    s.learning_starts = c.learning_starts;
-    s.batch_size = c.batch_size;
-    s.train_freq = c.train_freq;
-    s.gradient_steps = c.gradient_steps;
-    s.gamma = c.gamma;
-    s.seed = c.seed;
-    s.normalize_observations = c.normalize_observations;
-    s.target_return = c.target_return;
-    s.report_every = c.report_every;
-    return s;
-}
-
 DqnTrainer::DqnTrainer(TrainingEnvironment environment, DqnNetworks networks, DqnConfig config)
-    : loop_(std::move(environment), LoopSettings(config), "DQN"), networks_(std::move(networks)),
-      config_(std::move(config)) {}
-
-DqnTrainer::~DqnTrainer() = default;
+    : OffPolicyTrainer(std::move(environment), std::move(networks), std::move(config), "DQN", &DqnNetworks::q) {}
 
 bool DqnTrainer::CheckSetup(std::string& error) const {
     const auto& c = config_;
@@ -210,43 +177,10 @@ bool DqnTrainer::CheckSetup(std::string& error) const {
     return error.empty();
 }
 
-bool DqnTrainer::TakeTrained(DqnTrainedState& out, std::string& error) {
-    if (!learner_ || !loop_.Normalizer()) {
-        error = "DQN has not trained a policy.";
-        return false;
-    }
-    std::map<std::string, OptimizerState> optimizers;
-    if (!learner_->ExportOptimizers(optimizers, error)) return false;
-    out.optimizers = std::move(optimizers);
-    out.networks = std::move(learner_->Networks());
-    out.normalizer = loop_.TakeNormalizer();
-    learner_.reset();
-    return true;
-}
-
-bool DqnTrainer::CopyPolicy(ActorCopy& out, std::string& error) {
-    if (!learner_ || !loop_.Normalizer()) {
-        error = "DQN has no policy to copy yet.";
-        return false;
-    }
-    out.parameters.clear();
-    for (const auto& [name, tensor] : learner_->Networks().q->GetParameters()) out.parameters[name] = tensor.Clone();
-    out.normalizer = std::make_unique<VecNormalize>(*loop_.Normalizer());
-    return true;
-}
-
-bool DqnTrainer::Train(const std::function<void(const OffPolicyUpdateMetrics&)>& on_report, std::string& error) {
-    error.clear();
-    if (!CheckSetup(error)) return false;
+std::unique_ptr<DqnLearner> DqnTrainer::MakeLearner(DqnNetworks networks) {
     const auto& env = loop_.Environment();
-    try {
-        learner_ = std::make_unique<DqnLearner>(std::move(networks_), static_cast<size_t>(env.info.observation_size),
-                                                static_cast<size_t>(env.info.action_count), config_, env.count);
-    } catch (const std::exception& e) {
-        error = std::string("DQN training failed: ") + e.what();
-        return false;
-    }
-    return loop_.Run(*learner_, on_report, error);
+    return std::make_unique<DqnLearner>(std::move(networks), static_cast<size_t>(env.info.action_count), config_,
+                                        env.count);
 }
 
 }  // namespace cyxwiz::rl

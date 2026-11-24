@@ -19,6 +19,7 @@
 #include "../core/live_graph_compile.h"
 #include "../core/normalize_statistics.h"
 #include "../core/parquet_backed_dataset.h"
+#include "../core/rl_graph_compile.h"
 #include "../core/dashboard/dashboard_model.h"
 #include "../core/plot/plot_model.h"
 #include "../core/transformer_configuration_policy.h"
@@ -606,8 +607,7 @@ void Properties::RenderSettings(MLNode& node) {
 
     switch (view_.route) {
         case SettingsRoute::Metadata:
-            if (node.type == NodeType::PolicyHead || node.type == NodeType::PPO || node.type == NodeType::SAC ||
-                node.type == NodeType::TD3 || node.type == NodeType::DQN)
+            if (node.type == NodeType::PolicyHead || cyxwiz::IsRLLearnerNode(node.type))
                 properties_node_editors::RenderRlNodeFacts(node, {node_editor_, [this]() { NotifyEdited(); }});
             RenderMetadataRows(node, view_);
             break;

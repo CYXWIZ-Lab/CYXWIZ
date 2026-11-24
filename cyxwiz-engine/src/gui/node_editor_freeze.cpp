@@ -13,6 +13,7 @@
 #include "../core/freeze_actions.h"
 #include "../core/live_graph_compile.h"
 #include "../core/project_manager.h"
+#include "../core/rl_graph_compile.h"
 #include "../core/training_manager.h"
 #include "../core/weight_file.h"
 #include "../core/weight_match.h"
@@ -123,7 +124,7 @@ void NodeEditor::ApplyUserNodeDefaults(MLNode& node) const {
             defaults.frozen_batchnorm_keeps_statistics ? frozen::kStatisticsKeep : frozen::kStatisticsUpdate;
     }
     // A new SAC, TD3 or DQN node's replay buffer (Preferences > Simulation; Tuned for sets a task's own)
-    if (node.type == NodeType::SAC || node.type == NodeType::TD3 || node.type == NodeType::DQN)
+    if (cyxwiz::IsRLLearnerNode(node.type) && cyxwiz::IsOffPolicy(cyxwiz::RLAlgorithmOf(node.type)))
         node.parameters["buffer_size"] = std::to_string(cyxwiz::core::EngineConfig::Instance().ReplayBufferSize());
 }
 

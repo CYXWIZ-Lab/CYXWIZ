@@ -135,7 +135,7 @@ void CheckSb3Steps(const char* argv0) {
     config.max_grad_norm = s.at("max_grad_norm").get<float>();
     rl::DqnNetworks networks = Networks(obs, choices, hidden, 1);
     SetFrom(*networks.q, f.at("before"), "q");
-    rl::DqnLearner learner(std::move(networks), obs, choices, config, 1);
+    rl::DqnLearner learner(std::move(networks), choices, config, 1);
     Check(Worst(*learner.Networks().q_target, f.at("before"), "target_q") == 0.0,
           "the target starts as the Q network's copy, as SB3's");
     const size_t calls = s.at("calls"), per_call = s.at("steps_per_call");

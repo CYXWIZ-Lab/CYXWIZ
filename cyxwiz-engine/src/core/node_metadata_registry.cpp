@@ -9,6 +9,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <string_view>
 #include <utility>
 #include <spdlog/spdlog.h>
@@ -4665,6 +4666,66 @@ void NodeMetadataRegistry::InitializeAudioNodes() {
 // =============================================================================
 // RL Nodes
 // =============================================================================
+namespace {
+
+// What the off-policy learners' (SAC, TD3, DQN) shared settings differ in
+struct OffPolicyParameterDefaults {
+    const char* target_return;
+    const char* seeds;         // what the seed draws besides the copies, the weights and the minibatches
+    const char* random_steps;  // what the random steps first take
+    const char* batch_size;
+    const char* learning_rate;
+    const char* learning_rate_description;
+};
+
+// Their Run and Replay buffer settings and the first updates, Total steps to Discount
+std::vector<ParameterDefinition> OffPolicyRunParameters(const OffPolicyParameterDefaults& d) {
+    return {{"total_timesteps", "int", "1000000",
+             "Environment steps to train for, over all copies (total_timesteps)", {}, "1-1000000000", "Total steps",
+             "Run", true},
+            {"stop_at_return", "bool", "false", "Stop early once the last 100 episodes average the target", {}, "",
+             "Stop at a mean return", "Run"},
+            {"target_return", "float", d.target_return, "Mean return of the last 100 episodes that stops the run", {},
+             "", "Target return", "Run"},
+            {"seed", "int", "1",
+             std::string("Seeds the copies, the network weights, ") + d.seeds + " and the minibatches (seed)", {},
+             "0-2147483647", "Seed", "Run"},
+            {"buffer_size", "int", "1000000", "Steps the replay buffer keeps on the training device (buffer_size)", {},
+             "1-100000000", "Buffer size", "Replay buffer", true},
+            {"learning_starts", "int", "100",
+             std::string("Steps of ") + d.random_steps + " before learning starts (learning_starts)", {},
+             "0-1000000000", "Random steps first", "Replay buffer", true},
+            {"batch_size", "int", d.batch_size, "Steps in one minibatch drawn from the buffer (batch_size)", {},
+             "1-1000000", "Batch size", "Updates", true},
+            {"learning_rate", "float", d.learning_rate, d.learning_rate_description, {}, "", "Learning rate", "Updates",
+             true},
+            {"gamma", "float", "0.99", "Discount of future rewards (gamma)", {}, "0-1", "Discount", "Updates"}};
+}
+
+// How often they train: Train every (its default) and Gradient steps
+std::vector<ParameterDefinition> OffPolicyTrainParameters(const char* train_freq) {
+    return {{"train_freq", "int", train_freq, "Environment steps between updates (train_freq)", {}, "1-1000000",
+             "Train every", "Updates"},
+            {"gradient_steps", "int", "1", "Gradient steps each time it trains (gradient_steps)", {}, "1-1000000",
+             "Gradient steps", "Updates"}};
+}
+
+// Their last setting: the observation statistics
+ParameterDefinition NormalizeObservationsParameter() {
+    return {"normalize_observations", "bool", "false",
+            "Running mean and variance of the observations, as VecNormalize (norm_obs)", {}, "", "Observations",
+            "Normalise"};
+}
+
+// The parts, in order, as one list
+std::vector<ParameterDefinition> Joined(std::initializer_list<std::vector<ParameterDefinition>> parts) {
+    std::vector<ParameterDefinition> out;
+    for (const auto& part : parts) out.insert(out.end(), part.begin(), part.end());
+    return out;
+}
+
+}  // namespace
+
 void NodeMetadataRegistry::InitializeRLNodes() {
     // TOFIX195 S4.3: a PPO graph is Environment -> ordinary layers -> Policy
     // Head / Value Head -> PPO, trained by the Engine (core/rl/ppo_trainer).
@@ -4674,14 +4735,14 @@ void NodeMetadataRegistry::InitializeRLNodes() {
         "Picks an environment from the ones the Engine and the loaded plugins offer (CartPole-v1 is built in; "
         "the MuJoCo Simulation plugin adds InvertedPendulum-v5 and HalfCheetah-v5) and steps several copies "
         "side by side. Its observation feeds the policy and value (or Q) layers; its Environment pin goes to the "
-        "learner, PPO or SAC. "
+        "learner, PPO, SAC, TD3 or DQN. "
         "The environment's own settings come from its plugin.",
         "Environment -> Dense -> Tanh -> Dense -> Tanh -> Policy Head -> PPO",
         {},
         {{"Observation", PinType::Tensor, true,
           "What each copy observes, [copies, observation size]: connect it to the first policy and value layers."},
          {"Environment", PinType::Environment, true,
-          "The copies themselves: connect it to the Environment of PPO or SAC."}},
+          "The copies themselves: connect it to the Environment of PPO, SAC, TD3 or DQN."}},
         {{"environment", "string", "cyxwiz.builtin:CartPole-v1",
           "The environment, as <provider>:<id> (the built-in ones are cyxwiz.builtin)", {}, "",
           "Environment", "Environment", true},
@@ -4700,7 +4761,7 @@ void NodeMetadataRegistry::InitializeRLNodes() {
         "not put a Softmax before it.",
         "Environment -> Dense -> Tanh -> Dense -> Tanh -> Policy Head -> PPO",
         {{"Features", PinType::Tensor, true, "The last policy layer's output (reached from the Environment's Observation)."}},
-        {{"Policy", PinType::Tensor, true, "The policy: connect it to the Policy of PPO or SAC."}},
+        {{"Policy", PinType::Tensor, true, "The policy: connect it to the Policy of PPO, SAC or TD3."}},
         {{"log_std_init", "float", "0.0",
           "Starting log standard deviation of every action (continuous actions only)", {}, "",
           "Log std at start", "Gaussian"}},
@@ -4775,7 +4836,7 @@ void NodeMetadataRegistry::InitializeRLNodes() {
         "learner builds two Q networks of this shape plus a slowly following target copy of each, as "
         "Stable-Baselines3 does. Under DQN it has one output per choice of action, from the observation alone, "
         "and DQN keeps a target copy of it.",
-        "Environment -> Dense -> ReLU -> Dense -> ReLU -> Q Head -> SAC",
+        "Environment -> Dense -> ReLU -> Dense -> ReLU -> Q Head -> SAC, TD3 or DQN",
         {{"Features", PinType::Tensor, true, "The last Q layer's output (reached from the Environment's Observation)."}},
         {{"Q", PinType::Tensor, true, "The Q estimate: connect it to the Q of SAC, TD3 or DQN."}},
         {},
@@ -4801,41 +4862,24 @@ void NodeMetadataRegistry::InitializeRLNodes() {
          {"Environment", PinType::Environment, true, "From the Environment's Environment pin."},
          {"Q", PinType::Tensor, true, "From the Q Head."}},
         {{"Trained policy", PinType::Parameters, true, "The trained policy and Q networks."}},
-        {{"total_timesteps", "int", "1000000", "Environment steps to train for, over all copies (total_timesteps)", {},
-          "1-1000000000", "Total steps", "Run", true},
-         {"stop_at_return", "bool", "false", "Stop early once the last 100 episodes average the target", {}, "",
-          "Stop at a mean return", "Run"},
-         {"target_return", "float", "4000", "Mean return of the last 100 episodes that stops the run", {}, "",
-          "Target return", "Run"},
-         {"seed", "int", "1", "Seeds the copies, the network weights, the actions and the minibatches (seed)", {},
-          "0-2147483647", "Seed", "Run"},
-         {"buffer_size", "int", "1000000", "Steps the replay buffer keeps on the training device (buffer_size)", {},
-          "1-100000000", "Buffer size", "Replay buffer", true},
-         {"learning_starts", "int", "100", "Steps of uniform random actions before learning starts (learning_starts)",
-          {}, "0-1000000000", "Random steps first", "Replay buffer", true},
-         {"batch_size", "int", "256", "Steps in one minibatch drawn from the buffer (batch_size)", {}, "1-1000000",
-          "Batch size", "Updates", true},
-         {"learning_rate", "float", "0.0003",
-          "Adam's learning rate for the policy, the Q networks and the entropy weight (learning_rate)", {}, "",
-          "Learning rate", "Updates", true},
-         {"gamma", "float", "0.99", "Discount of future rewards (gamma)", {}, "0-1", "Discount", "Updates"},
-         {"tau", "float", "0.005", "How far the target Q networks move toward the Q networks each time (tau)", {},
-          "0-1", "Target update", "Updates"},
-         {"train_freq", "int", "1", "Environment steps between updates (train_freq)", {}, "1-1000000", "Train every",
-          "Updates"},
-         {"gradient_steps", "int", "1", "Gradient steps each time it trains (gradient_steps)", {}, "1-1000000",
-          "Gradient steps", "Updates"},
-         {"target_update_interval", "int", "1", "Gradient steps between target updates (target_update_interval)", {},
-          "1-1000000", "Target every", "Updates"},
-         ent_coef_mode,
-         {"ent_coef", "float", "1.0", "The entropy weight's start when learned, else its fixed value (ent_coef)", {},
-          "", "Weight", "Exploration (entropy)"},
-         target_entropy_mode,
-         {"target_entropy", "float", "-1", "The entropy the learned weight aims for, when typed (target_entropy)", {},
-          "", "Target", "Exploration (entropy)"},
-         {"normalize_observations", "bool", "false",
-          "Running mean and variance of the observations, as VecNormalize (norm_obs)", {}, "", "Observations",
-          "Normalise"}},
+        Joined({OffPolicyRunParameters({"4000", "the actions", "uniform random actions", "256", "0.0003",
+                                        "Adam's learning rate for the policy, the Q networks and the entropy weight "
+                                        "(learning_rate)"}),
+                {{"tau", "float", "0.005", "How far the target Q networks move toward the Q networks each time (tau)",
+                  {}, "0-1", "Target update", "Updates"}},
+                OffPolicyTrainParameters("1"),
+                {{"target_update_interval", "int", "1",
+                  "Gradient steps between target updates (target_update_interval)", {}, "1-1000000", "Target every",
+                  "Updates"},
+                 ent_coef_mode,
+                 {"ent_coef", "float", "1.0",
+                  "The entropy weight's start when learned, else its fixed value (ent_coef)", {}, "", "Weight",
+                  "Exploration (entropy)"},
+                 target_entropy_mode,
+                 {"target_entropy", "float", "-1",
+                  "The entropy the learned weight aims for, when typed (target_entropy)", {}, "", "Target",
+                  "Exploration (entropy)"},
+                 NormalizeObservationsParameter()}}),
         NodeImplementationStatus::Implemented, 0});
 
     // TOFIX216 TD3: the same graph shape as SAC's, a deterministic actor,
@@ -4859,45 +4903,25 @@ void NodeMetadataRegistry::InitializeRLNodes() {
          {"Environment", PinType::Environment, true, "From the Environment's Environment pin."},
          {"Q", PinType::Tensor, true, "From the Q Head."}},
         {{"Trained policy", PinType::Parameters, true, "The trained policy and Q networks."}},
-        {{"total_timesteps", "int", "1000000", "Environment steps to train for, over all copies (total_timesteps)", {},
-          "1-1000000000", "Total steps", "Run", true},
-         {"stop_at_return", "bool", "false", "Stop early once the last 100 episodes average the target", {}, "",
-          "Stop at a mean return", "Run"},
-         {"target_return", "float", "4000", "Mean return of the last 100 episodes that stops the run", {}, "",
-          "Target return", "Run"},
-         {"seed", "int", "1", "Seeds the copies, the network weights, the noise and the minibatches (seed)", {},
-          "0-2147483647", "Seed", "Run"},
-         {"buffer_size", "int", "1000000", "Steps the replay buffer keeps on the training device (buffer_size)", {},
-          "1-100000000", "Buffer size", "Replay buffer", true},
-         {"learning_starts", "int", "100", "Steps of uniform random actions before learning starts (learning_starts)",
-          {}, "0-1000000000", "Random steps first", "Replay buffer", true},
-         {"batch_size", "int", "256", "Steps in one minibatch drawn from the buffer (batch_size)", {}, "1-1000000",
-          "Batch size", "Updates", true},
-         {"learning_rate", "float", "0.001", "Adam's learning rate for the policy and the Q networks (learning_rate)",
-          {}, "", "Learning rate", "Updates", true},
-         {"gamma", "float", "0.99", "Discount of future rewards (gamma)", {}, "0-1", "Discount", "Updates"},
-         {"tau", "float", "0.005",
-          "How far the target policy and Q networks move toward theirs at each policy update (tau)", {}, "0-1",
-          "Target update", "Updates"},
-         {"train_freq", "int", "1", "Environment steps between updates (train_freq)", {}, "1-1000000", "Train every",
-          "Updates"},
-         {"gradient_steps", "int", "1", "Gradient steps each time it trains (gradient_steps)", {}, "1-1000000",
-          "Gradient steps", "Updates"},
-         {"policy_delay", "int", "2",
-          "Q network updates for each policy update; the targets move with the policy (policy_delay)", {},
-          "1-1000000", "Policy every", "Updates"},
-         action_noise,
-         {"action_noise_std", "float", "0.1",
-          "The noise's standard deviation, on the actions scaled to [-1, 1] (NormalActionNoise sigma)", {}, "",
-          "Noise std", "Exploration (noise)"},
-         {"target_policy_noise", "float", "0.2",
-          "Noise on the target policy's actions when the Q targets are computed (target_policy_noise)", {}, "",
-          "Noise", "Target smoothing"},
-         {"target_noise_clip", "float", "0.5", "That noise clipped to plus or minus this (target_noise_clip)", {}, "",
-          "Clipped at", "Target smoothing"},
-         {"normalize_observations", "bool", "false",
-          "Running mean and variance of the observations, as VecNormalize (norm_obs)", {}, "", "Observations",
-          "Normalise"}},
+        Joined({OffPolicyRunParameters({"4000", "the noise", "uniform random actions", "256", "0.001",
+                                        "Adam's learning rate for the policy and the Q networks (learning_rate)"}),
+                {{"tau", "float", "0.005",
+                  "How far the target policy and Q networks move toward theirs at each policy update (tau)", {}, "0-1",
+                  "Target update", "Updates"}},
+                OffPolicyTrainParameters("1"),
+                {{"policy_delay", "int", "2",
+                  "Q network updates for each policy update; the targets move with the policy (policy_delay)", {},
+                  "1-1000000", "Policy every", "Updates"},
+                 action_noise,
+                 {"action_noise_std", "float", "0.1",
+                  "The noise's standard deviation, on the actions scaled to [-1, 1] (NormalActionNoise sigma)", {}, "",
+                  "Noise std", "Exploration (noise)"},
+                 {"target_policy_noise", "float", "0.2",
+                  "Noise on the target policy's actions when the Q targets are computed (target_policy_noise)", {},
+                  "", "Noise", "Target smoothing"},
+                 {"target_noise_clip", "float", "0.5", "That noise clipped to plus or minus this (target_noise_clip)",
+                  {}, "", "Clipped at", "Target smoothing"},
+                 NormalizeObservationsParameter()}}),
         NodeImplementationStatus::Implemented, 0});
 
     // TOFIX216 DQN: a Q Head and the Environment, no Policy Head (the policy is
@@ -4917,48 +4941,28 @@ void NodeMetadataRegistry::InitializeRLNodes() {
         {{"Q", PinType::Tensor, true, "From the Q Head."},
          {"Environment", PinType::Environment, true, "From the Environment's Environment pin."}},
         {{"Trained policy", PinType::Parameters, true, "The trained Q network."}},
-        {{"total_timesteps", "int", "1000000", "Environment steps to train for, over all copies (total_timesteps)", {},
-          "1-1000000000", "Total steps", "Run", true},
-         {"stop_at_return", "bool", "false", "Stop early once the last 100 episodes average the target", {}, "",
-          "Stop at a mean return", "Run"},
-         {"target_return", "float", "475", "Mean return of the last 100 episodes that stops the run", {}, "",
-          "Target return", "Run"},
-         {"seed", "int", "1", "Seeds the copies, the network weights, the exploration and the minibatches (seed)", {},
-          "0-2147483647", "Seed", "Run"},
-         {"buffer_size", "int", "1000000", "Steps the replay buffer keeps on the training device (buffer_size)", {},
-          "1-100000000", "Buffer size", "Replay buffer", true},
-         {"learning_starts", "int", "100", "Steps of random choices before learning starts (learning_starts)", {},
-          "0-1000000000", "Random steps first", "Replay buffer", true},
-         {"batch_size", "int", "32", "Steps in one minibatch drawn from the buffer (batch_size)", {}, "1-1000000",
-          "Batch size", "Updates", true},
-         {"learning_rate", "float", "0.0001", "Adam's learning rate for the Q network (learning_rate)", {}, "",
-          "Learning rate", "Updates", true},
-         {"gamma", "float", "0.99", "Discount of future rewards (gamma)", {}, "0-1", "Discount", "Updates"},
-         {"train_freq", "int", "4", "Environment steps between updates (train_freq)", {}, "1-1000000", "Train every",
-          "Updates"},
-         {"gradient_steps", "int", "1", "Gradient steps each time it trains (gradient_steps)", {}, "1-1000000",
-          "Gradient steps", "Updates"},
-         {"target_update_interval", "int", "10000",
-          "Environment steps between updates of the target network (target_update_interval)", {}, "1-1000000000",
-          "Target every", "Updates"},
-         {"tau", "float", "1.0",
-          "How far the target network moves toward the Q network at each target update: 1 copies it (tau)", {},
-          "0-1", "Target update", "Updates"},
-         {"max_grad_norm", "float", "10",
-          "The gradients' overall norm is clipped to this before each step (max_grad_norm)", {}, "",
-          "Max gradient norm", "Updates"},
-         {"exploration_initial_eps", "float", "1.0",
-          "Share of random choices at the start (exploration_initial_eps)", {}, "0-1", "Start",
-          "Exploration (epsilon)"},
-         {"exploration_final_eps", "float", "0.05",
-          "Share of random choices once it has fallen (exploration_final_eps)", {}, "0-1", "End",
-          "Exploration (epsilon)"},
-         {"exploration_fraction", "float", "0.1",
-          "Share of the run over which the random choices fall from Start to End (exploration_fraction)", {},
-          "0-1", "Over", "Exploration (epsilon)"},
-         {"normalize_observations", "bool", "false",
-          "Running mean and variance of the observations, as VecNormalize (norm_obs)", {}, "", "Observations",
-          "Normalise"}},
+        Joined({OffPolicyRunParameters({"475", "the exploration", "random choices", "32", "0.0001",
+                                        "Adam's learning rate for the Q network (learning_rate)"}),
+                OffPolicyTrainParameters("4"),
+                {{"target_update_interval", "int", "10000",
+                  "Environment steps between updates of the target network (target_update_interval)", {},
+                  "1-1000000000", "Target every", "Updates"},
+                 {"tau", "float", "1.0",
+                  "How far the target network moves toward the Q network at each target update: 1 copies it (tau)",
+                  {}, "0-1", "Target update", "Updates"},
+                 {"max_grad_norm", "float", "10",
+                  "The gradients' overall norm is clipped to this before each step (max_grad_norm)", {}, "",
+                  "Max gradient norm", "Updates"},
+                 {"exploration_initial_eps", "float", "1.0",
+                  "Share of random choices at the start (exploration_initial_eps)", {}, "0-1", "Start",
+                  "Exploration (epsilon)"},
+                 {"exploration_final_eps", "float", "0.05",
+                  "Share of random choices once it has fallen (exploration_final_eps)", {}, "0-1", "End",
+                  "Exploration (epsilon)"},
+                 {"exploration_fraction", "float", "0.1",
+                  "Share of the run over which the random choices fall from Start to End (exploration_fraction)", {},
+                  "0-1", "Over", "Exploration (epsilon)"},
+                 NormalizeObservationsParameter()}}),
         NodeImplementationStatus::Implemented, 0});
 }
 

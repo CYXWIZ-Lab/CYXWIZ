@@ -17,10 +17,6 @@
 #include <string>
 #include <vector>
 
-namespace cyxwiz {
-class FusedMlp;
-}
-
 namespace cyxwiz::rl {
 
 // The actor gives [mean | log std] per row ([B, 2A], log std before its
@@ -58,7 +54,7 @@ struct SacStepLosses {
 // fails, the layers run as ArrayFire operations.
 class SacLearner : public OffPolicyLearner {
 public:
-    // target_entropy: the config's, already resolved (auto = -actions)
+    // target_entropy_auto: minus the actions, as SB3's "auto"; else the config's target_entropy
     SacLearner(SacNetworks networks, size_t observation_size, size_t action_size, const SacConfig& config);
     ~SacLearner() override;
 
@@ -141,37 +137,15 @@ struct SacTrainedState {
     std::map<std::string, OptimizerState> optimizers;
 };
 
-// The loop's settings of a SAC config
-OffPolicySettings LoopSettings(const SacConfig& config);
-
-class SacTrainer {
+class SacTrainer : public OffPolicyTrainer<SacLearner, SacNetworks, SacConfig, SacTrainedState> {
 public:
     // The environment's actions must be continuous and bounded.
     SacTrainer(TrainingEnvironment environment, SacNetworks networks, SacConfig config);
-    ~SacTrainer();
-
-    // Runs to total_timesteps, or until Stop. False with the reason on an
-    // environment or device failure (the replay buffer not fitting included).
-    bool Train(const std::function<void(const OffPolicyUpdateMetrics&)>& on_report, std::string& error);
-
-    void Stop() { loop_.Stop(); }
-    void Pause() { loop_.Pause(); }
-    void Resume() { loop_.Resume(); }
-    // Its loop (a run stops, pauses and resumes it there)
-    OffPolicyLoop& Loop() { return loop_; }
-
-    // Moves out what Train left (once, after Train). False with the reason.
-    bool TakeTrained(SacTrainedState& out, std::string& error);
-    // A copy of the actor now. Call from on_report, on the thread that trains.
-    bool CopyPolicy(ActorCopy& out, std::string& error);
 
 private:
-    bool CheckSetup(std::string& error) const;
-
-    OffPolicyLoop loop_;
-    SacNetworks networks_;  // until Train hands them to the learner
-    SacConfig config_;
-    std::unique_ptr<SacLearner> learner_;
+    bool CheckSetup(std::string& error) const override;
+    std::unique_ptr<SacLearner> MakeLearner(SacNetworks networks) override;
+    void TakeMore(SacLearner& learner, SacTrainedState& out) override;
 };
 
 }  // namespace cyxwiz::rl

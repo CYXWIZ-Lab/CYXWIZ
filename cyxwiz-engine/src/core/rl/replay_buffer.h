@@ -1,6 +1,7 @@
 #pragma once
 
-// SAC's replay buffer on the training device (TOFIX216 S3, owner D3): the
+// The off-policy learners' replay buffer (SAC, TD3, DQN) on the training
+// device (TOFIX216 S3, owner D3): the
 // last `capacity` transitions as one ArrayFire table, written as a ring and
 // sampled uniformly with replacement, as Stable-Baselines3's ReplayBuffer
 // does (handle_timeout_termination: an episode cut by a time limit is not
@@ -11,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 
 namespace cyxwiz::rl {
 
@@ -18,7 +20,8 @@ class ReplayBuffer {
 public:
     // On the current ArrayFire device. Throws std::runtime_error, saying how
     // much it needed, when the device cannot hold it.
-    ReplayBuffer(int64_t capacity, size_t observation_size, size_t action_size);
+    // learner: the node a buffer too big for the device is lowered on ("SAC")
+    ReplayBuffer(int64_t capacity, size_t observation_size, size_t action_size, const std::string& learner);
     ~ReplayBuffer();
     ReplayBuffer(const ReplayBuffer&) = delete;
     ReplayBuffer& operator=(const ReplayBuffer&) = delete;
@@ -33,6 +36,10 @@ public:
     int64_t Size() const { return size_; }
     int64_t Capacity() const { return capacity_; }
     uint64_t Bytes() const;  // what the table holds on the device
+    // What a buffer of `capacity` transitions holds on the device (0 for
+    // none): per transition the observation and the next one, the action,
+    // the reward and whether the episode ended, float32 each
+    static uint64_t BytesFor(int64_t capacity, size_t observation_size, size_t action_size);
 
     struct Batch {
         Tensor observations;       // [B, obs]

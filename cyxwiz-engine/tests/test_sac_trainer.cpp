@@ -93,7 +93,7 @@ rl::SacNetworks Networks(size_t obs, size_t act, size_t hidden, int layers) {
 
 void CheckReplayBuffer() {
     const size_t obs = 2, act = 1;
-    rl::ReplayBuffer buffer(4, obs, act);
+    rl::ReplayBuffer buffer(4, obs, act, "SAC");
     Check(buffer.Size() == 0 && buffer.Capacity() == 4 && buffer.Bytes() == 4 * (2 * obs + act + 2) * sizeof(float),
           "an empty buffer of 4 steps, its bytes from the width");
     // Step k: observation (k, 10k), action k/10, reward k, next observation (k+1, 10k+10), done on odd k
@@ -134,7 +134,7 @@ void CheckReplayBuffer() {
     Check(last == std::set<int>({15, 16, 17, 18}), "a batch larger than the buffer keeps its last rows");
     bool threw = false;
     try {
-        rl::ReplayBuffer empty(8, obs, act);
+        rl::ReplayBuffer empty(8, obs, act, "SAC");
         empty.Sample(4, 1);
     } catch (const std::logic_error&) {
         threw = true;

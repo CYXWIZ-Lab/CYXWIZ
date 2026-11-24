@@ -4,7 +4,6 @@
 // names and defaults them; the SAC node fills them, the SAC trainer reads
 // them. GUI-free.
 
-#include <cstddef>
 #include <cstdint>
 #include <limits>
 
@@ -31,13 +30,5 @@ struct SacConfig {
     float target_return = std::numeric_limits<float>::quiet_NaN();
     int64_t report_every = 1000;     // environment steps between the dashboard's reports (not an SB3 setting)
 };
-
-// Bytes the replay buffer holds on the device: per transition the observation
-// and the next one, the action, the reward and whether the episode ended
-// (float32 each)
-inline uint64_t ReplayBytes(int64_t buffer_size, size_t observation_size, size_t action_size) {
-    if (buffer_size <= 0) return 0;
-    return static_cast<uint64_t>(buffer_size) * (2 * observation_size + action_size + 2) * sizeof(float);
-}
 
 }  // namespace cyxwiz::rl

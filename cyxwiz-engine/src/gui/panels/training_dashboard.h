@@ -146,7 +146,7 @@ private:
     std::string memory_place_;
     std::optional<rl::PpoUpdateMetrics> last_update_;
     std::optional<rl::OffPolicyUpdateMetrics> last_report_;
-    long long report_updates_ = 0;  // gradient steps the last SAC report averaged
+    long long report_updates_ = 0;  // gradient steps the last off-policy report with any averaged
     // Watch progress: from Preferences > Simulation at each run's start
     int watch_ = 0;
     int watch_every_ = 20;

@@ -60,7 +60,8 @@ public:
         const float gap = ImGui::GetStyle().ItemSpacing.x;
         const float avail = ImGui::GetContentRegionAvail().x;
         const float readable = 10.0f * ImGui::GetFontSize();
-        per_row_ = std::clamp(static_cast<size_t>((avail + gap) / (readable + gap)), size_t{1}, most);
+        const float fit = std::max(0.0f, (avail + gap) / (readable + gap));  // a squeezed dock: none, then one
+        per_row_ = std::clamp(static_cast<size_t>(fit), size_t{1}, most);
         width_ = (avail - static_cast<float>(per_row_ - 1) * gap) / static_cast<float>(per_row_);
     }
     void Add(const char* id, const char* label, const std::string& value, const std::string& detail) {
@@ -221,9 +222,11 @@ void TrainingDashboardPanel::AddOffPolicyReport(const rl::OffPolicyUpdateMetrics
         Push("episode_length", m.mean_episode_length, steps);
     }
     // The losses average the gradient steps since the last report (none before learning starts)
-    report_updates_ = m.updates - (last_report_ ? last_report_->updates : 0);
+    // The loss cards say how many steps the last loss averaged, so a report without any keeps the count before
+    const long long since = m.updates - (last_report_ ? last_report_->updates : 0);
+    if (since > 0) report_updates_ = since;
     const bool dqn = run_ && run_->dqn;
-    if (report_updates_ > 0) {
+    if (since > 0) {
         Push(dqn ? "loss" : "critic_loss", m.critic_loss, steps);
         if (!dqn) Push("actor_loss", m.actor_loss, steps);
         Push("mean_q", m.mean_q, steps);
@@ -436,22 +439,24 @@ void TrainingDashboardPanel::RenderWatch() {
     }
     ui::SegmentedControl("##watch_progress", pb::kWatchChoices, pb::kWatchChoiceCount, &watch_);
     if (watch_ == 1) {
-        // A SAC or TD3 run copies its actor at a report (every report_every steps)
-        const bool sac = run_ && run_->off_policy;
+        // An off-policy run (SAC, TD3, DQN) copies its policy network at a report (every report_every steps)
+        const bool off_policy = run_ && run_->off_policy;
         const std::string every_tip =
-            sac ? "Reports between two copies of the actor (a report every " +
-                      plot::Thousands(static_cast<long long>(run_->report_every)) + " steps)"
-                : std::string("Updates between two copies of the networks");
+            off_policy ? "Reports between two copies of the " + std::string(run_->dqn ? "Q network" : "actor") +
+                             " (a report every " + plot::Thousands(static_cast<long long>(run_->report_every)) +
+                             " steps)"
+                       : std::string("Updates between two copies of the networks");
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(t.text_dim, "Take the networks every");
         ImGui::SameLine();
         ui::NumberField("##watch_every", &watch_every_, 1, 1000, 1, 60.0f, every_tip.c_str());
         ImGui::SameLine();
-        ImGui::TextColored(t.text_dim, "%s", sac ? "reports" : "updates");
+        ImGui::TextColored(t.text_dim, "%s", off_policy ? "reports" : "updates");
         ImGui::SameLine();
         if (ui::SecondaryButton("Now") && controls_.watch_now) controls_.watch_now();
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s", sac ? "Take the networks at the next report" : "Take the networks at the next update");
+            ImGui::SetTooltip("%s", off_policy ? "Take the networks at the next report"
+                                               : "Take the networks at the next update");
         // The preview card: which networks it plays, its episodes, how it plays
         ImGui::PushStyleColor(ImGuiCol_ChildBg, t.plot_bg);
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, t.rounding_card);

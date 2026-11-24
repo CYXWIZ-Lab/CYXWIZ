@@ -661,14 +661,18 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::TextDisabled("every");
                         ImGui::SameLine();
                         watch_changed |= ui::NumberField("##pref_watch_every", &watch_every, 1, 1000, 1, 60.0f,
-                                                         "PPO updates, or SAC reports, between two copies of the networks");
+                                                         "PPO updates, or reports of SAC, TD3 or DQN, between two "
+                                                         "copies of the networks");
                         ImGui::SameLine();
-                        ImGui::TextDisabled("updates, or SAC reports (the live preview takes the networks)");
+                        ImGui::TextDisabled("updates");
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled("Or reports, for SAC, TD3 and DQN: the live preview takes the networks.");
+                        ImGui::PopTextWrapPos();
                         if (watch_changed) {
                             engine_config.SetWatchTraining(watch_mode, watch_every);
                             engine_config.Save();
                         }
-                        // A new SAC node's replay buffer (TOFIX216 S4)
+                        // A new SAC, TD3 or DQN node's replay buffer (TOFIX216 S4)
                         ImGui::TableNextColumn();
                         ImGui::AlignTextToFramePadding();
                         ImGui::TextUnformatted("Replay buffer size");
@@ -676,14 +680,15 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         int replay = engine_config.ReplayBufferSize();
                         if (ui::NumberField("##pref_replay_buffer", &replay, 1,
                                             cyxwiz::core::EngineConfig::kMaxReplayBufferSize, 100000, 110.0f,
-                                            "Steps a new SAC node's replay buffer keeps")) {
+                                            "Steps a new SAC, TD3 or DQN node's replay buffer keeps")) {
                             engine_config.SetReplayBufferSize(replay);
                             engine_config.Save();
                         }
                         ImGui::SameLine();
                         ImGui::TextDisabled("steps");
                         ImGui::PushTextWrapPos(0.0f);
-                        ImGui::TextDisabled("What a new SAC node starts with (Tuned for sets the task's own).");
+                        ImGui::TextDisabled("What a new SAC, TD3 or DQN node starts with (Tuned for sets the "
+                                            "task's own).");
                         ImGui::PopTextWrapPos();
                         ImGui::EndTable();
                     }

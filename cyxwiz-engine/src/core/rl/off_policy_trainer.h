@@ -12,6 +12,7 @@
 // GUI-free.
 
 #include "../executable_model.h"
+#include "rl_common.h"
 #include "replay_buffer.h"
 #include "training_environment.h"
 #include "vec_normalize.h"
@@ -21,12 +22,18 @@
 
 #include <atomic>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <limits>
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
+
+namespace cyxwiz {
+class FusedMlp;
+}
 
 namespace cyxwiz::rl {
 
@@ -44,6 +51,25 @@ struct OffPolicySettings {
     float target_return = std::numeric_limits<float>::quiet_NaN();  // NaN: no early stop
     int64_t report_every = 1000;
 };
+
+// The loop's settings of a SAC, TD3 or DQN config (each names them as the loop does)
+template <class Config>
+OffPolicySettings LoopSettings(const Config& c) {
+    OffPolicySettings s;
+    s.total_timesteps = c.total_timesteps;
+    s.buffer_size = c.buffer_size;
+    s.learning_starts = c.learning_starts;
+    s.batch_size = c.batch_size;
+    s.train_freq = c.train_freq;
+    s.gradient_steps = c.gradient_steps;
+    s.gamma = c.gamma;
+    s.seed = c.seed;
+    s.normalize_observations = c.normalize_observations;
+    s.target_return = c.target_return;
+    s.report_every = c.report_every;
+    return s;
+}
+
 
 // Reported every report_every environment steps (and at the end, or at a
 // Stop), the losses averaged over the gradient steps since the last report.
@@ -113,6 +139,7 @@ public:
 
     const TrainingEnvironment& Environment() const { return environment_; }
     const OffPolicySettings& Settings() const { return settings_; }
+    const std::string& Algorithm() const { return algorithm_; }
 
     // Runs to total_timesteps, the target return, or a Stop. False with the
     // reason on an environment or device failure (the replay buffer not
@@ -173,5 +200,92 @@ struct OffPolicyUpdate {
 };
 void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, bool& together, const char* learner,
                               float max_grad_norm = 0.0f);
+
+// ---- The trainer around a learner
+
+// What SacTrainer, Td3Trainer and DqnTrainer share: the loop, the networks
+// until Train hands them to the learner, Stop / Pause / Resume and what a run
+// leaves. Each trainer checks its own setup and builds its own learner;
+// TrainedState holds networks, normalizer and optimizers.
+template <class Learner, class Networks, class Config, class TrainedState>
+class OffPolicyTrainer {
+public:
+    virtual ~OffPolicyTrainer() = default;
+
+    // Runs to total_timesteps, the target return, or a Stop. False with the
+    // reason on an environment or device failure (the replay buffer not
+    // fitting included).
+    bool Train(const std::function<void(const OffPolicyUpdateMetrics&)>& on_report, std::string& error) {
+        error.clear();
+        if (!CheckSetup(error)) return false;
+        try {
+            learner_ = MakeLearner(std::move(networks_));
+        } catch (const std::exception& e) {
+            error = loop_.Algorithm() + " training failed: " + e.what();
+            return false;
+        }
+        return loop_.Run(*learner_, on_report, error);
+    }
+
+    void Stop() { loop_.Stop(); }
+    void Pause() { loop_.Pause(); }
+    void Resume() { loop_.Resume(); }
+    // Its loop (a run stops, pauses and resumes it there)
+    OffPolicyLoop& Loop() { return loop_; }
+
+    // Moves out what Train left (once, after Train). False with the reason.
+    bool TakeTrained(TrainedState& out, std::string& error) {
+        if (!learner_ || !loop_.Normalizer()) {
+            error = loop_.Algorithm() + " has not trained a policy.";
+            return false;
+        }
+        std::map<std::string, OptimizerState> optimizers;
+        if (!learner_->ExportOptimizers(optimizers, error)) return false;
+        out.optimizers = std::move(optimizers);
+        TakeMore(*learner_, out);
+        out.networks = std::move(learner_->Networks());
+        out.normalizer = loop_.TakeNormalizer();
+        learner_.reset();
+        return true;
+    }
+
+    // A copy of the policy network now (the actor; DQN's Q network). Call
+    // from on_report, on the thread that trains.
+    bool CopyPolicy(ActorCopy& out, std::string& error) {
+        if (!learner_ || !loop_.Normalizer()) {
+            error = loop_.Algorithm() + " has no policy to copy yet.";
+            return false;
+        }
+        out.parameters.clear();
+        for (const auto& [name, tensor] : (learner_->Networks().*policy_)->GetParameters())
+            out.parameters[name] = tensor.Clone();
+        out.normalizer = std::make_unique<VecNormalize>(*loop_.Normalizer());
+        return true;
+    }
+
+protected:
+    // Which of the networks a preview copies
+    using PolicyNetwork = std::unique_ptr<IExecutableModel> Networks::*;
+
+    OffPolicyTrainer(TrainingEnvironment environment, Networks networks, Config config, std::string algorithm,
+                     PolicyNetwork policy)
+        : loop_(std::move(environment), LoopSettings(config), std::move(algorithm)), networks_(std::move(networks)),
+          config_(std::move(config)), policy_(policy) {}
+
+    // The trainer's own rules on its networks and config (CheckOffPolicySetup's among them)
+    virtual bool CheckSetup(std::string& error) const = 0;
+    // Its learner on the networks; throws when it cannot be built
+    virtual std::unique_ptr<Learner> MakeLearner(Networks networks) = 0;
+    // What the learner leaves besides the networks and optimizers (SAC: its entropy weight)
+    virtual void TakeMore(Learner& /*learner*/, TrainedState& /*out*/) {}
+
+    OffPolicyLoop loop_;
+    Networks networks_;  // until Train hands them to the learner
+    Config config_;
+
+private:
+    PolicyNetwork policy_;
+    std::unique_ptr<Learner> learner_;
+};
 
 }  // namespace cyxwiz::rl

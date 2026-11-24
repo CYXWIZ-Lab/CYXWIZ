@@ -1,6 +1,7 @@
 #include "ppo_trainer.h"
 
 #include "../optimizer_step.h"
+#include "rl_common.h"
 
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/optimizers/adam.h>
@@ -22,21 +23,6 @@
 namespace cyxwiz::rl {
 
 namespace {
-
-// SplitMix64 for the trainer's own draws (sample seeds, minibatch order)
-class Random {
-public:
-    explicit Random(uint64_t seed) : state_(seed) {}
-    uint64_t Next() {
-        uint64_t z = (state_ += 0x9E3779B97F4A7C15ull);
-        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
-        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-        return z ^ (z >> 31);
-    }
-
-private:
-    uint64_t state_;
-};
 
 std::vector<float> Host(const Tensor& t) {
     const float* data = t.ReadData<float>();
@@ -164,7 +150,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
     const size_t policy_outputs = discrete ? static_cast<size_t>(info.action_count) : act_size;
     const size_t steps = static_cast<size_t>(config_.n_steps);
     const size_t rollout = steps * n;
-    Random random(config_.seed ^ 0x5DEECE66Dull);
+    SplitMix64 random(config_.seed ^ 0x5DEECE66Dull);
 
     std::vector<float> obs(n * obs_size), final_obs(n * obs_size), rewards(n), env_actions(n * act_size);
     std::vector<uint8_t> terminated(n), truncated(n);
@@ -188,17 +174,9 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
     // few launches per forward and backward instead of several per layer
     // (TOFIX206 3.2). Otherwise, or when a fused call fails, the layers run
     // as ArrayFire operations.
-    const auto fuse = [](IExecutableModel& model, std::string& why) -> std::unique_ptr<FusedMlp> {
-        SequentialModel* sequential = model.AsSequentialModel();
-        if (!sequential) {
-            why = "not a sequential network";
-            return nullptr;
-        }
-        return FusedMlp::For(*sequential, why);
-    };
     std::string policy_why, value_why;
-    policy_fused_ = fuse(*policy_, policy_why);
-    value_fused_ = fuse(*value_, value_why);
+    policy_fused_ = FuseNetwork(*policy_, policy_why);
+    value_fused_ = FuseNetwork(*value_, value_why);
     if (policy_fused_ && value_fused_) {
         network_path_ = "fused small-network kernels (" + policy_fused_->ProviderId() + ")";
     } else {

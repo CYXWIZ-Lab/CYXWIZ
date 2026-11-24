@@ -1,6 +1,7 @@
 #include "cyxwiz/rl/dqn.h"
 
 #include "../arrayfire_indexed.h"
+#include "rl_common.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -21,25 +22,13 @@ namespace cyxwiz::rl {
 
 namespace {
 
-af::array Array(const Tensor& t) { return t.GetSemanticArray(); }
+using detail::Array;
+using detail::Make;
+using detail::Require;
 
-Tensor Make(const af::array& a, std::vector<size_t> shape) {
-    af::array evaluated = a;
-    evaluated.eval();
-    return Tensor::FromSemanticArray(evaluated, std::move(shape));
-}
+constexpr const char* kLearner = "DQN: ";
 
-void Require(bool ok, const std::string& what) {
-    if (!ok) throw std::invalid_argument(what);
-}
-
-// B values ([B] or [B, 1]) as an ArrayFire column of B rows
-af::array Column(const Tensor& t, size_t rows, const char* name) {
-    Require(t.NumElements() == rows,
-            std::string("DQN: ") + name + " needs " + std::to_string(rows) + " values, got " +
-                std::to_string(t.NumElements()));
-    return af::moddims(Array(t), static_cast<dim_t>(rows));
-}
+af::array Column(const Tensor& t, size_t rows, const char* name) { return detail::Column(t, rows, kLearner, name); }
 
 // The Q values [B, A]: B and A
 void RequireQ(const Tensor& q, const char* name, size_t& rows, size_t& choices) {
@@ -55,8 +44,7 @@ Tensor DqnTarget(const Tensor& next_q, const Tensor& rewards, const Tensor& done
     size_t rows = 0, choices = 0;
     RequireQ(next_q, "the next Q values", rows, choices);
     const af::array best = af::moddims(af::max(Array(next_q), 1), static_cast<dim_t>(rows));
-    const af::array y = Column(rewards, rows, "rewards") + (1.0f - Column(dones, rows, "dones")) * gamma * best;
-    return Make(af::moddims(y, static_cast<dim_t>(rows), 1), {rows, 1});
+    return detail::BellmanTarget(best, rewards, dones, gamma, rows, kLearner);
 }
 
 DqnLoss DqnLossAndGradient(const Tensor& q, const Tensor& actions, const Tensor& target) {

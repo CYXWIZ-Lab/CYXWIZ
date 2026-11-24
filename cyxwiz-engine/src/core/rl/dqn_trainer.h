@@ -15,15 +15,19 @@
 #include "dqn_config.h"
 #include "off_policy_trainer.h"
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
-
-namespace cyxwiz {
-class FusedMlp;
-}
+#include <vector>
 
 namespace cyxwiz::rl {
+
+// SB3's epsilon-greedy (DQN.predict): one uniform draw for all the rows; below
+// epsilon, a random choice of `count` for each row (one draw each, in order)
+// into choices and true; else choices as they are (the greedy ones) and false.
+// Training and playback both explore through it.
+bool EpsilonGreedy(std::vector<float>& choices, float epsilon, size_t count, const std::function<uint64_t()>& next);
 
 // The Q network gives [B, A] for observations [B, obs], one value per
 // choice; the target starts as its copy.
@@ -42,7 +46,7 @@ class DqnLearner : public OffPolicyLearner {
 public:
     // copies: the environment's copies (the target moves every
     // target_update_interval / copies steps of them, as SB3 counts)
-    DqnLearner(DqnNetworks networks, size_t observation_size, size_t choices, const DqnConfig& config, int copies);
+    DqnLearner(DqnNetworks networks, size_t choices, const DqnConfig& config, int copies);
     ~DqnLearner() override;
 
     // One gradient step on a replay batch (actions: choice indices); the
@@ -53,9 +57,6 @@ public:
 
     // The greedy choices [N] (as floats) for observations [N, obs]
     Tensor Act(const Tensor& observations);
-    // The share of random choices Explore makes now (SB3's exploration_rate:
-    // 0 until the first step, then the schedule's)
-    float ExplorationRate() const { return epsilon_; }
 
     // The loop's side: epsilon-greedy choices (one draw for all the copies:
     // all random, or all greedy); after each step of the copies, the target
@@ -84,7 +85,6 @@ private:
     Pass PassLayers(const ReplayBuffer::Batch& batch);
 
     DqnNetworks networks_;
-    size_t observation_size_;
     size_t choices_;
     DqnConfig config_;
     int64_t target_every_;  // steps of the copies between target updates
@@ -93,7 +93,7 @@ private:
     std::unique_ptr<FusedMlp> q_fused_, q_target_fused_;
     bool adam_together_ = true;
     std::string network_path_ = "ArrayFire operations";
-    float epsilon_ = 0.0f;
+    float epsilon_ = 0.0f;        // the share of random choices now (SB3's exploration_rate: 0 before the first step)
     int64_t updates_ = 0;         // gradient steps taken (SB3's _n_updates)
     int64_t target_updates_ = 0;
     // Sums since the last report, on the device
@@ -108,39 +108,15 @@ struct DqnTrainedState {
     std::map<std::string, OptimizerState> optimizers;
 };
 
-// The loop's settings of a DQN config
-OffPolicySettings LoopSettings(const DqnConfig& config);
-
-class DqnTrainer {
+// CopyPolicy copies the Q network (the greedy policy).
+class DqnTrainer : public OffPolicyTrainer<DqnLearner, DqnNetworks, DqnConfig, DqnTrainedState> {
 public:
     // The environment's actions must be a choice (one index a step).
     DqnTrainer(TrainingEnvironment environment, DqnNetworks networks, DqnConfig config);
-    ~DqnTrainer();
-
-    // Runs to total_timesteps, the target return, or a Stop. False with the
-    // reason on an environment or device failure (the replay buffer not
-    // fitting included).
-    bool Train(const std::function<void(const OffPolicyUpdateMetrics&)>& on_report, std::string& error);
-
-    void Stop() { loop_.Stop(); }
-    void Pause() { loop_.Pause(); }
-    void Resume() { loop_.Resume(); }
-    // Its loop (a run stops, pauses and resumes it there)
-    OffPolicyLoop& Loop() { return loop_; }
-
-    // Moves out what Train left (once, after Train). False with the reason.
-    bool TakeTrained(DqnTrainedState& out, std::string& error);
-    // A copy of the Q network now (the greedy policy). Call from on_report, on
-    // the thread that trains.
-    bool CopyPolicy(ActorCopy& out, std::string& error);
 
 private:
-    bool CheckSetup(std::string& error) const;
-
-    OffPolicyLoop loop_;
-    DqnNetworks networks_;  // until Train hands them to the learner
-    DqnConfig config_;
-    std::unique_ptr<DqnLearner> learner_;
+    bool CheckSetup(std::string& error) const override;
+    std::unique_ptr<DqnLearner> MakeLearner(DqnNetworks networks) override;
 };
 
 }  // namespace cyxwiz::rl

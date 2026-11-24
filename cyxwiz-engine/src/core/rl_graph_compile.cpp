@@ -28,6 +28,15 @@ std::string Param(const gui::MLNode& node, const char* key, const char* fallback
     return it == node.parameters.end() || it->second.empty() ? fallback : it->second;
 }
 
+// Continuous actions with a finite low and high bound each (SAC and TD3 squash into them)
+bool BoundedActions(const plugin::PluginEnvironmentInfo& info) {
+    const auto size = static_cast<size_t>(std::max(info.action_size, 0));
+    if (info.action_low.size() != size || info.action_high.size() != size) return false;
+    for (size_t i = 0; i < size; ++i)
+        if (!std::isfinite(info.action_low[i]) || !std::isfinite(info.action_high[i])) return false;
+    return true;
+}
+
 const gui::NodeLink* LinkInto(const std::vector<gui::NodeLink>& links, const gui::MLNode& node, size_t input) {
     if (input >= node.inputs.size()) return nullptr;
     for (const auto& l : links)
@@ -203,11 +212,30 @@ bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType pla
     return true;
 }
 
+bool IsRLLearnerNode(gui::NodeType type) {
+    return type == gui::NodeType::PPO || type == gui::NodeType::SAC || type == gui::NodeType::TD3 ||
+           type == gui::NodeType::DQN;
+}
+
 bool IsRLGraphNode(gui::NodeType type) {
     return type == gui::NodeType::RLEnvironment || type == gui::NodeType::PolicyHead ||
-           type == gui::NodeType::ValueHead || type == gui::NodeType::PPO || type == gui::NodeType::QHead ||
-           type == gui::NodeType::SAC || type == gui::NodeType::TD3 || type == gui::NodeType::DQN;
+           type == gui::NodeType::ValueHead || type == gui::NodeType::QHead || IsRLLearnerNode(type);
 }
+
+RLAlgorithm RLAlgorithmOf(gui::NodeType type) {
+    switch (type) {
+        case gui::NodeType::SAC:
+            return RLAlgorithm::SAC;
+        case gui::NodeType::TD3:
+            return RLAlgorithm::TD3;
+        case gui::NodeType::DQN:
+            return RLAlgorithm::DQN;
+        default:
+            return RLAlgorithm::PPO;
+    }
+}
+
+const char* RLLearnerName(gui::NodeType type) { return RLAlgorithmName(RLAlgorithmOf(type)); }
 
 TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vector<gui::MLNode>& nodes,
                                                                   const std::vector<gui::NodeLink>& links) {
@@ -231,8 +259,7 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
     // ---- One learner (PPO, SAC, TD3 or DQN), and nothing of a supervised graph
     std::vector<const gui::MLNode*> learners;
     for (const auto& n : nodes) {
-        if (n.type == gui::NodeType::PPO || n.type == gui::NodeType::SAC || n.type == gui::NodeType::TD3 ||
-            n.type == gui::NodeType::DQN)
+        if (IsRLLearnerNode(n.type))
             learners.push_back(&n);
         else if (n.type == gui::NodeType::DataInput || n.type == gui::NodeType::DatasetInput ||
                  std::any_of(n.outputs.begin(), n.outputs.end(), [](const gui::NodePin& pin) {
@@ -250,11 +277,7 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
               learners.empty() ? nullptr : learners[1], errors::Compiler::MissingTrainingPathNode);
     }
     const gui::MLNode* learner = learners.empty() ? nullptr : learners[0];
-    rl->algorithm = !learner                                ? RLAlgorithm::PPO
-                    : learner->type == gui::NodeType::SAC ? RLAlgorithm::SAC
-                    : learner->type == gui::NodeType::TD3 ? RLAlgorithm::TD3
-                    : learner->type == gui::NodeType::DQN ? RLAlgorithm::DQN
-                                                          : RLAlgorithm::PPO;
+    rl->algorithm = learner ? RLAlgorithmOf(learner->type) : RLAlgorithm::PPO;
     const bool sac = rl->algorithm == RLAlgorithm::SAC;
     const bool td3 = rl->algorithm == RLAlgorithm::TD3;
     const bool dqn = rl->algorithm == RLAlgorithm::DQN;
@@ -326,6 +349,11 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
         } else if (twin_q && rl->environment.discrete_actions) {
             error(learner_name + " learns continuous actions, and " + rl->environment.id +
                       " has a choice of actions: train it with PPO or DQN",
+                  learner, errors::Compiler::UnsupportedTrainingNode);
+            env = nullptr;
+        } else if (twin_q && !BoundedActions(rl->environment)) {
+            error(learner_name + " needs bounded actions, and " + rl->environment.id +
+                      " has actions without finite bounds: give its actuators a control range, or train it with PPO",
                   learner, errors::Compiler::UnsupportedTrainingNode);
             env = nullptr;
         } else if (dqn && !rl->environment.discrete_actions) {
@@ -413,123 +441,113 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
     const auto count = [](double x, double most) { return std::clamp(x, -1.0, most); };
     double v = 0.0;
     if (learner) rl->learner_node_id = learner->id;
-    if (learner && sac) {
-        auto& c = rl->sac;
+    // ---- What SAC, TD3 and DQN share (the loop's settings), each learner
+    // with its own defaults; every branch reads and checks in its node's order
+    struct OffPolicyDefaults {
+        const char* batch_size;
+        const char* learning_rate;
+        const char* tau;
+        const char* train_freq;
+    };
+    const auto read_loop_settings = [&](auto& c, const OffPolicyDefaults& d) {
         if (number("total_timesteps", "1000000", v)) c.total_timesteps = static_cast<int64_t>(count(v, 1e15));
         if (number("buffer_size", "1000000", v)) c.buffer_size = static_cast<int64_t>(count(v, 1e15));
         if (number("learning_starts", "100", v)) c.learning_starts = static_cast<int64_t>(count(v, 1e15));
-        if (number("batch_size", "256", v)) c.batch_size = static_cast<int>(count(v, 1e9));
-        if (number("learning_rate", "0.0003", v)) c.learning_rate = static_cast<float>(v);
+        if (number("batch_size", d.batch_size, v)) c.batch_size = static_cast<int>(count(v, 1e9));
+        if (number("learning_rate", d.learning_rate, v)) c.learning_rate = static_cast<float>(v);
         if (number("gamma", "0.99", v)) c.gamma = static_cast<float>(v);
-        if (number("tau", "0.005", v)) c.tau = static_cast<float>(v);
-        if (number("train_freq", "1", v)) c.train_freq = static_cast<int>(count(v, 1e9));
+        if (number("tau", d.tau, v)) c.tau = static_cast<float>(v);
+        if (number("train_freq", d.train_freq, v)) c.train_freq = static_cast<int>(count(v, 1e9));
         if (number("gradient_steps", "1", v)) c.gradient_steps = static_cast<int>(count(v, 1e9));
+    };
+    const auto read_seed = [&](auto& c) {
+        if (number("seed", "1", v)) c.seed = static_cast<uint64_t>(count(std::max(v, 0.0), 2147483647.0));
+    };
+    // The observation statistics and the early stop
+    const auto read_stop = [&](auto& c, const char* target_return) {
+        c.normalize_observations = Param(*learner, "normalize_observations", "false") == "true";
+        if (Param(*learner, "stop_at_return", "false") == "true" && number("target_return", target_return, v))
+            c.target_return = static_cast<float>(v);
+    };
+    // own_count: the learner's own count ("target every", "policy every") and whether it is at least 1
+    const auto check_counts = [&](const auto& c, bool own_count_ok, const char* own_count) {
+        if (c.total_timesteps < 1 || c.buffer_size < 1 || c.learning_starts < 0 || c.batch_size < 1 ||
+            c.train_freq < 1 || c.gradient_steps < 1 || !own_count_ok)
+            error(std::string("Total steps, buffer size, batch size, train every, gradient steps and ") + own_count +
+                      " must each be at least 1, and the random steps first at least 0",
+                  learner, errors::Compiler::InvalidParameter);
+    };
+    const auto check_discount = [&](const auto& c) {
+        if (!(c.gamma > 0.0f && c.gamma <= 1.0f) || !(c.tau > 0.0f && c.tau <= 1.0f))
+            error("The discount and the target update must each be in (0, 1]", learner,
+                  errors::Compiler::InvalidParameter);
+    };
+    const auto check_batch = [&](const auto& c) {
+        if (c.batch_size >= 1 && c.buffer_size >= 1 && c.batch_size > c.buffer_size)
+            error("Batch size " + std::to_string(c.batch_size) + " is larger than the replay buffer (" +
+                      std::to_string(c.buffer_size) + " steps). Lower it, or raise Buffer size",
+                  learner, errors::Compiler::InvalidParameter);
+    };
+    if (learner && sac) {
+        auto& c = rl->sac;
+        read_loop_settings(c, {"256", "0.0003", "0.005", "1"});
         if (number("target_update_interval", "1", v)) c.target_update_interval = static_cast<int>(count(v, 1e9));
         if (number("ent_coef", "1.0", v)) c.ent_coef = static_cast<float>(v);
-        if (number("seed", "1", v)) c.seed = static_cast<uint64_t>(std::max(v, 0.0));
+        read_seed(c);
         c.ent_coef_auto = Param(*learner, "ent_coef_mode", "learned") != "fixed";
         c.target_entropy_auto = Param(*learner, "target_entropy_mode", "auto") != "typed";
         if (!c.target_entropy_auto && number("target_entropy", "-1", v)) c.target_entropy = static_cast<float>(v);
         if (c.target_entropy_auto) c.target_entropy = -static_cast<float>(rl->policy_outputs);
-        c.normalize_observations = Param(*learner, "normalize_observations", "false") == "true";
-        if (Param(*learner, "stop_at_return", "false") == "true" && number("target_return", "4000", v))
-            c.target_return = static_cast<float>(v);
-        if (c.total_timesteps < 1 || c.buffer_size < 1 || c.learning_starts < 0 || c.batch_size < 1 ||
-            c.train_freq < 1 || c.gradient_steps < 1 || c.target_update_interval < 1)
-            error("Total steps, buffer size, batch size, train every, gradient steps and target every must each be "
-                  "at least 1, and the random steps first at least 0",
-                  learner, errors::Compiler::InvalidParameter);
+        read_stop(c, "4000");
+        check_counts(c, c.target_update_interval >= 1, "target every");
         if (!(c.learning_rate > 0.0f))
             error("The learning rate must be above 0", learner, errors::Compiler::InvalidParameter);
-        if (!(c.gamma > 0.0f && c.gamma <= 1.0f) || !(c.tau > 0.0f && c.tau <= 1.0f))
-            error("The discount and the target update must each be in (0, 1]", learner,
-                  errors::Compiler::InvalidParameter);
+        check_discount(c);
         if (!(c.ent_coef > 0.0f))
             error("The entropy weight must be above 0", learner, errors::Compiler::InvalidParameter);
-        if (c.batch_size >= 1 && c.buffer_size >= 1 && c.batch_size > c.buffer_size)
-            error("Batch size " + std::to_string(c.batch_size) + " is larger than the replay buffer (" +
-                      std::to_string(c.buffer_size) + " steps). Lower it, or raise Buffer size",
-                  learner, errors::Compiler::InvalidParameter);
+        check_batch(c);
     }
     if (learner && td3) {
         auto& c = rl->td3;
-        if (number("total_timesteps", "1000000", v)) c.total_timesteps = static_cast<int64_t>(count(v, 1e15));
-        if (number("buffer_size", "1000000", v)) c.buffer_size = static_cast<int64_t>(count(v, 1e15));
-        if (number("learning_starts", "100", v)) c.learning_starts = static_cast<int64_t>(count(v, 1e15));
-        if (number("batch_size", "256", v)) c.batch_size = static_cast<int>(count(v, 1e9));
-        if (number("learning_rate", "0.001", v)) c.learning_rate = static_cast<float>(v);
-        if (number("gamma", "0.99", v)) c.gamma = static_cast<float>(v);
-        if (number("tau", "0.005", v)) c.tau = static_cast<float>(v);
-        if (number("train_freq", "1", v)) c.train_freq = static_cast<int>(count(v, 1e9));
-        if (number("gradient_steps", "1", v)) c.gradient_steps = static_cast<int>(count(v, 1e9));
+        read_loop_settings(c, {"256", "0.001", "0.005", "1"});
         if (number("policy_delay", "2", v)) c.policy_delay = static_cast<int>(count(v, 1e9));
         if (number("action_noise_std", "0.1", v)) c.action_noise_std = static_cast<float>(v);
         if (number("target_policy_noise", "0.2", v)) c.target_policy_noise = static_cast<float>(v);
         if (number("target_noise_clip", "0.5", v)) c.target_noise_clip = static_cast<float>(v);
-        if (number("seed", "1", v)) c.seed = static_cast<uint64_t>(std::max(v, 0.0));
+        read_seed(c);
         c.action_noise = Param(*learner, "action_noise", "normal") != "none";
-        c.normalize_observations = Param(*learner, "normalize_observations", "false") == "true";
-        if (Param(*learner, "stop_at_return", "false") == "true" && number("target_return", "4000", v))
-            c.target_return = static_cast<float>(v);
-        if (c.total_timesteps < 1 || c.buffer_size < 1 || c.learning_starts < 0 || c.batch_size < 1 ||
-            c.train_freq < 1 || c.gradient_steps < 1 || c.policy_delay < 1)
-            error("Total steps, buffer size, batch size, train every, gradient steps and policy every must each be "
-                  "at least 1, and the random steps first at least 0",
-                  learner, errors::Compiler::InvalidParameter);
+        read_stop(c, "4000");
+        check_counts(c, c.policy_delay >= 1, "policy every");
         if (!(c.learning_rate > 0.0f))
             error("The learning rate must be above 0", learner, errors::Compiler::InvalidParameter);
-        if (!(c.gamma > 0.0f && c.gamma <= 1.0f) || !(c.tau > 0.0f && c.tau <= 1.0f))
-            error("The discount and the target update must each be in (0, 1]", learner,
-                  errors::Compiler::InvalidParameter);
+        check_discount(c);
         if ((c.action_noise && !(c.action_noise_std > 0.0f)) || !(c.target_policy_noise >= 0.0f) ||
             !(c.target_noise_clip >= 0.0f))
             error("The noise std must be above 0, the target smoothing noise and its clip at least 0", learner,
                   errors::Compiler::InvalidParameter);
-        if (c.batch_size >= 1 && c.buffer_size >= 1 && c.batch_size > c.buffer_size)
-            error("Batch size " + std::to_string(c.batch_size) + " is larger than the replay buffer (" +
-                      std::to_string(c.buffer_size) + " steps). Lower it, or raise Buffer size",
-                  learner, errors::Compiler::InvalidParameter);
+        check_batch(c);
     }
     if (learner && dqn) {
         auto& c = rl->dqn;
-        if (number("total_timesteps", "1000000", v)) c.total_timesteps = static_cast<int64_t>(count(v, 1e15));
-        if (number("buffer_size", "1000000", v)) c.buffer_size = static_cast<int64_t>(count(v, 1e15));
-        if (number("learning_starts", "100", v)) c.learning_starts = static_cast<int64_t>(count(v, 1e15));
-        if (number("batch_size", "32", v)) c.batch_size = static_cast<int>(count(v, 1e9));
-        if (number("learning_rate", "0.0001", v)) c.learning_rate = static_cast<float>(v);
-        if (number("gamma", "0.99", v)) c.gamma = static_cast<float>(v);
-        if (number("tau", "1.0", v)) c.tau = static_cast<float>(v);
-        if (number("train_freq", "4", v)) c.train_freq = static_cast<int>(count(v, 1e9));
-        if (number("gradient_steps", "1", v)) c.gradient_steps = static_cast<int>(count(v, 1e9));
+        read_loop_settings(c, {"32", "0.0001", "1.0", "4"});
         if (number("target_update_interval", "10000", v))
             c.target_update_interval = static_cast<int64_t>(count(v, 1e15));
         if (number("exploration_fraction", "0.1", v)) c.exploration_fraction = static_cast<float>(v);
         if (number("exploration_initial_eps", "1.0", v)) c.exploration_initial_eps = static_cast<float>(v);
         if (number("exploration_final_eps", "0.05", v)) c.exploration_final_eps = static_cast<float>(v);
         if (number("max_grad_norm", "10", v)) c.max_grad_norm = static_cast<float>(v);
-        if (number("seed", "1", v)) c.seed = static_cast<uint64_t>(std::max(v, 0.0));
-        c.normalize_observations = Param(*learner, "normalize_observations", "false") == "true";
-        if (Param(*learner, "stop_at_return", "false") == "true" && number("target_return", "475", v))
-            c.target_return = static_cast<float>(v);
-        if (c.total_timesteps < 1 || c.buffer_size < 1 || c.learning_starts < 0 || c.batch_size < 1 ||
-            c.train_freq < 1 || c.gradient_steps < 1 || c.target_update_interval < 1)
-            error("Total steps, buffer size, batch size, train every, gradient steps and target every must each be "
-                  "at least 1, and the random steps first at least 0",
-                  learner, errors::Compiler::InvalidParameter);
+        read_seed(c);
+        read_stop(c, "475");
+        check_counts(c, c.target_update_interval >= 1, "target every");
         if (!(c.learning_rate > 0.0f) || !(c.max_grad_norm > 0.0f))
             error("The learning rate and the largest gradient norm must each be above 0", learner,
                   errors::Compiler::InvalidParameter);
-        if (!(c.gamma > 0.0f && c.gamma <= 1.0f) || !(c.tau > 0.0f && c.tau <= 1.0f))
-            error("The discount and the target update must each be in (0, 1]", learner,
-                  errors::Compiler::InvalidParameter);
+        check_discount(c);
         const auto share = [](float x) { return x >= 0.0f && x <= 1.0f; };
         if (!share(c.exploration_fraction) || !share(c.exploration_initial_eps) || !share(c.exploration_final_eps))
             error("The exploration's start, end and share of the run must each be from 0 to 1", learner,
                   errors::Compiler::InvalidParameter);
-        if (c.batch_size >= 1 && c.buffer_size >= 1 && c.batch_size > c.buffer_size)
-            error("Batch size " + std::to_string(c.batch_size) + " is larger than the replay buffer (" +
-                      std::to_string(c.buffer_size) + " steps). Lower it, or raise Buffer size",
-                  learner, errors::Compiler::InvalidParameter);
+        check_batch(c);
     }
     if (learner && rl->algorithm == RLAlgorithm::PPO) {
         const gui::MLNode* ppo = learner;
@@ -546,7 +564,7 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
         if (number("clip_range_vf", "0", v)) c.loss.clip_range_vf = static_cast<float>(v);
         if (number("ent_coef", "0", v)) c.loss.ent_coef = static_cast<float>(v);
         if (number("vf_coef", "0.5", v)) c.loss.vf_coef = static_cast<float>(v);
-        if (number("seed", "1", v)) c.seed = static_cast<uint64_t>(std::max(v, 0.0));
+        if (number("seed", "1", v)) c.seed = static_cast<uint64_t>(count(std::max(v, 0.0), 2147483647.0));
         c.loss.normalize_advantage = Param(*ppo, "normalize_advantage", "true") == "true";
         c.normalize_observations = Param(*ppo, "normalize_observations", "false") == "true";
         c.normalize_rewards = Param(*ppo, "normalize_rewards", "false") == "true";

@@ -1,5 +1,5 @@
-"""The reference-curve files of generate_ppo_sb3_curves.py, generate_sac_sb3_curves.py and
-generate_td3_sb3_curves.py: read, merge one
+"""The reference-curve files of generate_ppo_sb3_curves.py and the off-policy generators (SAC, TD3, DQN):
+read, merge one
 run's tasks and seeds over a file, and write it with one row per line (resources/rl_reference/*.json)."""
 
 from __future__ import annotations
@@ -24,12 +24,20 @@ def Read(path):
 
 def Merge(old, new, order):
     """`new` over `old`: its tasks replace the same seeds of the same task, the rest stays; tasks sorted by
-    `order` (task ids)."""
+    `order` (task ids). Refuses runs of another SB3 or another library version, or a task recorded under
+    other settings: a reference mixing them would not be any one run's curve."""
     if old is None:
         return new
+    if old.get("versions") != new.get("versions"):
+        raise ValueError(f"cannot merge runs of {new.get('versions')} into a file of {old.get('versions')}")
     tasks = {t["id"]: t for t in old["tasks"]}
     for task in new["tasks"]:
         if task["id"] in tasks:
+            settings = {k: v for k, v in task.items() if k != "runs"}
+            recorded = {k: v for k, v in tasks[task["id"]].items() if k != "runs"}
+            if settings != recorded:
+                raise ValueError(f"{task['id']}: the new runs' settings {settings} differ from the recorded "
+                                 f"{recorded}; record all its seeds again under the new settings")
             kept = [r for r in tasks[task["id"]]["runs"] if r["seed"] not in {n["seed"] for n in task["runs"]}]
             task = dict(task, runs=sorted(kept + task["runs"], key=lambda r: r["seed"]))
         tasks[task["id"]] = task

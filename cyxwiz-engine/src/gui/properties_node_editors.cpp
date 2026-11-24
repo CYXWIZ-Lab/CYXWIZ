@@ -6,7 +6,7 @@
 // properties_rows so it carries its truth chip and the shared look.
 #include "properties_node_editors.h"
 #include "node_editor.h"
-#include "../core/rl/sac_config.h"
+#include "../core/rl/replay_buffer.h"
 #include "../core/rl_graph_presentation.h"
 #include "../plugin/builtin/classic_control_environments.h"
 #include "../plugin/plugin_manager.h"
@@ -496,8 +496,8 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
         }
         if (buffer > 0 && fits_learner) {
             const uint64_t bytes =
-                cyxwiz::rl::ReplayBytes(buffer, static_cast<size_t>(std::max(env.info.observation_size, 0)),
-                                        dqn ? 1 : static_cast<size_t>(std::max(env.info.action_size, 0)));
+                cyxwiz::rl::ReplayBuffer::BytesFor(buffer, static_cast<size_t>(std::max(env.info.observation_size, 0)),
+                                                   dqn ? 1 : static_cast<size_t>(std::max(env.info.action_size, 0)));
             const TrainingDeviceMemory device = SelectedTrainingDeviceMemory();
             const auto fit = cyxwiz::rl_graph::ReplayFitText(bytes, device.name, device.bytes);
             FactRows({{"Replay buffer", fit.text}});

@@ -4299,29 +4299,9 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
         info.total_timesteps = static_cast<long long>(c.ppo.total_timesteps);
         info.target_return = c.ppo.target_return;
     }
-    // The SB3 reference of the same settings, on the environment as recorded
-    // (its defaults: a run with grounds, pushes or throws has none)
-    if (cyxwiz::rl::DefaultEnvironmentSettings(c.environment, c.environment_settings)) {
-        namespace rl = cyxwiz::rl;
-        switch (c.algorithm) {
-            case cyxwiz::RLAlgorithm::TD3:
-                info.reference = rl::FindTd3Reference(rl::ReadReferenceFile("td3_sb3_curves.json"), c.environment.id,
-                                                      c.copies, c.td3);
-                break;
-            case cyxwiz::RLAlgorithm::SAC:
-                info.reference = rl::FindSacReference(rl::ReadReferenceFile("sac_sb3_curves.json"), c.environment.id,
-                                                      c.copies, c.sac);
-                break;
-            case cyxwiz::RLAlgorithm::DQN:
-                info.reference = rl::FindDqnReference(rl::ReadReferenceFile("dqn_sb3_curves.json"), c.environment.id,
-                                                      c.copies, c.dqn);
-                break;
-            case cyxwiz::RLAlgorithm::PPO:
-                info.reference = rl::FindPpoReference(rl::ReadReferenceFile("ppo_sb3_curves.json"), c.environment.id,
-                                                      c.copies, c.ppo);
-                break;
-        }
-    }
+    // The SB3 reference of the same settings, layers and copies, on the
+    // environment as recorded (its defaults: a run with grounds, pushes or throws has none)
+    info.reference = cyxwiz::rl::FindRLReference(c);
     auto* run = rl_run_.get();
     cyxwiz::TrainingDashboardPanel::RunControls controls;
     controls.pause = [run]() { run->Pause(); };

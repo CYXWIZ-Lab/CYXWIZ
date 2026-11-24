@@ -29,7 +29,8 @@ std::string Megabytes(uint64_t bytes) {
 
 }  // namespace
 
-ReplayBuffer::ReplayBuffer(int64_t capacity, size_t observation_size, size_t action_size)
+ReplayBuffer::ReplayBuffer(int64_t capacity, size_t observation_size, size_t action_size,
+                           const std::string& learner)
     : table_(std::make_unique<Table>()), capacity_(capacity), observation_size_(observation_size),
       action_size_(action_size) {
     if (capacity < 1) throw std::invalid_argument("The replay buffer needs room for at least one step.");
@@ -42,14 +43,17 @@ ReplayBuffer::ReplayBuffer(int64_t capacity, size_t observation_size, size_t act
     } catch (const std::exception& e) {  // af::exception, or the host's bad_alloc on the CPU device
         throw std::runtime_error("The replay buffer of " + std::to_string(capacity) + " steps (" + Megabytes(Bytes()) +
                                  ") does not fit on the training device (" + e.what() +
-                                 "). Lower Buffer size on the SAC node.");
+                                 "). Lower Buffer size on the " + learner + " node.");
     }
 }
 
 ReplayBuffer::~ReplayBuffer() = default;
 
-uint64_t ReplayBuffer::Bytes() const {
-    return static_cast<uint64_t>(capacity_) * Width(observation_size_, action_size_) * sizeof(float);
+uint64_t ReplayBuffer::Bytes() const { return BytesFor(capacity_, observation_size_, action_size_); }
+
+uint64_t ReplayBuffer::BytesFor(int64_t capacity, size_t observation_size, size_t action_size) {
+    if (capacity <= 0) return 0;
+    return static_cast<uint64_t>(capacity) * Width(observation_size, action_size) * sizeof(float);
 }
 
 void ReplayBuffer::Add(const float* observations, const float* actions, const float* rewards,

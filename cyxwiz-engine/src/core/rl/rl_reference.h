@@ -21,11 +21,18 @@
 #include <utility>
 #include <vector>
 
+namespace cyxwiz {
+struct RLTrainingConfiguration;
+}
+
 namespace cyxwiz::rl {
 
 struct RLReference {
     std::string label;  // "SB3 2.7.1, 3 seeds"
     std::vector<std::vector<std::pair<double, double>>> seeds;  // (steps, mean return of the last 100)
+    // The recorded networks' hidden widths, each network's (SB3's net_arch: the
+    // task's own, else the learner's default as SB3 or RL Zoo ran it)
+    std::vector<int> layers;
 
     // The seeds' mean at this step (each seed interpolated); nullopt past the shortest
     std::optional<double> At(double steps) const;
@@ -45,6 +52,14 @@ std::optional<RLReference> FindTd3Reference(const std::string& json_text, const 
 // The DQN reference likewise (dqn_sb3_curves.json)
 std::optional<RLReference> FindDqnReference(const std::string& json_text, const std::string& environment_id,
                                             int copies, const DqnConfig& config);
+
+// The reference the dashboard draws under a compiled run: its learner's
+// recorded file, the same settings and copies, the environment at its
+// defaults, and both networks of the recorded hidden widths; nullopt when any
+// differs (a curve of other settings or layers would mislead)
+std::optional<RLReference> FindRLReference(const RLTrainingConfiguration& config);
+// Whether both of the run's networks have the reference's hidden widths
+bool SameLayers(const RLReference& reference, const RLTrainingConfiguration& config);
 
 // Whether `settings` (the Environment node's) leave every setting the
 // environment declares at its default, as the recorded runs do: a value equal

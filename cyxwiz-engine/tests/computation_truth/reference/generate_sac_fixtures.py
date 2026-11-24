@@ -39,6 +39,11 @@ def squash_case(name: str, seed: int, rows: int, act: int) -> dict[str, Any]:
     log_std[0, 0] = -25.0
     mean[0, 0] = 0.0
     log_std[1, act - 1] = 3.0
+    # Exactly at the clamp's ends, where its gradient still passes: -20 (a 0 mean and noise, as above) and 2
+    log_std[4, 0] = -20.0
+    mean[4, 0] = 0.0
+    if act > 1:
+        log_std[4, act - 1] = 2.0
     # Near saturation: tanh(u) close to +-1, where the epsilon matters
     mean[2, 0] = 4.5
     mean[3, act - 1] = -4.0
@@ -49,6 +54,7 @@ def squash_case(name: str, seed: int, rows: int, act: int) -> dict[str, Any]:
     # cancels two terms of about noise / std (1e8) and keeps only rounding; a 0
     # noise makes u - mean exactly 0, so the clamp is tested and nothing cancels
     noise[0, 0] = 0.0
+    noise[4, 0] = 0.0
     # Upstream gradients, as the actor loss and the critics send them
     grad_actions = torch.randn(rows, act, generator=generator)
     grad_log_prob = torch.randn(rows, generator=generator) * 0.1

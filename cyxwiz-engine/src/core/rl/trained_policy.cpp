@@ -196,7 +196,7 @@ OffPolicyUpdateMetrics ReportFromJson(const json& j) {
     m.ent_coef = number("ent_coef");
     m.ent_coef_loss = number("ent_coef_loss");
     m.mean_q = number("mean_q");
-    m.exploration_rate = j.contains("exploration_rate") ? number("exploration_rate") : 0.0f;  // none before DQN
+    m.exploration_rate = number("exploration_rate");
     m.buffer_size = j.value("buffer_size", int64_t{0});
     m.buffer_capacity = j.value("buffer_capacity", int64_t{0});
     m.buffer_bytes = j.value("buffer_bytes", uint64_t{0});
@@ -317,6 +317,17 @@ bool SetWeights(IExecutableModel& model, const std::string& prefix,
     return true;
 }
 
+// SAC's and TD3's twin critics and their targets from the package
+template <class Networks>
+bool SetCriticWeights(Networks& n, const std::map<std::string, std::vector<uint8_t>>& weights,
+                      const std::map<std::string, std::vector<int64_t>>& shapes,
+                      const std::map<std::string, TensorDType>& dtypes, std::string& error) {
+    return SetWeights(*n.q1, "q1.", weights, shapes, dtypes, "first Q", error) &&
+           SetWeights(*n.q2, "q2.", weights, shapes, dtypes, "second Q", error) &&
+           SetWeights(*n.q1_target, "q1_target.", weights, shapes, dtypes, "first target Q", error) &&
+           SetWeights(*n.q2_target, "q2_target.", weights, shapes, dtypes, "second target Q", error);
+}
+
 }  // namespace
 
 std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfiguration& config, std::string& error) {
@@ -324,12 +335,59 @@ std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfigura
 }
 
 namespace {
-// SAC's: initialised as PyTorch's nn.Linear (SB3's SAC keeps that)
+// The off-policy learners' (SAC, TD3, DQN): initialised as PyTorch's nn.Linear (SB3 keeps that for them)
 std::unique_ptr<IExecutableModel> TorchLike(const std::vector<CompiledLayer>& hidden, size_t inputs, size_t outputs,
                                             const char* what, std::string& error, bool tanh = false) {
     auto model = Layers(hidden, inputs, outputs, what, error, tanh);
     if (model) InitializeLikeTorchLinear(*model);
     return model;
+}
+
+// SAC's and TD3's twin critics, [observation | action] -> [B, 1]
+template <class Networks>
+bool BuildCritics(const RLTrainingConfiguration& config, Networks& networks, std::string& error) {
+    const size_t q_inputs = config.observation_size + config.policy_outputs;
+    networks.q1 = TorchLike(config.q_layers, q_inputs, 1, "first Q", error);
+    if (!networks.q1) return false;
+    networks.q2 = TorchLike(config.q_layers, q_inputs, 1, "second Q", error);
+    return networks.q2 != nullptr;
+}
+
+// Their targets, not initialised: the learner copies the critics' weights into them
+template <class Networks>
+bool BuildCriticTargets(const RLTrainingConfiguration& config, Networks& networks, std::string& error) {
+    const size_t q_inputs = config.observation_size + config.policy_outputs;
+    networks.q1_target = Layers(config.q_layers, q_inputs, 1, "first target Q", error);
+    networks.q2_target = networks.q1_target ? Layers(config.q_layers, q_inputs, 1, "second target Q", error) : nullptr;
+    return networks.q1_target && networks.q2_target;
+}
+
+// The twin critics and their targets moved into a policy
+template <class Networks>
+void TakeCritics(Networks& n, TrainedPolicy& out) {
+    out.q1 = std::move(n.q1);
+    out.q2 = std::move(n.q2);
+    out.q1_target = std::move(n.q1_target);
+    out.q2_target = std::move(n.q2_target);
+}
+
+// An off-policy run's policy without its networks (the caller moves them in):
+// the graph, the observation statistics, the optimizers, the reports, and the
+// steps and mean return of the last report
+template <class TrainedState>
+std::unique_ptr<TrainedPolicy> OffPolicyRecord(const RLTrainingConfiguration& config, std::string graph_json,
+                                               TrainedState& state, std::vector<OffPolicyUpdateMetrics> reports) {
+    auto out = std::make_unique<TrainedPolicy>();
+    out->config = config;
+    out->graph_json = std::move(graph_json);
+    out->normalizer = std::move(state.normalizer);
+    out->optimizers = std::move(state.optimizers);
+    out->reports = std::move(reports);
+    if (!out->reports.empty()) {
+        out->steps = out->reports.back().timesteps;
+        out->mean_return = out->reports.back().mean_episode_return;
+    }
+    return out;
 }
 }  // namespace
 
@@ -338,20 +396,8 @@ std::unique_ptr<IExecutableModel> BuildSacActorNetwork(const RLTrainingConfigura
 }
 
 bool BuildSacNetworks(const RLTrainingConfiguration& config, SacNetworks& networks, std::string& error) {
-    const size_t actions = config.policy_outputs;
-    const size_t q_inputs = config.observation_size + actions;
-    const auto torch_like = [&](const std::vector<CompiledLayer>& hidden, size_t inputs, size_t outputs,
-                                const char* what) { return TorchLike(hidden, inputs, outputs, what, error); };
     networks.actor = BuildSacActorNetwork(config, error);
-    if (!networks.actor) return false;
-    networks.q1 = torch_like(config.q_layers, q_inputs, 1, "first Q");
-    if (!networks.q1) return false;
-    networks.q2 = torch_like(config.q_layers, q_inputs, 1, "second Q");
-    if (!networks.q2) return false;
-    // The targets start as copies of the critics (SacLearner copies the weights)
-    networks.q1_target = Layers(config.q_layers, q_inputs, 1, "first target Q", error);
-    networks.q2_target = networks.q1_target ? Layers(config.q_layers, q_inputs, 1, "second target Q", error) : nullptr;
-    return networks.q1_target && networks.q2_target;
+    return networks.actor && BuildCritics(config, networks, error) && BuildCriticTargets(config, networks, error);
 }
 
 std::unique_ptr<IExecutableModel> BuildTd3ActorNetwork(const RLTrainingConfiguration& config, std::string& error) {
@@ -359,22 +405,12 @@ std::unique_ptr<IExecutableModel> BuildTd3ActorNetwork(const RLTrainingConfigura
 }
 
 bool BuildTd3Networks(const RLTrainingConfiguration& config, Td3Networks& networks, std::string& error) {
-    const size_t actions = config.policy_outputs;
-    const size_t q_inputs = config.observation_size + actions;
-    const auto torch_like = [&](const std::vector<CompiledLayer>& hidden, size_t inputs, size_t outputs,
-                                const char* what) { return TorchLike(hidden, inputs, outputs, what, error); };
     networks.actor = BuildTd3ActorNetwork(config, error);
-    if (!networks.actor) return false;
-    networks.q1 = torch_like(config.q_layers, q_inputs, 1, "first Q");
-    if (!networks.q1) return false;
-    networks.q2 = torch_like(config.q_layers, q_inputs, 1, "second Q");
-    if (!networks.q2) return false;
+    if (!networks.actor || !BuildCritics(config, networks, error)) return false;
     // The targets start as copies (Td3Learner copies the weights)
-    networks.actor_target = Layers(config.policy_layers, config.observation_size, actions, "target actor", error, true);
-    if (!networks.actor_target) return false;
-    networks.q1_target = Layers(config.q_layers, q_inputs, 1, "first target Q", error);
-    networks.q2_target = networks.q1_target ? Layers(config.q_layers, q_inputs, 1, "second target Q", error) : nullptr;
-    return networks.q1_target && networks.q2_target;
+    networks.actor_target =
+        Layers(config.policy_layers, config.observation_size, config.policy_outputs, "target actor", error, true);
+    return networks.actor_target && BuildCriticTargets(config, networks, error);
 }
 
 std::unique_ptr<IExecutableModel> BuildDqnQNetwork(const RLTrainingConfiguration& config, std::string& error) {
@@ -417,60 +453,27 @@ std::unique_ptr<TrainedPolicy> MakeTrainedPolicy(const RLTrainingConfiguration& 
 
 std::unique_ptr<TrainedPolicy> MakeSacTrainedPolicy(const RLTrainingConfiguration& config, std::string graph_json,
                                                     SacTrainedState state, std::vector<OffPolicyUpdateMetrics> reports) {
-    auto out = std::make_unique<TrainedPolicy>();
-    out->config = config;
-    out->graph_json = std::move(graph_json);
+    auto out = OffPolicyRecord(config, std::move(graph_json), state, std::move(reports));
     out->policy = std::move(state.networks.actor);
-    out->q1 = std::move(state.networks.q1);
-    out->q2 = std::move(state.networks.q2);
-    out->q1_target = std::move(state.networks.q1_target);
-    out->q2_target = std::move(state.networks.q2_target);
+    TakeCritics(state.networks, *out);
     out->log_ent_coef = state.log_ent_coef;
-    out->normalizer = std::move(state.normalizer);
-    out->optimizers = std::move(state.optimizers);
-    out->reports = std::move(reports);
-    if (!out->reports.empty()) {
-        out->steps = out->reports.back().timesteps;
-        out->mean_return = out->reports.back().mean_episode_return;
-    }
     return out;
 }
 
 std::unique_ptr<TrainedPolicy> MakeTd3TrainedPolicy(const RLTrainingConfiguration& config, std::string graph_json,
                                                     Td3TrainedState state, std::vector<OffPolicyUpdateMetrics> reports) {
-    auto out = std::make_unique<TrainedPolicy>();
-    out->config = config;
-    out->graph_json = std::move(graph_json);
+    auto out = OffPolicyRecord(config, std::move(graph_json), state, std::move(reports));
     out->policy = std::move(state.networks.actor);
     out->actor_target = std::move(state.networks.actor_target);
-    out->q1 = std::move(state.networks.q1);
-    out->q2 = std::move(state.networks.q2);
-    out->q1_target = std::move(state.networks.q1_target);
-    out->q2_target = std::move(state.networks.q2_target);
-    out->normalizer = std::move(state.normalizer);
-    out->optimizers = std::move(state.optimizers);
-    out->reports = std::move(reports);
-    if (!out->reports.empty()) {
-        out->steps = out->reports.back().timesteps;
-        out->mean_return = out->reports.back().mean_episode_return;
-    }
+    TakeCritics(state.networks, *out);
     return out;
 }
 
 std::unique_ptr<TrainedPolicy> MakeDqnTrainedPolicy(const RLTrainingConfiguration& config, std::string graph_json,
                                                     DqnTrainedState state, std::vector<OffPolicyUpdateMetrics> reports) {
-    auto out = std::make_unique<TrainedPolicy>();
-    out->config = config;
-    out->graph_json = std::move(graph_json);
+    auto out = OffPolicyRecord(config, std::move(graph_json), state, std::move(reports));
     out->policy = std::move(state.networks.q);
     out->q_target = std::move(state.networks.q_target);
-    out->normalizer = std::move(state.normalizer);
-    out->optimizers = std::move(state.optimizers);
-    out->reports = std::move(reports);
-    if (!out->reports.empty()) {
-        out->steps = out->reports.back().timesteps;
-        out->mean_return = out->reports.back().mean_episode_return;
-    }
     return out;
 }
 
@@ -487,16 +490,9 @@ std::vector<float> PolicyActions(TrainedPolicy& p, std::vector<float> observatio
         const float* data = greedy.ReadData<float>();
         std::vector<float> actions(data, data + rows);
         if (!best) {
-            uint64_t state = seed;
-            const auto next = [&state]() {  // splitmix64
-                uint64_t z = (state += 0x9E3779B97F4A7C15ull);
-                z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
-                z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-                return z ^ (z >> 31);
-            };
-            const double draw = static_cast<double>(next() >> 11) * (1.0 / 9007199254740992.0);
-            if (draw < p.config.dqn.exploration_final_eps)  // one draw for all the rows, as SB3's predict
-                for (auto& a : actions) a = static_cast<float>(next() % static_cast<uint64_t>(p.config.policy_outputs));
+            SplitMix64 random(seed);
+            EpsilonGreedy(actions, p.config.dqn.exploration_final_eps, p.config.policy_outputs,
+                          [&random]() { return random.Next(); });
         }
         return actions;
     }
@@ -821,25 +817,16 @@ std::unique_ptr<TrainedPolicy> LoadTrainedPolicy(const std::filesystem::path& pa
             if (!BuildTd3Networks(out->config, n, error)) return nullptr;
             if (!SetWeights(*n.actor, "actor.", weights, shapes, dtypes, "actor", error) ||
                 !SetWeights(*n.actor_target, "actor_target.", weights, shapes, dtypes, "target actor", error) ||
-                !SetWeights(*n.q1, "q1.", weights, shapes, dtypes, "first Q", error) ||
-                !SetWeights(*n.q2, "q2.", weights, shapes, dtypes, "second Q", error) ||
-                !SetWeights(*n.q1_target, "q1_target.", weights, shapes, dtypes, "first target Q", error) ||
-                !SetWeights(*n.q2_target, "q2_target.", weights, shapes, dtypes, "second target Q", error))
+                !SetCriticWeights(n, weights, shapes, dtypes, error))
                 return nullptr;
             out->policy = std::move(n.actor);
             out->actor_target = std::move(n.actor_target);
-            out->q1 = std::move(n.q1);
-            out->q2 = std::move(n.q2);
-            out->q1_target = std::move(n.q1_target);
-            out->q2_target = std::move(n.q2_target);
+            TakeCritics(n, *out);
         } else if (out->IsSac()) {
             SacNetworks n;
             if (!BuildSacNetworks(out->config, n, error)) return nullptr;
             if (!SetWeights(*n.actor, "actor.", weights, shapes, dtypes, "actor", error) ||
-                !SetWeights(*n.q1, "q1.", weights, shapes, dtypes, "first Q", error) ||
-                !SetWeights(*n.q2, "q2.", weights, shapes, dtypes, "second Q", error) ||
-                !SetWeights(*n.q1_target, "q1_target.", weights, shapes, dtypes, "first target Q", error) ||
-                !SetWeights(*n.q2_target, "q2_target.", weights, shapes, dtypes, "second target Q", error))
+                !SetCriticWeights(n, weights, shapes, dtypes, error))
                 return nullptr;
             const auto it = weights.find("log_ent_coef");
             if (it == weights.end()) {
@@ -848,10 +835,7 @@ std::unique_ptr<TrainedPolicy> LoadTrainedPolicy(const std::filesystem::path& pa
             }
             out->log_ent_coef = FromBytes(it->second, shapes.at("log_ent_coef"), dtypes.at("log_ent_coef"));
             out->policy = std::move(n.actor);
-            out->q1 = std::move(n.q1);
-            out->q2 = std::move(n.q2);
-            out->q1_target = std::move(n.q1_target);
-            out->q2_target = std::move(n.q2_target);
+            TakeCritics(n, *out);
         } else {
             if (!BuildRLNetworks(out->config, out->policy, out->value, error)) return nullptr;
             if (!SetWeights(*out->policy, "policy.", weights, shapes, dtypes, "policy", error) ||

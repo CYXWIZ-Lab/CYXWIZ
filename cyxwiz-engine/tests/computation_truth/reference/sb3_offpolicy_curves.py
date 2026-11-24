@@ -102,27 +102,24 @@ def Main(learner, tasks, columns, settings_key, default_output, generator, make_
 
     torch.set_num_threads(args.threads)
     rl.load_plugin(os.path.abspath(args.plugin))
-    results = []
+    versions = {"stable_baselines3": stable_baselines3.__version__, "torch": torch.__version__,
+                "gymnasium": gymnasium.__version__, "mujoco": mujoco.__version__}
     for task in tasks:
         if task["id"] not in args.tasks:
             continue
-        runs = []
         for seed in args.seeds:
             outcome = run(learner, task, seed, rl, settings_key, make_kwargs, columns)
+            final = outcome["updates"][-1][1] if outcome["updates"] else None
             print(f"{task['id']} seed {seed}: target {task['target']} reached at "
-                  f"{outcome['reached_target_at']} steps ({outcome['seconds']} s), "
-                  f"final return {outcome['updates'][-1][1]:.1f}", flush=True)
-            runs.append(outcome)
-        results.append({key: task[key] for key in ("id", "copies", "target", "total_timesteps", settings_key)} |
-                       {"runs": runs})
-
-    report = {
-        "generator": generator,
-        "versions": {"stable_baselines3": stable_baselines3.__version__, "torch": torch.__version__,
-                     "gymnasium": gymnasium.__version__, "mujoco": mujoco.__version__},
-        "columns": columns,
-        "report_every": REPORT_EVERY,
-        "tasks": results,
-    }
-    WriteReport(args.output, Merge(Read(args.output), report, order))
-    print(f"wrote {args.output}")
+                  f"{outcome['reached_target_at']} steps ({outcome['seconds']} s), final return {final}", flush=True)
+            # Written after every seed, so a long run that stops later keeps what it trained
+            report = {
+                "generator": generator,
+                "versions": versions,
+                "columns": columns,
+                "report_every": REPORT_EVERY,
+                "tasks": [{key: task[key] for key in ("id", "copies", "target", "total_timesteps", settings_key)} |
+                          {"runs": [outcome]}],
+            }
+            WriteReport(args.output, Merge(Read(args.output), report, order))
+            print(f"wrote {args.output}", flush=True)

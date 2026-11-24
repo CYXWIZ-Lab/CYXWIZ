@@ -137,6 +137,10 @@ int main() {
     Check(CompactRunText("SAC 212,000 steps" + dot + "CUDA") == "212,000 steps" &&
               CompactRunText("SAC waiting for the GPU") == "Waiting" && CompactRunText("SAC starting") == "Starting",
           "a SAC line shortened to its state");
+    Check(CompactRunText("TD3 waiting for the GPU") == "Waiting" && CompactRunText("TD3 starting") == "Starting" &&
+              CompactRunText("DQN 21,000 steps" + dot + "CUDA") == "21,000 steps" &&
+              CompactRunText("DQN waiting for the GPU") == "Waiting",
+          "TD3 and DQN lines shortened to their state");
 
     // The Code menu: the framework on the bar only in Code Gen; elsewhere the
     // menu names it.

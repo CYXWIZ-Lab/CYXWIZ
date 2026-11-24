@@ -1,5 +1,7 @@
 #include "rl_reference.h"
 
+#include "../rl_graph_compile.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -22,10 +24,20 @@ double Setting(const nlohmann::json& settings, const char* key, double fallback)
 // the run's settings are floats
 bool Same(double a, double b) { return std::abs(a - b) <= 1e-6 * std::max(std::abs(a), std::abs(b)); }
 
+// A recorded net_arch: a list of widths, or one width for two layers (the PPO
+// generator's "policy"); the fallback when the settings leave it out
+std::vector<int> Layers(const nlohmann::json& settings, const char* key, std::vector<int> fallback) {
+    if (!settings.is_object() || !settings.contains(key)) return fallback;
+    const auto& v = settings.at(key);
+    if (v.is_number_integer()) return {v.get<int>(), v.get<int>()};
+    return v.get<std::vector<int>>();
+}
+
 // The first recorded task of this environment and copy count whose settings
-// match, as a reference
+// match, as a reference; layers(task): the hidden widths it was recorded with
 std::optional<RLReference> Find(const std::string& json_text, const std::string& environment_id, int copies,
-                                const std::function<bool(const nlohmann::json& task)>& matches) {
+                                const std::function<bool(const nlohmann::json& task)>& matches,
+                                const std::function<std::vector<int>(const nlohmann::json& task)>& layers) {
     if (json_text.empty()) return std::nullopt;
     try {
         const auto doc = nlohmann::json::parse(json_text);
@@ -42,6 +54,7 @@ std::optional<RLReference> Find(const std::string& json_text, const std::string&
             if (task.at("id").get<std::string>() != environment_id || task.at("copies").get<int>() != copies) continue;
             if (!matches(task)) continue;
             RLReference ref;
+            ref.layers = layers(task);
             for (const auto& run : task.at("runs")) {
                 std::vector<std::pair<double, double>> curve;
                 for (const auto& row : run.at("updates")) {
@@ -102,6 +115,8 @@ std::optional<RLReference> FindPpoReference(const std::string& json_text, const 
         // The reference's VecNormalize (observations and rewards together), as the run's
         const bool normalize = task.value("normalize", false);
         return same && c.normalize_observations == normalize && c.normalize_rewards == normalize;
+    }, [](const nlohmann::json& task) {  // SB3's MlpPolicy: 64-64; RL Zoo's HalfCheetah: "policy" 256
+        return Layers(task.value("policy", nlohmann::json::object()), "net_arch", {64, 64});
     });
 }
 
@@ -120,7 +135,7 @@ std::optional<RLReference> FindSacReference(const std::string& json_text, const 
                Same(Setting(s, "gradient_steps", 1), c.gradient_steps) &&
                Same(Setting(s, "target_update_interval", 1), c.target_update_interval) && c.ent_coef_auto &&
                Same(c.ent_coef, 1.0) && c.target_entropy_auto && !c.normalize_observations;
-    });
+    }, [](const nlohmann::json& task) { return Layers(task.at("sac"), "net_arch", {256, 256}); });  // SB3 SAC's
 }
 
 std::optional<RLReference> FindTd3Reference(const std::string& json_text, const std::string& environment_id,
@@ -142,7 +157,7 @@ std::optional<RLReference> FindTd3Reference(const std::string& json_text, const 
                Same(Setting(s, "policy_delay", 2), c.policy_delay) &&
                Same(Setting(s, "target_policy_noise", 0.2), c.target_policy_noise) &&
                Same(Setting(s, "target_noise_clip", 0.5), c.target_noise_clip);
-    });
+    }, [](const nlohmann::json& task) { return Layers(task.at("td3"), "net_arch", {400, 300}); });  // SB3 TD3's
 }
 
 std::optional<RLReference> FindDqnReference(const std::string& json_text, const std::string& environment_id,
@@ -162,7 +177,34 @@ std::optional<RLReference> FindDqnReference(const std::string& json_text, const 
                Same(Setting(s, "exploration_initial_eps", 1.0), c.exploration_initial_eps) &&
                Same(Setting(s, "exploration_final_eps", 0.05), c.exploration_final_eps) &&
                Same(Setting(s, "max_grad_norm", 10), c.max_grad_norm);
-    });
+    }, [](const nlohmann::json& task) { return Layers(task.at("dqn"), "net_arch", {64, 64}); });  // SB3 DQN's
+}
+
+bool SameLayers(const RLReference& reference, const RLTrainingConfiguration& config) {
+    const auto [first, second] = RLNetworkUnits(config);
+    return first == reference.layers && second == reference.layers;
+}
+
+std::optional<RLReference> FindRLReference(const RLTrainingConfiguration& c) {
+    // The recorded runs use the environment's defaults (no grounds, pushes or throws)
+    if (!DefaultEnvironmentSettings(c.environment, c.environment_settings)) return std::nullopt;
+    std::optional<RLReference> ref;
+    switch (c.algorithm) {
+        case RLAlgorithm::SAC:
+            ref = FindSacReference(ReadReferenceFile("sac_sb3_curves.json"), c.environment.id, c.copies, c.sac);
+            break;
+        case RLAlgorithm::TD3:
+            ref = FindTd3Reference(ReadReferenceFile("td3_sb3_curves.json"), c.environment.id, c.copies, c.td3);
+            break;
+        case RLAlgorithm::DQN:
+            ref = FindDqnReference(ReadReferenceFile("dqn_sb3_curves.json"), c.environment.id, c.copies, c.dqn);
+            break;
+        case RLAlgorithm::PPO:
+            ref = FindPpoReference(ReadReferenceFile("ppo_sb3_curves.json"), c.environment.id, c.copies, c.ppo);
+            break;
+    }
+    if (ref && !SameLayers(*ref, c)) return std::nullopt;
+    return ref;
 }
 
 bool DefaultEnvironmentSettings(const plugin::PluginEnvironmentInfo& environment,

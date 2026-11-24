@@ -1,7 +1,7 @@
 #pragma once
 
 // Watching a run while it trains (TOFIX212 P5, approved board 7). Live
-// preview: the run copies its policy every N updates (a SAC run: reports); a PolicyPlayback plays
+// preview: the run copies its policy every N updates (an off-policy run: reports); a PolicyPlayback plays
 // one copy of the environment at real time with the best actions, and takes
 // the newest networks at each episode's start (the plugin's view says which
 // update it plays). Raw training copy: the run shows its own copy 0. The UI
@@ -28,7 +28,7 @@ public:
         double last_return = 0.0;    // the last finished episode's
         int last_return_update = 0;  // the update of the networks that played it
         long long last_return_steps = 0;
-        bool by_steps = false;       // a SAC run's networks: named by their step
+        bool by_steps = false;       // an off-policy run's networks: named by their step
         std::string message;         // why the preview failed
     };
 

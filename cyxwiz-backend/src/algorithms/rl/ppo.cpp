@@ -15,6 +15,7 @@
 #include "../arrayfire_host_materialization.h"
 #include "../arrayfire_indexed.h"
 #include "../device_random.h"
+#include "rl_common.h"
 
 // Windows headers define these; ArrayFire's min/max must win.
 #ifdef max
@@ -28,35 +29,19 @@ namespace cyxwiz::rl {
 
 namespace {
 
-constexpr double kLogSqrtTwoPi = 0.91893853320467274178;  // log(sqrt(2 pi))
+using detail::Array;
+using detail::kLogSqrtTwoPi;
+using detail::Make;
+using detail::Require;
+using detail::Total;
 
-af::array Array(const Tensor& t) { return t.GetSemanticArray(); }
-
-Tensor Make(const af::array& a, std::vector<size_t> shape) {
-    af::array evaluated = a;
-    evaluated.eval();
-    return Tensor::FromSemanticArray(evaluated, std::move(shape));
-}
+constexpr const char* kLearner = "PPO: ";
 
 size_t Rows(const Tensor& t) { return t.Shape().empty() ? 0 : t.Shape()[0]; }
 
-void Require(bool ok, const std::string& what) {
-    if (!ok) throw std::invalid_argument(what);
-}
+void RequireRows(const Tensor& t, size_t rows, const char* name) { detail::RequireRows(t, rows, kLearner, name); }
 
-// A [B] or [B, 1] tensor as an ArrayFire column of B rows.
-void RequireRows(const Tensor& t, size_t rows, const char* name) {
-    Require(t.NumElements() == rows, std::string("PPO: ") + name + " needs " + std::to_string(rows) +
-                                         " values, got " + std::to_string(t.NumElements()));
-}
-
-af::array Column(const Tensor& t, size_t rows, const char* name) {
-    RequireRows(t, rows, name);
-    return af::moddims(Array(t), static_cast<dim_t>(rows));
-}
-
-// A sum as a [1] array on the device (no host read)
-af::array Total(const af::array& a) { return af::sum(af::flat(a)); }
+af::array Column(const Tensor& t, size_t rows, const char* name) { return detail::Column(t, rows, kLearner, name); }
 
 af::array LogSoftmaxRows(const af::array& logits) {
     const af::array shifted = logits - af::tile(af::max(logits, 1), 1, static_cast<unsigned>(logits.dims(1)));

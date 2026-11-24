@@ -81,6 +81,12 @@ void SetRLEnvironmentLookup(RLEnvironmentLookup lookup);
 
 // True for the node types of an RL graph
 bool IsRLGraphNode(gui::NodeType type);
+// True for the learner node types (PPO, SAC, TD3, DQN)
+bool IsRLLearnerNode(gui::NodeType type);
+// The learner a learner node trains with (PPO for any other node type)
+RLAlgorithm RLAlgorithmOf(gui::NodeType type);
+// That learner's name ("PPO", "SAC", "TD3", "DQN")
+const char* RLLearnerName(gui::NodeType type);
 
 // Whether the device's neural provider would run the networks (PPO's policy
 // and value; SAC's and TD3's actor and Q, the twin and targets alike; DQN's Q

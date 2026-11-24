@@ -29,7 +29,9 @@ CYXWIZ_API Tensor DqnTarget(const Tensor& next_q, const Tensor& rewards, const T
 // smooth_l1(q[b, action_b], y_b) averaged over the batch (Huber with beta 1:
 // 0.5 d^2 within 1, |d| - 0.5 past it) and its gradient d / d q [B, A]: the
 // clipped difference / B in each row's chosen column, 0 elsewhere. actions:
-// B choice indices in [0, A) held as floats (the replay buffer's).
+// B choice indices in [0, A) held as floats (the replay buffer's). They are
+// not checked, so a step reads nothing back from the device: an index
+// outside [0, A) or not whole selects no column, and its row's Q counts as 0.
 struct CYXWIZ_API DqnLoss {
     Tensor loss;    // [1] on the device
     Tensor mean_q;  // [1] mean of the chosen Q values, for the dashboard
