@@ -49,6 +49,46 @@ Each archive is accompanied by `.zip.signed.json` canonical signature input
 and `.zip.manifest.json`. Without `--signature`, the manifest intentionally has
 an empty signature list and is a signing request, not a publishable artifact.
 
+### Plugin packs
+
+The `plugin` profile emits one Engine plugin with the runtime it brings, for
+example the MuJoCo simulation plugin with `mujoco.dll`, as a schema-2
+`plugin_pack` manifest (see "Plugin Packs" in
+[`BACKEND_PACK_CONTRACT.md`](BACKEND_PACK_CONTRACT.md)). It names its companion
+CPU base and leaves out the vcpkg runtime libraries that base already ships, so
+`--build-dir` must be the base's build output and `--vcpkg-installed-dir` that
+build's vcpkg installed root. Plugin packs are Windows only for now. They are
+signed, promoted and catalogued like backend packs, but they are not
+accelerator packs: a CPU-only release may carry one, and one does not make a
+release "full".
+
+### Packs built by CI
+
+The `CPU Base Native` workflow (`.github/workflows/cpu-base-native.yml`)
+uploads every pack it builds as a workflow artifact. All of them are
+`diagnostic` and unsigned; CI holds no signing key, and promotion to
+`supported` and signing stay separate release steps (see Commands below).
+
+| Artifact | Contents |
+|---|---|
+| `cyxwiz-windows-cpu-base` | Windows CPU base, checked again on a fresh runner |
+| `cyxwiz-windows-accelerator-packs` | Windows CUDA, OpenCL and oneAPI packs |
+| `cyxwiz-windows-plugin-packs` | Windows MuJoCo simulation plugin pack |
+| `cyxwiz-macos-intel-cpu-base` | macOS Intel CPU base, checked on a fresh runner |
+| `cyxwiz-linux-x64-cpu-base`, `cyxwiz-macos-arm64-cpu-base` | Linux and macOS Apple Silicon CPU bases (`cpu-base-posix.yml`) |
+
+The Windows job builds the MuJoCo plugin against the release pinned in
+`plugins/simulation/mujoco/cmake/MuJoCoSdk.cmake` (cached by that file), and
+only after the CPU base is packaged, because the plugin's test targets copy
+`mujoco.dll` into the build output the base is made from. Before packaging the
+plugin it runs `cyxwiz-plugin-check` on the plugin folder, the plugin's
+environment, viewport and clock tests, `test_plugin_presentation` and
+`test_rl_graph_training` with the plugin folder, all on ArrayFire CPU. The
+plugin-pack lifecycle contracts (`test_addon_pack_presentation`,
+`test_backend_pack_manager_model`, `test_backend_pack_maintenance`,
+`test_backend_pack_lifecycle_service`) run in `Installer Native Build` on all
+four platforms.
+
 ## Implementation
 
 Both shell families call one standard-library implementation:

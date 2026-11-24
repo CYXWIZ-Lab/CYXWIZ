@@ -51,6 +51,16 @@ development paths were present. This closes the Windows CPU-base row with
 bounded CPU execution evidence; it does not claim a full optimizer loop or
 physical accelerator qualification.
 
+## Hosted Windows plugin-pack build
+
+The same Windows job builds the MuJoCo simulation plugin, runs
+`cyxwiz-plugin-check` and the plugin's tests on ArrayFire CPU in the build
+tree, and uploads the diagnostic, unsigned plugin pack as
+`cyxwiz-windows-plugin-packs`. This is build-tree evidence only: no fresh
+runner installs the pack yet. Installing it through the helper and starting the
+Engine with the plugin loaded from the pack is still a local check against a
+test-signed catalog.
+
 ## Failure-contract coverage
 
 | Release condition | Native contract |

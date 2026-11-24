@@ -15,6 +15,10 @@ on:
         description: Windows accelerator (CUDA/OpenCL/oneAPI) pack revision
         type: string
         default: "1"
+      plugin_pack_version:
+        description: Windows plugin pack (MuJoCo simulation) revision
+        type: string
+        default: "1"
   pull_request:
     paths:
       - ".github/workflows/cpu-base-native.yml"
@@ -23,6 +27,7 @@ on:
       - "cmake/**"
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
+      - "plugins/simulation/mujoco/**"
       - "redist/bootstrapper/**"
       - "redist/scripts/backend_pack_contract.py"
       - "redist/scripts/backend_pack_target.py"
@@ -57,6 +62,7 @@ on:
       - "cmake/**"
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
+      - "plugins/simulation/mujoco/**"
       - "redist/bootstrapper/**"
       - "redist/scripts/backend_pack_contract.py"
       - "redist/scripts/backend_pack_target.py"
@@ -93,6 +99,7 @@ env:
   CYXWIZ_RELEASE: ${{ inputs.cyxwiz_release || '0.2.0' }}
   CYXWIZ_PACK_VERSION: ${{ inputs.pack_version || '1' }}
   CYXWIZ_ACCELERATOR_PACK_VERSION: ${{ inputs.accelerator_pack_version || '1' }}
+  CYXWIZ_PLUGIN_PACK_VERSION: ${{ inputs.plugin_pack_version || '1' }}
   VCPKG_BINARY_SOURCES: >-
     clear;files,${{ github.workspace }}/vcpkg-binary-cache,readwrite
 
@@ -107,6 +114,7 @@ jobs:
       - name: Run release package contracts
         run: >-
           python -B -m unittest
+          redist.tests.test_backend_pack_contract
           redist.tests.test_backend_pack_target
           redist.tests.test_package_release
 
@@ -198,10 +206,43 @@ jobs:
           }
           Remove-Item deps/cuda-download -Recurse -Force
 
+      # The MuJoCo simulation plugin builds against the official MuJoCo release
+      # that plugins/simulation/mujoco/cmake/MuJoCoSdk.cmake pins. The version
+      # and SHA-256 are read from that file, so the pin has one home; the cache
+      # key follows the file. CMake checks the extracted headers' version again.
+      - name: Restore MuJoCo release
+        id: mujoco-cache
+        uses: actions/cache@v4
+        with:
+          path: deps/mujoco
+          key: mujoco-windows-x86_64-${{ hashFiles('plugins/simulation/mujoco/cmake/MuJoCoSdk.cmake') }}
+
+      - name: Download pinned MuJoCo release
+        if: steps.mujoco-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $pin = Get-Content -Raw plugins/simulation/mujoco/cmake/MuJoCoSdk.cmake
+          $version = [regex]::Match($pin, 'set\(CYXWIZ_MUJOCO_VERSION "([0-9]+\.[0-9]+\.[0-9]+)"\)').Groups[1].Value
+          $sha256 = [regex]::Match($pin,
+            'windows-x86_64\.zip"\)\s*set\(_mujoco_sha256 "([0-9a-f]{64})"\)').Groups[1].Value
+          if (-not $version -or -not $sha256) {
+            throw 'Cannot read the MuJoCo version and Windows SHA-256 from MuJoCoSdk.cmake'
+          }
+          $archive = "mujoco-$version-windows-x86_64.zip"
+          Invoke-WebRequest `
+            -Uri "https://github.com/google-deepmind/mujoco/releases/download/$version/$archive" `
+            -OutFile deps-mujoco.zip
+          if ((Get-FileHash deps-mujoco.zip -Algorithm SHA256).Hash -ne $sha256) {
+            throw "MuJoCo release input digest mismatch: $archive"
+          }
+          Expand-Archive deps-mujoco.zip -DestinationPath deps/mujoco
+          Remove-Item deps-mujoco.zip
+
       - name: Configure Release CPU build
         shell: pwsh
         run: |
           $cudaRoot = (Resolve-Path deps/cuda).Path -replace '\\', '/'
+          $mujocoRoot = (Resolve-Path deps/mujoco).Path -replace '\\', '/'
           $configureArgs = @(
             '-S', '.', '-B', 'build',
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake",
@@ -218,7 +259,8 @@ jobs:
             '-DCYXWIZ_ENABLE_ONNX=OFF',
             '-DCYXWIZ_ENABLE_GGUF=OFF',
             '-DCYXWIZ_ENABLE_PYTORCH=OFF',
-            '-DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF',
+            '-DCYXWIZ_BUILD_MUJOCO_PLUGIN=ON',
+            "-DMUJOCO_DIR=$mujocoRoot",
             '-DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF',
             '-DCYXWIZ_ENABLE_CUDA=ON',
             '-DCYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER=ON',
@@ -290,6 +332,106 @@ jobs:
           name: cyxwiz-windows-cpu-base
           path: cpu-base-artifact/
           if-no-files-found: error
+
+      # The MuJoCo simulation plugin pack (redist/BACKEND_PACK_CONTRACT.md,
+      # Plugin Packs). Built only after the CPU base is packaged: the plugin's
+      # test targets copy mujoco.dll into build/bin/Release, and the base packs
+      # every library found there.
+      - name: Build the MuJoCo plugin and its tests
+        run: >-
+          cmake --build build --config Release --parallel
+          --target mujoco_plugin
+          test_mujoco_graph_clock test_mujoco_environments test_mujoco_viewport
+          test_plugin_presentation test_rl_graph_training
+
+      # CPU only: the runners have no GPU. test_rl_graph_training trains the
+      # built-in CartPole and, with the plugin folder, MuJoCo InvertedPendulum.
+      - name: Run the MuJoCo plugin tests on the CPU
+        shell: pwsh
+        timeout-minutes: 60
+        env:
+          CYXWIZ_TEST_ARRAYFIRE_BACKEND: cpu
+        run: |
+          # The build tree has no ArrayFire or Python runtime beside its
+          # programs: the installed ones go on PATH for these runs only.
+          $env:PATH = "C:\Program Files\ArrayFire\v3\lib;${env:CYXWIZ_PYTHON_ROOT};${env:PATH}"
+          $plugin = (Resolve-Path plugins/simulation/mujoco).Path
+          function Invoke-Check([string]$Name, [string[]]$Arguments = @()) {
+            Write-Host "::group::$Name $Arguments"
+            & "build/bin/Release/$Name.exe" @Arguments
+            $code = $LASTEXITCODE
+            Write-Host '::endgroup::'
+            if ($code -ne 0) { throw "$Name failed with exit code $code" }
+          }
+          Invoke-Check cyxwiz-plugin-check $plugin
+          Invoke-Check test_mujoco_graph_clock
+          Invoke-Check test_mujoco_environments
+          Invoke-Check test_mujoco_viewport
+          Invoke-Check test_plugin_presentation
+          Invoke-Check test_rl_graph_training $plugin
+
+      # Diagnostic and unsigned, as every CI pack: the signed promotion to
+      # supported is a separate release step outside CI. The libraries the
+      # CPU base already ships (vcpkg runtime libraries of this build) are left
+      # out; mujoco.dll ships in the pack.
+      - name: Build the MuJoCo plugin pack
+        shell: pwsh
+        run: |
+          $base = "cyxwiz-base-${env:CYXWIZ_RELEASE}-${env:CYXWIZ_PACK_VERSION}-win64-x86_64"
+          python redist/scripts/package_release.py plugin `
+            --version "${env:CYXWIZ_RELEASE}" `
+            --pack-version "${env:CYXWIZ_PLUGIN_PACK_VERSION}" `
+            --build-dir build/bin/Release `
+            --vcpkg-installed-dir build/vcpkg_installed `
+            --plugin-dir plugins/simulation/mujoco `
+            --base-pack-id $base `
+            --third-party-license MuJoCo=bin/MUJOCO_LICENSE.txt `
+            --third-party-license MuJoCo-third-party=bin/MUJOCO_THIRD_PARTY_NOTICES.txt `
+            --third-party-license Gymnasium=assets/GYMNASIUM_LICENSE.txt `
+            --generated-utc 2026-08-20T00:00:00Z
+          if ($LASTEXITCODE -ne 0) { throw 'MuJoCo plugin pack failed' }
+          New-Item -ItemType Directory -Force plugin-packs | Out-Null
+          Copy-Item redist/output/cyxwiz-plugin-mujoco-*-win64-x86_64.zip* plugin-packs/
+          @'
+          import json, pathlib, sys, zipfile
+          manifests = sorted(pathlib.Path("plugin-packs").glob("*.zip.manifest.json"))
+          if len(manifests) != 1:
+              sys.exit(f"expected one plugin-pack manifest, found {len(manifests)}")
+          document = json.loads(manifests[0].read_text(encoding="utf-8"))
+          signed = document["signed"]
+          paths = {component["path"] for component in signed["components"]}
+          with zipfile.ZipFile(manifests[0].with_name(signed["archive"]["file_name"])) as archive:
+              entries = {name for name in archive.namelist() if not name.endswith("/")}
+          # The base ships the vcpkg runtime libraries found in its build output
+          shipped = {path.name.lower() for path in pathlib.Path("build/bin/Release").glob("*.dll")}
+          vcpkg = shipped & {path.name.lower() for path in pathlib.Path("build/vcpkg_installed").glob("*/bin/*.dll")}
+          problems = []
+          if document["schema_version"] != 2 or signed["pack_kind"] != "plugin_pack":
+              problems.append("not a schema-2 plugin pack")
+          if signed["support_status"] != "diagnostic" or document["signatures"]:
+              problems.append("CI packs stay diagnostic and unsigned")
+          if entries != paths:
+              problems.append("archive entries differ from the manifest components")
+          for required in ("plugin.json", "bin/mujoco_plugin.dll", "bin/mujoco.dll"):
+              if required not in paths:
+                  problems.append(f"{required} is missing")
+          problems += [f"{path} is a library the CPU base ships" for path in sorted(paths)
+                       if path.lower().endswith(".dll") and path.rsplit("/", 1)[-1].lower() in vcpkg]
+          if problems:
+              sys.exit("\n".join(problems))
+          print(f"{signed['pack_id']}: {len(paths)} files, companion base {signed['companion_base_id']}")
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw 'The MuJoCo plugin pack failed its checks' }
+          Get-ChildItem plugin-packs | ForEach-Object {
+            '{0,10:N1} MiB  {1}' -f ($_.Length / 1MB), $_.Name
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-windows-plugin-packs
+          path: plugin-packs/
+          if-no-files-found: error
+          compression-level: 0
 
       # Accelerator packs redistribute the CUDA, OpenCL and oneAPI runtimes
       # from the ArrayFire 3.10 install above; nothing is compiled. CI cannot
