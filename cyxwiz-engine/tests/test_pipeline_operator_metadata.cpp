@@ -924,7 +924,6 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
     }
 
     const std::vector<gui::NodeType> expected_catalog_previews = {
-        gui::NodeType::HuggingFaceDataset,
         gui::NodeType::PluginCustom,
     };
     for (const auto type : expected_catalog_previews) {
@@ -6080,6 +6079,8 @@ int main() {
           "retired Tensor Reshape (the Reshape node replaced it) is not registered");
     Check(metadata.GetMetadata(gui::NodeType::HDF5Dataset) == nullptr,
           "retired HDF5 Reader (Data Input replaced it) is not registered");
+    Check(metadata.GetMetadata(gui::NodeType::HuggingFaceDataset) == nullptr,
+          "the removed Hugging Face Dataset node is not registered");
     Check(metadata.GetMetadata(gui::NodeType::Bidirectional) == nullptr,
           "retired Bidirectional (the recurrent layers' bidirectional setting replaced it) is not registered");
     Check(metadata.GetMetadata(gui::NodeType::SelfAttention) == nullptr,

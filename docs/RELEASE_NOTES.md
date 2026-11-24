@@ -871,6 +871,10 @@ private Data Studio tickets (`tofix*/track*`).
   amounts from a reservation.
 - **Deploy > Publish to Marketplace.** The planned item is gone; models are
   not published to a marketplace.
+- **The Hugging Face Dataset node and script template.** The node was a
+  preview that could not run; the `huggingface_datasets.cyx` script template
+  no longer ships. A saved graph with that node does not load and names the
+  node to remove; load the data with a Data Input node instead.
 
 ### Fixed
 

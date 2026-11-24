@@ -580,9 +580,6 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"CIFAR10Dataset", "legacy CIFAR10Dataset graph execution is not implemented; placeholder metadata creation is disabled",
          gui::NodeType::CIFAR10Dataset, std::nullopt, true,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"HuggingFaceDataset", "legacy HuggingFaceDataset graph execution is not implemented; placeholder metadata creation is disabled",
-         gui::NodeType::HuggingFaceDataset, std::nullopt, true,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"KaggleDataset", "legacy KaggleDataset graph execution is not implemented; placeholder metadata creation is disabled",
          gui::NodeType::KaggleDataset, std::nullopt, true,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
@@ -839,7 +836,6 @@ GetPipelineSourceRuntimeCapabilities() {
         {"ImageFolderDataset"},
         {"MNISTDataset"},
         {"CIFAR10Dataset"},
-        {"HuggingFaceDataset"},
         {"KaggleDataset"},
         {"ParquetInput"},
     };

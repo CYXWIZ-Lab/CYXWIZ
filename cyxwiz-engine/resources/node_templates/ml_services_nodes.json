@@ -29,29 +29,6 @@
       "effort_estimate": "Low"
     },
     {
-      "type": "HuggingFaceHub",
-      "name": "HuggingFace Hub",
-      "icon": "download",
-      "status": "template",
-      "badge": "Coming Soon",
-      "keywords": ["huggingface", "model", "download", "hub"],
-      "brief_description": "Download models from HuggingFace Hub",
-      "help_text": "Downloads pre-trained models from HuggingFace Hub for local inference.",
-      "inputs": [],
-      "outputs": [
-        {"name": "Model", "type": "Parameters", "description": "Downloaded model"}
-      ],
-      "parameters": [
-        {"name": "model_id", "type": "string", "default": "", "description": "Model ID (e.g., bert-base-uncased)"},
-        {"name": "revision", "type": "string", "default": "main", "description": "Model revision/branch"},
-        {"name": "cache_dir", "type": "directory", "default": "", "description": "Local cache directory"}
-      ],
-      "implementation_notes": "Use HuggingFace Hub API",
-      "target_phase": "Phase 3",
-      "dependencies": ["libcurl"],
-      "effort_estimate": "Medium"
-    },
-    {
       "type": "MLflowTracker",
       "name": "MLflow Tracker",
       "icon": "chart-line",

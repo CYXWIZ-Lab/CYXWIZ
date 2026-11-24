@@ -41,7 +41,7 @@ enum class NodeCategory {
     Training,         // Optimizer, Loss, LR Scheduler
     Regularization,   // L1, L2, Dropout
     ModelIO,          // Model Reader/Writer, Checkpoints (Coming Soon)
-    MLServices,       // AutoML, HuggingFace, MLflow (Coming Soon)
+    MLServices,       // AutoML, MLflow (Coming Soon)
     Explainability,   // SHAP, LIME (Coming Soon)
 
     // Data Processing
@@ -432,7 +432,8 @@ enum class NodeType {
     ImageFolderDataset, // Load images from folder with class labels
     MNISTDataset,       // Load MNIST handwritten digits dataset
     CIFAR10Dataset,     // Load CIFAR-10 image classification dataset
-    HuggingFaceDataset, // Load dataset from HuggingFace Hub
+    HuggingFaceDataset, // Retired (removed, no replacement; Data Input loads the files): the slot
+                        // stays so later ids do not move; a saved graph with one fails to load.
     KaggleDataset,      // Load dataset from Kaggle
 
     // ===== Advanced Augmentation Nodes (Phase 6 - UI Consolidation) =====
