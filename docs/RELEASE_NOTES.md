@@ -869,6 +869,8 @@ private Data Studio tickets (`tofix*/track*`).
   Deploy show a node's hourly price without a token name and no longer show
   a staked amount. The Engine no longer reads escrow accounts or lamport
   amounts from a reservation.
+- **Deploy > Publish to Marketplace.** The planned item is gone; models are
+  not published to a marketplace.
 
 ### Fixed
 

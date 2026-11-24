@@ -88,7 +88,6 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
         {"script.run", ICON_FA_PLAY}, {"script.stop", ICON_FA_STOP}, {"script.python_console", ICON_FA_TERMINAL},
         {"deploy.connect", ICON_FA_PLUG}, {"deploy.deploy", ICON_FA_CLOUD_ARROW_UP}, {"deploy.serving", ICON_FA_SERVER},
         {"deploy.convert", ICON_FA_RIGHT_LEFT}, {"deploy.quantize", ICON_FA_COMPRESS},
-        {"deploy.marketplace", ICON_FA_TAG},
         {"apps.plugin_manager", ICON_FA_PLUG},
         {"apps.plugin", ICON_FA_PLUG},
         {"help.tutorials", ICON_FA_LIGHTBULB}, {"help.shortcuts", ICON_FA_KEYBOARD},

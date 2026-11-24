@@ -21,8 +21,8 @@ project and your account at the right end.
 | Help | Tutorials, keyboard shortcuts, **Documentation** (F1), **API Reference**, **What's New**, **Known Issues**, Report Issue, **Open Logs Folder**, About |
 
 An item that cannot run now is greyed; hover it for the reason. Items marked
-*(planned)* are not built yet (Check for Updates, Deploy > Quantize, Publish
-to Marketplace, Data > Augment).
+*(planned)* are not built yet (Check for Updates, Deploy > Quantize,
+Data > Augment).
 
 ## The right end
 

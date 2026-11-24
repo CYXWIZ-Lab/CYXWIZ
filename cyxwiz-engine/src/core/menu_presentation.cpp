@@ -818,8 +818,6 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                         {Planned(f, "deploy.quantize_int8", "INT8", "8-bit integer weights."),
                          Planned(f, "deploy.quantize_int4", "INT4", "4-bit integer weights."),
                          Planned(f, "deploy.quantize_fp16", "FP16", "16-bit float weights.")}));
-        i.push_back(Sep());
-        i.push_back(Planned(f, "deploy.marketplace", "Publish to Marketplace...", "Offers the model on the marketplace."));
         model.menus.push_back(std::move(m));
     }
 
