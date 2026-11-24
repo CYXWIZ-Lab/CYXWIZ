@@ -117,17 +117,15 @@ bool PythonNodeMakerPanel::HasProject() const { return ProjectManager::Instance(
 
 std::string PythonNodeMakerPanel::ProjectName() const { return ProjectManager::Instance().GetProjectName(); }
 
+// The source in the project's nodes_src; empty without a project (Python
+// starts only with one, so nothing is written or run before).
 fs::path PythonNodeMakerPanel::SourcePath() const {
-    if (form_.class_name.empty()) return {};
-    const std::string file = nm::FileStemFor(form_.class_name) + ".py";
-    if (HasProject()) return fs::path(ProjectManager::Instance().GetProjectRoot()) / "nodes_src" / file;
-    return fs::temp_directory_path() / "cyxwiz_node_maker" / file;
+    if (form_.class_name.empty() || !HasProject()) return {};
+    return fs::path(ProjectManager::Instance().GetProjectRoot()) / "nodes_src" /
+           (nm::FileStemFor(form_.class_name) + ".py");
 }
 
 std::string PythonNodeMakerPanel::ConflictReason() const {
-    // Without a project the source goes to a temporary folder; nothing else
-    // is there to overwrite.
-    if (!HasProject()) return {};
     const fs::path path = SourcePath();
     if (path.empty()) return {};
     std::error_code ec;
@@ -183,6 +181,10 @@ bool PythonNodeMakerPanel::Dirty() const {
 }
 
 bool PythonNodeMakerPanel::WriteSource(fs::path& written, std::string& error) {
+    if (!HasProject()) {
+        error = "Open a project first: Python runs in the project's environment";
+        return false;
+    }
     written = SourcePath();
     if (written.empty()) {
         error = "Give it a class name";
@@ -196,7 +198,7 @@ bool PythonNodeMakerPanel::WriteSource(fs::path& written, std::string& error) {
     }
     // The file this form opened, changed on disk since (in the Script Editor):
     // writing now would throw that change away.
-    if (HasProject() && !file_.empty() && fs::exists(written, ec) && fs::equivalent(written, file_, ec) &&
+    if (!file_.empty() && fs::exists(written, ec) && fs::equivalent(written, file_, ec) &&
         WithoutCR(ReadText(written)) != WithoutCR(saved_source_)) {
         error = written.filename().string() +
                 " was changed on disk since it was opened here (in the Script Editor?). Open it again to load the "
@@ -211,11 +213,8 @@ bool PythonNodeMakerPanel::WriteSource(fs::path& written, std::string& error) {
         error = "Could not write " + written.string();
         return false;
     }
-    // Only a source in the project is the one this form edits.
-    if (HasProject()) {
-        file_ = written;
-        saved_source_ = source;
-    }
+    file_ = written;
+    saved_source_ = source;
     return true;
 }
 
@@ -427,7 +426,7 @@ void PythonNodeMakerPanel::RenderTopRow() {
                         [this]() { Reset(nm::Starter(nm::Kind::Layer), {}); });
     }
     ImGui::SameLine();
-    const std::string file = SourcePath().filename().string();
+    const std::string file = form_.class_name.empty() ? std::string() : nm::FileStemFor(form_.class_name) + ".py";
     const std::string state = created_ && !Dirty() ? "created" : file_.empty() || Dirty() ? "not created yet" : "saved";
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_dim, "Editing %s \xC2\xB7 %s", file.empty() ? "a new node" : file.c_str(), state.c_str());
@@ -783,8 +782,9 @@ void PythonNodeMakerPanel::RenderFooter(float height) {
               : result_ == Result::Failed                            ? t.caution
                                                                      : t.error;
     } else if (!HasProject()) {
-        title = "Open a project to create a node";
-        detail = "A node is written into the project's nodes folder. You can still write and check it.";
+        title = "Open a project to check and create a node";
+        detail = "Python runs in the project's environment, and the node is written into its nodes folder. "
+                 "You can write it now.";
     }
     if (ImGui::BeginTable("##footer_row", 2, ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("result", ImGuiTableColumnFlags_WidthStretch);
@@ -802,9 +802,11 @@ void PythonNodeMakerPanel::RenderFooter(float height) {
         ImGui::PopTextWrapPos();
         ImGui::Unindent(r * 2.0f + ImGui::GetStyle().ItemSpacing.x);
         ImGui::TableNextColumn();
-        const bool can_check = !busy && blocker.empty();
-        if (ui::SecondaryButton("Check", can_check, busy ? "Wait for the running step" : blocker.c_str(),
-                                ui::ButtonSize::Regular))
+        const char* check_reason = busy               ? "Wait for the running step"
+                                   : !blocker.empty() ? blocker.c_str()
+                                   : !HasProject()    ? "Open a project first: Python runs in the project's environment"
+                                                      : nullptr;
+        if (ui::SecondaryButton("Check", check_reason == nullptr, check_reason, ui::ButtonSize::Regular))
             StartCheck();
         ImGui::SameLine();
         const char* reason = busy                ? "Wait for the running step"

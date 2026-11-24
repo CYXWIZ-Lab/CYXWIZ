@@ -143,8 +143,9 @@ source, checks it and creates its bundle. You write only the arithmetic.
   overwritten: Check and Create say so until you open it again.
 - **New**, **Open** and a different **Kind** ask first when the form holds
   changes not created yet; a Kind starts its code over.
-- **Create node** needs an open project; without one you can still write and
-  check the node. It is blocked, with the reason, while a field is wrong,
+- **Check** and **Create node** need an open project (Python runs in the
+  project's environment); without one you can still write the node.
+  Create is blocked, with the reason, while a field is wrong,
   when another node's source already has that file name, or when the
   project's `nodes` folder has a bundle of that name made another way.
 - A Check or Create result stays only while the form still writes the
