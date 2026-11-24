@@ -20,11 +20,9 @@ struct ReservationInfo {
     std::string node_endpoint;     // IP:port for P2P connection
     std::string p2p_auth_token;    // JWT for P2P authentication
     int64_t p2p_token_expires;     // Unix timestamp
-    std::string escrow_account;    // Solana escrow PDA
-    int64_t escrow_amount;         // Amount in lamports
     int64_t start_time;            // Unix timestamp
     int64_t end_time;              // Unix timestamp
-    double price_per_hour;         // CYXWIZ tokens
+    double price_per_hour;         // the node's hourly price, as the central server quotes it
 };
 
 // Callback types
@@ -38,13 +36,12 @@ struct HeartbeatReport {
     bool should_extend = false;
 };
 using HeartbeatCallback = std::function<void(const HeartbeatReport&)>;
-using ReleaseCallback = std::function<void(bool success, int64_t payment_released, int64_t refund_amount)>;
 
 /**
  * ReservationClient - Manages node reservations with Central Server
  *
  * This client handles the reservation workflow:
- * 1. ReserveNode - Reserve a node for a duration, creates escrow
+ * 1. ReserveNode - Reserve a node for a duration
  * 2. EngineHeartbeat - Send periodic heartbeats during reservation
  * 3. ConfirmJobComplete - Confirm job completion to release payment
  * 4. (Leaving a node does not end the reservation: the reserved time is the user's)
@@ -104,7 +101,6 @@ public:
         const std::string& reservation_id,
         int32_t additional_minutes,
         int64_t& new_expires,
-        int64_t& additional_escrow,
         std::string& p2p_auth_token);
 
     // Get reservation details

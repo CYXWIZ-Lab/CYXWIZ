@@ -35,9 +35,6 @@ struct NodeDisplayInfo {
     double price_usd_equivalent = 0.0;
     std::string billing_model;  // "Hourly", "Per Epoch", etc.
     bool free_tier_available = false;
-
-    // Staking
-    double staked_amount = 0.0;
 };
 
 // Search criteria for FindNodes

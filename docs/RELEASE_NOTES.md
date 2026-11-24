@@ -865,6 +865,10 @@ private Data Studio tickets (`tofix*/track*`).
 - **The Wallet panel.** It is gone from View > Panels, the account menu and
   the default layout. It showed made-up balances; paying for compute is not
   done with crypto.
+- **Token prices and stakes in the node lists.** Connect to Server and
+  Deploy show a node's hourly price without a token name and no longer show
+  a staked amount. The Engine no longer reads escrow accounts or lamport
+  amounts from a reservation.
 
 ### Fixed
 
