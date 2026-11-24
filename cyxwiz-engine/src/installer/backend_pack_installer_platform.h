@@ -61,6 +61,11 @@ public:
     virtual InstallerOperationResult InstallOrUpdate(
         const std::string& pack_id,
         const InstallerOperationDetailObserver& observer = {}) = 0;
+    // An add-on (plugin pack): installed and activated in active-plugins.json
+    // by the helper's --plugin-pack-id, with no route qualification.
+    virtual InstallerOperationResult InstallPlugin(
+        const std::string& pack_id,
+        const InstallerOperationDetailObserver& observer = {}) = 0;
     virtual InstallerOperationResult DeactivateBackend(
         const std::string& backend,
         const InstallerOperationDetailObserver& observer = {}) = 0;

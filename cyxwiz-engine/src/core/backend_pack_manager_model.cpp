@@ -14,6 +14,14 @@ bool CatalogAllowsConsent(BackendPackCatalogSupport support) {
          support == BackendPackCatalogSupport::Diagnostic;
 }
 
+// Plugin packs are delivered only when the signed catalog supports them (no
+// diagnostic add-ons); compute packs may also be diagnostic.
+bool CatalogAllowsConsent(const BackendPackManagerRecord &record) {
+  return record.pack_kind == BackendPackRecordKind::Plugin
+             ? record.catalog_support == BackendPackCatalogSupport::Supported
+             : CatalogAllowsConsent(record.catalog_support);
+}
+
 bool CompatibilityAllowsConsent(const BackendPackManagerRecord &record) {
   return record.compatibility.has_value() &&
          record.compatibility->eligibility !=
@@ -24,6 +32,14 @@ bool CompatibilityAllowsConsent(const BackendPackManagerRecord &record) {
 
 BackendPackActionDecision Disabled(std::string reason) {
   return {false, std::move(reason)};
+}
+
+bool IsPluginRecord(const BackendPackManagerRecord &record) {
+  return record.pack_kind == BackendPackRecordKind::Plugin;
+}
+
+std::string AddOnCount(std::size_t count) {
+  return std::to_string(count) + (count == 1 ? " add-on" : " add-ons");
 }
 
 BackendPackActionDecision
@@ -170,7 +186,9 @@ BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
   std::set<std::string> selected;
   if (choice == BackendPackInstallChoice::Recommended) {
     for (const auto &record : catalog_records) {
-      if (record.backend != "cpu" && IsBackendPackRecommended(record) &&
+      // Add-ons are never part of a profile: the user ticks them.
+      if (record.backend != "cpu" && !IsPluginRecord(record) &&
+          IsBackendPackRecommended(record) &&
           record.catalog_support == BackendPackCatalogSupport::Supported &&
           CompatibilityAllowsConsent(record) && !record.pack_id.empty()) {
         selected.insert(record.pack_id);
@@ -193,7 +211,7 @@ BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
                        return candidate.pack_id == pack_id;
                      });
     if (record == catalog_records.end() || record->backend == "cpu" ||
-        !CatalogAllowsConsent(record->catalog_support) ||
+        !CatalogAllowsConsent(*record) ||
         !CompatibilityAllowsConsent(*record)) {
       result.message = "Custom selection contains a pack not authorized by the "
                        "signed catalog";
@@ -221,7 +239,7 @@ bool HasSelectableCustomBackendPack(
 bool IsBackendPackSelectableForInstaller(
     const BackendPackManagerRecord &record) {
   return record.backend != "cpu" && record.delivery_metadata_available &&
-         CatalogAllowsConsent(record.catalog_support) &&
+         CatalogAllowsConsent(record) &&
          CompatibilityAllowsConsent(record);
 }
 
@@ -310,15 +328,22 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
         catalog_records.begin(), catalog_records.end(),
         [&](const auto &candidate) { return candidate.pack_id == pack_id; });
     if (record == catalog_records.end() || record->backend == "cpu" ||
-        !CatalogAllowsConsent(record->catalog_support) ||
+        !CatalogAllowsConsent(*record) ||
         !CompatibilityAllowsConsent(*record) ||
         !record->delivery_metadata_available) {
       plan.message =
           "A selected pack is not deliverable from the signed catalog";
       return plan;
     }
-    if (base && (record->runtime_set_id != base->runtime_set_id ||
-                 record->companion_base_id != base->pack_id)) {
+    if (base && IsPluginRecord(*record) &&
+        record->companion_base_id != base->pack_id) {
+      plan.message = "A selected add-on is built for another CyxWiz Engine "
+                     "release";
+      return plan;
+    }
+    if (base && !IsPluginRecord(*record) &&
+        (record->runtime_set_id != base->runtime_set_id ||
+         record->companion_base_id != base->pack_id)) {
       plan.message = "A selected backend pack does not belong to the required "
                      "CPU base runtime set";
       return plan;
@@ -338,15 +363,21 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
       return plan;
     }
     plan.download_size_bytes += record->download_size_bytes;
-    plan.pack_ids.push_back(record->pack_id);
+    (IsPluginRecord(*record) ? plan.plugin_pack_ids : plan.pack_ids)
+        .push_back(record->pack_id);
   }
   plan.valid = true;
+  const std::string add_ons =
+      plan.plugin_pack_ids.empty()
+          ? std::string{}
+          : " and " + AddOnCount(plan.plugin_pack_ids.size());
   if (plan.install_base) {
     plan.message = "Install the required CyxWiz Engine/CPU base";
     if (!plan.pack_ids.empty()) {
       plan.message += " and " + std::to_string(plan.pack_ids.size()) +
                       " signed optional backend pack(s)";
     }
+    plan.message += add_ons;
     plan.message += "; every compute route requires local verification";
   } else if (plan.update_base) {
     plan.message = "Update the signed CyxWiz Engine/CPU base";
@@ -354,6 +385,7 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
       plan.message += " and " + std::to_string(plan.pack_ids.size()) +
                       " compatible backend pack(s)";
     }
+    plan.message += add_ons;
     plan.message += "; the new base activates CPU-only before optional packs";
   } else if (!plan.deactivate_backends.empty()) {
     plan.message = std::to_string(plan.deactivate_backends.size()) +
@@ -361,12 +393,20 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
                    "files will be kept";
   } else if (selection.deactivate_optional_backends) {
     plan.message = "CPU base is already the only active compute route";
-  } else if (plan.pack_ids.empty()) {
+  } else if (plan.pack_ids.empty() && plan.plugin_pack_ids.empty()) {
     plan.message = "No optional backend-pack download is required";
+  } else if (plan.pack_ids.empty()) {
+    plan.message = AddOnCount(plan.plugin_pack_ids.size()) +
+                   " will be downloaded and installed; no device check is "
+                   "needed";
   } else {
     plan.message =
         std::to_string(plan.pack_ids.size()) +
         " signed backend pack(s) will be downloaded and locally qualified";
+    if (!plan.plugin_pack_ids.empty()) {
+      plan.message += ", and " + AddOnCount(plan.plugin_pack_ids.size()) +
+                      " installed";
+    }
   }
   return plan;
 }
@@ -376,7 +416,9 @@ std::vector<std::string> OptionalPacksForThisComputer(
     const std::vector<std::string> &selected_pack_ids) {
   std::vector<std::string> backends;
   for (const auto &record : records) {
-    if (record.backend == "cpu" || record.installed || !record.compatibility) continue;
+    if (record.backend == "cpu" || IsPluginRecord(record) || record.installed ||
+        !record.compatibility)
+      continue;
     if (record.compatibility->eligibility != runtime::BackendPackEligibility::Compatible ||
         !record.compatibility->recommendation_target_eligible) {
       continue;

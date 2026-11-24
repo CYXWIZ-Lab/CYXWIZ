@@ -802,6 +802,7 @@ void TestInstallerTransactionJournal() {
   record.plan.install_base = true;
   record.plan.base_pack_id = "base-v1";
   record.plan.pack_ids = {"cuda-v1"};
+  record.plan.plugin_pack_ids = {"mujoco-v1"};
   record.plan.remove_pack_ids = {"opencl-v0"};
 
   std::string error;
@@ -825,6 +826,8 @@ void TestInstallerTransactionJournal() {
             contents.find("\"scope\": \"all_users\"") !=
                 std::string::npos &&
             contents.find("cuda-v1") != std::string::npos &&
+            contents.find("\"install_plugin_pack_ids\"") != std::string::npos &&
+            contents.find("mujoco-v1") != std::string::npos &&
             contents.find("opencl-v0") != std::string::npos &&
             !std::filesystem::exists(path.string() + ".next"),
         "The terminal receipt must preserve the requested install and removal plan without a partial side file");
@@ -923,6 +926,17 @@ public:
                 "Adopting verified backend"});
       observer({"activating", 0, 0, 0, 0, "Activating backend"});
     }
+    return Result(pack_id);
+  }
+
+  cyxwiz::installer::InstallerOperationResult
+  InstallPlugin(
+      const std::string &pack_id,
+      const cyxwiz::installer::InstallerOperationDetailObserver &observer)
+      override {
+    calls.push_back("plugin:" + pack_id);
+    if (observer)
+      observer({"activating", 0, 0, 0, 0, "Activating the verified plugin pack"});
     return Result(pack_id);
   }
 
@@ -1074,6 +1088,39 @@ void TestInstallerBaseUpdateExecution() {
         "Execution must activate the base update before its optional packs");
 }
 
+void TestInstallerAddOnExecution() {
+  cyxwiz::BackendPackInstallerPlan plan;
+  plan.install_base = true;
+  plan.base_pack_id = "base-v1";
+  plan.pack_ids = {"cuda-v1"};
+  plan.plugin_pack_ids = {"mujoco-v1"};
+
+  RecordingInstallerPlatform platform;
+  std::vector<cyxwiz::installer::InstallerPlanExecutionProgress> progress;
+  const auto result = cyxwiz::installer::ExecuteInstallerPlan(
+      platform, plan,
+      [&](const auto &snapshot) { progress.push_back(snapshot); });
+  Check(result.succeeded &&
+            platform.calls == std::vector<std::string>{"base:base-v1",
+                                                       "pack:cuda-v1",
+                                                       "plugin:mujoco-v1"} &&
+            !progress.empty() && progress.back().total_steps == 3 &&
+            progress.back().completed_steps == 3 &&
+            std::any_of(progress.begin(), progress.end(), [](const auto &item) {
+              return item.package_id == "mujoco-v1" && item.package_index == 3 &&
+                     item.package_count == 3;
+            }),
+        "Add-ons install through the plugin path after the base and the "
+        "backend packs");
+
+  RecordingInstallerPlatform failing;
+  failing.failing_id = "mujoco-v1";
+  const auto failed = cyxwiz::installer::ExecuteInstallerPlan(failing, plan);
+  Check(!failed.succeeded &&
+            failed.message.find("mujoco-v1 failed") != std::string::npos,
+        "A failed add-on installation is reported");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1100,6 +1147,7 @@ int main(int argc, char** argv) {
   TestInstallerPackPresentation();
   TestInstallerPlanExecution();
   TestInstallerBaseUpdateExecution();
+  TestInstallerAddOnExecution();
   std::cout << "Backend pack manager model tests passed\n";
   return 0;
 }

@@ -132,11 +132,13 @@ InstallerPlanExecutionResult ExecuteInstallerPlan(
   const std::size_t total_steps = static_cast<std::size_t>(plan.install_base) +
                                   static_cast<std::size_t>(plan.update_base) +
                                   plan.pack_ids.size() +
+                                  plan.plugin_pack_ids.size() +
                                   plan.remove_pack_ids.size() +
                                   plan.deactivate_backends.size();
   const std::size_t package_count =
       static_cast<std::size_t>(plan.install_base) +
-      static_cast<std::size_t>(plan.update_base) + plan.pack_ids.size();
+      static_cast<std::size_t>(plan.update_base) + plan.pack_ids.size() +
+      plan.plugin_pack_ids.size();
   if (total_steps == 0) {
     batch.succeeded = true;
     batch.message = "No installation changes were required";
@@ -185,6 +187,22 @@ InstallerPlanExecutionResult ExecuteInstallerPlan(
            "Acquiring and installing " + pack_id, package_index,
            package_count, pack_id);
     const auto result = platform.InstallOrUpdate(
+        pack_id, [&](const InstallerHelperProgress &detail) {
+          ReportDetail(observer, completed_steps, total_steps, detail, false,
+                       package_index, package_count, pack_id);
+        });
+    AppendMessage(batch.message, result.message);
+    if (!result.succeeded || !result.activated)
+      return batch;
+    ++completed_steps;
+  }
+
+  for (const auto &pack_id : plan.plugin_pack_ids) {
+    ++package_index;
+    Report(observer, completed_steps, total_steps,
+           "Acquiring and installing " + pack_id, package_index,
+           package_count, pack_id);
+    const auto result = platform.InstallPlugin(
         pack_id, [&](const InstallerHelperProgress &detail) {
           ReportDetail(observer, completed_steps, total_steps, detail, false,
                        package_index, package_count, pack_id);

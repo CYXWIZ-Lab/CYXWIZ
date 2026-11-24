@@ -96,6 +96,7 @@ bool WriteInstallerTransactionJournal(
         {"update_base", record.plan.update_base},
         {"base_pack_id", record.plan.base_pack_id},
         {"install_pack_ids", record.plan.pack_ids},
+        {"install_plugin_pack_ids", record.plan.plugin_pack_ids},
         {"remove_pack_ids", record.plan.remove_pack_ids},
         {"deactivate_backends", record.plan.deactivate_backends}}}};
   auto next = path;

@@ -67,7 +67,11 @@ void ReconcileBackendPackDecisionEvidence(
     std::vector<BackendPackManagerRecord>& records,
     const InstallerVerificationSummary& verification) {
     for (auto& record : records) {
-        if (!record.compatibility) continue;
+        // Add-ons have no compute route: nothing to verify or measure.
+        if (!record.compatibility ||
+            record.pack_kind == BackendPackRecordKind::Plugin) {
+            continue;
+        }
         auto& decision = *record.compatibility;
         decision.local_package_state = LocalPackageState(record);
         decision.install_recommendation =

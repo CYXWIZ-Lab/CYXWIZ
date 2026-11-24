@@ -468,6 +468,14 @@ RuntimeBackendPackTruth ReadBackendPackTruth() {
     std::vector<BackendPackManagerRecord> records;
     if (catalog_available) {
         records = BuildBackendPackCatalogRecords(catalog, active);
+        // Compute truth lists compute packs only; add-ons have no route.
+        records.erase(
+            std::remove_if(records.begin(), records.end(),
+                           [](const BackendPackManagerRecord& record) {
+                               return record.pack_kind ==
+                                      BackendPackRecordKind::Plugin;
+                           }),
+            records.end());
         for (auto& record : records) {
             if (record.installed && !record.active &&
                 record.pack_id != record.installed_pack_id) {

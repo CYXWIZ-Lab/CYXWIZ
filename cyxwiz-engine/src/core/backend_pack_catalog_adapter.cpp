@@ -41,6 +41,26 @@ const runtime::ActivePackState* FindActivePack(
     return match == active_runtime.packs.end() ? nullptr : &*match;
 }
 
+// A plugin pack active for this base, by plugin id (or by pack id when the
+// plugin id is not known). A list written for another base is inactive: the
+// Engine skips it.
+const runtime::ActivePluginPackState* FindActivePlugin(
+    const runtime::ActivePluginsState& active_plugins,
+    const runtime::ActiveRuntimeState& active_runtime,
+    const std::string& plugin_id, const std::string& pack_id) {
+    if (active_runtime.base_pack_id.empty() ||
+        active_plugins.base_pack_id != active_runtime.base_pack_id) {
+        return nullptr;
+    }
+    const auto match = std::find_if(
+        active_plugins.plugins.begin(), active_plugins.plugins.end(),
+        [&](const auto& plugin) {
+            return plugin_id.empty() ? plugin.pack_id == pack_id
+                                     : plugin.plugin_id == plugin_id;
+        });
+    return match == active_plugins.plugins.end() ? nullptr : &*match;
+}
+
 void ApplyUpdatePolicy(BackendPackManagerRecord& record,
     const runtime::VerifiedBackendPackManifest& candidate,
     const runtime::VerifiedBackendPackCatalogSnapshot& snapshot) {
@@ -121,16 +141,19 @@ runtime::BackendPackCompatibilityContext BuildDefaultCompatibilityContext(
 
 std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
     const runtime::VerifiedBackendPackCatalogSnapshot& catalog,
-    const runtime::ActiveRuntimeState& active_runtime) {
+    const runtime::ActiveRuntimeState& active_runtime,
+    const runtime::ActivePluginsState& active_plugins) {
     return BuildBackendPackCatalogRecords(
         catalog, active_runtime,
-        BuildDefaultCompatibilityContext(catalog, active_runtime));
+        BuildDefaultCompatibilityContext(catalog, active_runtime),
+        active_plugins);
 }
 
 std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
     const runtime::VerifiedBackendPackCatalogSnapshot& catalog,
     const runtime::ActiveRuntimeState& active_runtime,
-    const runtime::BackendPackCompatibilityContext& compatibility_context) {
+    const runtime::BackendPackCompatibilityContext& compatibility_context,
+    const runtime::ActivePluginsState& active_plugins) {
     std::vector<BackendPackManagerRecord> records;
     records.reserve(catalog.records.size() + active_runtime.packs.size());
     for (const auto& candidate : catalog.records) {
@@ -148,6 +171,29 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
         record.delivery_metadata_available = candidate.manifest.has_value();
         record.delivery_metadata_error = candidate.manifest_error;
         const runtime::ActivePackState* installed = nullptr;
+        if (candidate.manifest &&
+            candidate.manifest->kind ==
+                runtime::BackendPackManifestKind::PluginPack) {
+            const auto& manifest = *candidate.manifest;
+            record.pack_kind = BackendPackRecordKind::Plugin;
+            record.plugin_id = manifest.plugin_id;
+            record.compatibility = runtime::EvaluateBackendPackCompatibility(
+                manifest, compatibility_context);
+            record.package_version = manifest.package_version;
+            record.runtime_set_id = manifest.runtime_set_id;
+            record.companion_base_id = manifest.companion_base_id;
+            record.download_size_bytes = manifest.archive.size;
+            record.licenses = manifest.licenses;
+            if (const auto* plugin = FindActivePlugin(
+                    active_plugins, active_runtime, manifest.plugin_id, {})) {
+                record.installed = true;
+                record.installed_pack_id = plugin->pack_id;
+                record.active = record.installed_pack_id == record.pack_id;
+                ApplyUpdatePolicy(record, manifest, catalog);
+            }
+            records.push_back(std::move(record));
+            continue;
+        }
         if (candidate.manifest) {
             record.compatibility = runtime::EvaluateBackendPackCompatibility(
                 *candidate.manifest, compatibility_context);
@@ -173,7 +219,19 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
             }
         } else {
             installed = FindActivePack(active_runtime, record.pack_id);
-            if (installed) record.backend = installed->backend;
+            if (installed) {
+                record.backend = installed->backend;
+            } else if (const auto* plugin = FindActivePlugin(
+                           active_plugins, active_runtime, {},
+                           record.pack_id)) {
+                // An installed add-on whose catalog metadata cannot be
+                // verified stays an add-on, so it can still be uninstalled.
+                record.pack_kind = BackendPackRecordKind::Plugin;
+                record.plugin_id = plugin->plugin_id;
+                record.installed = true;
+                record.installed_pack_id = plugin->pack_id;
+                record.active = true;
+            }
         }
         if (installed) {
             record.installed = true;
@@ -214,6 +272,27 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
         record.installed = true;
         record.active = true;
         records.push_back(std::move(record));
+    }
+
+    // Active add-ons the catalog no longer lists stay visible (and removable).
+    if (!active_runtime.base_pack_id.empty() &&
+        active_plugins.base_pack_id == active_runtime.base_pack_id) {
+        for (const auto& installed : active_plugins.plugins) {
+            const bool represented = std::any_of(
+                records.begin(), records.end(), [&](const auto& record) {
+                    return record.pack_kind == BackendPackRecordKind::Plugin &&
+                           record.installed_pack_id == installed.pack_id;
+                });
+            if (represented) continue;
+            BackendPackManagerRecord record;
+            record.pack_kind = BackendPackRecordKind::Plugin;
+            record.plugin_id = installed.plugin_id;
+            record.pack_id = installed.pack_id;
+            record.installed_pack_id = installed.pack_id;
+            record.installed = true;
+            record.active = true;
+            records.push_back(std::move(record));
+        }
     }
     return records;
 }

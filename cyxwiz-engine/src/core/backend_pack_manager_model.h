@@ -45,8 +45,16 @@ enum class BackendPackAction {
   Rollback
 };
 
+// A compute pack (the CPU base or an ArrayFire backend pack) or a plugin pack
+// (an add-on such as Simulation (MuJoCo)): plugin packs come from schema-2
+// manifests, have no backend, device or route, and are listed by plugin id
+// in active-plugins.json.
+enum class BackendPackRecordKind { Compute, Plugin };
+
 struct BackendPackManagerRecord {
-  std::string backend;
+  BackendPackRecordKind pack_kind = BackendPackRecordKind::Compute;
+  std::string backend;     // empty for a plugin pack
+  std::string plugin_id;   // set for a plugin pack only
   std::string pack_id;
   std::string installed_pack_id;
   std::string package_version;
@@ -102,6 +110,9 @@ struct BackendPackInstallerPlan {
   bool update_base = false;
   std::string base_pack_id;
   std::vector<std::string> pack_ids;
+  // Plugin packs (add-ons) to install or update; installed after the base
+  // and the backend packs, with no route qualification.
+  std::vector<std::string> plugin_pack_ids;
   std::vector<std::string> remove_pack_ids;
   std::vector<std::string> deactivate_backends;
   std::uint64_t download_size_bytes = 0;

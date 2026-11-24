@@ -414,8 +414,20 @@ public:
                 ? GetRouteQualificationSnapshot()
                 : std::optional<RouteQualificationSnapshot>{},
             active_identity);
+        // Add-ons (plugin packs) are active in their own state file.
+        runtime::ActivePluginsState active_plugins;
+        std::string plugins_error;
+        if (installation.condition ==
+            runtime::RuntimeInstallationCondition::Active) {
+            // A broken file reads as no add-on installed, with its reason
+            // in the catalog message.
+            runtime::LoadActivePluginsState(
+                runtime_root_ / runtime::kActivePluginsFileName,
+                active_plugins, plugins_error);
+        }
         runtime::VerifiedBackendPackCatalogSnapshot active_only;
-        state.records = BuildBackendPackCatalogRecords(active_only, active);
+        state.records =
+            BuildBackendPackCatalogRecords(active_only, active, active_plugins);
         const auto catalog_root = CurrentCatalogRoot();
         if (!catalog_root.is_absolute()) {
             state.message = "The signed metadata root must be absolute";
@@ -438,12 +450,17 @@ public:
             return state;
         }
         lifecycle.ReadInstalledMetadata(runtime_root_, active, snapshot);
-        state.records = BuildBackendPackCatalogRecords(snapshot, active);
+        state.records =
+            BuildBackendPackCatalogRecords(snapshot, active, active_plugins);
         ReconcileBackendPackDecisionEvidence(
             state.records, state.verification);
         state.available = true;
         state.catalog_id = snapshot.catalog.catalog_id;
         state.message = "Verified signed catalog " + state.catalog_id;
+        if (!plugins_error.empty()) {
+            state.message += ". Installed add-ons could not be read: " +
+                             plugins_error;
+        }
         return state;
     }
 
@@ -520,6 +537,46 @@ public:
         } else {
             result.message = error.empty()
                 ? "Pack installation failed with helper exit code " +
+                      std::to_string(exit_code)
+                : std::move(error);
+        }
+        return result;
+    }
+
+    InstallerOperationResult InstallPlugin(
+        const std::string& pack_id,
+        const InstallerOperationDetailObserver& observer) override {
+        InstallerOperationResult result;
+        if (!IsIdentifier(pack_id)) {
+            result.message = "The selected add-on identity is invalid";
+            return result;
+        }
+        const auto helper = HelperPath(executable_directory_);
+        if (!std::filesystem::is_regular_file(helper)) {
+            result.message =
+                "The signed pack helper is missing from this installation";
+            return result;
+        }
+        std::string error;
+        const int exit_code = RunHelper(
+            helper, runtime_root_, CurrentCatalogRoot(), elevate_,
+            package_source_, false,
+#ifdef _WIN32
+            L"--plugin-pack-id",
+#else
+            "--plugin-pack-id",
+#endif
+            pack_id, observer,
+            [this](const std::string& token) { BeginHelper(token); },
+            [this](const std::string& token) { FinishHelper(token); }, error);
+        if (exit_code == 0) {
+            result.succeeded = true;
+            result.activated = true;
+            result.message = pack_id +
+                " was installed; CyxWiz Engine loads it at its next start";
+        } else {
+            result.message = error.empty()
+                ? "Add-on installation failed with helper exit code " +
                       std::to_string(exit_code)
                 : std::move(error);
         }
