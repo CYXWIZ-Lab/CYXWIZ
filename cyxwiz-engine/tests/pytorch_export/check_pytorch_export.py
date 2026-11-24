@@ -49,19 +49,21 @@ def load_graph(path: Path) -> dict:
         v = str(v)
         return defaults.get(v[1:], v) if v.startswith("$") else v
 
+    # A block's one-sample shape for its first layer ("[8, $d_model]").
+    sample_shape = re.sub(r"\$(\w+)", lambda m: defaults.get(m.group(1), m.group(0)), doc.get("sample_shape", ""))
+
     nodes = [{"id": n["id"], "type": n.get("type"), "name": n.get("name", ""),
               "parameters": {k: value(v) for k, v in (n.get("params") or n.get("parameters") or {}).items()}}
              for n in template["nodes"]]
     links = [{"from_node": l.get("from"), "to_node": l.get("to"),
               "to_pin_index": l.get("to_pin", 0)} for l in template.get("links", [])]
-    return {"nodes": nodes, "links": links}
+    return {"nodes": nodes, "links": links, "sample_shape": sample_shape, "needs": doc.get("needs", "")}
 
 
 # Why the Engine's headless tool cannot count a model's parameters, when the
 # reason is this PC and not the graph: nothing to compare the export with.
 OFFLINE_REASONS = (
     ("could not open", "a file the model needs is not on this PC"),
-    ("the graph has no nodes and links arrays", "the headless loader does not read pattern templates yet"),
 )
 
 
@@ -118,6 +120,8 @@ def synthetic_input(graph_json: dict, batch: int = 2):
         if "embedding_dim" in params and ("num_embeddings" in params or "vocab_size" in params):
             vocab = int(params.get("num_embeddings") or params["vocab_size"])
             return torch.randint(4, vocab, (batch, min(limits))), vocab
+    if graph_json.get("sample_shape"):  # a block: the shape its first layer reads
+        return torch.randn(batch, *[int(d) for d in json.loads(graph_json["sample_shape"])]), None
     for node in nodes:
         params = node.get("parameters", {})
         if params.get("source_type") == "file" or "file_type" in params:
@@ -132,6 +136,10 @@ def synthetic_input(graph_json: dict, batch: int = 2):
 
 def check(graph: Path, bin_dir: Path, work: Path):
     result = {"graph": graph.name}
+    # A pattern the Engine marks not ready is refused on open, saying why.
+    needs = load_graph(graph).get("needs")
+    if needs:
+        return {**result, "ok": None, "stage": "blocked", "detail": f"the pattern is not ready yet: {needs}"[:200]}
     code = work / (graph.stem + ".py")
     export = subprocess.run([str(bin_dir / "cyxwiz-engine.exe"), "--export-code", "pytorch", str(graph), str(code)],
                             capture_output=True, text=True)
