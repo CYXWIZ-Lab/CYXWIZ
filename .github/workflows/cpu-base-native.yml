@@ -344,11 +344,10 @@ jobs:
           test_mujoco_graph_clock test_mujoco_environments test_mujoco_viewport
           test_plugin_presentation test_rl_graph_training
 
-      # CPU only: the runners have no GPU. test_rl_graph_training trains the
-      # built-in CartPole and, with the plugin folder, MuJoCo InvertedPendulum.
+      # CPU only: the runners have no GPU.
       - name: Run the MuJoCo plugin tests on the CPU
         shell: pwsh
-        timeout-minutes: 60
+        timeout-minutes: 20
         env:
           CYXWIZ_TEST_ARRAYFIRE_BACKEND: cpu
         run: |
@@ -368,7 +367,6 @@ jobs:
           Invoke-Check test_mujoco_environments
           Invoke-Check test_mujoco_viewport
           Invoke-Check test_plugin_presentation
-          Invoke-Check test_rl_graph_training $plugin
 
       # Diagnostic and unsigned, as every CI pack: the signed promotion to
       # supported is a separate release step outside CI. The libraries the
@@ -402,9 +400,14 @@ jobs:
           paths = {component["path"] for component in signed["components"]}
           with zipfile.ZipFile(manifests[0].with_name(signed["archive"]["file_name"])) as archive:
               entries = {name for name in archive.namelist() if not name.endswith("/")}
-          # The base ships the vcpkg runtime libraries found in its build output
-          shipped = {path.name.lower() for path in pathlib.Path("build/bin/Release").glob("*.dll")}
-          vcpkg = shipped & {path.name.lower() for path in pathlib.Path("build/vcpkg_installed").glob("*/bin/*.dll")}
+          # What the uploaded CPU base really ships (its signed component list)
+          base_manifests = sorted(pathlib.Path("cpu-base-artifact").glob("*.zip.manifest.json"))
+          if len(base_manifests) != 1:
+              sys.exit(f"expected one CPU-base manifest, found {len(base_manifests)}")
+          base_components = json.loads(base_manifests[0].read_text(encoding="utf-8"))["signed"]["components"]
+          shipped = {component["path"].rsplit("/", 1)[-1].lower() for component in base_components}
+          beside = {path.name.lower() for path in pathlib.Path("plugins/simulation/mujoco/bin").glob("*.dll")}
+          packed = {path.rsplit("/", 1)[-1].lower() for path in paths}
           problems = []
           if document["schema_version"] != 2 or signed["pack_kind"] != "plugin_pack":
               problems.append("not a schema-2 plugin pack")
@@ -416,7 +419,10 @@ jobs:
               if required not in paths:
                   problems.append(f"{required} is missing")
           problems += [f"{path} is a library the CPU base ships" for path in sorted(paths)
-                       if path.lower().endswith(".dll") and path.rsplit("/", 1)[-1].lower() in vcpkg]
+                       if path.lower().endswith(".dll") and path.rsplit("/", 1)[-1].lower() in shipped]
+          # Every library beside the plugin reaches the user: in the pack or in the base
+          problems += [f"{name} is in neither the plugin pack nor the CPU base"
+                       for name in sorted(beside - packed - shipped)]
           if problems:
               sys.exit("\n".join(problems))
           print(f"{signed['pack_id']}: {len(paths)} files, companion base {signed['companion_base_id']}")
@@ -432,6 +438,23 @@ jobs:
           path: plugin-packs/
           if-no-files-found: error
           compression-level: 0
+
+      # Trains the built-in CartPole and, with the plugin folder, MuJoCo
+      # InvertedPendulum on the CPU (PPO, SAC, TD3, DQN). Its own step and time
+      # limit: the longest check here, run after the pack is uploaded.
+      - name: Train RL graphs with the MuJoCo plugin on the CPU
+        shell: pwsh
+        timeout-minutes: 60
+        env:
+          CYXWIZ_TEST_ARRAYFIRE_BACKEND: cpu
+        run: |
+          $env:PATH = "C:\Program Files\ArrayFire\v3\lib;${env:CYXWIZ_PYTHON_ROOT};${env:PATH}"
+          $plugin = (Resolve-Path plugins/simulation/mujoco).Path
+          $started = Get-Date
+          & build/bin/Release/test_rl_graph_training.exe $plugin
+          $code = $LASTEXITCODE
+          Write-Host ('test_rl_graph_training: {0:N0} s' -f ((Get-Date) - $started).TotalSeconds)
+          if ($code -ne 0) { throw "test_rl_graph_training failed with exit code $code" }
 
       # Accelerator packs redistribute the CUDA, OpenCL and oneAPI runtimes
       # from the ArrayFire 3.10 install above; nothing is compiled. CI cannot
