@@ -13,20 +13,20 @@ It has two programs:
 
 ## 1. Build
 
-From the repository root (`D:\Dev\CyxWiz_Engine`), in the node's build tree:
+From the repository root, in a Release build tree (here `build/windows-release`; see [INSTALL.md](../../../INSTALL.md) for the presets):
 
 ```powershell
-cmake --build build-tofix118 --config Release --target cyxwiz-server-daemon cyxwiz-server-gui -- /m:4
+cmake --build build/windows-release --config Release --target cyxwiz-server-daemon cyxwiz-server-gui -- /m:4
 ```
 
-Binaries land in `build-tofix118\bin\Release\`. Tests:
-`cmake --build build-tofix118 --config Release --target test_job_execution_service`
-then `build-tofix118\bin\Release\test_job_execution_service.exe`.
+Binaries land in `build\windows-release\bin\Release\`. Tests:
+`cmake --build build/windows-release --config Release --target test_job_execution_service`
+then `build\windows-release\bin\Release\test_job_execution_service.exe`.
 
 ## 2. Check the machine first
 
 ```powershell
-cd build-tofix118\bin\Release
+cd build\windows-release\bin\Release
 .\cyxwiz-server-daemon.exe --doctor      # can this node take training jobs?
 .\cyxwiz-server-daemon.exe --benchmark   # measure throughput on each verified device, save it
 ```
@@ -54,7 +54,7 @@ What a node needs to agree on with the network:
 ### Start it
 
 ```powershell
-cd D:\Dev\CyxWiz_Engine\build-tofix118\bin\Release
+cd <repository>\build\windows-release\bin\Release
 # once: the secret in a file only you can read (P2P_SECRET of the server side)
 Set-Content -NoNewline -Path p2p.secret -Value '<P2P secret>'
 .\cyxwiz-server-daemon.exe --central-server=localhost:50051 --p2p-secret-file=p2p.secret

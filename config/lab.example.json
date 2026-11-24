@@ -1,0 +1,31 @@
+{
+  "_comment": "Template. Copy to config/lab.local.json (ignored by git) and describe your own lab machines there. See docs/architecture/distributed-test-lab.md.",
+  "machines": [
+    {
+      "name": "Development PC",
+      "os": "Windows 11",
+      "address": "192.168.10.10",
+      "roles": "Development and testing; runs the Engine",
+      "ssh_alias": null,
+      "reached_by": "local"
+    },
+    {
+      "name": "Server side",
+      "os": "Linux",
+      "address": "192.168.10.20",
+      "roles": "CyxWiz API, central server, CyxCloud gateway, a storage node",
+      "ssh_alias": "lab-server",
+      "reached_by": "ssh lab-server"
+    },
+    {
+      "name": "Training node",
+      "os": "Windows",
+      "address": "192.168.10.30",
+      "roles": "Server node (training)",
+      "ssh_alias": "lab-node-1",
+      "reached_by": "ssh lab-node-1"
+    }
+  ],
+  "hardware_notes": "",
+  "status_notes": ""
+}
