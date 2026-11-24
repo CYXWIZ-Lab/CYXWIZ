@@ -52,18 +52,18 @@ int main() {
     Check(CertificateFingerprint(ca, &error) == kFixtureFingerprint && error.empty(), "the fingerprint openssl prints");
 
     // Shown only where it can matter
-    Check(DescribeServerCa("https://192.168.1.180", "").shown, "an https server shows the row");
-    Check(!DescribeServerCa("http://192.168.1.180:8000", "").shown, "a plain server does not");
+    Check(DescribeServerCa("https://192.168.10.18", "").shown, "an https server shows the row");
+    Check(!DescribeServerCa("http://192.168.10.18:8000", "").shown, "a plain server does not");
     Check(!DescribeServerCa("", "").shown, "no server, no row");
 
     // Empty: the system's roots
-    auto v = DescribeServerCa("https://192.168.1.180", "  ");
+    auto v = DescribeServerCa("https://192.168.10.18", "  ");
     Check(v.empty && v.problem.empty() && v.fingerprint.empty(), "empty means the system's roots");
     Check(v.leave_empty.find("public certificate") != std::string::npos && v.trusts.empty(),
           "empty: only when to leave it empty");
 
     // A CA: its fingerprint, short on the surface and whole on hover
-    v = DescribeServerCa("https://192.168.1.180", ca);
+    v = DescribeServerCa("https://192.168.10.18", ca);
     Check(!v.empty && v.problem.empty() && v.fingerprint == kFixtureFingerprint, "a CA file: its fingerprint");
     Check(v.fingerprint_short == "00:9C:8E:68:...:F1:16", "the short form: first four, last two");
     Check(v.trusts.find("private CA") != std::string::npos && v.compare.find("new-certs.sh show") != std::string::npos &&
@@ -71,9 +71,9 @@ int main() {
           "set: what it trusts, where to compare, when to leave it empty");
 
     // Not a certificate, or no file: the reason, no fingerprint
-    v = DescribeServerCa("https://192.168.1.180", notes);
+    v = DescribeServerCa("https://192.168.10.18", notes);
     Check(!v.problem.empty() && v.fingerprint.empty(), "a file that is not a certificate is named");
-    v = DescribeServerCa("https://192.168.1.180", (dir / "missing.crt").string());
+    v = DescribeServerCa("https://192.168.10.18", (dir / "missing.crt").string());
     Check(!v.problem.empty(), "a missing file is named");
 
     // The screens' cache: the same view until the path or the file changes
@@ -82,21 +82,21 @@ int main() {
         const std::string swapped = (dir / "swapped.crt").string();
         std::ofstream(swapped) << "not a certificate";
         cyxwiz::protocol::ServerCaViewCache slow(1h);
-        Check(!slow.Get("https://192.168.1.180", swapped).problem.empty(), "cache: first look reads the file");
+        Check(!slow.Get("https://192.168.10.18", swapped).problem.empty(), "cache: first look reads the file");
         std::ofstream(swapped, std::ios::binary) << kFixtureCa;
         std::filesystem::last_write_time(swapped, std::filesystem::last_write_time(swapped) + 1h);
-        Check(!slow.Get("https://192.168.1.180", swapped).problem.empty(),
+        Check(!slow.Get("https://192.168.10.18", swapped).problem.empty(),
               "cache: not read again before the recheck time");
-        Check(slow.Get("https://192.168.1.180", ca).fingerprint == kFixtureFingerprint,
+        Check(slow.Get("https://192.168.10.18", ca).fingerprint == kFixtureFingerprint,
               "cache: a new path is read at once");
 
         cyxwiz::protocol::ServerCaViewCache now(0ms);
         std::ofstream(swapped) << "not a certificate";
         std::filesystem::last_write_time(swapped, std::filesystem::last_write_time(swapped) + 2h);
-        Check(!now.Get("https://192.168.1.180", swapped).problem.empty(), "cache: reads the file");
+        Check(!now.Get("https://192.168.10.18", swapped).problem.empty(), "cache: reads the file");
         std::ofstream(swapped, std::ios::binary) << kFixtureCa;
         std::filesystem::last_write_time(swapped, std::filesystem::last_write_time(swapped) + 3h);
-        Check(now.Get("https://192.168.1.180", swapped).fingerprint == kFixtureFingerprint,
+        Check(now.Get("https://192.168.10.18", swapped).fingerprint == kFixtureFingerprint,
               "cache: a changed file is read again");
     }
 

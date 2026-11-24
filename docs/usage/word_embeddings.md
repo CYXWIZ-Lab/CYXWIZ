@@ -365,7 +365,7 @@ weights file".
 
 ## Example: the mental-health sentiment set
 
-`D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv`
+`<your data folder>/sentiment analysis/sentiment_mental_health.csv`
 (column `statement`, 53,043 rows) with its tokenizer vocabulary
 `sentiment_analysis_vocab.txt` (5,000 tokens) and vectors trained on it by
 gensim (100 values, window 5, minimum count 5, 5 epochs):
