@@ -131,18 +131,10 @@ public:
         const cyxwiz::daemon::SetConfigRequest* request,
         cyxwiz::daemon::SetConfigResponse* response) override;
 
-    // Earnings & Wallet
+    // Earnings
     grpc::Status GetEarnings(grpc::ServerContext* context,
         const cyxwiz::daemon::GetEarningsRequest* request,
         cyxwiz::daemon::GetEarningsResponse* response) override;
-
-    grpc::Status GetWalletInfo(grpc::ServerContext* context,
-        const cyxwiz::daemon::GetWalletInfoRequest* request,
-        cyxwiz::daemon::GetWalletInfoResponse* response) override;
-
-    grpc::Status SetWalletAddress(grpc::ServerContext* context,
-        const cyxwiz::daemon::SetWalletAddressRequest* request,
-        cyxwiz::daemon::SetWalletAddressResponse* response) override;
 
     // Logs
     grpc::Status GetLogs(grpc::ServerContext* context,
@@ -152,23 +144,6 @@ public:
     grpc::Status StreamLogs(grpc::ServerContext* context,
         const cyxwiz::daemon::StreamLogsRequest* request,
         grpc::ServerWriter<cyxwiz::daemon::LogEntry>* writer) override;
-
-    // Pool Mining
-    grpc::Status GetPoolStatus(grpc::ServerContext* context,
-        const cyxwiz::daemon::GetPoolStatusRequest* request,
-        cyxwiz::daemon::GetPoolStatusResponse* response) override;
-
-    grpc::Status JoinPool(grpc::ServerContext* context,
-        const cyxwiz::daemon::JoinPoolRequest* request,
-        cyxwiz::daemon::JoinPoolResponse* response) override;
-
-    grpc::Status LeavePool(grpc::ServerContext* context,
-        const cyxwiz::daemon::LeavePoolRequest* request,
-        cyxwiz::daemon::LeavePoolResponse* response) override;
-
-    grpc::Status SetMiningIntensity(grpc::ServerContext* context,
-        const cyxwiz::daemon::SetMiningIntensityRequest* request,
-        cyxwiz::daemon::SetMiningIntensityResponse* response) override;
 
     // Daemon Control
     grpc::Status Shutdown(grpc::ServerContext* context,

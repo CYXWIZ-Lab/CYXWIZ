@@ -555,7 +555,7 @@ grpc::Status DaemonServiceImpl::SetConfig(
 }
 
 // ============================================================================
-// Earnings & Wallet
+// Earnings
 // ============================================================================
 
 grpc::Status DaemonServiceImpl::GetEarnings(
@@ -578,29 +578,6 @@ grpc::Status DaemonServiceImpl::GetEarnings(
     // jobs_completed not in EarningsInfo, use 0
     earnings->set_jobs_completed(0);
 
-    return grpc::Status::OK;
-}
-
-grpc::Status DaemonServiceImpl::GetWalletInfo(
-    grpc::ServerContext* context,
-    const GetWalletInfoRequest* request,
-    GetWalletInfoResponse* response) {
-
-    // TODO: Get from wallet integration
-    response->set_wallet_address("");
-    response->set_balance(0.0);
-    response->set_is_connected(false);
-
-    return grpc::Status::OK;
-}
-
-grpc::Status DaemonServiceImpl::SetWalletAddress(
-    grpc::ServerContext* context,
-    const SetWalletAddressRequest* request,
-    SetWalletAddressResponse* response) {
-
-    // TODO: Validate and store wallet address
-    response->set_success(true);
     return grpc::Status::OK;
 }
 
@@ -638,53 +615,6 @@ grpc::Status DaemonServiceImpl::StreamLogs(
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
-    return grpc::Status::OK;
-}
-
-// ============================================================================
-// Pool Mining
-// ============================================================================
-
-grpc::Status DaemonServiceImpl::GetPoolStatus(
-    grpc::ServerContext* context,
-    const GetPoolStatusRequest* request,
-    GetPoolStatusResponse* response) {
-
-    // TODO: Get from pool mining manager
-    response->set_is_mining(false);
-    response->set_current_intensity(0.0f);
-
-    return grpc::Status::OK;
-}
-
-grpc::Status DaemonServiceImpl::JoinPool(
-    grpc::ServerContext* context,
-    const JoinPoolRequest* request,
-    JoinPoolResponse* response) {
-
-    // TODO: Implement
-    response->set_success(false);
-    response->set_error_message("Pool mining not implemented");
-    return grpc::Status::OK;
-}
-
-grpc::Status DaemonServiceImpl::LeavePool(
-    grpc::ServerContext* context,
-    const LeavePoolRequest* request,
-    LeavePoolResponse* response) {
-
-    // TODO: Implement
-    response->set_success(true);
-    return grpc::Status::OK;
-}
-
-grpc::Status DaemonServiceImpl::SetMiningIntensity(
-    grpc::ServerContext* context,
-    const SetMiningIntensityRequest* request,
-    SetMiningIntensityResponse* response) {
-
-    // TODO: Implement
-    response->set_success(true);
     return grpc::Status::OK;
 }
 
