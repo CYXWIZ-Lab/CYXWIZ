@@ -23,12 +23,16 @@ graph-editor:
   synced_at: 202a19691
 
 data-studio:
-  code: [cyxwiz-engine/src/gui/data_*, cyxwiz-engine/src/gui/panels/data_studio*, cyxwiz-engine/src/core/data_*, cyxwiz-engine/src/data/**]
-  synced_at:
+  code: [cyxwiz-engine/src/gui/data_*, cyxwiz-engine/src/gui/panels/data_studio*, cyxwiz-engine/src/gui/panels/table_viewer*, cyxwiz-engine/src/core/data_*, cyxwiz-engine/src/data/**]
+  synced_at: 202a19691
 
 training:
-  code: [cyxwiz-engine/src/core/training_*, cyxwiz-engine/src/core/graph_compiler*, cyxwiz-engine/src/gui/panels/training_*, cyxwiz-backend/src/**]
-  synced_at:
+  code: [cyxwiz-engine/src/core/training_*, cyxwiz-engine/src/core/graph_compiler*, cyxwiz-engine/src/core/checkpoint_*, cyxwiz-engine/src/gui/panels/training_*, cyxwiz-engine/src/gui/panels/studio_debugger*, cyxwiz-backend/src/**]
+  synced_at: 202a19691
+
+evaluation:
+  code: [cyxwiz-engine/src/gui/data_studio/results_view*, cyxwiz-engine/src/gui/data_studio/test_*, cyxwiz-engine/src/gui/data_studio/folds_view*, cyxwiz-engine/src/core/test_*, cyxwiz-engine/src/core/data_studio_results*, cyxwiz-engine/src/core/cross_validation_*, cyxwiz-engine/src/core/model_explain*, cyxwiz-engine/src/core/model_evaluation*, cyxwiz-engine/src/core/feature_importance*, cyxwiz-engine/src/core/language_model_generation*, cyxwiz-engine/src/core/plot/**, cyxwiz-engine/src/gui/panels/feature_importance*, cyxwiz-engine/src/gui/panels/language_model_generation*, cyxwiz-engine/src/gui/dashboard/**]
+  synced_at: 202a19691
 
 scripting:
   code: [cyxwiz-engine/src/scripting/**, cyxwiz-engine/src/gui/panels/script_editor*, cyxwiz-backend/python/**]
