@@ -35,6 +35,11 @@ struct GraphDocumentLoadOptions {
     bool strict_links = false;
 };
 
+// The node type a saved node names, when this Engine still loads it: false
+// with a reason for a type id it does not know or a retired node type (and
+// what replaced it). Every reader of saved graphs goes through it.
+bool ReadLoadableNodeType(const nlohmann::json& node_json, gui::NodeType& node_type, std::string& error);
+
 // Builds nodes and links from `content` (the document's nodes/links, already
 // flattened by the caller when it has subgraphs); contract versions are read
 // from `document`. False with a reason when the graph cannot be loaded.

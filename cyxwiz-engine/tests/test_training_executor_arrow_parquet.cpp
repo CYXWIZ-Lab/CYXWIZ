@@ -17,6 +17,7 @@
 #include "../src/core/training_executor.h"
 #include "../src/core/training_failure.h"
 #include "../src/core/training_trace_collector.h"
+#include "../src/core/atomic_json_file.h"
 #include "../src/core/execution_device_context.h"
 #include "../src/core/execution_device_preferences.h"
 #include "../src/plugin/interfaces/i_training_hook.h"
@@ -4912,13 +4913,15 @@ void TestRegressionTargetTransform(
           "target scaler order error should explain the mismatch");
 }
 
+// Read as the Engine's readers do: on Windows the open fails for a moment
+// while the writer swaps the file in, and the shared reader retries it.
 nlohmann::json ReadPersistedTrainingTrace(const std::filesystem::path& path) {
-    std::ifstream input(path);
-    if (!input) {
+    auto trace = cyxwiz::ReadJsonFileWithRetry(path);
+    if (!trace) {
         throw std::runtime_error(
             "persisted training trace should be readable: " + path.string());
     }
-    return nlohmann::json::parse(input);
+    return *trace;
 }
 
 void TestTrainingTracePersistenceCoalescing() {

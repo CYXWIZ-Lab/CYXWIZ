@@ -108,7 +108,7 @@ bool TrialConfiguration(const TrialSetup& setup, const std::vector<TrialChange>&
     const auto graph_error = std::find_if(compiled.issues.begin(), compiled.issues.end(), [&](const ValidationIssue& i) {
         if (i.level != IssueLevel::Error) return false;
         const gui::MLNode* node = FindNode(nodes, i.node_id);
-        return !(node && (node->type == gui::NodeType::DataInput || node->type == gui::NodeType::DatasetInput));
+        return !(node && (node->type == gui::NodeType::DataInput));
     });
     if (graph_error != compiled.issues.end()) {
         error = "the changed graph does not compile: " + graph_error->message;

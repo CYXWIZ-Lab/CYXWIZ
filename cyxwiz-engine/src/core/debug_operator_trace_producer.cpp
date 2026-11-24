@@ -18,8 +18,7 @@ namespace cyxwiz {
 namespace {
 
 bool IsDataInputNode(const gui::MLNode& node) {
-    return node.type == gui::NodeType::DataInput ||
-           node.type == gui::NodeType::DatasetInput;
+    return node.type == gui::NodeType::DataInput;
 }
 
 std::string DatasetNameForNode(const gui::MLNode& node) {
@@ -51,8 +50,6 @@ std::string NodeTypeName(gui::NodeType type) {
             return "Dense";
         case gui::NodeType::DataInput:
             return "DataInput";
-        case gui::NodeType::DatasetInput:
-            return "DatasetInput";
         case gui::NodeType::TextTokenizer:
             return "TextTokenizer";
         case gui::NodeType::TextVocabulary:
@@ -516,11 +513,11 @@ DebugOperatorTraceProducer::TracePreprocessingGraph(
 
     const gui::MLNode* data_input = FindDataInput(nodes, source_dataset_name);
     if (!data_input) {
-        std::string message = "Operator-backed debugger tracing skipped because the graph has no DataInput or DatasetInput source node.";
+        std::string message = "Operator-backed debugger tracing skipped because the graph has no DataInput source node.";
         if (!source_dataset_name.empty()) {
             message = "Operator-backed debugger tracing skipped because dataset '" +
                 source_dataset_name +
-                "' does not match any DataInput/DatasetInput node in the graph.";
+                "' does not match any DataInput node in the graph.";
         }
         auto warning = BuildGraphWarningTrace(
             run_id, debug_window.table, message, errors::Runtime::InputDatasetMissing);

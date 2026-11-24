@@ -24,7 +24,7 @@ title when the Studio is moved out of the main window).
     was on the canvas before.
   - **Export a copy of the graph...**: writes a copy where you choose; the
     open graph stays on its own file.
-  - **Custom Node Editor**.
+  - **Make a Python node...**.
   - **Clear the canvas...**: asks first; Ctrl+Z brings the nodes back. The
     file changes only when you save.
   - While a run keeps the graph busy (training, a test, a pipeline, a Data

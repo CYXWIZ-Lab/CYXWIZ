@@ -371,49 +371,6 @@ std::string NASEvaluator::DescribeArchitecture(
 }
 
 // ============================================================================
-// Architecture Validation
-// ============================================================================
-
-std::pair<bool, std::string> NASEvaluator::ValidateArchitecture(
-    const std::vector<gui::MLNode>& nodes,
-    const std::vector<gui::NodeLink>& links)
-{
-    if (nodes.empty()) {
-        return {false, "Empty architecture"};
-    }
-
-    // Check for input node
-    bool has_input = false;
-    bool has_output = false;
-
-    for (const auto& node : nodes) {
-        if (node.type == gui::NodeType::DatasetInput) has_input = true;
-        if (node.type == gui::NodeType::Output) has_output = true;
-    }
-
-    if (!has_input) {
-        return {false, "Missing DatasetInput node"};
-    }
-
-    if (!has_output) {
-        return {false, "Missing Output node"};
-    }
-
-    // Check connectivity (all nodes should be reachable)
-    std::set<int> connected_nodes;
-    for (const auto& link : links) {
-        connected_nodes.insert(link.from_node);
-        connected_nodes.insert(link.to_node);
-    }
-
-    if (connected_nodes.size() < nodes.size() - 1) {
-        return {false, "Some nodes are not connected"};
-    }
-
-    return {true, ""};
-}
-
-// ============================================================================
 // Architecture Mutation
 // ============================================================================
 

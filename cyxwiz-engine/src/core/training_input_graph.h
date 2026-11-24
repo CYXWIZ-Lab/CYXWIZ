@@ -24,7 +24,7 @@ inline int PinIndex(const std::vector<gui::NodePin>& pins, int pin_id) {
 }
 
 inline bool IsSource(const gui::MLNode& node) {
-    return node.type == gui::NodeType::DataInput || node.type == gui::NodeType::DatasetInput;
+    return node.type == gui::NodeType::DataInput;
 }
 
 inline std::string DatasetName(const gui::MLNode& node) {

@@ -449,7 +449,7 @@ struct TrainingConfiguration {
 
     // Dataset configuration
     std::string dataset_name;           // Name of dataset in DataRegistry
-    int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
+    int data_source_node_id = -1;       // Selected DataInput node
     ResolvedDatasetPartitions dataset_roles;  // Typed partition resolution
     // Columns the Data Input's column roles keep out of the features (TOFIX129
     // D7a G1): the ID, Group, Weight and Ignore columns set in Explore >
@@ -853,7 +853,7 @@ private:
     ) const;
 
     // Find specific node types
-    const gui::MLNode* FindDatasetInputNode(
+    const gui::MLNode* FindDataInputNode(
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links) const;
     const gui::MLNode* FindLossNode(const std::vector<gui::MLNode>& nodes) const;

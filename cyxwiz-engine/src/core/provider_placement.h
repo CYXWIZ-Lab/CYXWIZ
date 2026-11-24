@@ -8,6 +8,7 @@
 
 #include "execution_device_context.h"
 #include "graph_compiler.h"
+#include "recurrent_configuration_policy.h"
 #include "spatial_layer_shapes.h"
 #include "spatial_sequential_head.h"
 #include "transformer_configuration_policy.h"
@@ -80,7 +81,8 @@ inline std::vector<NeuralOpRequest> RecurrentRequests(const TrainingConfiguratio
     } else if (layer.type == gui::NodeType::RNN) {
         forward = NeuralOp::RnnForward;
         backward = NeuralOp::RnnBackward;
-        shape.activation = Param(layer, "nonlinearity") == "relu" ? NeuralActivation::Relu : NeuralActivation::Tanh;
+        shape.activation =
+            RnnNonlinearity(layer.parameters) == "relu" ? NeuralActivation::Relu : NeuralActivation::Tanh;
     }
     shape.batch = static_cast<size_t>(std::max(1, config.batch_size));
     shape.seq = layer.input_shape[0];

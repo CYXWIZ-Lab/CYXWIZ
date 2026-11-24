@@ -1,7 +1,9 @@
 {
   "id": "attention_block",
   "name": "Multi-Head Attention Block",
-  "description": "Standalone multi-head attention block with residual connection and layer normalization. Can be used as a building block for custom architectures.",
+  "kind": "block",
+  "description": "LayerNorm, Multi-Head Attention and Dropout, added to the block's input (the residual). The input is [sequence, d_model].",
+  "sample_shape": "[8, 64]",
   "category": "BuildingBlocks",
   "tags": ["attention", "multi-head", "transformer", "block", "building-block"],
   "parameters": [
@@ -32,22 +34,18 @@
   ],
   "template": {
     "nodes": [
-      {"id": "input", "type": "DatasetInput", "name": "Input", "pos": [0, 200]},
+      {"id": "input", "type": "Identity", "name": "Block input", "pos": [0, 200]},
       {"id": "ln1", "type": "LayerNorm", "name": "Pre-LayerNorm", "pos": [200, 200]},
       {"id": "mha", "type": "MultiHeadAttention", "name": "Multi-Head Attention", "pos": [400, 200], "params": {"embed_dim": "$d_model", "num_heads": "$num_heads"}},
       {"id": "dropout1", "type": "Dropout", "name": "Dropout", "pos": [600, 200], "params": {"rate": "$dropout_rate"}},
-      {"id": "add1", "type": "Add", "name": "Residual Add", "pos": [800, 200]},
-      {"id": "output", "type": "Output", "name": "Output", "pos": [1000, 200]}
+      {"id": "add1", "type": "Add", "name": "Residual Add", "pos": [800, 200]}
     ],
     "links": [
       {"from": "input", "to": "ln1"},
       {"from": "ln1", "to": "mha", "to_pin": 0},
-      {"from": "ln1", "to": "mha", "to_pin": 1},
-      {"from": "ln1", "to": "mha", "to_pin": 2},
       {"from": "mha", "to": "dropout1"},
       {"from": "dropout1", "to": "add1", "to_pin": 0},
-      {"from": "input", "to": "add1", "to_pin": 1},
-      {"from": "add1", "to": "output"}
+      {"from": "input", "to": "add1", "to_pin": 1}
     ]
   }
 }

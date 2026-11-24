@@ -1814,6 +1814,18 @@ void CheckImplementedRecurrentConfigurationContract(
         Check(!cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
                    gui::NodeType::RNN, rnn_relu),
               "relu RNN should be supported");
+        // Every reader (compile, model build, device request, code export)
+        // takes the setting through RnnNonlinearity, so "ReLU" is relu.
+        rnn_relu["nonlinearity"] = " ReLU ";
+        Check(!cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+                   gui::NodeType::RNN, rnn_relu) &&
+                  cyxwiz::RnnNonlinearity(rnn_relu) == "relu",
+              "\" ReLU \" passes the check and reads as relu");
+        Check(cyxwiz::RnnNonlinearity(supported) == "tanh",
+              "no nonlinearity reads as tanh");
+        rnn_relu["nonlinearity"] = "";
+        Check(cyxwiz::RnnNonlinearity(rnn_relu) == "tanh",
+              "an empty nonlinearity reads as tanh");
     }
     Check(!cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
                gui::NodeType::GRU, supported),

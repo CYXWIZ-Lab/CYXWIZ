@@ -58,7 +58,7 @@ struct Graph {
 // Data -> Dense 16 -> ReLU -> Dropout -> Dense 3 -> CrossEntropy -> AdamW.
 Graph Mlp() {
     Graph g;
-    const int data = g.Add(gui::NodeType::DatasetInput, "Data", {{"shape", "[8]"}});
+    const int data = g.Add(gui::NodeType::DataInput, "Data", {{"shape", "[8]"}});
     const int hidden = g.Add(gui::NodeType::Dense, "Hidden", {{"units", "16"}});
     const int relu = g.Add(gui::NodeType::ReLU, "ReLU");
     const int drop = g.Add(gui::NodeType::Dropout, "Dropout", {{"rate", "0.25"}});
@@ -144,7 +144,7 @@ void CheckRefusals() {
 Graph Recurrent(gui::NodeType recurrent, const std::string& return_sequences, gui::NodeType loss,
                 std::map<std::string, std::string> loss_params = {}) {
     Graph g;
-    const int data = g.Add(gui::NodeType::DatasetInput, "Data", {{"shape", "[6,3]"}});
+    const int data = g.Add(gui::NodeType::DataInput, "Data", {{"shape", "[6,3]"}});
     const int rnn = g.Add(recurrent, "Recurrent",
                           {{"input_size", "3"}, {"hidden_size", "5"}, {"return_sequences", return_sequences}});
     const int head = g.Add(gui::NodeType::Dense, "Head", {{"units", "1"}});
@@ -192,7 +192,7 @@ void CheckRecurrentAndLoss() {
     // A per-token head: [batch, seq, classes] against [batch, seq] targets,
     // the loss over every token.
     Graph tagger;
-    const int tokens = tagger.Add(gui::NodeType::DatasetInput, "Data", {{"shape", "[6,3]"}});
+    const int tokens = tagger.Add(gui::NodeType::DataInput, "Data", {{"shape", "[6,3]"}});
     const int lstm = tagger.Add(gui::NodeType::LSTM, "Recurrent",
                                 {{"input_size", "3"}, {"hidden_size", "5"}, {"return_sequences", "true"}});
     const int tags = tagger.Add(gui::NodeType::TimeDistributed, "Tags", {{"units", "4"}});
@@ -212,7 +212,7 @@ void CheckRecurrentAndLoss() {
           "BCE with logits: pos_weight, float targets shaped like the output");
 
     Graph reshaped;
-    const int flat = reshaped.Add(gui::NodeType::DatasetInput, "Data", {{"shape", "[18]"}});
+    const int flat = reshaped.Add(gui::NodeType::DataInput, "Data", {{"shape", "[18]"}});
     const int steps = reshaped.Add(gui::NodeType::Reshape, "Steps", {{"shape", "6,3"}});
     const int over_steps = reshaped.Add(gui::NodeType::GRU, "Over the steps", {{"hidden_size", "4"}});
     reshaped.Connect(flat, steps);
@@ -286,7 +286,7 @@ void CheckBranchesAndImages() {
     Check(!std::regex_search(chain, saved_tensor), "a plain chain keeps no named tensors (its code as before)");
 
     Graph g;
-    const int data = g.Add(gui::NodeType::DatasetInput, "Data", {{"shape", "[60]"}});
+    const int data = g.Add(gui::NodeType::DataInput, "Data", {{"shape", "[60]"}});
     const int image = g.Add(gui::NodeType::Reshape, "Image", {{"shape", "6,5,2"}});
     const int stem = g.Add(gui::NodeType::Conv2D, "Stem",
                            {{"filters", "4"}, {"kernel_size", "3"}, {"padding", "same"}, {"stride", "1"}});

@@ -7,6 +7,34 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **The Pattern Browser, redesigned.** Category chips that wrap (they ran off
+  the panel's edge), with counts and a new Reinforcement learning category
+  (PPO was filed under Custom); search across every category; a card per
+  pattern with Full graph or Block, its node count and two lines of
+  description; patterns that cannot be used yet greyed at the end with the
+  reason; settings typed or stepped with - / + instead of dragged. Insert
+  says what it added, or why nothing was added (it was a log line). A full
+  graph inserted onto a canvas that has nodes asks first: Replace the canvas
+  (Undo brings it back), Add beside it, or Cancel; it used to land on top of
+  the graph. A double-click on a Nodes panel example opens it in the
+  browser. See [Patterns](usage/patterns.md).
+- **A pattern with a link to a missing pin is refused.** The link was
+  skipped and the rest inserted, leaving a hole in the graph; now nothing is
+  added and the browser names the pin and the node.
+- **Patterns insert and train again.** 26 of the 28 shipped patterns still
+  used the retired Dataset Input node and failed to insert (with only a log
+  line); the others were model pieces with no loss or optimizer, so Train
+  stayed off. The whole models are now full graphs: Data Input, Data Split,
+  DataLoader, the image or text steps, the layers, a loss, an optimizer and
+  Output; point Data Input at your data, Apply, then Train. Conv-BN-ReLU,
+  Residual Block and Multi-Head Attention Block are blocks that start with a
+  Block input node. The GAN, autoencoder, VAE, U-Net and sequence-to-sequence
+  patterns need training the Engine does not have yet: inserting one is
+  refused with the reason. The old "Phase 3 Demo" is now "Skip Connections
+  and Merges". See [Patterns](usage/patterns.md).
+- **An RNN layer reads its nonlinearity in any case.** "Tanh" passed the
+  compile check but stopped the model build with "RNNLayer nonlinearity must
+  be tanh or relu"; it now means tanh.
 - **Preferences: "Restore this page's defaults" on every page with
   settings** (only Appearance and Search could go back before). It asks
   first and keeps what is yours (the Python interpreter, Favourite and Recent
@@ -575,6 +603,31 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Make a Python node.** **Nodes > Make a Python node...** (also in the
+  Studio toolbar's More menu) writes a node in Python from a form: pick the
+  kind (Activation, Layer or Loss, which fixes the pins), name it, add
+  settings, and type the method bodies; each kind starts from a node that
+  works. **Check** runs the gradient check, **Create node** writes the source
+  to the project's `nodes_src` and the bundle to its `nodes`, approved for
+  you, and the node is in the Nodes panel at once (under Plugins). It
+  replaces the Custom Node Editor, whose nodes never reached the Nodes panel.
+  Example: `examples/python_nodes/node_maker`.
+- **Save selection as pattern, and My patterns.** Select nodes, right-click
+  the canvas and choose Actions > Save selection as pattern...: the dialog
+  says which links are kept and which leave the selection, and saves a block
+  (with a Block input where an outside link fed it) or, with a Data Input
+  and an Output, a full graph. Your patterns are listed under My patterns,
+  saved in `%APPDATA%\CyxWiz\patterns` (`~/.cyxwiz/patterns` on Linux and
+  macOS) whatever folder the Engine starts in, with Show in folder and
+  Delete (to the Recycle Bin or Trash). See
+  [Patterns](usage/patterns.md#my-patterns-saving-your-own).
+
+- **ResNet-18, MobileNetV2 and MobileNetV3 Small patterns.** Full graphs of
+  torchvision's networks, every layer named as torchvision names it, so
+  torchvision's ImageNet weight files fill them through **Start from > A
+  weights file**. **num_classes** sets the head (other than 1000, it starts
+  fresh) and **freeze_backbone** trains only the head. See
+  [Patterns](usage/patterns.md#starting-from-torchvisions-weights).
 - **CyxWiz Cream theme.** A warm light theme beside CyxWiz Light: a cream
   window, ivory fields and menus, warm brown text, the CyxWiz purple accent
   (View > Theme or Preferences > Appearance; the Theme Editor changes any
@@ -809,6 +862,38 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- **Save selection as pattern names the pattern it would replace.** Two names
+  that share a file ("Foo Bar" and "foo-bar") now warn with the existing
+  pattern's name.
+- **A pattern whose file was moved or deleted outside the Engine can be
+  deleted.** Delete takes it out of My patterns instead of refusing with "the
+  file is no longer there".
+- **A settings folder whose name Windows cannot spell in its code page no longer
+  stops the Engine starting.** My patterns are off in that case, and a file in
+  the patterns folder with such a name is skipped instead of stopping the load.
+- **The Nodes panel's Examples follow the pattern library.** The list and its
+  count update after a pattern is saved or deleted, and My patterns stay in the
+  Pattern Browser instead of mixing with the shipped examples.
+- **A CyxQL count groups by the other columns.** `RETURN type(n) AS type,
+  count(n) AS count` gave one row (the first node's type beside the count of
+  every node); it now gives one row per type, as in Cypher.
+- Query Console: Run on an example puts the query in the editor, so a
+  result or an error's line and column read against the text on screen; an
+  error says its line and column once.
+- **Every Query Console example runs.** "Count nodes by type" stopped with
+  "Expected alias after AS" and "List optimizers" with "Expected clause":
+  CyxQL refused function words (type, count, size...) as an alias, property,
+  label or key, and has no UNION. Function words now work as names, and
+  "List optimizers" lists the optimizer types in one query.
+- **Edit > Undo, Redo, Cut, Copy, Paste, Delete, Select All and Find work on
+  the Studio canvas.** The menu said "Editing: Studio canvas" but sent them
+  to the Script Editor, so nothing happened on the canvas; only the keys
+  (Ctrl+Z and the rest) worked there.
+- **Canvas menus read at the normal size at any zoom.** The right-click
+  menus (canvas, node, note, group, frame) and the rename, description and
+  freeze dialogs were drawn at the canvas zoom: zoomed out, too small to read.
+- A text link beside a button (Cancel beside Replace, Show in folder beside
+  Insert) sits on the button's line; it was 4 px higher.
 - **Arabic text is drawn.** The interface fonts had no Arabic, so Arabic
   data (dashboard cards, tables, plot labels, legends and hover) showed as
   "???". Noto Sans Arabic is now part of the interface fonts, and the

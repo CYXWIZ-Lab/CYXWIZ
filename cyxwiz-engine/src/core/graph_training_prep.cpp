@@ -37,8 +37,7 @@ void SetBlockedStatus(LaunchBlock& result, std::string title, std::string detail
 
 std::string FindGraphDatasetName(const std::vector<MLNode>& nodes) {
     for (const auto& node : nodes) {
-        if (node.type != NodeType::DataInput &&
-            node.type != NodeType::DatasetInput) {
+        if (node.type != NodeType::DataInput) {
             continue;
         }
         auto it = node.parameters.find("dataset_name");

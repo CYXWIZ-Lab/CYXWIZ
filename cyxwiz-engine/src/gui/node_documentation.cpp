@@ -302,7 +302,6 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
             return "Utility";
 
         // Data Pipeline
-        case NodeType::DatasetInput:
         case NodeType::DataLoader:
         case NodeType::DataSplit:
         case NodeType::Normalize:
@@ -1712,21 +1711,6 @@ void NodeDocumentationManager::InitializeDocumentation() {
     };
 
     // ===== Data Pipeline Nodes =====
-    docs_[NodeType::DatasetInput] = {
-        "Dataset Input",
-        "Loads a dataset from the Data Registry. This is the entry point "
-        "for training data into your model.",
-        "Select a loaded dataset to use for training.",
-        {
-            {"dataset", "Name of dataset in Data Registry"}
-        },
-        {
-            "Load dataset in Dataset Panel first",
-            "Returns (features, labels) tuple"
-        },
-        "Data Pipeline"
-    };
-
     docs_[NodeType::DataLoader] = {
         "Data Loader",
         "Creates runtime batchers from the resolved Dataset partitions. "

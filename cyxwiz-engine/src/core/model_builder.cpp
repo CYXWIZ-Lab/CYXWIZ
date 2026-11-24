@@ -809,11 +809,7 @@ bool BuildSequential(
                     return_sequences = (rs_it->second == "true" ||
                                         rs_it->second == "1");
                 }
-                auto act_it = layer_cfg.parameters.find("nonlinearity");
-                if (act_it != layer_cfg.parameters.end() &&
-                    !act_it->second.empty()) {
-                    nonlinearity = act_it->second;
-                }
+                nonlinearity = RnnNonlinearity(layer_cfg.parameters);
                 if (hidden_size < 1) hidden_size = 1;
                 if (num_layers < 1) num_layers = 1;
 
@@ -1687,7 +1683,6 @@ bool BuildSequential(
             }
 
             // Skip non-layer nodes (preprocessing, loss functions, optimizers)
-            case gui::NodeType::DatasetInput:
             case gui::NodeType::DataLoader:
             case gui::NodeType::DataSplit:
             case gui::NodeType::Normalize:

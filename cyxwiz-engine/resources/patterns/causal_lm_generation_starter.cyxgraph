@@ -1,9 +1,11 @@
 {
   "id": "causal_lm_generation_starter",
   "name": "Causal LM Generation Starter",
-  "description": "Decoder-only causal language-model starter that keeps sequence logits shaped [batch, seq, vocab] through a TimeDistributed token head. CPU-backed transformer path; intended for prompt-generation runtime experiments.",
+  "kind": "graph",
+  "description": "Decoder-only causal language model: token embeddings with positions, two Transformer Decoder blocks and a per-token head (logits [batch, sequence, vocabulary]), trained on the next token at every position. Expects a CSV of token ids, one sequence per row (max_sequence_length columns). Double-click Data Input, point it at your data and click Apply, then Train.",
+  "sample_shape": "[$max_sequence_length]",
   "category": "Transformer",
-  "tags": ["transformer", "decoder", "causal", "language-model", "generation", "time-distributed", "cpu-backed"],
+  "tags": ["transformer", "decoder", "causal", "language-model", "generation", "time-distributed"],
   "parameters": [
     {
       "name": "d_model",
@@ -56,25 +58,34 @@
   ],
   "template": {
     "nodes": [
-      {"id": "input", "type": "DatasetInput", "name": "Token IDs", "pos": [0, 200], "params": {"shape": "[1]", "create_causal_lm_targets": "true", "max_sequence_length": "$max_sequence_length"}},
-      {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [220, 200], "params": {"num_embeddings": "$vocab_size", "embedding_dim": "$d_model"}},
-      {"id": "pos_enc", "type": "PositionalEncoding", "name": "Positional Encoding", "pos": [440, 200], "params": {"d_model": "$d_model"}},
-      {"id": "dropout1", "type": "Dropout", "name": "Dropout", "pos": [660, 200], "params": {"rate": "$dropout_rate"}},
-      {"id": "dec1", "type": "TransformerDecoder", "name": "Causal Decoder 1", "pos": [880, 200], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "dim_feedforward": "$ff_dim", "dropout": "$dropout_rate"}},
-      {"id": "dec2", "type": "TransformerDecoder", "name": "Causal Decoder 2", "pos": [1100, 200], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "dim_feedforward": "$ff_dim", "dropout": "$dropout_rate"}},
-      {"id": "ln", "type": "LayerNorm", "name": "Layer Norm", "pos": [1320, 200]},
-      {"id": "token_head", "type": "TimeDistributed", "name": "Token Logit Head", "pos": [1540, 200], "params": {"units": "$vocab_size"}},
-      {"id": "output", "type": "Output", "name": "Sequence Logits", "pos": [1760, 200], "params": {"num_classes": "$vocab_size"}}
+      {"id": "data_input", "type": "DataInput", "name": "Token sequences", "pos": [0, 260], "params": {"source_type": "file", "file_category": "tabular", "file_type": "csv", "has_header": "true", "sequence_create_causal_lm_targets": "true", "sequence_length": "$max_sequence_length"}},
+      {"id": "data_split", "type": "DataSplit", "name": "Data Split", "pos": [220, 260], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1", "seed": "42", "stratified": "false"}},
+      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [440, 260], "params": {"batch_size": "8", "epochs": "20", "shuffle": "true", "seed": "42", "validation_freq": "1"}},
+      {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [660, 260], "params": {"num_embeddings": "$vocab_size", "embedding_dim": "$d_model", "padding_idx": "0"}},
+      {"id": "pos_enc", "type": "PositionalEncoding", "name": "Positional Encoding", "pos": [860, 260], "params": {"d_model": "$d_model", "max_sequence_length": "$max_sequence_length"}},
+      {"id": "dropout1", "type": "Dropout", "name": "Dropout", "pos": [1060, 260], "params": {"rate": "$dropout_rate"}},
+      {"id": "dec1", "type": "TransformerDecoder", "name": "Causal Decoder 1", "pos": [1260, 260], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "dim_feedforward": "$ff_dim", "dropout": "$dropout_rate"}},
+      {"id": "dec2", "type": "TransformerDecoder", "name": "Causal Decoder 2", "pos": [1460, 260], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "dim_feedforward": "$ff_dim", "dropout": "$dropout_rate"}},
+      {"id": "ln", "type": "LayerNorm", "name": "Layer Norm", "pos": [1660, 260]},
+      {"id": "token_head", "type": "TimeDistributed", "name": "Token Logit Head", "pos": [1860, 260], "params": {"units": "$vocab_size"}},
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "Next-token cross entropy", "pos": [2080, 320], "params": {"ignore_index": "-100", "reduction": "mean"}},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [2300, 320], "params": {"learning_rate": "0.001", "beta1": "0.9", "beta2": "0.999", "epsilon": "1e-8"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [2520, 320], "params": {"num_classes": "$vocab_size"}}
     ],
     "links": [
-      {"from": "input", "to": "embed"},
-      {"from": "embed", "to": "pos_enc"},
-      {"from": "pos_enc", "to": "dropout1"},
-      {"from": "dropout1", "to": "dec1"},
-      {"from": "dec1", "to": "dec2"},
-      {"from": "dec2", "to": "ln"},
-      {"from": "ln", "to": "token_head"},
-      {"from": "token_head", "to": "output"}
+      {"from": "data_input", "to": "data_split", "from_pin": 0, "to_pin": 0},
+      {"from": "data_split", "to": "data_loader", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "embed", "from_pin": 0, "to_pin": 0},
+      {"from": "embed", "to": "pos_enc", "from_pin": 0, "to_pin": 0},
+      {"from": "pos_enc", "to": "dropout1", "from_pin": 0, "to_pin": 0},
+      {"from": "dropout1", "to": "dec1", "from_pin": 0, "to_pin": 0},
+      {"from": "dec1", "to": "dec2", "from_pin": 0, "to_pin": 0},
+      {"from": "dec2", "to": "ln", "from_pin": 0, "to_pin": 0},
+      {"from": "ln", "to": "token_head", "from_pin": 0, "to_pin": 0},
+      {"from": "token_head", "to": "loss", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "optimizer", "from_pin": 0, "to_pin": 0},
+      {"from": "optimizer", "to": "output", "from_pin": 0, "to_pin": 0}
     ]
   }
 }

@@ -2119,8 +2119,7 @@ bool HasTrainingGraphStructure(
     bool has_loss = false;
     const auto& roles = GetPipelineSupportedTrainingRoleCapabilities();
     for (const auto& node : nodes) {
-        has_source |= node.type == gui::NodeType::DataInput ||
-                      node.type == gui::NodeType::DatasetInput;
+        has_source |= node.type == gui::NodeType::DataInput;
         if (node.type == gui::NodeType::PluginCustom && extension_role) {
             if (const auto role = extension_role(node)) {
                 has_model |= *role == PipelineTrainingSupportRole::ModelLayer;

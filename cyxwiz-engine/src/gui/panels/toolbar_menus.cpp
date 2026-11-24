@@ -69,7 +69,7 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
         {"view.fullscreen", ICON_FA_EXPAND},
         {"nodes.add_layer", ICON_FA_PLUS}, {"nodes.group", ICON_FA_OBJECT_GROUP},
         {"nodes.ungroup", ICON_FA_OBJECT_UNGROUP}, {"nodes.duplicate", ICON_FA_COPY},
-        {"nodes.delete", ICON_FA_TRASH}, {"nodes.custom_node_editor", ICON_FA_CUBE},
+        {"nodes.delete", ICON_FA_TRASH}, {"nodes.python_node_maker", ICON_FA_CUBE},
         {"nodes.freeze", ICON_FA_SNOWFLAKE},
         {"train.compile", ICON_FA_WRENCH}, {"train.local_debug", ICON_FA_BUG}, {"train.start", ICON_FA_PLAY},
         {"train.pause", ICON_FA_PAUSE}, {"train.resume", ICON_FA_PLAY}, {"train.stop", ICON_FA_STOP},
@@ -657,7 +657,7 @@ void ToolbarPanel::BuildActionHandlers() {
             if (freeze_nodes_callback_) freeze_nodes_callback_(command);
         };
     }
-    call("nodes.custom_node_editor", open_custom_node_editor_callback_);
+    call("nodes.python_node_maker", open_python_node_maker_callback_);
 
     // Train
     call("train.compile", compile_graph_callback_);

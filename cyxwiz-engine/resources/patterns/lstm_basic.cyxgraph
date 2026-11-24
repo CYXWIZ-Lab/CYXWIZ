@@ -1,7 +1,9 @@
 {
   "id": "lstm_basic",
   "name": "Basic LSTM",
-  "description": "Long Short-Term Memory network for sequence modeling. Great for time series, NLP, and sequential data.",
+  "kind": "graph",
+  "description": "One LSTM over word embeddings, Dropout and a Dense head. Expects a CSV with a text column and a label column. Double-click Data Input, point it at your data and click Apply, then Train.",
+  "sample_shape": "[$max_length]",
   "category": "RNN",
   "tags": ["lstm", "rnn", "sequence", "time-series", "nlp"],
   "parameters": [
@@ -25,9 +27,25 @@
       "name": "output_size",
       "type": "int",
       "default_value": "10",
-      "description": "Output dimension",
+      "description": "Number of classes",
       "min_value": "1",
       "max_value": "10000"
+    },
+    {
+      "name": "vocab_size",
+      "type": "int",
+      "default_value": "10000",
+      "description": "Words kept in the vocabulary",
+      "min_value": "100",
+      "max_value": "100000"
+    },
+    {
+      "name": "embedding_dim",
+      "type": "int",
+      "default_value": "128",
+      "description": "Word vector size",
+      "min_value": "16",
+      "max_value": "1024"
     },
     {
       "name": "dropout",
@@ -36,23 +54,42 @@
       "description": "Dropout probability",
       "min_value": "0.0",
       "max_value": "0.9"
+    },
+    {
+      "name": "max_length",
+      "type": "int",
+      "default_value": "64",
+      "description": "Tokens kept per text (longer texts are cut, shorter ones padded)",
+      "min_value": "4",
+      "max_value": "4096"
     }
   ],
   "template": {
     "nodes": [
-      {"id": "input", "type": "DatasetInput", "name": "Sequence Input", "pos": [0, 200]},
-      {"id": "embedding", "type": "Embedding", "name": "Embedding", "pos": [200, 200]},
-      {"id": "lstm", "type": "LSTM", "name": "LSTM", "pos": [400, 200], "params": {"hidden_size": "$hidden_size", "num_layers": "$num_layers", "dropout": "$dropout"}},
-      {"id": "dropout", "type": "Dropout", "name": "Dropout", "pos": [600, 200], "params": {"rate": "$dropout"}},
-      {"id": "dense", "type": "Dense", "name": "Output Layer", "pos": [800, 200], "params": {"units": "$output_size"}},
-      {"id": "output", "type": "Output", "name": "Output", "pos": [1000, 200]}
+      {"id": "data_input", "type": "DataInput", "name": "Data Input", "pos": [0, 260], "params": {"source_type": "file", "file_category": "text", "file_type": "csv", "text_column": "text", "text_label_column": "label", "text_tokenizer_type": "1", "text_max_length": "$max_length", "text_lowercase": "true", "text_max_vocab_size": "$vocab_size"}},
+      {"id": "tokenizer", "type": "TextTokenizer", "name": "Text Tokenizer", "pos": [220, 260], "params": {"tokenizer_type": "1", "max_length": "$max_length", "lowercase": "true", "max_vocab_size": "$vocab_size", "text_col": "text", "label_col": "label", "min_word_freq": "2", "padding": "true", "truncation": "true", "pad_value": "0"}},
+      {"id": "data_split", "type": "DataSplit", "name": "Data Split", "pos": [440, 260], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1", "seed": "42", "stratified": "true"}},
+      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [660, 260], "params": {"batch_size": "64", "epochs": "10", "shuffle": "true", "seed": "42", "validation_freq": "1"}},
+      {"id": "embedding", "type": "Embedding", "name": "Embedding", "pos": [880, 260], "params": {"num_embeddings": "$vocab_size", "embedding_dim": "$embedding_dim", "padding_idx": "0"}},
+      {"id": "lstm", "type": "LSTM", "name": "LSTM", "pos": [1080, 260], "params": {"hidden_size": "$hidden_size", "num_layers": "$num_layers", "dropout": "0.0"}},
+      {"id": "dropout", "type": "Dropout", "name": "Dropout", "pos": [1280, 260], "params": {"rate": "$dropout"}},
+      {"id": "dense", "type": "Dense", "name": "Output Layer", "pos": [1480, 260], "params": {"units": "$output_size"}},
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy", "pos": [1700, 320]},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [1920, 320], "params": {"learning_rate": "0.001", "beta1": "0.9", "beta2": "0.999", "epsilon": "1e-8"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [2140, 320], "params": {"num_classes": "$output_size"}}
     ],
     "links": [
-      {"from": "input", "to": "embedding"},
+      {"from": "data_input", "to": "tokenizer", "from_pin": 0, "to_pin": 0},
+      {"from": "tokenizer", "to": "data_split", "from_pin": 0, "to_pin": 0},
+      {"from": "data_split", "to": "data_loader", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "embedding", "from_pin": 0, "to_pin": 0},
       {"from": "embedding", "to": "lstm"},
       {"from": "lstm", "to": "dropout"},
       {"from": "dropout", "to": "dense"},
-      {"from": "dense", "to": "output"}
+      {"from": "dense", "to": "loss", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "optimizer", "from_pin": 0, "to_pin": 0},
+      {"from": "optimizer", "to": "output", "from_pin": 0, "to_pin": 0}
     ]
   }
 }

@@ -81,6 +81,10 @@ private:
     bool match(TokenType type);
     bool matchAny(std::initializer_list<TokenType> types);
     void consume(TokenType type, const std::string& message);
+    // A name: an identifier or a function word (count, type, size...), which
+    // is not reserved, so a property, an alias, a label or a key may use it.
+    bool matchName();
+    void consumeName(const std::string& message);
     bool isAtEnd() const;
 
     // Error handling

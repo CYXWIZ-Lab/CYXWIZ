@@ -7,6 +7,7 @@
 #include "graph_compiler.h"
 #include "loss_node_types.h"
 #include "pipeline_runtime_capabilities.h"
+#include "recurrent_configuration_policy.h"
 #include "rl_graph_compile.h"
 #include "spatial_layer_shapes.h"
 
@@ -139,13 +140,7 @@ std::string RecurrentLastStepLine(const MLNode& node) {
 
 // A simple RNN's activation as the frameworks spell it ('tanh' or 'relu');
 // the node may say "Tanh".
-std::string RecurrentNonlinearity(const MLNode& node) {
-    std::string value = GetParamOrDefault(node, "nonlinearity", "tanh");
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return value;
-}
+std::string RecurrentNonlinearity(const MLNode& node) { return RnnNonlinearity(node.parameters); }
 
 // The example loop's criterion: its setup line and its call's arguments.
 struct PyTorchCriterion {
@@ -754,9 +749,8 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
-        // Skip DatasetInput and Output nodes in __init__ (they don't have layers)
-        if (node->type == NodeType::DatasetInput ||
-            node->type == NodeType::Output ||
+        // Skip Output nodes in __init__ (they don't have layers)
+        if (node->type == NodeType::Output ||
             node->type == NodeType::SequenceTagOutput) {
             continue;
         }
@@ -941,9 +935,6 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
         }
 
         switch (node->type) {
-            case NodeType::DatasetInput:
-                code += "        # Dataset input layer (x is already the input)\n";
-                break;
 
             case NodeType::Dense:
             case NodeType::PReLU:
@@ -1394,9 +1385,8 @@ std::string GraphCodeExporter::GenerateTensorFlowCode(const std::vector<int>& so
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
-        // Skip DatasetInput and Output nodes in __init__
-        if (node->type == NodeType::DatasetInput ||
-            node->type == NodeType::Output ||
+        // Skip Output nodes in __init__
+        if (node->type == NodeType::Output ||
             node->type == NodeType::SequenceTagOutput) {
             continue;
         }
@@ -1432,9 +1422,6 @@ std::string GraphCodeExporter::GenerateTensorFlowCode(const std::vector<int>& so
         }
 
         switch (node->type) {
-            case NodeType::DatasetInput:
-                code += "        # Dataset input layer (x is already the input)\n";
-                break;
 
             case NodeType::Dense:
             case NodeType::PReLU:
@@ -1542,10 +1529,6 @@ std::string GraphCodeExporter::GenerateKerasCode(const std::vector<int>& sorted_
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
-        // Skip DatasetInput node
-        if (node->type == NodeType::DatasetInput) {
-            continue;
-        }
         if (node->type == NodeType::PluginCustom) {
             simulation_comments += cyxwiz::SimulationNodeCodeComment(*node, "keras", "");
             continue;
@@ -1636,9 +1619,8 @@ std::string GraphCodeExporter::GeneratePyCyxWizCode(const std::vector<int>& sort
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
-        // Skip DatasetInput and Output nodes in __init__
-        if (node->type == NodeType::DatasetInput ||
-            node->type == NodeType::Output ||
+        // Skip Output nodes in __init__
+        if (node->type == NodeType::Output ||
             node->type == NodeType::SequenceTagOutput) {
             continue;
         }
@@ -1747,10 +1729,6 @@ std::string GraphCodeExporter::GeneratePyCyxWizCode(const std::vector<int>& sort
         }
 
         switch (node->type) {
-            case NodeType::DatasetInput:
-                code += "        " + out + " = x\n";
-                record_output(out);
-                break;
 
             case NodeType::Dense:
             case NodeType::PReLU:

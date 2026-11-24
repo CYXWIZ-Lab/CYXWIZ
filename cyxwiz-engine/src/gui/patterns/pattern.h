@@ -38,8 +38,16 @@ enum class PatternCategory {
     RNN,            // Recurrent networks (LSTM, GRU)
     Transformer,    // Attention-based architectures
     Generative,     // VAE, autoencoder, GAN
+    ReinforcementLearning, // An environment, a policy and its training (PPO)
     BuildingBlocks, // Residual block, attention block, etc.
     Custom          // User-defined patterns
+};
+
+// A whole model (data line to optimizer: point the Data Input at data, then
+// Train) or a block to link into a graph.
+enum class PatternKind {
+    Graph,
+    Block
 };
 
 // Node definition within a pattern template
@@ -72,10 +80,15 @@ struct Pattern {
     std::string name;           // Display name
     std::string description;    // Description shown in browser
     PatternCategory category;
+    PatternKind kind = PatternKind::Block;
+    std::string needs;          // Why it cannot be inserted yet; empty when it can
+    std::string sample_shape;   // One sample's shape for the first layer, e.g. "[32, 32, 3]" (may use $params)
     std::vector<PatternParameter> parameters;
     PatternTemplate template_data;  // Parsed template
     std::string template_json;      // Raw JSON template (for saving)
     std::vector<std::string> tags;  // Search tags
+    std::string file_path;          // The file it was read from
+    bool user = false;              // Read from the user's patterns folder (My patterns)
 };
 
 // Helper functions
@@ -86,6 +99,7 @@ inline const char* PatternCategoryToString(PatternCategory category) {
         case PatternCategory::RNN:           return "RNN";
         case PatternCategory::Transformer:   return "Transformer";
         case PatternCategory::Generative:    return "Generative";
+        case PatternCategory::ReinforcementLearning: return "Reinforcement Learning";
         case PatternCategory::BuildingBlocks: return "Building Blocks";
         case PatternCategory::Custom:        return "Custom";
         default:                             return "Unknown";
@@ -98,9 +112,14 @@ inline PatternCategory StringToPatternCategory(const std::string& str) {
     if (str == "RNN")             return PatternCategory::RNN;
     if (str == "Transformer")     return PatternCategory::Transformer;
     if (str == "Generative")      return PatternCategory::Generative;
+    if (str == "Reinforcement Learning") return PatternCategory::ReinforcementLearning;
     if (str == "BuildingBlocks" || str == "Building Blocks")
                                   return PatternCategory::BuildingBlocks;
     return PatternCategory::Custom;
+}
+
+inline PatternKind StringToPatternKind(const std::string& str) {
+    return str == "graph" ? PatternKind::Graph : PatternKind::Block;
 }
 
 inline const char* ParameterTypeToString(ParameterType type) {
@@ -135,6 +154,7 @@ inline const char* GetPatternCategoryIcon(PatternCategory category) {
         case PatternCategory::RNN:            return ICON_FA_CHART_LINE;
         case PatternCategory::Transformer:    return ICON_FA_BRAIN;
         case PatternCategory::Generative:     return ICON_FA_WAND_MAGIC_SPARKLES;
+        case PatternCategory::ReinforcementLearning: return ICON_FA_ROCKET;
         case PatternCategory::BuildingBlocks: return ICON_FA_CUBES;
         case PatternCategory::Custom:         return ICON_FA_USER;
         default:                              return ICON_FA_CUBE;

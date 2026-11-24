@@ -1,6 +1,8 @@
 {
   "id": "gan_basic",
   "name": "Basic GAN",
+  "kind": "graph",
+  "needs": "Training a generator against a discriminator (GAN training) is not built yet.",
   "description": "Basic Generative Adversarial Network with MLP generator and discriminator. Generator creates fake samples from noise, discriminator classifies real vs fake.",
   "category": "Generative",
   "tags": ["gan", "generative", "adversarial", "generator", "discriminator"],
@@ -32,7 +34,6 @@
   ],
   "template": {
     "nodes": [
-      {"id": "noise_input", "type": "DatasetInput", "name": "Noise Input (z)", "pos": [0, 100]},
       {"id": "g_dense1", "type": "Dense", "name": "G Dense 1", "pos": [200, 100], "params": {"units": "$hidden_size"}},
       {"id": "g_act1", "type": "LeakyReLU", "name": "G LeakyReLU 1", "pos": [400, 100]},
       {"id": "g_dense2", "type": "Dense", "name": "G Dense 2", "pos": [600, 100], "params": {"units": "512"}},
@@ -40,8 +41,6 @@
       {"id": "g_dense3", "type": "Dense", "name": "G Dense 3", "pos": [1000, 100], "params": {"units": "$output_size"}},
       {"id": "g_output", "type": "Tanh", "name": "G Tanh Output", "pos": [1200, 100]},
       {"id": "fake_output", "type": "Output", "name": "Generated Output", "pos": [1400, 100]},
-
-      {"id": "real_input", "type": "DatasetInput", "name": "Real Data Input", "pos": [0, 350]},
       {"id": "d_dense1", "type": "Dense", "name": "D Dense 1", "pos": [200, 350], "params": {"units": "512"}},
       {"id": "d_act1", "type": "LeakyReLU", "name": "D LeakyReLU 1", "pos": [400, 350]},
       {"id": "d_dropout1", "type": "Dropout", "name": "D Dropout 1", "pos": [600, 350], "params": {"rate": "0.3"}},
@@ -53,15 +52,12 @@
       {"id": "disc_output", "type": "Output", "name": "Discriminator Output", "pos": [1800, 350]}
     ],
     "links": [
-      {"from": "noise_input", "to": "g_dense1"},
       {"from": "g_dense1", "to": "g_act1"},
       {"from": "g_act1", "to": "g_dense2"},
       {"from": "g_dense2", "to": "g_act2"},
       {"from": "g_act2", "to": "g_dense3"},
       {"from": "g_dense3", "to": "g_output"},
       {"from": "g_output", "to": "fake_output"},
-
-      {"from": "real_input", "to": "d_dense1"},
       {"from": "d_dense1", "to": "d_act1"},
       {"from": "d_act1", "to": "d_dropout1"},
       {"from": "d_dropout1", "to": "d_dense2"},

@@ -6,17 +6,9 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <filesystem>
 
 namespace gui::patterns {
-
-// Forward declaration for instantiation callback
-class PatternLibrary;
-
-// Callback type for pattern instantiation (legacy)
-using PatternInstantiateCallback = std::function<void(
-    const std::vector<MLNode>& nodes,
-    const std::vector<NodeLink>& links
-)>;
 
 // Callback type for node creation - creates a node with proper pins based on type
 // This allows PatternLibrary to delegate node creation to NodeEditor
@@ -48,25 +40,17 @@ public:
     std::vector<Pattern> Search(const std::string& query) const;
     const Pattern* GetPattern(const std::string& id) const;
     size_t GetPatternCount() const { return patterns_.size(); }
+    // Changes whenever a pattern is read, saved or deleted (views rebuild then).
+    size_t Revision() const { return revision_; }
 
     // Get all categories that have patterns
     std::vector<PatternCategory> GetAvailableCategories() const;
 
-    // Instantiate a pattern into nodes and links
-    // Legacy version - creates simplified nodes with only 1 input/1 output pin
-    bool InstantiatePattern(
-        const std::string& pattern_id,
-        const std::map<std::string, std::string>& params,
-        std::vector<MLNode>& out_nodes,
-        std::vector<NodeLink>& out_links,
-        int& next_node_id,
-        int& next_pin_id,
-        int& next_link_id,
-        ImVec2 base_position = ImVec2(0, 0)
-    );
-
-    // New version with node creator callback - creates nodes with proper pins
-    // The callback should use NodeEditor::CreateNode() to create nodes
+    // Instantiate a pattern into nodes and links. The callback creates each
+    // node with its real pins (NodeEditor::CreateNode). All or nothing: on a
+    // refusal the outputs are empty and `error` (when given) says why in
+    // plain words (not ready, an unknown or template node type, a link to a
+    // pin the node does not have).
     bool InstantiatePatternWithCreator(
         const std::string& pattern_id,
         const std::map<std::string, std::string>& params,
@@ -75,21 +59,36 @@ public:
         int& next_node_id,
         int& next_link_id,
         ImVec2 base_position,
-        NodeCreatorCallback node_creator
+        NodeCreatorCallback node_creator,
+        std::string* error = nullptr
     );
 
-    // Save a selection of nodes as a custom pattern
-    bool SavePatternFromSelection(
+    // Writes the selected nodes as one of My patterns (<user folder>/<file
+    // name from `name`>.cyxgraph, replacing one of the same name) and reads it
+    // in: node types by their file names, places relative to the selection
+    // (`positions` in canvas grid space), links with their pins. A selection
+    // with a Data Input and an Output is a full graph; otherwise each node an
+    // outside link fed gets a Block input. Returns the new pattern's id, or
+    // empty with the reason in `error`.
+    std::string SavePatternFromSelection(
         const std::vector<MLNode>& nodes,
         const std::vector<NodeLink>& links,
+        const std::map<int, ImVec2>& positions,
         const std::vector<int>& selected_ids,
         const std::string& name,
         const std::string& description,
         PatternCategory category,
-        const std::string& save_path = ""
+        std::string* error = nullptr
     );
+    // The file one of My patterns named `name` is saved in.
+    std::filesystem::path UserPatternFile(const std::string& name) const;
 
-    // Get/set user patterns directory
+    // Moves one of My patterns' files to the Recycle Bin (Trash) and drops
+    // it from the library. False, with the reason, when it could not.
+    bool DeleteUserPattern(const std::string& id, std::string* error = nullptr);
+
+    // The user's own patterns (My patterns): the Engine sets it to
+    // <user settings folder>/patterns before Initialize. Empty: none are read.
     const std::string& GetUserPatternsDirectory() const { return user_patterns_dir_; }
     void SetUserPatternsDirectory(const std::string& dir) { user_patterns_dir_ = dir; }
 
@@ -99,6 +98,8 @@ public:
 private:
     PatternLibrary();
     ~PatternLibrary() = default;
+
+    bool LoadPatternFile(const std::string& filepath, bool user);
 
     // Parse pattern JSON
     bool ParsePatternJson(const std::string& json_content, Pattern& out_pattern);
@@ -112,19 +113,12 @@ private:
     // Convert node type string to NodeType enum
     NodeType StringToNodeType(const std::string& type_str) const;
 
-    // Create an MLNode from a PatternNode with parameter substitution
-    MLNode CreateNodeFromPattern(
-        const PatternNode& pattern_node,
-        const std::map<std::string, std::string>& params,
-        int& node_id,
-        int& pin_id
-    ) const;
-
     // Storage
     std::map<std::string, Pattern> patterns_;
     std::string user_patterns_dir_;
     std::string builtin_patterns_dir_;
     bool initialized_ = false;
+    size_t revision_ = 0;
 };
 
 } // namespace gui::patterns

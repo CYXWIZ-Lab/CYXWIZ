@@ -280,6 +280,7 @@ set(ENGINE_SOURCES
     src/core/preparation_recipe.cpp  # TOFIX101 package B recipe lowering
     src/core/node_palette.cpp  # TOFIX157 palette curation
     src/core/nodes_panel_presentation.cpp  # TOFIX129 the Nodes panel's model
+    src/core/pattern_browser_presentation.cpp  # TOFIX178 4e the Pattern Browser's model
     src/core/prepared_data_cache.cpp
     src/core/training_input_preparation.cpp
     src/core/prepared_step_run.cpp
@@ -471,6 +472,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor_freeze.cpp
     src/gui/node_editor_io.cpp
     src/gui/node_editor_subgraph.cpp
+    src/gui/node_editor_save_pattern.cpp
     src/gui/subgraph_document.cpp
     src/gui/subgraph_presentation.cpp
     src/gui/node_type_import_registry.cpp
@@ -536,6 +538,7 @@ set(ENGINE_SOURCES
     src/core/extension_properties_presentation.cpp
     src/core/plugin_presentation.cpp
     src/core/python_bundle_presentation.cpp
+    src/core/python_node_maker.cpp
     src/plugin/plugin_session.cpp
     src/core/start_page_presentation.cpp
     src/core/python_setup_presentation.cpp
@@ -646,6 +649,7 @@ set(ENGINE_SOURCES
     src/gui/panels/asset_browser.cpp
     src/gui/file_browser_launch.cpp
     src/gui/python_bundle_ui.cpp
+    src/gui/python_node_calls.cpp
     src/gui/panels/create_node_dialog.cpp
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/training_plot_panel.cpp
@@ -715,7 +719,7 @@ set(ENGINE_SOURCES
     # Annotation Editor Panel (Phase 2 - UI Consolidation)
     src/gui/panels/annotation_editor_panel.cpp
     src/gui/panels/task_progress_panel.cpp
-    src/gui/panels/custom_node_editor.cpp
+    src/gui/panels/python_node_maker_panel.cpp
     src/gui/panels/theme_editor.cpp
     src/gui/panels/monitor_panel.cpp
     src/gui/panels/monitor_panel_loaded_data.cpp
@@ -772,10 +776,12 @@ set(ENGINE_SOURCES
     src/gui/tutorial/tutorial_system.cpp
     src/gui/panels/query_console.cpp
     src/gui/patterns/pattern_library.cpp
+    src/core/recycle_bin.cpp
     src/gui/query/cyxql_types.cpp
     src/gui/query/cyxql_lexer.cpp
     src/gui/query/cyxql_parser.cpp
     src/gui/query/cyxql_executor.cpp
+    src/gui/query/cyxql_examples.cpp
     src/data/data_table.cpp
     src/data/arrow_data_table.cpp
     src/data/table_text_export.cpp
@@ -1018,7 +1024,7 @@ set(ENGINE_HEADERS
     # Interactive annotation tools (Phase 4)
     src/gui/annotation/annotation_tools.h
     src/gui/panels/task_progress_panel.h
-    src/gui/panels/custom_node_editor.h
+    src/gui/panels/python_node_maker_panel.h
     src/gui/panels/theme_editor.h
     src/gui/panels/monitor_panel.h
     src/gui/panels/pattern_browser.h
@@ -1060,6 +1066,7 @@ set(ENGINE_HEADERS
     src/gui/query/cyxql_lexer.h
     src/gui/query/cyxql_parser.h
     src/gui/query/cyxql_executor.h
+    src/gui/query/cyxql_examples.h
     src/data/data_table.h
     src/scripting/python_engine.h
     src/scripting/script_manager.h
@@ -3657,10 +3664,45 @@ set_target_properties(test_pipeline_run_release PROPERTIES
 )
 add_test(NAME pipeline_run_release COMMAND test_pipeline_run_release)
 
+# ===== Test: Make a Python node =====
+# The form behind Make a Python node: every starter is valid, Generate and
+# Read round-trip each kind and every setting type, validation in plain words.
+add_executable(test_python_node_maker
+    tests/test_python_node_maker.cpp
+    src/core/python_node_maker.cpp
+)
+target_include_directories(test_python_node_maker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+set_target_properties(test_python_node_maker PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME python_node_maker COMMAND test_python_node_maker)
+
+# ===== Test: CyxQL parser =====
+# Every example query the Query Console offers parses, and function words
+# (type, count, size...) work as aliases and property names.
+add_executable(test_cyxql_parser
+    tests/test_cyxql_parser.cpp
+    src/gui/query/cyxql_types.cpp
+    src/gui/query/cyxql_lexer.cpp
+    src/gui/query/cyxql_parser.cpp
+    src/gui/query/cyxql_examples.cpp
+)
+target_include_directories(test_cyxql_parser PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+set_target_properties(test_cyxql_parser PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME cyxql_parser COMMAND test_cyxql_parser)
+
 # ===== Test: Pattern Template Guard =====
 add_executable(test_pattern_template_guard
     tests/test_pattern_template_guard.cpp
     src/gui/patterns/pattern_library.cpp
+    src/core/recycle_bin.cpp
+    src/core/pattern_browser_presentation.cpp
     src/gui/node_type_import_registry.cpp
 )
 target_link_libraries(test_pattern_template_guard PRIVATE cyxwiz-training-core)
@@ -5881,6 +5923,25 @@ function(configure_training_executor_harness target_name)
     )
 endfunction()
 
+# ===== Test: shipped patterns insert, compile and train (TOFIX178 4b) =====
+add_executable(test_shipped_patterns
+    tests/test_shipped_patterns.cpp
+    src/gui/patterns/pattern_library.cpp
+    src/core/recycle_bin.cpp
+    src/core/pattern_browser_presentation.cpp
+    src/gui/node_type_import_registry.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
+)
+configure_training_executor_harness(test_shipped_patterns)
+target_link_libraries(test_shipped_patterns PRIVATE OpenSSL::Crypto imgui::imgui)
+add_test(NAME shipped_patterns COMMAND test_shipped_patterns)
+
 # Regression: checkpoint weights retain their owner across testing workers.
 add_executable(test_testing_device_handoff
     tests/test_testing_device_handoff.cpp
@@ -6347,6 +6408,19 @@ if(WIN32)
 endif()
 set_target_properties(test_nodes_panel_presentation PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME test_nodes_panel_presentation COMMAND test_nodes_panel_presentation)
+
+# ===== Test: the Pattern Browser's model (chips, list, insert words, Save selection; TOFIX178 4e) =====
+add_executable(test_pattern_browser_presentation
+    tests/test_pattern_browser_presentation.cpp
+    src/core/pattern_browser_presentation.cpp
+)
+target_include_directories(test_pattern_browser_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_pattern_browser_presentation PRIVATE nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_pattern_browser_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_pattern_browser_presentation PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME test_pattern_browser_presentation COMMAND test_pattern_browser_presentation)
 
 # ===== Test: Saved Text Smoke Graph Patterns =====
 add_executable(test_text_smoke_graph_patterns

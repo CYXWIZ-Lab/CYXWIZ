@@ -53,6 +53,18 @@ void Parser::consume(TokenType type, const std::string& message) {
     error(message);
 }
 
+bool Parser::matchName() {
+    return matchAny({TokenType::IDENTIFIER,
+                     TokenType::COUNT, TokenType::SUM, TokenType::AVG,
+                     TokenType::MIN, TokenType::MAX, TokenType::COLLECT,
+                     TokenType::TYPE, TokenType::ID, TokenType::PROPERTIES,
+                     TokenType::KEYS, TokenType::EXISTS, TokenType::SIZE});
+}
+
+void Parser::consumeName(const std::string& message) {
+    if (!matchName()) error(message);
+}
+
 bool Parser::isAtEnd() const {
     return current_.token_type == TokenType::END_OF_INPUT ||
            current_.token_type == TokenType::ERROR;
@@ -341,7 +353,7 @@ ASTNodePtr Parser::parseNodePattern() {
 
     // Optional label(s)
     while (match(TokenType::COLON)) {
-        consume(TokenType::IDENTIFIER, "Expected label after ':'");
+        consumeName("Expected label after ':'");
         auto label = std::make_shared<ASTNode>(ASTNodeType::Label, previous_.value);
         node->addChild(label);
     }
@@ -377,7 +389,7 @@ ASTNodePtr Parser::parseRelationshipPattern() {
 
         // Optional type
         if (match(TokenType::COLON)) {
-            consume(TokenType::IDENTIFIER, "Expected relationship type after ':'");
+            consumeName("Expected relationship type after ':'");
             auto type = std::make_shared<ASTNode>(ASTNodeType::RelType, previous_.value);
             rel->addChild(type);
         }
@@ -450,7 +462,7 @@ ASTNodePtr Parser::parsePropertyList() {
 
     if (!check(TokenType::RBRACE)) {
         // First property
-        consume(TokenType::IDENTIFIER, "Expected property name");
+        consumeName("Expected property name");
         std::string key = previous_.value;
         consume(TokenType::COLON, "Expected ':' after property name");
         auto value = parseExpression();
@@ -461,7 +473,7 @@ ASTNodePtr Parser::parsePropertyList() {
 
         // Additional properties
         while (match(TokenType::COMMA)) {
-            consume(TokenType::IDENTIFIER, "Expected property name");
+            consumeName("Expected property name");
             key = previous_.value;
             consume(TokenType::COLON, "Expected ':' after property name");
             value = parseExpression();
@@ -480,7 +492,7 @@ ASTNodePtr Parser::parseReturnItem() {
     auto expr = parseExpression();
 
     if (match(TokenType::AS)) {
-        consume(TokenType::IDENTIFIER, "Expected alias after AS");
+        consumeName("Expected alias after AS");
         auto alias = std::make_shared<ASTNode>(ASTNodeType::Alias, previous_.value);
         alias->addChild(expr);
         return alias;
@@ -512,7 +524,7 @@ ASTNodePtr Parser::parseSetItem() {
     auto base = ASTNode::makeIdentifier(previous_.value, previous_.line, previous_.column);
 
     consume(TokenType::DOT, "Expected '.' for property access");
-    consume(TokenType::IDENTIFIER, "Expected property name");
+    consumeName("Expected property name");
     std::string propName = previous_.value;
 
     consume(TokenType::EQUALS, "Expected '=' for SET");
@@ -688,11 +700,7 @@ ASTNodePtr Parser::parsePrimary() {
     }
 
     // Function calls and identifiers
-    if (matchAny({TokenType::IDENTIFIER,
-                  TokenType::COUNT, TokenType::SUM, TokenType::AVG,
-                  TokenType::MIN, TokenType::MAX, TokenType::COLLECT,
-                  TokenType::TYPE, TokenType::ID, TokenType::PROPERTIES,
-                  TokenType::KEYS, TokenType::EXISTS, TokenType::SIZE})) {
+    if (matchName()) {
         std::string name = previous_.value;
         int line = previous_.line;
         int col = previous_.column;
@@ -717,7 +725,7 @@ ASTNodePtr Parser::parsePrimary() {
 
 ASTNodePtr Parser::parsePropertyAccess(ASTNodePtr base) {
     while (match(TokenType::DOT)) {
-        consume(TokenType::IDENTIFIER, "Expected property name after '.'");
+        consumeName("Expected property name after '.'");
         auto access = std::make_shared<ASTNode>(ASTNodeType::PropertyAccess, previous_.value);
         access->addChild(base);
         base = access;
@@ -783,7 +791,7 @@ ASTNodePtr Parser::parseMapExpression() {
     auto map = std::make_shared<ASTNode>(ASTNodeType::MapExpr);
 
     if (!check(TokenType::RBRACE)) {
-        consume(TokenType::IDENTIFIER, "Expected key");
+        consumeName("Expected key");
         std::string key = previous_.value;
         consume(TokenType::COLON, "Expected ':' after key");
         auto value = parseExpression();
@@ -793,7 +801,7 @@ ASTNodePtr Parser::parseMapExpression() {
         map->addChild(entry);
 
         while (match(TokenType::COMMA)) {
-            consume(TokenType::IDENTIFIER, "Expected key");
+            consumeName("Expected key");
             key = previous_.value;
             consume(TokenType::COLON, "Expected ':' after key");
             value = parseExpression();

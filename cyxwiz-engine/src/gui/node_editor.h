@@ -338,8 +338,13 @@ public:
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
     // Configure a node as a double-click does (Properties "Open Dialog...").
     void OpenNodeConfiguration(int node_id) { ConfigureNode(node_id); }
+    // The Edit menu while the canvas has the focus: what the canvas's own keys do.
+    enum class EditCommand { Undo, Redo, Cut, Copy, Paste, Delete, SelectAll, Find };
+    void RunEditCommand(EditCommand command);
     // "Edit roles in Data Studio" in a Dashboard window (MainWindow opens the Profile tab).
     void SetOpenDataStudioProfileCallback(std::function<void(const std::string&)> cb) { open_data_studio_profile_ = std::move(cb); }
+    // Shows a pattern in the Pattern Browser (the link after Save selection as pattern).
+    void SetOpenPatternCallback(std::function<void(const std::string&)> cb) { open_pattern_ = std::move(cb); }
     // Add to Dashboard from Data Studio (TOFIX134 P3.11): the Dashboard nodes and
     // whether each shows `dataset`; the Data Input a new one would read; the add
     // itself is applied in the editor's next frame (node 0: a new Dashboard node).
@@ -419,9 +424,8 @@ public:
     using DebugCallback = std::function<void()>;
     void SetDebugCallback(DebugCallback callback) { debug_callback_ = callback; }
 
-    // Open Custom Node Editor callback - opens the CustomNodeEditorPanel from the Studio toolbar
-    using OpenCustomNodeEditorCallback = std::function<void()>;
-    void SetOpenCustomNodeEditorCallback(OpenCustomNodeEditorCallback callback) { open_custom_node_editor_callback_ = callback; }
+    // Make a Python node, from the Studio toolbar's More menu
+    void SetOpenPythonNodeMakerCallback(std::function<void()> callback) { open_python_node_maker_callback_ = std::move(callback); }
 
     // Open Studio Debugger callback - opens the debugger panel from the Studio toolbar
     using OpenStudioDebuggerCallback = std::function<void()>;
@@ -542,8 +546,6 @@ public:
     void SetNodeExecutionError(int node_id, const std::string& error);
     void ClearExecutionStates();
 
-    // Update DatasetInput node name based on loaded dataset
-    void UpdateDatasetNodeName(const std::string& dataset_name);
 
     // Dynamic pins: rebuild a node's pins from plugin-provided data.
     // Called when a trigger parameter changes on a supports_dynamic_pins node.
@@ -551,9 +553,15 @@ public:
     // looked for again), not an edit the user can undo
     void ResolveDynamicPins(int node_id, bool record_undo = true);
 
+    // Where an inserted pattern goes: below the graph (a block, or an empty
+    // canvas), to its right, or in place of it (one undo step brings the graph
+    // back; its saved file is untouched until the next Save).
+    enum class PatternPlacement { Below, Beside, Replace };
     // Pattern insertion - add multiple nodes and links from a pattern template
-    // (fresh ids, so a pattern never shares an id with the canvas).
-    void InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    // (fresh ids, so a pattern never shares an id with the canvas). Returns
+    // why nothing was added (a run or a load is using the graph), or empty.
+    std::string InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links,
+                              PatternPlacement placement = PatternPlacement::Below);
     // Replace the graph with an edited copy of it (Neural Architecture
     // Search): unchanged nodes keep their id, place and group; new or retyped
     // nodes are built for their type and placed between their neighbours.
@@ -600,15 +608,6 @@ public:
     void Show() { show_window_ = true; }
     // Show and bring the CyxWiz Studio tab to the front (gui::BringToFront).
     void Raise();
-
-    // ===== Data Studio Integration (Phase 5 Week 7) =====
-
-    /**
-     * Set dataset from Data Studio deployment
-     * Finds or creates a DatasetInput node and populates it with the dataset
-     * Automatically frames the node after creation
-     */
-    void SetDatasetFromDataStudio(const std::string& dataset_name);
 
     // ===== Skip/Residual Connection Helpers =====
 
@@ -920,6 +919,11 @@ private:
     void CarryDockFromOldName();
     bool dock_carried_ = false;
     void DrawStudioDialogs();
+    // Actions > Save selection as pattern... (TOFIX178 4e): the dialog, and the
+    // notice on the canvas after a save.
+    void OpenSavePatternDialog();
+    void DrawSavePatternDialog();
+    void RenderSavedPatternNotice();
     // An empty canvas says how to start (TOFIX129 A3-3).
     void RenderEmptyCanvas();
     std::function<void()> open_nodes_panel_callback_;
@@ -1224,8 +1228,8 @@ private:
     // Local Debug callback (runs one forward + backward pass on synthetic data)
     DebugCallback debug_callback_;
 
-    // Open Custom Node Editor callback (opens CustomNodeEditorPanel)
-    OpenCustomNodeEditorCallback open_custom_node_editor_callback_;
+    // Opens Make a Python node
+    std::function<void()> open_python_node_maker_callback_;
     OpenPluginManagerCallback open_plugin_manager_callback_;
 
     // Open Studio Debugger callback (opens StudioDebuggerPanel)
@@ -1349,6 +1353,9 @@ private:
     // (positions keyed by the old node id); returns old id -> new id.
     std::map<int, int> AddWithFreshIds(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links,
                                        const std::map<int, ImVec2>& positions);
+    // Empties the canvas (nodes, links, groups, notes, the data they
+    // registered); the caller has checked CanReplaceGraph and saved undo.
+    void ResetGraphContents();
 
     // Deferred position setting (for nodes created outside render context)
     std::map<int, ImVec2> pending_positions_;  // node_id -> position
@@ -1521,6 +1528,18 @@ private:
     std::map<int, std::shared_ptr<cyxwiz::dashboard::DashboardWindow>> dashboard_windows_;
     std::map<int, uint64_t> dashboard_data_versions_;
     std::function<void(const std::string&)> open_data_studio_profile_;
+    std::function<void(const std::string&)> open_pattern_;
+    struct SavePatternState {
+        bool open_request = false;
+        std::vector<int> selected;     // the nodes chosen when the dialog opened
+        char name[128] = "";
+        char description[1024] = "";
+        int category = 0;              // index into the dialog's category list
+        std::string error;             // why the last Save failed
+        std::string saved_id;          // the notice after a save
+        std::string saved_text;
+        double saved_until = 0.0;      // ImGui time the notice goes away
+    } save_pattern_;
     std::function<void(const std::string&, const std::string&)> open_data_studio_query_;
     void OpenDashboardNode(int node_id);
     // The Data Input node whose dataset this is (its ds_datainput_<id> or dataset_name), or -1.

@@ -1,6 +1,8 @@
 {
   "id": "lstm_seq2seq",
   "name": "LSTM Seq2Seq",
+  "kind": "graph",
+  "needs": "Two-input sequence-to-sequence training (an encoder input and a shifted decoder input) is not built yet.",
   "description": "Encoder-decoder LSTM for sequence-to-sequence tasks like machine translation, text summarization, or time series prediction.",
   "category": "RNN",
   "tags": ["lstm", "seq2seq", "encoder-decoder", "translation", "sequence"],
@@ -40,10 +42,8 @@
   ],
   "template": {
     "nodes": [
-      {"id": "input", "type": "DatasetInput", "name": "Source Input", "pos": [0, 150]},
       {"id": "embed_enc", "type": "Embedding", "name": "Encoder Embed", "pos": [200, 150], "params": {"num_embeddings": "$vocab_size", "embedding_dim": "$embedding_dim"}},
       {"id": "encoder", "type": "LSTM", "name": "Encoder LSTM", "pos": [400, 150], "params": {"hidden_size": "$hidden_size"}},
-      {"id": "target_input", "type": "DatasetInput", "name": "Target Input", "pos": [0, 350]},
       {"id": "embed_dec", "type": "Embedding", "name": "Decoder Embed", "pos": [200, 350], "params": {"num_embeddings": "$vocab_size", "embedding_dim": "$embedding_dim"}},
       {"id": "decoder", "type": "LSTM", "name": "Decoder LSTM", "pos": [600, 350], "params": {"hidden_size": "$hidden_size", "return_sequences": "true"}},
       {"id": "dense", "type": "Dense", "name": "Output Dense", "pos": [800, 350], "params": {"units": "$output_size"}},
@@ -51,9 +51,7 @@
       {"id": "output", "type": "Output", "name": "Output", "pos": [1200, 350]}
     ],
     "links": [
-      {"from": "input", "to": "embed_enc"},
       {"from": "embed_enc", "to": "encoder"},
-      {"from": "target_input", "to": "embed_dec"},
       {"from": "embed_dec", "to": "decoder"},
       {"from": "encoder", "to": "decoder"},
       {"from": "decoder", "to": "dense"},
