@@ -7,8 +7,8 @@ rules as the `cyxcloud` CLI:
 | You give | Means |
 | --- | --- |
 | `https://cloud.cyxwiz.ai` | a front door with TLS: everything at that one origin (gRPC on 443, sign-in at `/api`) |
-| `http://192.168.1.216:8000` | a front door without TLS (local, LAN; `deploy/local` runs one on 8000) |
-| `192.168.1.216` | no front door: central `:50051`, the gateway `:50060`, sign-in `http://…:3002/api` |
+| `http://192.168.10.20:8000` | a front door without TLS (local, LAN; `deploy/local` runs one on 8000) |
+| `192.168.10.20` | no front door: central `:50051`, the gateway `:50060`, sign-in `http://…:3002/api` |
 
 `host:port` without a scheme is refused (it could mean either).
 
