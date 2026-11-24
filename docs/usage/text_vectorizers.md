@@ -4,7 +4,7 @@ CyxWiz provides dense TF-IDF and count-vectorizer nodes for classic NLP
 workflows. Their numerical contract follows scikit-learn for raw counts, IDF,
 binary presence, vocabulary capping, and optional row normalization.
 Data Studio's Explore > Text > Terms weighs the terms with the same code and
-adds this node with its settings ([text](text.md#terms)).
+adds this node with its settings ([text](../user-guide/data-studio/text.md#terms)).
 
 ## Words and terms
 

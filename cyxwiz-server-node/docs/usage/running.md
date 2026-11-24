@@ -117,7 +117,7 @@ of the node's data budget (half of its memory) stays on disk and is read one
 row group at a time while training, so a node can train on data larger than
 its memory. Token windows on disk need each split share as its own file (a
 ratio split of a file on disk is refused with the reason); see the Engine's
-docs/usage/big_data.md.
+docs/concepts/data-bigger-than-memory.md.
 
 ## 5b. Sign-in
 

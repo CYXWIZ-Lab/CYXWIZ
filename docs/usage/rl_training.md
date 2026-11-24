@@ -100,18 +100,18 @@ train faster on the CPU: each environment step runs many small GPU
 operations, and some graphics drivers struggle under that load. Only then
 does Compile add an Info line saying so, and the dashboard repeats it once
 the run reports how it computes; the Engine never switches devices for you.
-See [Why small networks are slow on a GPU](gpu_providers.md#why-small-networks-are-slow-on-a-gpu-and-what-cyxwiz-does-about-it). While a PPO
+See [Why small networks are slow on a GPU](../concepts/gpu-providers.md#why-small-networks-are-slow-on-a-gpu). While a PPO
 run is active, the device choices in Preferences are disabled until it ends,
 and a second training run (Train on a model graph) is refused. A run on a GPU
 that another training run (another Engine, a tool) is using waits for it:
 the toolbar says "PPO waiting for the GPU" and the dashboard says why;
-Stop ends the wait. See [What runs where on a GPU](gpu_providers.md).
+Stop ends the wait. See [What runs where on a GPU](../concepts/gpu-providers.md).
 
 ## The RL Training Dashboard
 
 It opens with **Train** on an RL graph, and from **Train > RL Training
 Dashboard** at any time (with no run it says how to start one). It uses the
-same parts and words as the [Training Dashboard](training_dashboard.md).
+same parts and words as the [Training Dashboard](../main-window/training-dashboard.md).
 
 **Header.** A pill says what is happening: **Starting**, **Training**,
 **Paused**, **Waiting for the GPU**, and after the run **Reached its target**
@@ -162,7 +162,7 @@ wheel** zooms a chart (in a chart's own window the wheel zooms).
   (continuous actions).
 
 A script can report to the same window with `pycyxwiz.rl_update_metric`
-(see [Plotting](plotting.md#rl-training-dashboard)): the pill reads
+(see [Plotting](../user-guide/evaluation/plots-from-python.md#report-reinforcement-learning-metrics-from-a-script)): the pill reads
 **Reporting** while values arrive, then **From a script**; the cards show the
 last episode reward (best, mean), episode length and policy loss.
 

@@ -18,7 +18,7 @@ real robots). For every setting and panel, see
 - **A device.** Training runs on the device chosen in **Preferences >
   Devices**. On an NVIDIA GPU with the **CUDA GPU pack**, PPO runs its small
   networks as fused GPU kernels and trains several times faster than on the
-  CPU (see [What runs where on a GPU](gpu_providers.md)). On the CPU every
+  CPU (see [What runs where on a GPU](../concepts/gpu-providers.md)). On the CPU every
   example still trains; it just takes longer.
 - **The MuJoCo Simulation plugin** (InvertedPendulum and HalfCheetah only).
   Open **Apps > Plugin Manager**:

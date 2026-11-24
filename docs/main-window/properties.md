@@ -126,7 +126,7 @@ shapes come from the compiler.
 
 A Data Split on an image or audio graph shows its parts instead: a row per
 part and a column per class, the images left out, and **Show the split in
-Data Studio** (see [Image split](../usage/image_split.md)).
+Data Studio** (see [Image split](../user-guide/data-studio/split-images-and-audio.md)).
 
 A Concatenate fed by an Embedding also gets the *Word + POS fusion* card
 with the compiler's verdict and the fix when it will not compile.

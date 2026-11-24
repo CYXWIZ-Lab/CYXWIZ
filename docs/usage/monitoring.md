@@ -7,7 +7,7 @@ item opens it on its own tab:
 | --- | --- | --- |
 | System | The machine, the compute device and this Engine: CPU, memory, threads, with trends | System |
 | Memory | The Engine's memory over time, and now / lowest / highest for each kind | Memory |
-| Loaded data | Every dataset the Engine holds, in memory and on disk (see [Loaded data](loaded_data.md)) | Loaded Data |
+| Loaded data | Every dataset the Engine holds, in memory and on disk (see [Loaded data](../concepts/loaded-data.md)) | Loaded Data |
 | Frames | Frame times and the windows they go to | Frames |
 
 The same menu has **Performance Profiler** (opens Studio Debugger > Runtime,

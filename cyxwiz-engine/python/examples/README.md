@@ -1,7 +1,7 @@
 # Python plotting examples
 
 Run these in the Engine's Script Editor (open the file, press F5). How each
-plot window works is described in `docs/usage/plotting.md`.
+plot window works is described in `docs/user-guide/evaluation/plotting.md`.
 
 | File | What it shows |
 | --- | --- |

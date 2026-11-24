@@ -45,7 +45,7 @@ output_format=dense
 being built.
 
 To look at the text before choosing features, open the column in Data
-Studio's Explore > Text ([text](text.md)): the commonest words and pairs, what
+Studio's Explore > Text ([text](../user-guide/data-studio/text.md)): the commonest words and pairs, what
 sets each class apart (Terms), VADER sentiment per class, and the token
 lengths.
 

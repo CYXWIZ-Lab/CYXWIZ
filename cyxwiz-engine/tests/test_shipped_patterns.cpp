@@ -351,7 +351,7 @@ int main() {
         {"mlp_basic", {10, 0}}, {"cnn_basic", {10, 0}}, {"lenet5", {10, 0}}, {"rnn_basic", {2, 200}}};
 
     // Written by scripts/examples/torch_to_cyxgraph.py: {layers with weights, the head}, as
-    // docs/usage/pretrained_weights.md lists them.
+    // docs/user-guide/training/start-from-pretrained-weights.md lists them.
     const std::map<std::string, std::pair<size_t, std::string>> published = {
         {"resnet18", {41, "fc"}}, {"mobilenet_v2", {105, "classifier.1"}}, {"mobilenet_v3_small", {79, "classifier.3"}}};
 

@@ -11,7 +11,7 @@ last_reviewed: 2026-11-24
 related:
   - windows.md
   - update-and-uninstall.md
-  - ../usage/gpu_providers.md
+  - ../concepts/gpu-providers.md
 redirect_from: []
 ---
 
@@ -118,11 +118,11 @@ is not verified, or another route is selected. Verify, then pick the route
 with **Use this device**.
 
 Which layers run on CyxWiz's own GPU kernels instead of ArrayFire is
-explained in [What runs where on a GPU](../usage/gpu_providers.md). Known GPU
+explained in [What runs where on a GPU](../concepts/gpu-providers.md). Known GPU
 runtime problems are listed in
 [KNOWN_ISSUES.md](https://github.com/CYXWIZ-Lab/CYXWIZ/blob/HEAD/KNOWN_ISSUES.md).
 
 ## Related
 
 - [Update or uninstall](update-and-uninstall.md) (remove one pack)
-- [What runs where on a GPU](../usage/gpu_providers.md)
+- [What runs where on a GPU](../concepts/gpu-providers.md)

@@ -91,7 +91,7 @@ Two pattern settings are for this:
   the head trains. Turn **Frozen** off on the layers later to fine-tune the
   whole network.
 
-See [Starting from published weights](pretrained_weights.md) for how layers
+See [Starting from published weights](../user-guide/training/start-from-pretrained-weights.md) for how layers
 are matched and what the match report says.
 
 ## Patterns that cannot be used yet

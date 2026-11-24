@@ -15,7 +15,7 @@ more classes see [Changing it](#changing-it).
    (`root/cat/*.jpg`, `root/dog/*.jpg`) or **Flat folder + labels CSV** (a CSV
    of `image,labels`). Click **OK**; it loads the image list.
 3. Open **Quality Analyzer** and click **Analyze** (once per image set and
-   Resize size, see [quality_analyzer.md](quality_analyzer.md)). Look at what it leaves out, then
+   Resize size, see [quality_analyzer.md](../user-guide/data-studio/quality-analyzer.md)). Look at what it leaves out, then
    **OK**.
 4. **Train**. When it finishes, **Train > Test > Run Test** (F8) scores the
    held-out test images in **Data Studio > Results > Test**.
@@ -102,7 +102,7 @@ The loss and accuracy points are means over the last 10 batches (640
 images), so they wiggle; the epoch-end values and validation (one point per
 epoch) are the ones to compare. Train accuracy can sit below validation: training
 images are augmented, validation images are not. See
-[plotting.md](plotting.md#training-dashboard).
+[plotting.md](../user-guide/evaluation/plotting.md#charts-in-the-training-dashboard).
 
 See also [cnn_layers.md](cnn_layers.md), [image_transforms.md](image_transforms.md),
-[image_split.md](image_split.md), [testing.md](testing.md).
+[image_split.md](../user-guide/data-studio/split-images-and-audio.md), [testing.md](../user-guide/evaluation/test-a-trained-model.md).

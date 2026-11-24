@@ -12,7 +12,7 @@ related:
   - ../usage/preferences.md
   - ./editing-values.md
   - ../reference/shortcuts.md
-  - ../usage/gpu_providers.md
+  - ../concepts/gpu-providers.md
 redirect_from: []
 ---
 
@@ -71,7 +71,7 @@ The rail groups the pages under four headings.
 Installed plugins can add their own sections at the end of the **General**,
 **Script Editor**, **Python** and **Simulation** pages.
 
-For the **Devices** page, see also [GPU providers](../usage/gpu_providers.md).
+For the **Devices** page, see also [GPU providers](../concepts/gpu-providers.md).
 
 ## Search the pages
 

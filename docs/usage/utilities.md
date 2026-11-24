@@ -86,7 +86,7 @@ seed, then **Generate**:
 | Integers | Low, High |
 
 **The same seed gives the same values on Windows, Linux and macOS** (see
-[Seeds and reproducibility](seeds_and_reproducibility.md)). **New seed** picks
+[Seeds and reproducibility](../concepts/seeds-and-reproducibility.md)). **New seed** picks
 another.
 
 The results area shows:

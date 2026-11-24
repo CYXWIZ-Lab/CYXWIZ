@@ -134,7 +134,7 @@ More ways to add nodes:
 - **Test**: **Run Test** (F8), **Run Quick Test** (the first 10 batches),
   **View Test Results**, **Compare Test Results...**, **Export Test
   Report...**, **Load Checkpoint for Testing...**. See
-  [Testing a model](../usage/testing.md).
+  [Testing a model](../user-guide/evaluation/test-a-trained-model.md).
 - **Evaluate**: **Cross-validate**, **Learning Curve**.
 - **Training Dashboard**, **RL Training Dashboard**, **Optimizer
   Settings...** (selects the graph's optimizer node in Properties),
@@ -152,7 +152,7 @@ More ways to add nodes:
 - **Tokenization** opens Data Studio's Text tab.
 - **Augment (planned)**.
 
-See [Data Studio](../usage/data_studio.md).
+See [Data Studio](../user-guide/data-studio/overview.md).
 
 ## Tools
 
@@ -170,7 +170,7 @@ Each item opens a tool window or a Data Studio tab on the right view:
 - **Diagnostics**: **Log Frame-rate Changes**, **Log Every Python
   Command**, **Frame Time Overlay** (check items, saved).
 
-Pages: [Model tools](../usage/model_tools.md),
+Pages: [Model tools](model-window.md),
 [Linear algebra](../usage/linear_algebra.md),
 [Monitoring](../usage/monitoring.md), [Utilities](../usage/utilities.md).
 

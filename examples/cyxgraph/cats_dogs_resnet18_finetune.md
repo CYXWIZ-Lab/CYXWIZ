@@ -90,4 +90,4 @@ same.
 - **Freeze less.** **Nodes > Freeze > Freeze all but the last N layers...**
   keeps the last blocks training.
 
-See [docs/usage/pretrained_weights.md](../../docs/usage/pretrained_weights.md).
+See [Start from pretrained weights](../../docs/user-guide/training/start-from-pretrained-weights.md).

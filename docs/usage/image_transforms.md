@@ -464,7 +464,7 @@ frequencies.
 ## Notes
 
 - To leave blurry, dark, flat or duplicate images out of training, see
-  [Quality Analyzer](quality_analyzer.md).
+  [Quality Analyzer](../user-guide/data-studio/quality-analyzer.md).
 - Code export (PyTorch / TensorFlow / Keras / PyCyxWiz) does not include image
   transforms yet, the OpenCV steps included, and says so; train these graphs
   in Studio.

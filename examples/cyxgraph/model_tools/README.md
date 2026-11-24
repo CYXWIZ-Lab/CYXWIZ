@@ -1,7 +1,7 @@
 # MNIST digits: the Model window and Results > Test
 
-**Graph:** `mnist_cnn.cyxgraph`. **Docs:** [The Model window](../../../docs/usage/model_tools.md),
-[Testing a trained model](../../../docs/usage/testing.md).
+**Graph:** `mnist_cnn.cyxgraph`. **Docs:** [The Model window](../../../docs/main-window/model-window.md),
+[Testing a trained model](../../../docs/user-guide/evaluation/test-a-trained-model.md).
 
 A small CNN on the MNIST test digits, read from a CSV of pixel columns. It is
 the graph the Model window's guide uses for its numbers:

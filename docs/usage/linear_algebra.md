@@ -111,7 +111,7 @@ positive.
 
 - **PCA**: centred (and with **scale**, standardised) directions of the
   covariance, `pc_0` ... See
-  [Dimensionality reduction](dimensionality_reduction.md#pca).
+  [Dimensionality reduction](../user-guide/data-studio/dimensionality-reduction.md#pca).
 - **Truncated SVD**: the singular value decomposition of the Train rows,
   uncentred, as scikit-learn's `TruncatedSVD`: each row becomes x V_k,
   `svd_0` ... Uncentred suits word counts and TF-IDF (latent semantic

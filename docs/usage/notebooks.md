@@ -61,7 +61,7 @@ not use the notebook's Python.
 `%matplotlib` line) is understood: from that line on, figures go to the cell,
 also after `matplotlib.use('Agg')`. Other `%` magics and `!` shell lines are
 not supported; the cell stops with a syntax error. See
-[plotting.md](plotting.md).
+[plotting.md](../user-guide/evaluation/plotting.md).
 
 ## Closing the Engine
 
