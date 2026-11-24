@@ -4852,6 +4852,11 @@ add_executable(cyxwiz-graph-compile-check
     src/core/dataset_catalog_registry.cpp
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
+    # Pattern templates are read as the Engine opens them (TOFIX233 A1).
+    src/gui/patterns/pattern_library.cpp
+    src/core/recycle_bin.cpp
+    src/core/pattern_browser_presentation.cpp
+    src/gui/node_type_import_registry.cpp
 )
 target_link_libraries(cyxwiz-graph-compile-check PRIVATE cyxwiz-training-core)
 

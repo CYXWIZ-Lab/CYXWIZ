@@ -1,6 +1,7 @@
-// Compiles saved .cyxgraph files with the Engine's GraphCompiler, without the
-// GUI, and prints the issues plus the resolved training recipe. Used to check
-// graphs before a (long) run is launched on another machine.
+// Compiles saved .cyxgraph files (and pattern templates, instantiated as the
+// Engine opens them) with the Engine's GraphCompiler, without the GUI, and
+// prints the issues plus the resolved training recipe. Used to check graphs
+// before a (long) run is launched on another machine.
 //
 // Usage: cyxwiz-graph-compile-check [--reference known_good.cyxgraph] <graph.cyxgraph> [more ...]
 // Exit code: 0 when every graph compiles valid (or, with --reference, has no
@@ -13,8 +14,10 @@
 // renamed node does not count as a new issue).
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_document.h"
+#include "../src/core/graph_node_factory.h"
 #include "../src/core/model_builder.h"
 #include "../src/gui/loaders/data_loader.h"
+#include "../src/gui/patterns/pattern_library.h"
 
 #include <nlohmann/json.hpp>
 
@@ -51,6 +54,22 @@ bool LoadGraph(const std::filesystem::path& path, std::vector<gui::MLNode>& node
     }
     std::stringstream buffer;
     buffer << in.rdbuf();
+    // A pattern template is instantiated as the Engine opens one: through the
+    // pattern library (its parameter defaults, its checks), nodes from the
+    // node factory.
+    const json root = json::parse(buffer.str(), nullptr, false);
+    if (root.is_object() && root.contains("template")) {
+        auto& library = gui::patterns::PatternLibrary::Instance();
+        gui::patterns::Pattern pattern;
+        int factory_node_id = 1, next_pin_id = 1;  // the library numbers the nodes itself
+        const auto create = [&](gui::NodeType type, const std::string& name) {
+            return gui::CreateGraphNode(type, name, factory_node_id, next_pin_id);
+        };
+        int next_node_id = 1, next_link_id = 1;
+        return library.ReadPatternFile(path.string(), pattern, &error) &&
+               library.InstantiatePatternWithCreator(pattern, {}, nodes, links, next_node_id, next_link_id,
+                                                     ImVec2(0, 0), create, &error);
+    }
     cyxwiz::GraphDocument document;
     if (!cyxwiz::ParseGraphDocument(buffer.str(), document, error)) return false;
     nodes = std::move(document.nodes);
