@@ -94,12 +94,14 @@ public:
     BackendPackRemovalProgress GetProgress() const;
 
 private:
+    // plugin_pack picks the wording: "Plugin pack ..." or "Backend pack ...".
     BackendPackRemovalResult QuarantineAndDelete(
         const std::filesystem::path& target,
         bool target_exists,
         const std::filesystem::path& pending_root,
         BackendPackRemovalProgress& progress,
-        const std::optional<BackendPackStateResult>& deactivation);
+        const std::optional<BackendPackStateResult>& deactivation,
+        bool plugin_pack);
     BackendPackRemovalResult Finish(
         BackendPackRemovalStatus status,
         std::string message,

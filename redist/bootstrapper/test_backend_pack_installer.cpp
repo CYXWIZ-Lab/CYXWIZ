@@ -426,7 +426,8 @@ int main() {
                     fixture.root / "plugins" / "com.cyxwiz.simulation.mujoco" / "mujoco-v1" /
                     "bin" / "mujoco.dll") &&
                 loaded && plugins.base_pack_id == "base-v1" && plugins.plugins.size() == 1 &&
-                plugins.plugins.front().pack_id == "mujoco-v1",
+                plugins.plugins.front().pack_id == "mujoco-v1" &&
+                result.message == "Plugin pack installed and active",
             "a plugin pack must publish into plugins/ and activate in active-plugins.json: " +
                 result.message);
         failures += !Expect(

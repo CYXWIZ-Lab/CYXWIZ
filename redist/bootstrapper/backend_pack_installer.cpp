@@ -863,9 +863,11 @@ BackendPackInstallResult BackendPackInstaller::Apply(
             destination);
     }
     if (!activate) {
+        // Plugin packs have no route qualification: their caller activates them.
         return Finish(
             BackendPackInstallStatus::InstalledUnqualified,
-            "Complete pack is installed and awaiting route qualification",
+            plugin ? "Plugin pack installed, not active yet"
+                   : "Complete pack is installed and awaiting route qualification",
             destination);
     }
     progress.stage = BackendPackInstallStage::Activating;
@@ -878,7 +880,8 @@ BackendPackInstallResult BackendPackInstaller::Apply(
     if (activation.status != BackendPackStateStatus::Completed) {
         return Finish(
             BackendPackInstallStatus::InstalledUnqualified,
-            "Complete pack is installed but activation failed: " +
+            std::string(plugin ? "Plugin pack is installed but activation failed: "
+                               : "Complete pack is installed but activation failed: ") +
                 activation.message,
             destination, std::move(activation));
     }
@@ -887,7 +890,8 @@ BackendPackInstallResult BackendPackInstaller::Apply(
         already_installed
             ? BackendPackInstallStatus::AlreadyInstalledAndActivated
             : BackendPackInstallStatus::InstalledAndActivated,
-        "Pack installed and activated", destination, std::move(activation));
+        plugin ? "Plugin pack installed and active" : "Pack installed and activated",
+        destination, std::move(activation));
 }
 
 void BackendPackInstaller::Cancel() {

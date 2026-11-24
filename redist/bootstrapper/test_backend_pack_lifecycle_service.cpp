@@ -1272,12 +1272,16 @@ int main() {
         };
         const auto runtime_before = read_text(fixture.runtime / "active-runtime.json");
         bool qualified = false;
+        std::string progress_messages;
         BackendPackLifecycleService service(
             fixture.runtime, fixture.Verifier(), [] { return false; },
             [&](const auto&, const auto&, const ActiveRuntimeState&) {
                 qualified = true;
                 return BackendPackQualificationDecision{
                     BackendPackQualificationDisposition::Qualified, "unexpected"};
+            },
+            [&](const BackendPackLifecycleProgress& progress) {
+                progress_messages += progress.message + "\n";
             });
         auto request = fixture.Request();
         request.pack_id = "mujoco-v1";
@@ -1322,6 +1326,13 @@ int main() {
                 plugins.plugins.empty() &&
                 read_text(fixture.runtime / "active-runtime.json") == runtime_before,
             "plugin removal must deactivate and delete the plugin pack only");
+        // Plugin packs have no route qualification: their messages say so.
+        failures += !Expect(
+            progress_messages.find("route qualification") == std::string::npos &&
+                progress_messages.find("Plugin pack installed, not active yet") != std::string::npos &&
+                removed.message == "Plugin pack removed",
+            "plugin delivery and removal must use plugin-pack wording: " + removed.message +
+                "\n" + progress_messages);
     }
     {
         // Only a supported plugin pack is delivered; the catalog snapshot lists it.

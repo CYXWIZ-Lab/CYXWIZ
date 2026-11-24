@@ -222,7 +222,7 @@ BackendPackRemovalResult BackendPackRemover::Remove(
     return QuarantineAndDelete(
         target, target_exists,
         runtime_root_ / "staging" / "removal" / backend / pack_id,
-        progress, deactivation);
+        progress, deactivation, false);
 }
 
 BackendPackRemovalResult BackendPackRemover::RemovePlugin(
@@ -315,7 +315,7 @@ BackendPackRemovalResult BackendPackRemover::RemovePlugin(
     return QuarantineAndDelete(
         target, target_exists,
         runtime_root_ / "staging" / "removal" / "plugins" / plugin_id / pack_id,
-        progress, deactivation);
+        progress, deactivation, true);
 }
 
 // The pack is inactive: move it into a private quarantine, then delete it. A
@@ -325,7 +325,12 @@ BackendPackRemovalResult BackendPackRemover::QuarantineAndDelete(
     bool target_exists,
     const std::filesystem::path& pending_root,
     BackendPackRemovalProgress& progress,
-    const std::optional<BackendPackStateResult>& deactivation) {
+    const std::optional<BackendPackStateResult>& deactivation,
+    bool plugin_pack) {
+    // Same steps for both kinds; the messages name the kind removed.
+    const std::string kind = plugin_pack ? "Plugin pack" : "Backend pack";
+    const std::string kind_lower = plugin_pack ? "plugin pack" : "backend pack";
+    const std::string kind_hyphen = plugin_pack ? "plugin-pack" : "backend-pack";
     std::error_code filesystem_error;
     std::string error;
     if (!target_exists) {
@@ -335,7 +340,7 @@ BackendPackRemovalResult BackendPackRemover::QuarantineAndDelete(
         if (filesystem_error) {
             return Finish(
                 BackendPackRemovalStatus::FilesystemFailure,
-                "Cannot inspect pending backend-pack cleanup", {},
+                "Cannot inspect pending " + kind_hyphen + " cleanup", {},
                 deactivation);
         }
         if (pending_exists) {
@@ -343,7 +348,7 @@ BackendPackRemovalResult BackendPackRemover::QuarantineAndDelete(
                     runtime_root_, pending_root, error)) {
                 return Finish(
                     BackendPackRemovalStatus::FilesystemFailure,
-                    "Pending backend-pack cleanup is unsafe: " + error,
+                    "Pending " + kind_hyphen + " cleanup is unsafe: " + error,
                     pending_root, deactivation);
             }
             std::filesystem::remove_all(pending_root, filesystem_error);
@@ -351,13 +356,13 @@ BackendPackRemovalResult BackendPackRemover::QuarantineAndDelete(
                 std::filesystem::exists(pending_root, filesystem_error)) {
                 return Finish(
                     BackendPackRemovalStatus::CleanupPending,
-                    "Backend pack is absent, but quarantined cleanup is pending",
+                    kind + " is absent, but quarantined cleanup is pending",
                     pending_root, deactivation);
             }
         }
         return Finish(
             BackendPackRemovalStatus::AlreadyAbsent,
-            "Backend pack is absent and pending cleanup is complete", {},
+            kind + " is absent and pending cleanup is complete", {},
             deactivation);
     }
 
@@ -387,7 +392,7 @@ BackendPackRemovalResult BackendPackRemover::QuarantineAndDelete(
     if (filesystem_error) {
         return Finish(
             BackendPackRemovalStatus::FilesystemFailure,
-            "Cannot atomically quarantine the backend pack: " +
+            "Cannot atomically quarantine the " + kind_lower + ": " +
                 filesystem_error.message(),
             {}, deactivation);
     }
@@ -397,12 +402,13 @@ BackendPackRemovalResult BackendPackRemover::QuarantineAndDelete(
         !checkpoint_(BackendPackRemovalCheckpoint::AfterQuarantine)) {
         return Finish(
             BackendPackRemovalStatus::Interrupted,
-            "Backend-pack removal interrupted after quarantine",
+            (plugin_pack ? "Plugin-pack" : "Backend-pack") +
+                std::string(" removal interrupted after quarantine"),
             quarantine, deactivation);
     }
 
     progress.stage = BackendPackRemovalStage::Deleting;
-    progress.message = "Deleting the quarantined backend pack";
+    progress.message = "Deleting the quarantined " + kind_lower;
     SetProgress(progress);
     std::filesystem::remove_all(quarantine, filesystem_error);
     if (filesystem_error ||
@@ -414,7 +420,7 @@ BackendPackRemovalResult BackendPackRemover::QuarantineAndDelete(
     }
     return Finish(
         BackendPackRemovalStatus::Removed,
-        "Backend pack removed", {}, deactivation);
+        kind + " removed", {}, deactivation);
 }
 
 void BackendPackRemover::Cancel() {
