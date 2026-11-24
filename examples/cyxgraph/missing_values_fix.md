@@ -34,4 +34,4 @@ without a `diagnosis`.
    a diagnosis"). **Undo** in the report removes a group's step; Ctrl+Z on
    the canvas removes the last one added, and the card follows.
 
-More in [the compile report](../../docs/usage/studio_toolbar.md#missing-values-the-fix-in-the-report).
+More in [the compile report](../../docs/user-guide/graph-editor/fix-missing-values.md).

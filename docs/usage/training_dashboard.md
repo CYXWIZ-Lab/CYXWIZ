@@ -5,7 +5,7 @@ curves go, how it ended and which model the Engine holds after it. Open it
 with **Train > Training Dashboard** or the **Training** button in the
 sidebar; it also opens by itself when you press **Train**. It sits beside the
 Console by default and can have a window of its own (right-click its tab:
-**Move to its own window**; see [Windows of their own](windows.md)).
+**Move to its own window**; see [Windows of their own](../main-window/layouts-and-docking.md#windows-of-their-own)).
 
 ## The header
 
@@ -42,7 +42,7 @@ The first card says what the run is doing, in plain words.
     Cannot-start-training report (Fill these columns, Drop these rows, Drop
     rows without a label, Undo, Show on canvas), then **Train again**; its
     stop code is `missing_values` (see
-    [the compile report](studio_toolbar.md#missing-values-the-fix-in-the-report));
+    [the compile report](../user-guide/graph-editor/fix-missing-values.md));
   - the active model, the one the Engine keeps for testing and export: "the
     best validation checkpoint, epoch 10 (validation loss 0.2554, accuracy
     92.61%)", or "the final state of the run" when no checkpoint was kept;

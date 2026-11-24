@@ -337,7 +337,7 @@ private Data Studio tickets (`tofix*/track*`).
   - A node inside a frame keeps its own clicks and right-click menu.
   - **Generate** says why when the graph cannot be turned into code,
     instead of only writing it to the log.
-  - Guide: `docs/usage/canvas_groups_frames.md`.
+  - Guide: `docs/user-guide/graph-editor/groups-frames-and-names.md`.
 - **Studio Debugger Local Debug runs the sample you pick**, item N of your
   data prepared the way validation sees it (fixed steps and Normalize, no
   random augmentation), for images, tables in memory or on disk, sparse
@@ -374,7 +374,7 @@ private Data Studio tickets (`tofix*/track*`).
   node's noise, time stretch and pitch shift used to alter validation and
   test clips too, so their metrics changed from run to run.
 - **The CyxWiz Studio bar is one row that never hides Train** (guide in
-  `docs/usage/studio_toolbar.md`). What does not fit folds into **More**
+  `docs/main-window/toolbar.md`). What does not fit folds into **More**
   instead of being cut off; Compile and Local Debug keep their names.
   - **Code** (Generate into Script Editor, Save as .py) replaces the gear
     and Export icons. It says why when the graph cannot be turned into
@@ -415,7 +415,7 @@ private Data Studio tickets (`tofix*/track*`).
     keeps its state on the bar.
   - Undoing back to the saved layout clears the unsaved dot (positions are
     saved to a hundredth of a grid unit).
-- **The menu bar's right end** (guide in `docs/usage/menu_bar.md`): your
+- **The menu bar's right end** (guide in `docs/main-window/menus.md`): your
   account sits in the window's top-right corner as initials, name and plan
   (it was a bare icon with the email as a tooltip), its menu says who you are
   and adds **Servers...**; the project name opens Show in Explorer, Copy Path
@@ -749,7 +749,7 @@ private Data Studio tickets (`tofix*/track*`).
   lists the last nodes you added, newest first, as chips to click or drag.
   The filter gains *Favourites*. Both are saved with your Engine settings
   (every project); **Preferences > Nodes panel** turns Recent off, sets how
-  many it shows and clears it. Guide: `docs/usage/node_palette.md`.
+  many it shows and clears it. Guide: `docs/main-window/nodes-panel.md`.
 - **Layer capture for the Studio Debugger** (Preferences > Studio Debugger,
   off to start). Local Debug and training can keep every layer's input and
   output, weights and gradients. Training takes a snapshot every N epochs and
@@ -760,7 +760,7 @@ private Data Studio tickets (`tofix*/track*`).
   feature-map colour (Heat or Grayscale) are kept in Preferences; Layer
   capture in the debugger's toolbar changes them for the session, shows one
   snapshot's size for the model on the canvas and saves them as your
-  defaults. Guide: `docs/usage/studio_toolbar.md`, "Layer capture".
+  defaults. Guide: `docs/user-guide/training/studio-debugger.md`, "Layer capture".
 - **Studio Debugger Full size**: a toolbar button hides the side panels
   while the debugger is shown and brings them back afterwards.
 - **Studio Debugger > Model > Layers**: every captured layer with the views
@@ -803,7 +803,7 @@ private Data Studio tickets (`tofix*/track*`).
   **Unit weights** draws each unit of a Dense layer that reads the image
   flattened as the picture of what it looks for, the strongest units first;
   click one for it large with its bias, value and top images.
-  Guide: `docs/usage/studio_toolbar.md`, "Model > Layers".
+  Guide: `docs/user-guide/training/studio-debugger.md`, "Model > Layers".
 - **The Portfolio Weights node** (Analytics): the least risky mix of assets
   from a table of returns, with an optional target return and long only,
   fitted on the Train rows; one row per asset with its weight, mean, sd and

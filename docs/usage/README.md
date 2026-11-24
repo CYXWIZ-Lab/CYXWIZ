@@ -10,24 +10,30 @@ To write your own nodes in Python or C++, see
 
 | Page | What it covers |
 | --- | --- |
-| [The menu bar](menu_bar.md) | File to Help, the project and your account at the top right |
-| [The CyxWiz Studio bar](studio_toolbar.md) | The bar at the top of the canvas |
-| [Windows of their own](windows.md) | Moving the big windows out of the main window |
+| [Menus](../main-window/menus.md) | File to Help, the project and your account at the top right |
+| [The Studio bar](../main-window/toolbar.md) | The bar at the top of the canvas |
+| [The Studio Debugger](../user-guide/training/studio-debugger.md) | Local Debug, layer capture and the layer views |
+| [Layouts and docking](../main-window/layouts-and-docking.md) | Arranging panels, moving the big windows out of the main window |
 | [Preferences](preferences.md) | How the Engine starts (start page or the last project), recent projects kept, asking before closing |
 | [Theme Editor](theme_editor.md) | Every colour the Engine draws, the accent, and saving your own theme |
 | [Asset Browser](asset_browser.md) | The project's folders and files, previews, new files |
-| [Properties](properties.md) | The Properties panel for the selected node |
+| [Properties](../main-window/properties.md) | The Properties panel for the selected node |
 | [Console and logs](console_logs.md) | Logs, the Python REPL and commands |
 
 ## Building a graph
 
 | Page | What it covers |
 | --- | --- |
-| [Adding nodes](node_palette.md) | The Nodes panel, search and the right-click menu |
-| [Node dialogs](node_dialogs.md) | Configuring a node in its dialog |
+| [Find and add nodes](../user-guide/graph-editor/find-and-add-nodes.md) | Every way to add a node: the Nodes panel, search, the right-click menu |
+| [Nodes panel](../main-window/nodes-panel.md) | The Nodes panel in detail |
+| [The canvas](../user-guide/graph-editor/canvas.md) | Pan, zoom, select, undo |
+| [Connect nodes](../user-guide/graph-editor/connect-nodes.md) | Pins, what connects, refused links |
+| [Set node properties](../user-guide/graph-editor/node-properties.md) | The Properties panel and node dialogs |
+| [Compile and run](../user-guide/graph-editor/compile-and-run.md) | Compile, the compile report, run modes, what Train does first |
+| [Node dialogs](../main-window/node-dialogs.md) | Configuring a node in its dialog |
 | [Patterns](patterns.md) | Ready-made full graphs and blocks, what data each expects, the ones not usable yet |
 | [Branched graphs](branched_graphs.md) | Split and merge inside a model |
-| [Groups, frames and names](canvas_groups_frames.md) | Grouping and naming nodes, frames, copy and paste, renaming |
+| [Groups, frames and names](../user-guide/graph-editor/groups-frames-and-names.md) | Grouping and naming nodes, frames, copy and paste, renaming |
 | [Your own nodes](extension_nodes.md) | Python node bundles and C++ plugins in the Engine: install, approve, use |
 | [Graph simulation](graph_simulation.md) | Run Sim, the Simulation menu and the Simulation Monitor |
 | [Environments for reinforcement learning](rl_environments.md) | Plugin environments (MuJoCo tasks), their settings, and `pycyxwiz.rl` for Gymnasium and Stable-Baselines3 |
