@@ -5,6 +5,7 @@
 #include "installer/installer_progress_channel.h"
 
 #include "backend_pack_lifecycle_service.h"
+#include "backend_pack_removal_target.h"
 #include "backend_pack_remover.h"
 #include "backend_pack_metadata_cache.h"
 #include "backend_pack_platform.h"
@@ -565,55 +566,13 @@ int main(int argc, char** argv) {
             ? 0 : 1;
     }
     if (options.remove_pack) {
-        // A pack ID active in active-plugins.json is a plugin pack.
-        std::string remove_plugin_id;
-        cyxwiz::runtime::ActivePluginsState plugins;
-        if (!cyxwiz::runtime::LoadActivePluginsState(
-                options.runtime_root / cyxwiz::runtime::kActivePluginsFileName, plugins, error)) {
-            const auto message = "Cannot load the active plugin packs for removal: " + error;
-            publish_progress("failed", message);
-            std::cerr << message << '\n';
-            return 1;
-        }
-        for (const auto& plugin : plugins.plugins)
-            if (plugin.pack_id == options.pack_id) remove_plugin_id = plugin.plugin_id;
-        // An installed plugin pack that is not active (another base became
-        // active since, or it was deactivated): found by its folder,
-        // runtime/plugins/<plugin-id>/<pack-id>/plugin.json
-        const bool plain_id = !options.pack_id.empty() &&
-            options.pack_id.find_first_of("/\\:") == std::string::npos && options.pack_id != "." &&
-            options.pack_id != "..";
-        if (remove_plugin_id.empty() && plain_id) {
-            std::error_code scan_error;
-            for (const auto& entry :
-                 std::filesystem::directory_iterator(options.runtime_root / "plugins", scan_error)) {
-                std::error_code entry_error;
-                if (entry.is_directory(entry_error) &&
-                    std::filesystem::is_regular_file(entry.path() / options.pack_id / "plugin.json", entry_error)) {
-                    remove_plugin_id = entry.path().filename().string();
-                    break;
-                }
-            }
-        }
-        cyxwiz::runtime::ActiveRuntimeState active;
-        if (!cyxwiz::runtime::LoadActiveRuntimeState(
-                options.runtime_root / "active-runtime.json", active,
-                error)) {
-            const auto message =
-                "Cannot load the packaged runtime for component removal: " +
-                error;
-            publish_progress("failed", message);
-            std::cerr << message << '\n';
-            return 1;
-        }
-        const auto selected = std::find_if(
-            active.packs.begin(), active.packs.end(),
-            [&](const auto& pack) { return pack.pack_id == options.pack_id; });
-        if (selected == active.packs.end() && remove_plugin_id.empty()) {
-            const auto message =
-                "The selected optional component is not installed and active";
-            publish_progress("failed", message);
-            std::cerr << message << '\n';
+        // A backend pack resolves from active-runtime.json alone; only a
+        // plugin pack needs active-plugins.json.
+        cyxwiz::runtime::BackendPackRemovalTarget target;
+        if (!cyxwiz::runtime::ResolveBackendPackRemovalTarget(
+                options.runtime_root, options.pack_id, target, error)) {
+            publish_progress("failed", error);
+            std::cerr << error << '\n';
             return 1;
         }
         cyxwiz::runtime::BackendPackRemover remover(
@@ -641,9 +600,9 @@ int main(int argc, char** argv) {
                     }
                 });
         }
-        const auto result = remove_plugin_id.empty()
-            ? remover.Remove(selected->backend, options.pack_id)
-            : remover.RemovePlugin(remove_plugin_id, options.pack_id);
+        const auto result = target.plugin_id.empty()
+            ? remover.Remove(target.backend, options.pack_id)
+            : remover.RemovePlugin(target.plugin_id, options.pack_id);
         cancellation_monitor.Stop();
         if (!options.progress_token.empty()) {
             cyxwiz::installer::ClearInstallerCancellation(

@@ -1,5 +1,6 @@
 #include "backend_pack_installer.h"
 #include "backend_pack_platform.h"
+#include "backend_pack_removal_target.h"
 #include "backend_pack_remover.h"
 #include "runtime_mutation_gate.h"
 
@@ -324,6 +325,50 @@ int main() {
                 invalid.status == rt::BackendPackRemovalStatus::InvalidRequest,
             "plugin removal must be idempotent and reject unsafe identities");
         std::filesystem::remove_all(plugin_source);
+    }
+    {
+        // A damaged active-plugins.json blocks only plugin-pack removal: a
+        // backend pack resolves from active-runtime.json and is removed.
+        namespace rt = cyxwiz::runtime;
+        Fixture fixture;
+        fixture.Install();
+        std::ofstream(fixture.root / rt::kActivePluginsFileName, std::ios::binary)
+            << "{\"schema_version\": 1, \"plugins\": [";
+        rt::BackendPackRemovalTarget target;
+        std::string error;
+        const bool backend_resolved =
+            rt::ResolveBackendPackRemovalTarget(fixture.root, "opencl-v1", target, error);
+        failures += !Expect(
+            backend_resolved && target.backend == "opencl" && target.plugin_id.empty(),
+            "a backend pack must resolve for removal despite a damaged plugin state: " + error);
+        rt::BackendPackRemover remover(fixture.root);
+        const auto removed = remover.Remove(target.backend, "opencl-v1");
+        failures += !Expect(
+            removed.status == rt::BackendPackRemovalStatus::Removed && fixture.Active().packs.empty(),
+            "the backend pack must be removed despite a damaged plugin state: " + removed.message);
+        const bool plugin_resolved =
+            rt::ResolveBackendPackRemovalTarget(fixture.root, "mujoco-v1", target, error);
+        failures += !Expect(
+            !plugin_resolved && error.find(rt::kActivePluginsFileName) != std::string::npos &&
+                error.find("Delete that file") != std::string::npos,
+            "a plugin-pack removal must say the plugin state is unreadable and what to do: " + error);
+
+        // Without the damaged file: an installed, inactive plugin pack is
+        // found by its folder, and an unknown ID is refused.
+        std::filesystem::remove(fixture.root / rt::kActivePluginsFileName);
+        Fixture::Touch(rt::PluginPackDirectory(fixture.root, "com.cyxwiz.simulation.mujoco", "mujoco-v1") /
+                       "plugin.json");
+        const bool unknown_resolved =
+            rt::ResolveBackendPackRemovalTarget(fixture.root, "missing-v1", target, error);
+        failures += !Expect(
+            !unknown_resolved && error.find("not installed") != std::string::npos,
+            "an unknown pack ID must not resolve for removal: " + error);
+        const bool installed_resolved =
+            rt::ResolveBackendPackRemovalTarget(fixture.root, "mujoco-v1", target, error);
+        failures += !Expect(
+            installed_resolved && target.plugin_id == "com.cyxwiz.simulation.mujoco" &&
+                target.backend.empty(),
+            "an installed, inactive plugin pack must resolve by its folder: " + error);
     }
     if (failures == 0) {
         std::cout << "backend pack maintenance contract tests passed\n";

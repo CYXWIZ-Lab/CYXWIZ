@@ -50,6 +50,7 @@ endif()
 
 add_library(cyxwiz-backend-pack-maintenance STATIC
     backend_pack_maintenance_request.cpp
+    backend_pack_removal_target.cpp
     backend_pack_remover.cpp
 )
 target_include_directories(cyxwiz-backend-pack-maintenance PUBLIC
