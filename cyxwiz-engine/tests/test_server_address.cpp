@@ -33,17 +33,17 @@ int main() {
           "an https port is kept, a trailing slash dropped");
 
     // A front door without TLS (local, LAN)
-    e = ResolveServerAddress("http://192.168.1.216:8000");
+    e = ResolveServerAddress("http://192.168.10.20:8000");
     Check(e.error.empty() && e.front_door && !e.tls, "http with a port is a front door without TLS");
-    Check(e.central == "192.168.1.216:8000" && e.gateway == "192.168.1.216:8000", "plain gRPC at the door");
-    Check(e.api_base_url == "http://192.168.1.216:8000/api", "sign-in at the door");
+    Check(e.central == "192.168.10.20:8000" && e.gateway == "192.168.10.20:8000", "plain gRPC at the door");
+    Check(e.api_base_url == "http://192.168.10.20:8000/api", "sign-in at the door");
 
     // No front door: the three services on their own ports
-    e = ResolveServerAddress("192.168.1.216");
+    e = ResolveServerAddress("192.168.10.20");
     Check(e.error.empty() && !e.front_door && !e.tls, "a bare host is three services");
-    Check(e.central == "192.168.1.216:50051", "central port");
-    Check(e.gateway == "192.168.1.216:50060", "gateway port");
-    Check(e.api_base_url == "http://192.168.1.216:3002/api", "API port");
+    Check(e.central == "192.168.10.20:50051", "central port");
+    Check(e.gateway == "192.168.10.20:50060", "gateway port");
+    Check(e.api_base_url == "http://192.168.10.20:3002/api", "API port");
     Check(ResolveServerAddress("http://localhost").central == "localhost:50051", "http without a port too");
 
     // Unclear addresses are refused with the reason
@@ -56,8 +56,8 @@ int main() {
     // CLI's rule): a public server must be https
     using cyxwiz::protocol::PlainHttpAllowed;
     for (const char* host : {"localhost", "127.0.0.1", "::1", "[::1]", "10.1.2.3", "172.16.0.9", "172.31.255.1",
-                             "192.168.1.180", "169.254.10.1", "100.100.1.2", "fd12:3456::1", "fe80::1",
-                             "::ffff:192.168.1.5", "hp-linux", "gateway", "nas.local", "box.lan", "svc.internal",
+                             "192.168.10.18", "169.254.10.1", "100.100.1.2", "fd12:3456::1", "fe80::1",
+                             "::ffff:192.168.1.5", "build-box", "gateway", "nas.local", "box.lan", "svc.internal",
                              "printer.home.arpa"}) {
         Check(PlainHttpAllowed(host), host);
     }
@@ -72,7 +72,7 @@ int main() {
     Check(!e.error.empty() && e.error.find("https://") != std::string::npos,
           "plain to a public front door is refused, with what to use");
     Check(!ResolveServerAddress("203.0.113.9").error.empty(), "a bare public host is plain too");
-    Check(ResolveServerAddress("http://192.168.1.180:8000").error.empty(), "a LAN front door may be plain");
+    Check(ResolveServerAddress("http://192.168.10.18:8000").error.empty(), "a LAN front door may be plain");
     Check(ResolveServerAddress("https://203.0.113.9").error.empty(), "https to anywhere");
 
     // The server's CA: set by the app, else CYXWIZ_CA_FILE; a bad file is named

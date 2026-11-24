@@ -99,9 +99,9 @@ void TestStatus() {
     input.initialized = true;
     input.version = "3.12.14";
     input.linked_version = "3.12";
-    input.project_root = "C:/Users/chick/Documents/CyxWiz Projects/Berean";
+    input.project_root = "C:/Users/me/Documents/CyxWiz Projects/Berean";
     input.interpreter_path =
-        "C:/Users/chick/Documents/CyxWiz Projects/Berean/python/Scripts/python.exe";
+        "C:/Users/me/Documents/CyxWiz Projects/Berean/python/Scripts/python.exe";
     input.bundled_runtime = true;
     StatusView view = BuildStatusView(input);
     Check(view.state == StatusState::Ready && view.state_label == "Ready", "ready");
