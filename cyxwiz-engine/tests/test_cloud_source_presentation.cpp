@@ -23,7 +23,7 @@ Input Connected() {
     Input in;
     in.signed_in = true;
     in.connected = true;
-    in.gateway = "192.168.1.116:50060";
+    in.gateway = "192.168.10.16:50060";
     in.account = "e2e-user@local.test";
     in.datasets = {{"3b9d2c1e-5f60-4a71-8b92-c3d4e5f60718", "berean-raw-v2", 0, 166615611, 3},
                    {"f8ccb4ed-dda2-4b37-a693-61657fd6a257", "tiny-causal-lm", 2, 6088, 2}};
@@ -38,7 +38,7 @@ void CheckConnectedAndPicked() {
     Input in = Connected();
     in.selected_file_id = in.files[0].id;
     const View v = Build(in);
-    Check(v.connection == "Connected to 192.168.1.116:50060 as e2e-user@local.test" && v.connection_tone == Tone::Success,
+    Check(v.connection == "Connected to 192.168.10.16:50060 as e2e-user@local.test" && v.connection_tone == Tone::Success,
           "connection line: " + v.connection);
     Check(v.offer_open_browser && !v.offer_sign_in && !v.offer_try_again, "connected offers the Cloud browser only");
     Check(v.datasets.size() == 2 && v.datasets[0].selected && v.datasets[0].trust == "Self" &&
@@ -99,14 +99,14 @@ void CheckPickingRules() {
 
 void CheckNotConnected() {
     Input in;
-    in.gateway = "192.168.1.116:50060";
+    in.gateway = "192.168.10.16:50060";
     in.remembered = {"berean-raw-v2", "3b9d2c1e-5f60-4a71-8b92-c3d4e5f60718", "simplewiki_20231101.parquet",
                      "2f1c7f8e-7d3a-4b4e-9c2d-1a2b3c4d5e6f", 156885218};
     View v = Build(in);
     Check(Contains(v.connection, "sign in to CyxWiz first") && v.connection_tone == Tone::Warning && v.offer_sign_in,
           "signed out: " + v.connection);
     Check(v.remembered.size() == 6 && v.remembered[0].key == "Dataset" && v.remembered[0].value == "berean-raw-v2" &&
-              v.remembered[4].value == "149.6 MB" && Contains(v.remembered[5].value, "192.168.1.116:50060"),
+              v.remembered[4].value == "149.6 MB" && Contains(v.remembered[5].value, "192.168.10.16:50060"),
           "remembered pairs");
     Check(Contains(v.remembered_note, "mint the node's access token"), "remembered note");
     Check(v.detected == "Parquet table, 149.6 MB, file 2f1c7f8e in dataset 3b9d2c1e", "detected from memory: " + v.detected);
@@ -118,12 +118,12 @@ void CheckNotConnected() {
           "browser never opened: " + v.connection);
     in.browser_opened = true;
     v = Build(in);
-    Check(v.connection == "Connecting to 192.168.1.116:50060..." && v.connection_tone == Tone::Accent, "connecting: " + v.connection);
+    Check(v.connection == "Connecting to 192.168.10.16:50060..." && v.connection_tone == Tone::Accent, "connecting: " + v.connection);
     Check(v.apply_blocked_reason == "Connect to CyxCloud first", "Apply off while connecting");
 
     in.connect_error = "connection refused";
     v = Build(in);
-    Check(Contains(v.connection, "Gateway unreachable at 192.168.1.116:50060 (connection refused)") && v.offer_try_again,
+    Check(Contains(v.connection, "Gateway unreachable at 192.168.10.16:50060 (connection refused)") && v.offer_try_again,
           "unreachable: " + v.connection);
     Check(v.datasets.empty() && v.files.empty() && v.datasets_hint.empty(), "no lists without a connection");
 

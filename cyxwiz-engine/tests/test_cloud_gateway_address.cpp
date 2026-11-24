@@ -18,14 +18,14 @@ void Check(bool ok, const char* what) {
 int main() {
     using cyxwiz::core::ResolveCloudGatewayAddress;
     Check(ResolveCloudGatewayAddress("", "localhost:50051") == "localhost:50060", "central host, gateway port");
-    Check(ResolveCloudGatewayAddress("", "192.168.1.116:50051") == "192.168.1.116:50060", "LAN central -> LAN gateway");
+    Check(ResolveCloudGatewayAddress("", "192.168.10.16:50051") == "192.168.10.16:50060", "LAN central -> LAN gateway");
     Check(ResolveCloudGatewayAddress("", "cloud.cyxwiz.io") == "cloud.cyxwiz.io:50060", "host without port");
     Check(ResolveCloudGatewayAddress("", "[::1]:50051") == "[::1]:50060", "IPv6 literal keeps brackets");
     Check(ResolveCloudGatewayAddress("", "") == "localhost:50060", "nothing configured at all");
     Check(ResolveCloudGatewayAddress("gw.local:7000", "localhost:50051") == "gw.local:7000", "configured wins");
     Check(ResolveCloudGatewayAddress("", "https://cloud.cyxwiz.ai:443") == "https://cloud.cyxwiz.ai:443",
           "a front door serves the gateway too");
-    Check(ResolveCloudGatewayAddress("", "http://192.168.1.216:8000") == "http://192.168.1.216:8000",
+    Check(ResolveCloudGatewayAddress("", "http://192.168.10.20:8000") == "http://192.168.10.20:8000",
           "a front door without TLS");
     if (failures == 0) std::printf("test_cloud_gateway_address: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

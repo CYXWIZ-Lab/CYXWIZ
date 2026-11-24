@@ -108,8 +108,8 @@ std::string DisplayGrpcAddress(const std::string& grpc_address) {
 const std::vector<ServerAddressExample>& ServerAddressExamples() {
     static const std::vector<ServerAddressExample> examples = {
         {"This PC", "http://localhost:8000"},
-        {"Another PC", "http://192.168.1.216:8000"},
-        {"No front door", "192.168.1.216"},
+        {"Another PC", "http://192.168.10.20:8000"},
+        {"No front door", "192.168.10.20"},
         {"CyxWiz", "https://cloud.cyxwiz.ai"},
     };
     return examples;
