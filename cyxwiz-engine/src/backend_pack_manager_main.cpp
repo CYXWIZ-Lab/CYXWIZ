@@ -60,6 +60,9 @@ struct Arguments {
   std::filesystem::path metadata_root;
   cyxwiz::CyxWizInstallScope scope = cyxwiz::CyxWizInstallScope::CurrentUser;
   std::string selected_pack;
+  // An installed pack whose uninstall confirmation opens at start (the
+  // Engine's Uninstall add-on).
+  std::string uninstall_pack;
   std::string catalog_url = CYXWIZ_INSTALLER_DEFAULT_CATALOG_URL;
   cyxwiz::installer::InstallerPackageSource package_source =
       cyxwiz::installer::InstallerPackageSource::CatalogHttps;
@@ -93,6 +96,7 @@ bool ParseArguments(const std::vector<std::string> &values,
   bool runtime_seen = false;
   bool metadata_seen = false;
   bool selection_seen = false;
+  bool uninstall_seen = false;
   bool catalog_url_seen = false;
   bool offline_seen = false;
   bool product_removal_host_seen = false;
@@ -114,6 +118,10 @@ bool ParseArguments(const std::vector<std::string> &values,
                index + 1 < values.size()) {
       output.selected_pack = values[++index];
       selection_seen = true;
+    } else if (values[index] == "--uninstall-pack" && !uninstall_seen &&
+               index + 1 < values.size()) {
+      output.uninstall_pack = values[++index];
+      uninstall_seen = true;
     } else if (values[index] == "--catalog-url" && !catalog_url_seen &&
                index + 1 < values.size()) {
       output.catalog_url = values[++index];
@@ -139,7 +147,8 @@ bool ParseArguments(const std::vector<std::string> &values,
     }
   }
   if (output.package_smoke &&
-      (runtime_seen || metadata_seen || selection_seen || catalog_url_seen ||
+      (runtime_seen || metadata_seen || selection_seen || uninstall_seen ||
+       catalog_url_seen ||
        offline_seen || product_removal_host_seen ||
        open_product_removal_seen ||
        output.scope == cyxwiz::CyxWizInstallScope::AllUsers)) {
@@ -332,9 +341,42 @@ int RunInstaller(const std::vector<std::string> &arguments,
               initial_install_path.size() + 1);
   view_state.install_scope = install_location.scope;
   view_state.install_location_message = install_location.message;
+  // The Engine opens the installer for one component: show the components
+  // page; tick the component only when it can be installed or updated (its
+  // card says why not otherwise).
+  // An add-on may be named by its plugin id; it selects the add-on's catalog
+  // pack when the catalog has one.
   if (!parsed.selected_pack.empty()) {
-    view_state.custom_selection.insert(parsed.selected_pack);
-    view_state.choice = cyxwiz::BackendPackInstallChoice::Custom;
+    view_state.requested_page = 1;
+    view_state.focus_pack_id = parsed.selected_pack;
+    const auto record = std::find_if(
+        catalog.records.begin(), catalog.records.end(),
+        [&](const cyxwiz::BackendPackManagerRecord &candidate) {
+          return candidate.pack_id == parsed.selected_pack ||
+                 (candidate.pack_kind == cyxwiz::BackendPackRecordKind::Plugin &&
+                  candidate.plugin_id == parsed.selected_pack &&
+                  candidate.delivery_metadata_available);
+        });
+    if (record != catalog.records.end() &&
+        cyxwiz::IsBackendPackSelectableForInstaller(*record) &&
+        (!record->installed || record->update_available)) {
+      view_state.custom_selection.insert(record->pack_id);
+      view_state.choice = cyxwiz::BackendPackInstallChoice::Custom;
+    }
+  }
+  if (!parsed.uninstall_pack.empty()) {
+    view_state.requested_page = 1;
+    view_state.focus_pack_id = parsed.uninstall_pack;
+    const bool installed = std::any_of(
+        catalog.records.begin(), catalog.records.end(),
+        [&](const cyxwiz::BackendPackManagerRecord &candidate) {
+          return candidate.installed && candidate.backend != "cpu" &&
+                 candidate.installed_pack_id == parsed.uninstall_pack;
+        });
+    if (installed) {
+      view_state.pending_pack_removal_id = parsed.uninstall_pack;
+      view_state.pack_removal_confirmation_requested = true;
+    }
   }
 
   glfwSetErrorCallback([](int, const char *description) {

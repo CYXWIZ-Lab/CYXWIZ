@@ -1,9 +1,11 @@
 #include "installer_view.h"
 
+#include "core/addon_pack_presentation.h"
 #include "core/compute_device_presentation.h"
 #include "core/installer_pack_presentation.h"
 #include "gui/icons.h"
 #include "gui/ui_buttons.h"
+#include "gui/ui_tokens.h"
 
 #include <imgui.h>
 
@@ -17,6 +19,9 @@ namespace cyxwiz::installer::gui {
 namespace {
 
 const ImVec4 kAccent = InstallerBrandAccent();
+// Where a component card's status starts, measured from the card's right
+// edge: one column for every card on the page.
+constexpr float kStatusColumnFromRight = 175.0f;
 constexpr ImVec4 kSuccess = ImVec4(0.25f, 0.82f, 0.56f, 1.0f);
 constexpr ImVec4 kWarning = ImVec4(1.0f, 0.68f, 0.28f, 1.0f);
 constexpr ImVec4 kDanger = ImVec4(1.0f, 0.38f, 0.43f, 1.0f);
@@ -92,6 +97,70 @@ std::string Join(const std::vector<std::string> &values) {
 std::vector<std::string>
 SelectedPackIds(const std::set<std::string> &selected) {
   return {selected.begin(), selected.end()};
+}
+
+bool IsAddOn(const BackendPackManagerRecord &record) {
+  return record.pack_kind == BackendPackRecordKind::Plugin;
+}
+
+// What a summary or list calls a record: an add-on's own name, else the
+// compute backend's.
+std::string RecordName(const BackendPackManagerRecord &record) {
+  return IsAddOn(record) ? AddOnTitle(record.plugin_id)
+                         : std::string(BackendName(record.backend));
+}
+
+const char *RecordIcon(const BackendPackManagerRecord &record) {
+  return IsAddOn(record) ? ICON_FA_CUBE : BackendIcon(record.backend);
+}
+
+// Scrolls the page to the card about to be drawn when it is the requested
+// component. Cards size themselves on their first frames, so the scroll is
+// applied over a few frames before the request ends.
+void ScrollToFocusedCard(InstallerViewState &state, const std::string &pack_id,
+                         const std::string &installed_pack_id,
+                         const std::string &plugin_id = {}) {
+  constexpr int kFocusFrames = 4;
+  const auto &focus = state.focus_pack_id;
+  if (focus.empty() || (focus != pack_id && focus != installed_pack_id &&
+                        (plugin_id.empty() || focus != plugin_id))) {
+    return;
+  }
+  ImGui::SetScrollHereY(0.1f);
+  if (++state.focus_frames >= kFocusFrames) {
+    state.focus_pack_id.clear();
+    state.focus_frames = 0;
+  }
+}
+
+// Ticking a component moves to the Custom profile. It starts from what the
+// current profile installs, so a recommended pack is not dropped silently.
+void EnterCustomSelection(InstallerViewState &state,
+                          const InstallerCatalogState &catalog) {
+  if (state.choice == BackendPackInstallChoice::Custom)
+    return;
+  const auto current =
+      ResolveBackendPackInstallerSelection(state.choice, catalog.records);
+  state.custom_selection.insert(current.pack_ids.begin(),
+                                current.pack_ids.end());
+  state.choice = BackendPackInstallChoice::Custom;
+}
+
+ImVec4 ToneColor(InstallerPackPresentationTone tone) {
+  const auto &t = cyxwiz::ui::CurrentTokens();
+  switch (tone) {
+  case InstallerPackPresentationTone::Success:
+    return t.success;
+  case InstallerPackPresentationTone::Warning:
+    return t.warning;
+  case InstallerPackPresentationTone::Danger:
+    return t.error;
+  case InstallerPackPresentationTone::Accent:
+    return t.accent_text;
+  case InstallerPackPresentationTone::Neutral:
+    return t.text_dim;
+  }
+  return t.text_dim;
 }
 
 void CenteredDisabledWrappedText(const char *text, float wrap_width,
@@ -211,10 +280,115 @@ void RenderWorkloads(InstallerViewState &state,
          state.custom_selection.contains(record.pack_id));
     if (!included)
       continue;
+    if (IsAddOn(record)) {
+      ImGui::BulletText("%s %s  Add-on", RecordIcon(record),
+                        RecordName(record).c_str());
+      continue;
+    }
     const auto presentation = BuildInstallerPackPresentation(record);
     ImGui::BulletText("%s %s  %s", BackendIcon(record.backend),
                       BackendName(record.backend),
                       presentation.status.c_str());
+  }
+}
+
+// One add-on card (the approved Components design): checkbox, icon, name and
+// status; then description, facts, what happens next, licences, and the
+// uninstall action when installed. Height follows the content.
+void RenderAddOnCard(InstallerViewState &state,
+                     const InstallerCatalogState &catalog,
+                     const AddOnCardView &card, bool operation_running) {
+  const auto &t = cyxwiz::ui::CurrentTokens();
+  const auto &style = ImGui::GetStyle();
+  ScrollToFocusedCard(state, card.pack_id, card.installed_pack_id, card.key);
+  ImGui::PushID(card.key.c_str());
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
+  ImGui::BeginChild("addon", ImVec2(0.0f, 0.0f),
+                    ImGuiChildFlags_AutoResizeY |
+                        ImGuiChildFlags_AlwaysUseWindowPadding,
+                    ImGuiWindowFlags_NoScrollbar);
+  bool checked = card.checked;
+  ImGui::BeginDisabled(!card.can_select || operation_running);
+  if (ImGui::Checkbox("##selected", &checked)) {
+    EnterCustomSelection(state, catalog);
+    if (checked)
+      state.custom_selection.insert(card.pack_id);
+    else
+      state.custom_selection.erase(card.pack_id);
+  }
+  ImGui::EndDisabled();
+  if (!card.can_select && !card.select_disabled_reason.empty() &&
+      ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("%s", card.select_disabled_reason.c_str());
+  }
+  const float indent = ImGui::GetItemRectSize().x + style.ItemSpacing.x;
+  ImGui::SameLine();
+  ImGui::TextColored(t.accent_text, "%s", ICON_FA_CUBE);
+  ImGui::SameLine();
+  ImGui::TextUnformatted(card.title.c_str());
+  // The status sits in the page's status column, never over the name.
+  ImGui::SameLine();
+  ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
+                                ImGui::GetWindowWidth() - kStatusColumnFromRight));
+  ImGui::TextColored(ToneColor(card.tone), "%s", card.status_text.c_str());
+
+  ImGui::Indent(indent);
+  ImGui::PushTextWrapPos(0.0f);
+  if (card.status != AddOnCardStatus::NotPublished)
+    ImGui::TextDisabled("%s", card.description.c_str());
+  if (!card.facts.empty())
+    ImGui::TextDisabled("%s", card.facts.c_str());
+  if (!card.explanation.empty()) {
+    const bool warn = card.status == AddOnCardStatus::NeedsEngineUpdate ||
+                      card.status == AddOnCardStatus::UpdateBlocked;
+    if (warn)
+      ImGui::PushStyleColor(ImGuiCol_Text, t.warning);
+    ImGui::TextUnformatted(card.explanation.c_str());
+    if (warn)
+      ImGui::PopStyleColor();
+  }
+  if (!card.licence.empty())
+    ImGui::TextDisabled("%s", card.licence.c_str());
+  if (!card.action_hint.empty()) {
+    ImGui::PushStyleColor(ImGuiCol_Text, t.warning);
+    ImGui::TextUnformatted(card.action_hint.c_str());
+    ImGui::PopStyleColor();
+  }
+  if (!card.error.empty()) {
+    ImGui::PushStyleColor(ImGuiCol_Text, t.error);
+    ImGui::TextUnformatted(card.error.c_str());
+    ImGui::PopStyleColor();
+  }
+  ImGui::PopTextWrapPos();
+  if (card.can_uninstall &&
+      cyxwiz::ui::DangerButton("Uninstall add-on", !operation_running,
+                               "Wait for the current change to finish",
+                               cyxwiz::ui::ButtonSize::Regular)) {
+    state.pending_pack_removal_id = card.installed_pack_id;
+    state.pack_removal_confirmation_requested = true;
+  }
+  ImGui::Unindent(indent);
+  ImGui::EndChild();
+  ImGui::PopStyleColor();
+  ImGui::PopID();
+}
+
+void RenderAddOns(InstallerViewState &state,
+                  const InstallerCatalogState &catalog,
+                  bool operation_running) {
+  const auto cards =
+      BuildAddOnCards(catalog.records, state.choice ==
+                                               BackendPackInstallChoice::Custom
+                                           ? state.custom_selection
+                                           : std::set<std::string>{});
+  if (cards.empty())
+    return;
+  ImGui::Dummy(ImVec2(0.0f, 4.0f));
+  ImGui::TextUnformatted("Add-ons");
+  ImGui::SameLine();
+  ImGui::TextDisabled("Optional features. They need no device check.");
+  for (const auto &card : cards) {
+    RenderAddOnCard(state, catalog, card, operation_running);
   }
 }
 
@@ -234,6 +408,9 @@ void RenderComponents(InstallerViewState &state,
   }
 
   for (const auto &record : catalog.records) {
+    if (IsAddOn(record))
+      continue;
+    ScrollToFocusedCard(state, record.pack_id, record.installed_pack_id);
     ImGui::PushID(record.pack_id.c_str());
     ImGui::PushStyleColor(ImGuiCol_ChildBg,
                           ImVec4(0.055f, 0.115f, 0.19f, 1.0f));
@@ -251,7 +428,7 @@ void RenderComponents(InstallerViewState &state,
                             (!record.installed || record.update_available);
     ImGui::BeginDisabled(!can_select || operation_running);
     if (ImGui::Checkbox("##selected", &selected)) {
-      state.choice = BackendPackInstallChoice::Custom;
+      EnterCustomSelection(state, catalog);
       if (selected)
         state.custom_selection.insert(record.pack_id);
       else
@@ -270,7 +447,7 @@ void RenderComponents(InstallerViewState &state,
       ImGui::SameLine();
       ImGui::TextColored(kSuccess, "Recommended");
     }
-    ImGui::SameLine(ImGui::GetWindowWidth() - 175.0f);
+    ImGui::SameLine(ImGui::GetWindowWidth() - kStatusColumnFromRight);
     ImGui::TextColored(PackToneColor(presentation.tone), "%s",
                        presentation.status.c_str());
     ImGui::Indent(29.0f);
@@ -343,7 +520,7 @@ void RenderComponents(InstallerViewState &state,
     ImGui::TextColored(kAccent, "%s", BackendIcon(backend));
     ImGui::SameLine();
     ImGui::TextUnformatted(BackendName(backend));
-    ImGui::SameLine(ImGui::GetWindowWidth() - 175.0f);
+    ImGui::SameLine(ImGui::GetWindowWidth() - kStatusColumnFromRight);
     ImGui::TextColored(kWarning, "Not published");
     ImGui::Indent(29.0f);
     ImGui::TextDisabled("%s", BackendDescription(backend));
@@ -363,30 +540,38 @@ void RenderComponents(InstallerViewState &state,
     ImGui::PopStyleColor();
     ImGui::PopID();
   }
+
+  RenderAddOns(state, catalog, operation_running);
 }
 
 void RenderPackRemovalConfirmation(InstallerViewState &state,
+                                   const InstallerCatalogState &catalog,
                                    bool operation_running,
                                    InstallerViewAction &action) {
+  // One popup for compute components and add-ons; the title after ### is
+  // its fixed identity, the words follow the pack.
+  constexpr const char *kPopupId = "###pack-removal";
   if (state.pack_removal_confirmation_requested) {
-    ImGui::OpenPopup("Uninstall backend component");
+    ImGui::OpenPopup(kPopupId);
     state.pack_removal_confirmation_requested = false;
   }
+  const auto wording =
+      BuildPackRemovalWording(catalog.records, state.pending_pack_removal_id);
+  const std::string title = wording.title + kPopupId;
   ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_Appearing);
-  if (!ImGui::BeginPopupModal("Uninstall backend component", nullptr,
+  if (!ImGui::BeginPopupModal(title.c_str(), nullptr,
                               ImGuiWindowFlags_AlwaysAutoResize)) {
     return;
   }
-  ImGui::TextWrapped(
-      "CyxWiz will deactivate this compute route, remove its versioned "
-      "package files, and clear its downloaded package cache.");
+  ImGui::TextWrapped("%s", wording.body.c_str());
   ImGui::Spacing();
-  ImGui::TextDisabled("Component: %s",
-                      state.pending_pack_removal_id.c_str());
+  ImGui::TextDisabled("%s", wording.subject.c_str());
   ImGui::Spacing();
-  ImGui::BeginDisabled(operation_running ||
-                       state.pending_pack_removal_id.empty());
-  if (ImGui::Button("Uninstall", ImVec2(175.0f, 36.0f))) {
+  const bool can_remove =
+      !operation_running && !state.pending_pack_removal_id.empty();
+  if (cyxwiz::ui::DangerButton(wording.confirm.c_str(), can_remove,
+                               "Wait for the current change to finish",
+                               cyxwiz::ui::ButtonSize::Regular)) {
     action.kind = InstallerViewActionKind::ApplyPlan;
     action.plan.valid = true;
     action.plan.remove_pack_ids = {state.pending_pack_removal_id};
@@ -395,9 +580,9 @@ void RenderPackRemovalConfirmation(InstallerViewState &state,
     state.pending_pack_removal_id.clear();
     ImGui::CloseCurrentPopup();
   }
-  ImGui::EndDisabled();
   ImGui::SameLine();
-  if (ImGui::Button("Keep component", ImVec2(175.0f, 36.0f))) {
+  if (cyxwiz::ui::SecondaryButton(wording.keep.c_str(), true, nullptr,
+                                  cyxwiz::ui::ButtonSize::Regular)) {
     state.pending_pack_removal_id.clear();
     ImGui::CloseCurrentPopup();
   }
@@ -686,11 +871,12 @@ void RenderSummary(InstallerViewState &state,
   const auto plan =
       BuildBackendPackInstallerPlan(selection, catalog.records, catalog.mode);
 
+  const bool downloads =
+      !plan.pack_ids.empty() || !plan.plugin_pack_ids.empty();
   const bool has_changes = plan.install_base || plan.update_base ||
-                           !plan.pack_ids.empty() ||
-                           !plan.deactivate_backends.empty();
+                           downloads || !plan.deactivate_backends.empty();
   const bool can_apply = plan.valid && has_changes &&
-                         (plan.pack_ids.empty() || catalog.available) &&
+                         (!downloads || catalog.available) &&
                          !state.install_location_dirty &&
                          install_location.valid && !operation_running;
   // Why Review is disabled, shown under the button (never a silent no-op).
@@ -699,7 +885,7 @@ void RenderSummary(InstallerViewState &state,
     if (!plan.valid) {
       apply_block_reason = plan.message.empty()
           ? "The selected changes cannot be applied." : plan.message;
-    } else if (!plan.pack_ids.empty() && !catalog.available) {
+    } else if (downloads && !catalog.available) {
       apply_block_reason =
           "The signed package catalog is not available; use Refresh catalog.";
     } else if (state.install_location_dirty) {
@@ -743,7 +929,7 @@ void RenderSummary(InstallerViewState &state,
                        return candidate.pack_id == pack_id;
                      });
     if (record != catalog.records.end()) {
-      ImGui::BulletText("%s", BackendName(record->backend));
+      ImGui::BulletText("%s", RecordName(*record).c_str());
     }
   }
   if (const auto optional = OptionalPacksForThisComputer(catalog.records, selection.pack_ids);
@@ -976,6 +1162,21 @@ void RenderReviewPopup(InstallerViewState &state,
           "install only its signed app-local CUDA backend pack.");
     }
   }
+  if (!state.pending_plan.plugin_pack_ids.empty()) {
+    ImGui::Text("Install add-ons (no device check):");
+    for (const auto &pack_id : state.pending_plan.plugin_pack_ids) {
+      const auto record = std::find_if(
+          catalog.records.begin(), catalog.records.end(),
+          [&](const BackendPackManagerRecord &candidate) {
+            return candidate.pack_id == pack_id;
+          });
+      ImGui::BulletText("%s", record != catalog.records.end()
+                                  ? RecordName(*record).c_str()
+                                  : pack_id.c_str());
+      ImGui::SameLine();
+      ImGui::TextDisabled("%s", pack_id.c_str());
+    }
+  }
   if (!state.pending_plan.deactivate_backends.empty()) {
     ImGui::Text("Deactivate optional routes while keeping their files:");
     for (const auto &backend : state.pending_plan.deactivate_backends) {
@@ -1047,7 +1248,11 @@ InstallerViewAction RenderInstallerView(
       RenderWorkloads(state, catalog, operation_running);
       ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("Individual components")) {
+    const bool open_components = state.requested_page == 1;
+    state.requested_page = -1;
+    if (ImGui::BeginTabItem("Individual components", nullptr,
+                            open_components ? ImGuiTabItemFlags_SetSelected
+                                            : ImGuiTabItemFlags_None)) {
       state.page = 1;
       RenderComponents(state, catalog, operation_running);
       ImGui::EndTabItem();
@@ -1080,7 +1285,7 @@ InstallerViewAction RenderInstallerView(
   }
   RenderReviewPopup(state, catalog, install_location, operation_running,
                     action);
-  RenderPackRemovalConfirmation(state, operation_running, action);
+  RenderPackRemovalConfirmation(state, catalog, operation_running, action);
   RenderCloseConfirmation(state, operation_cancellable, action);
   ImGui::End();
   return action;

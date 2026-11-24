@@ -56,6 +56,14 @@ struct InstallerViewState {
   BackendPackInstallerPlan pending_plan;
   InstallerRemovalViewState removal;
   int page = 0;
+  // A tab to open on the next frame (1 = Individual components), when the
+  // Engine opens the installer for one component; -1 = none.
+  int requested_page = -1;
+  // The component (pack id, or an add-on's plugin id) the page scrolls to
+  // once it is drawn; the
+  // scroll is applied for a few frames, while auto-sized cards measure.
+  std::string focus_pack_id;
+  int focus_frames = 0;
 };
 
 InstallerViewAction RenderInstallerView(
