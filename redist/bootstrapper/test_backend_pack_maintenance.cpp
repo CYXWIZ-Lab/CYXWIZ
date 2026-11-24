@@ -370,6 +370,34 @@ int main() {
                 target.backend.empty(),
             "an installed, inactive plugin pack must resolve by its folder: " + error);
     }
+    {
+        // An add-on listed for another base (the CPU base was updated since)
+        // is already inactive: Uninstall resolves it and deletes it without a
+        // deactivation step.
+        namespace rt = cyxwiz::runtime;
+        Fixture fixture;
+        const std::string plugin_id = "com.cyxwiz.simulation.mujoco";
+        const auto pack = rt::PluginPackDirectory(fixture.root, plugin_id, "mujoco-old");
+        Fixture::Touch(pack / "plugin.json");
+        std::string error;
+        const rt::ActivePluginsState old_base{"base-old", {{plugin_id, "mujoco-old"}}};
+        failures += !Expect(
+            rt::SaveActivePluginsStateAtomic(fixture.root / rt::kActivePluginsFileName,
+                                             old_base, error),
+            error);
+        rt::BackendPackRemovalTarget target;
+        const bool resolved =
+            rt::ResolveBackendPackRemovalTarget(fixture.root, "mujoco-old", target, error);
+        rt::BackendPackRemover remover(fixture.root);
+        const auto removed = resolved ? remover.RemovePlugin(target.plugin_id, "mujoco-old")
+                                      : rt::BackendPackRemovalResult{};
+        failures += !Expect(
+            resolved && target.plugin_id == plugin_id &&
+                removed.status == rt::BackendPackRemovalStatus::Removed &&
+                !removed.deactivation.has_value() && !std::filesystem::exists(pack),
+            "an add-on listed for another base must uninstall without deactivation: " +
+                error + " " + removed.message);
+    }
     if (failures == 0) {
         std::cout << "backend pack maintenance contract tests passed\n";
     }

@@ -66,7 +66,8 @@ bool IsAddOn(const BackendPackManagerRecord& record) {
 }
 
 // The record a card shows when the catalog lists several packs of one add-on:
-// the update, else the installed one, else the first deliverable one.
+// the update, else the installed one, else the first one this installation
+// can take, else the first deliverable one.
 const BackendPackManagerRecord* PickRecord(
     const std::vector<const BackendPackManagerRecord*>& candidates) {
     if (candidates.empty()) return nullptr;
@@ -75,6 +76,9 @@ const BackendPackManagerRecord* PickRecord(
     }
     for (const auto* record : candidates) {
         if (record->installed && record->active) return record;
+    }
+    for (const auto* record : candidates) {
+        if (IsBackendPackSelectableForInstaller(*record)) return record;
     }
     for (const auto* record : candidates) {
         if (record->delivery_metadata_available) return record;
@@ -117,8 +121,57 @@ void Status(AddOnCardView& card, AddOnCardStatus status, std::string text,
     card.tone = tone;
 }
 
+// An add-on installed for another CPU base: the Engine no longer loads it.
+// The card offers this base's pack when the catalog has a deliverable one,
+// and always Uninstall add-on for the old pack.
+void BuildReinstallCard(AddOnCardView& card,
+                        const BackendPackManagerRecord& record,
+                        const BackendPackManagerRecord& stale,
+                        const std::set<std::string>& selected_pack_ids) {
+    card.installed_pack_id = stale.installed_pack_id;
+    card.can_uninstall = true;
+    card.checked = false;
+    card.can_select = false;
+    card.can_install = false;
+    card.action_hint.clear();
+    const bool own_record = &record == &stale;
+    if (!own_record) {
+        AddDetail(card.details, "Installed pack", stale.installed_pack_id);
+        AddDetail(card.details, "Installed for CPU Engine",
+                  stale.companion_base_id);
+    }
+    const bool reinstallable = !own_record &&
+                               IsBackendPackSelectableForInstaller(record) &&
+                               !BuiltForAnotherEngine(record);
+    if (!reinstallable) {
+        Status(card, AddOnCardStatus::NeedsReinstall, "Needs reinstall",
+               InstallerPackPresentationTone::Warning);
+        card.pack_id.clear();
+        card.facts.clear();
+        card.explanation =
+            "Installed for another CyxWiz Engine release, so the Engine no "
+            "longer loads it. No version for this release is published yet; "
+            "Uninstall add-on removes its files.";
+        card.select_disabled_reason =
+            "No version for this CyxWiz Engine release is published yet";
+        return;
+    }
+    const bool picked = selected_pack_ids.contains(record.pack_id);
+    Status(card, AddOnCardStatus::NeedsReinstall,
+           picked ? "Reinstall selected" : "Needs reinstall",
+           picked ? InstallerPackPresentationTone::Accent
+                  : InstallerPackPresentationTone::Warning);
+    card.explanation =
+        "Installed for another CyxWiz Engine release, so the Engine no "
+        "longer loads it. Select it to install the version for this release.";
+    card.checked = picked;
+    card.can_select = true;
+    card.can_install = true;
+}
+
 AddOnCardView BuildCard(const std::string& plugin_id,
                         const BackendPackManagerRecord* record,
+                        const BackendPackManagerRecord* stale,
                         const std::set<std::string>& selected_pack_ids) {
     AddOnCardView card;
     card.key = plugin_id;
@@ -129,6 +182,7 @@ AddOnCardView BuildCard(const std::string& plugin_id,
         : "An optional add-on from the signed catalog.";
     AddDetail(card.details, "Plugin", plugin_id);
 
+    if (!record) record = stale;
     if (!record) {
         Status(card, AddOnCardStatus::NotPublished, "Not published",
                InstallerPackPresentationTone::Neutral);
@@ -163,6 +217,11 @@ AddOnCardView BuildCard(const std::string& plugin_id,
         AddDetail(card.details, "Update", record->update_decision->message);
     }
     AddDetail(card.details, "Signed metadata", record->delivery_metadata_error);
+
+    if (stale) {
+        BuildReinstallCard(card, *record, *stale, selected_pack_ids);
+        return card;
+    }
 
     const bool selectable = IsBackendPackSelectableForInstaller(*record);
     const bool picked = selected_pack_ids.contains(record->pack_id);
@@ -287,16 +346,44 @@ std::vector<AddOnCardView> BuildAddOnCards(
     std::vector<AddOnCardView> cards;
     cards.reserve(plugin_ids.size());
     for (const auto& plugin_id : plugin_ids) {
+        // A pack installed for another base is kept apart: the card shows
+        // this base's pack and offers to uninstall the old one.
         std::vector<const BackendPackManagerRecord*> candidates;
+        const BackendPackManagerRecord* stale = nullptr;
         for (const auto& record : records) {
-            if (IsAddOn(record) && record.plugin_id == plugin_id) {
+            if (!IsAddOn(record) || record.plugin_id != plugin_id) continue;
+            if (record.installed_for_other_base) {
+                stale = &record;
+            } else {
                 candidates.push_back(&record);
             }
         }
-        cards.push_back(
-            BuildCard(plugin_id, PickRecord(candidates), selected_pack_ids));
+        cards.push_back(BuildCard(plugin_id, PickRecord(candidates), stale,
+                                  selected_pack_ids));
     }
     return cards;
+}
+
+std::string ResolvePackToSelect(
+    const std::vector<BackendPackManagerRecord>& records,
+    const std::string& requested) {
+    if (requested.empty()) return {};
+    for (const auto& card : BuildAddOnCards(records, {})) {
+        if (card.key == requested ||
+            (!card.pack_id.empty() && card.pack_id == requested)) {
+            return card.can_select ? card.pack_id : std::string{};
+        }
+    }
+    const auto record = std::find_if(
+        records.begin(), records.end(), [&](const auto& candidate) {
+            return !IsAddOn(candidate) && candidate.pack_id == requested;
+        });
+    if (record == records.end() ||
+        !IsBackendPackSelectableForInstaller(*record) ||
+        (record->installed && !record->update_available)) {
+        return {};
+    }
+    return record->pack_id;
 }
 
 PackRemovalWording BuildPackRemovalWording(

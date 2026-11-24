@@ -217,27 +217,8 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             backend_pack_catalog_records_ = BuildBackendPackCatalogRecords(
                 snapshot, next_runtime, active_plugins);
             backend_pack_catalog_available_ = true;
-            // Count only optional packs for this computer; the catalog also
-            // lists the CPU base of every platform.
-            const auto optional_packs = std::count_if(
-                backend_pack_catalog_records_.begin(),
-                backend_pack_catalog_records_.end(),
-                [](const auto& record) {
-                    return record.backend != "cpu" &&
-                           record.pack_kind == BackendPackRecordKind::Compute;
-                });
-            const auto add_ons = std::count_if(
-                backend_pack_catalog_records_.begin(),
-                backend_pack_catalog_records_.end(),
-                [](const auto& record) {
-                    return record.pack_kind == BackendPackRecordKind::Plugin;
-                });
-            backend_pack_catalog_message_ =
-                "Signed catalog " + snapshot.catalog.catalog_id +
-                " verified; " + std::to_string(optional_packs) +
-                " optional pack(s) and " + std::to_string(add_ons) +
-                (add_ons == 1 ? " add-on" : " add-ons") +
-                " for this computer.";
+            backend_pack_catalog_message_ = BackendPackCatalogSummary(
+                snapshot.catalog.catalog_id, backend_pack_catalog_records_);
             if (!plugins_error.empty()) {
                 backend_pack_catalog_message_ +=
                     " Installed add-ons could not be read: " + plugins_error;

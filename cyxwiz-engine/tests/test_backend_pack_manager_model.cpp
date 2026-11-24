@@ -1123,6 +1123,96 @@ void TestInstallerAddOnExecution() {
 
 } // namespace
 
+// A base update keeps the installed add-ons: the new base's pack of each is
+// queued with it; one with no such pack is named in a warning.
+void TestMaintenanceBaseUpdateKeepsAddOns() {
+  cyxwiz::BackendPackManagerRecord base;
+  base.backend = "cpu";
+  base.pack_id = "base-v2";
+  base.installed = true;
+  base.installed_pack_id = "base-v1";
+  base.update_available = true;
+  base.catalog_support = cyxwiz::BackendPackCatalogSupport::Supported;
+  base.delivery_metadata_available = true;
+  base.download_size_bytes = 1000;
+
+  // The installed add-on as the adapter lists it: every catalog pack of the
+  // plugin carries the installed pack.
+  cyxwiz::BackendPackManagerRecord old_add_on;
+  old_add_on.pack_kind = cyxwiz::BackendPackRecordKind::Plugin;
+  old_add_on.plugin_id = "com.example.sim";
+  old_add_on.pack_id = "sim-v1";
+  old_add_on.companion_base_id = "base-v1";
+  old_add_on.installed = true;
+  old_add_on.active = true;
+  old_add_on.installed_pack_id = "sim-v1";
+  old_add_on.catalog_support = cyxwiz::BackendPackCatalogSupport::Supported;
+  old_add_on.delivery_metadata_available = true;
+  auto new_add_on = old_add_on;
+  new_add_on.pack_id = "sim-v2";
+  new_add_on.companion_base_id = "base-v2";
+  new_add_on.active = false;
+  new_add_on.download_size_bytes = 300;
+
+  cyxwiz::BackendPackInstallerSelection selection;
+  selection.valid = true;
+  const auto kept = cyxwiz::BuildBackendPackInstallerPlan(
+      selection, std::vector{base, old_add_on, new_add_on},
+      cyxwiz::CyxWizInstallerMode::Maintenance);
+  Check(kept.valid && kept.update_base &&
+            kept.plugin_pack_ids == std::vector<std::string>{"sim-v2"} &&
+            kept.download_size_bytes == 1300,
+        "A base update queues the new base's pack of an installed add-on");
+  Check(kept.message ==
+            "Update the signed CyxWiz Engine/CPU base and 1 add-on; the new base activates "
+            "CPU-only before optional packs. 1 installed add-on is reinstalled for the new "
+            "base, so you keep it",
+        "The plan says the add-on is kept: " + kept.message);
+
+  auto diagnostic = new_add_on;
+  diagnostic.catalog_support = cyxwiz::BackendPackCatalogSupport::Diagnostic;
+  for (const auto &records :
+       {std::vector{base, old_add_on}, std::vector{base, old_add_on, diagnostic}}) {
+    const auto lost = cyxwiz::BuildBackendPackInstallerPlan(
+        selection, records, cyxwiz::CyxWizInstallerMode::Maintenance);
+    Check(lost.valid && lost.update_base && lost.plugin_pack_ids.empty() &&
+              lost.download_size_bytes == 1000,
+          "No supported pack for the new base: nothing is queued");
+    Check(lost.message ==
+              "Update the signed CyxWiz Engine/CPU base; the new base activates CPU-only "
+              "before optional packs. Warning: 1 installed add-on has no version for the new "
+              "base yet. The Engine stops loading it until one is published; you can "
+              "uninstall it under Add-ons",
+          "The plan warns that the add-on stops loading: " + lost.message);
+  }
+
+  // Without a base update, installed add-ons are left as they are.
+  base.update_available = false;
+  const auto unchanged = cyxwiz::BuildBackendPackInstallerPlan(
+      selection, std::vector{base, old_add_on, new_add_on},
+      cyxwiz::CyxWizInstallerMode::Maintenance);
+  Check(unchanged.valid && !unchanged.update_base && unchanged.plugin_pack_ids.empty(),
+        "Add-ons are queued only with a base update");
+}
+
+void TestBackendPackCatalogSummary() {
+  cyxwiz::BackendPackManagerRecord cpu;
+  cpu.backend = "cpu";
+  const auto opencl =
+      Pack("opencl-v1", cyxwiz::BackendPackCatalogSupport::Supported);
+  cyxwiz::BackendPackManagerRecord add_on;
+  add_on.pack_kind = cyxwiz::BackendPackRecordKind::Plugin;
+  Check(cyxwiz::BackendPackCatalogSummary("c1", {cpu, opencl, opencl}) ==
+            "Signed catalog c1 verified; 2 optional pack(s) for this computer.",
+        "A compute-only catalog keeps its sentence");
+  Check(cyxwiz::BackendPackCatalogSummary("c1", {cpu, opencl, add_on}) ==
+            "Signed catalog c1 verified; 1 optional pack(s) and 1 add-on for this computer.",
+        "One add-on is named in the singular");
+  Check(cyxwiz::BackendPackCatalogSummary("c1", {cpu, add_on, add_on}) ==
+            "Signed catalog c1 verified; 0 optional pack(s) and 2 add-ons for this computer.",
+        "Several add-ons are named in the plural");
+}
+
 int main(int argc, char** argv) {
   if (argc == 4 && std::string(argv[1]) == "--catalog-root")
     return RunBackendPackCatalogAcceptance(argv[2], argv[3], nullptr, nullptr);
@@ -1135,6 +1225,8 @@ int main(int argc, char** argv) {
   TestInstallerPlan();
   TestFreshInstallerPlan();
   TestMaintenanceBaseUpdatePlan();
+  TestMaintenanceBaseUpdateKeepsAddOns();
+  TestBackendPackCatalogSummary();
   TestPackPlatformIdentity();
   TestCatalogAdapter();
   TestMultiTargetCpuCatalogPlan();

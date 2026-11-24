@@ -294,6 +294,26 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
             records.push_back(std::move(record));
         }
     }
+
+    // Add-ons installed for another base (the base was updated since): the
+    // Engine no longer loads them. Each gets its own record, after the
+    // catalog's, so it can be uninstalled while the catalog's packs stay
+    // offered for this base.
+    if (!active_runtime.base_pack_id.empty() &&
+        !active_plugins.base_pack_id.empty() &&
+        active_plugins.base_pack_id != active_runtime.base_pack_id) {
+        for (const auto& installed : active_plugins.plugins) {
+            BackendPackManagerRecord record;
+            record.pack_kind = BackendPackRecordKind::Plugin;
+            record.plugin_id = installed.plugin_id;
+            record.pack_id = installed.pack_id;
+            record.installed_pack_id = installed.pack_id;
+            record.companion_base_id = active_plugins.base_pack_id;
+            record.installed = true;
+            record.installed_for_other_base = true;
+            records.push_back(std::move(record));
+        }
+    }
     return records;
 }
 

@@ -4,6 +4,7 @@
 #include "core/compute_device_presentation.h"
 #include "core/installer_pack_presentation.h"
 #include "gui/icons.h"
+#include "gui/pack_tone_colour.h"
 #include "gui/ui_buttons.h"
 #include "gui/ui_tokens.h"
 
@@ -64,22 +65,6 @@ const char *BackendDescription(std::string_view backend) {
     return "Qualified Intel GPU and accelerator execution.";
   }
   return "Optional signed compute package.";
-}
-
-ImVec4 PackToneColor(InstallerPackPresentationTone tone) {
-  switch (tone) {
-  case InstallerPackPresentationTone::Success:
-    return kSuccess;
-  case InstallerPackPresentationTone::Warning:
-    return kWarning;
-  case InstallerPackPresentationTone::Danger:
-    return kDanger;
-  case InstallerPackPresentationTone::Accent:
-    return kAccent;
-  case InstallerPackPresentationTone::Neutral:
-    return ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
-  }
-  return kAccent;
 }
 
 std::string Join(const std::vector<std::string> &values) {
@@ -144,23 +129,6 @@ void EnterCustomSelection(InstallerViewState &state,
   state.custom_selection.insert(current.pack_ids.begin(),
                                 current.pack_ids.end());
   state.choice = BackendPackInstallChoice::Custom;
-}
-
-ImVec4 ToneColor(InstallerPackPresentationTone tone) {
-  const auto &t = cyxwiz::ui::CurrentTokens();
-  switch (tone) {
-  case InstallerPackPresentationTone::Success:
-    return t.success;
-  case InstallerPackPresentationTone::Warning:
-    return t.warning;
-  case InstallerPackPresentationTone::Danger:
-    return t.error;
-  case InstallerPackPresentationTone::Accent:
-    return t.accent_text;
-  case InstallerPackPresentationTone::Neutral:
-    return t.text_dim;
-  }
-  return t.text_dim;
 }
 
 void CenteredDisabledWrappedText(const char *text, float wrap_width,
@@ -330,7 +298,8 @@ void RenderAddOnCard(InstallerViewState &state,
   ImGui::SameLine();
   ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
                                 ImGui::GetWindowWidth() - kStatusColumnFromRight));
-  ImGui::TextColored(ToneColor(card.tone), "%s", card.status_text.c_str());
+  ImGui::TextColored(cyxwiz::ui::PackToneColour(card.tone), "%s",
+                     card.status_text.c_str());
 
   ImGui::Indent(indent);
   ImGui::PushTextWrapPos(0.0f);
@@ -340,6 +309,7 @@ void RenderAddOnCard(InstallerViewState &state,
     ImGui::TextDisabled("%s", card.facts.c_str());
   if (!card.explanation.empty()) {
     const bool warn = card.status == AddOnCardStatus::NeedsEngineUpdate ||
+                      card.status == AddOnCardStatus::NeedsReinstall ||
                       card.status == AddOnCardStatus::UpdateBlocked;
     if (warn)
       ImGui::PushStyleColor(ImGuiCol_Text, t.warning);
@@ -448,7 +418,7 @@ void RenderComponents(InstallerViewState &state,
       ImGui::TextColored(kSuccess, "Recommended");
     }
     ImGui::SameLine(ImGui::GetWindowWidth() - kStatusColumnFromRight);
-    ImGui::TextColored(PackToneColor(presentation.tone), "%s",
+    ImGui::TextColored(cyxwiz::ui::PackToneColour(presentation.tone), "%s",
                        presentation.status.c_str());
     ImGui::Indent(29.0f);
     ImGui::TextDisabled("%s", BackendDescription(record.backend));

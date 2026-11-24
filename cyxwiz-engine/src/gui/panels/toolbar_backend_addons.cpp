@@ -7,6 +7,7 @@
 #include "toolbar.h"
 
 #include "../icons.h"
+#include "../pack_tone_colour.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
 #include "../../core/addon_pack_presentation.h"
@@ -18,20 +19,6 @@
 #include <set>
 
 namespace cyxwiz {
-namespace {
-
-ImVec4 ToneColor(InstallerPackPresentationTone tone, const ui::Tokens& t) {
-    switch (tone) {
-        case InstallerPackPresentationTone::Success: return t.success;
-        case InstallerPackPresentationTone::Warning: return t.warning;
-        case InstallerPackPresentationTone::Danger: return t.error;
-        case InstallerPackPresentationTone::Accent: return t.accent_text;
-        case InstallerPackPresentationTone::Neutral: return t.text_dim;
-    }
-    return t.text_dim;
-}
-
-}  // namespace
 
 void ToolbarPanel::RenderBackendAddOns(
     const std::vector<BackendPackManagerRecord>& records,
@@ -63,7 +50,7 @@ void ToolbarPanel::RenderBackendAddOns(
         const float status_width = ImGui::CalcTextSize(card.status_text.c_str()).x;
         ImGui::SameLine();
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), right - status_width));
-        ImGui::TextColored(ToneColor(card.tone, t), "%s", card.status_text.c_str());
+        ImGui::TextColored(ui::PackToneColour(card.tone, t), "%s", card.status_text.c_str());
 
         ImGui::Indent(indent);
         ImGui::PushTextWrapPos(0.0f);
@@ -73,6 +60,7 @@ void ToolbarPanel::RenderBackendAddOns(
         if (!card.facts.empty()) ImGui::TextDisabled("%s", card.facts.c_str());
         if (!card.explanation.empty()) {
             const bool warn = card.status == AddOnCardStatus::NeedsEngineUpdate ||
+                              card.status == AddOnCardStatus::NeedsReinstall ||
                               card.status == AddOnCardStatus::UpdateBlocked;
             if (warn) ImGui::PushStyleColor(ImGuiCol_Text, t.warning);
             ImGui::TextUnformatted(card.explanation.c_str());
@@ -89,7 +77,9 @@ void ToolbarPanel::RenderBackendAddOns(
         bool action_drawn = false;
         if (card.can_install) {
             const char* label = card.status == AddOnCardStatus::UpdateAvailable
-                ? "Update add-on..." : "Install add-on...";
+                ? "Update add-on..."
+                : card.status == AddOnCardStatus::NeedsReinstall ? "Reinstall add-on..."
+                                                                 : "Install add-on...";
             if (ui::SecondaryButton(label, installer_available, kNoInstaller,
                                     ui::ButtonSize::Regular)) {
                 core::WindowManager::LaunchExecutable(

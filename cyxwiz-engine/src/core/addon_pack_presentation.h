@@ -23,6 +23,7 @@ enum class AddOnCardStatus {
     UpdateAvailable,
     UpdateBlocked,
     NeedsEngineUpdate,  // built for another CyxWiz Engine release
+    NeedsReinstall,     // installed for another CPU base: no longer loaded
     Unavailable,        // not offered by the signed catalog, or unverifiable
     NotPublished        // a known add-on with no pack for this platform
 };
@@ -66,6 +67,14 @@ std::string AddOnTitle(const std::string& plugin_id);
 std::vector<AddOnCardView> BuildAddOnCards(
     const std::vector<BackendPackManagerRecord>& records,
     const std::set<std::string>& selected_pack_ids);
+
+// The pack the installer ticks for `--select <id>`: an add-on named by its
+// plugin id or pack id follows its card (the pack the card offers, when its
+// checkbox can change); any other id names a compute pack that can be
+// installed or updated. Empty when nothing can be ticked.
+std::string ResolvePackToSelect(
+    const std::vector<BackendPackManagerRecord>& records,
+    const std::string& requested);
 
 // The words of the uninstall confirmation for one pack: an add-on's own
 // wording, or the compute component's.

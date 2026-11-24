@@ -12,7 +12,8 @@ namespace cyxwiz {
 // One record per catalog pack for this platform, plus installed packs the
 // catalog no longer lists. A plugin-pack manifest becomes a Plugin record
 // (plugin id, no backend); its installed state comes from active_plugins
-// (active-plugins.json), which counts only for the active base.
+// (active-plugins.json), which counts only for the active base. Add-ons the
+// file lists for another base are installed_for_other_base records.
 std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
     const runtime::VerifiedBackendPackCatalogSnapshot& catalog,
     const runtime::ActiveRuntimeState& active_runtime,

@@ -42,6 +42,27 @@ std::string AddOnCount(std::size_t count) {
   return std::to_string(count) + (count == 1 ? " add-on" : " add-ons");
 }
 
+// What a base update does to the installed add-ons: kept ones are reinstalled
+// for the new base; lost ones have no pack for it yet.
+std::string BaseUpdateAddOnNote(std::size_t kept, std::size_t lost) {
+  std::string note;
+  if (kept > 0) {
+    note += ". " + std::to_string(kept) + " installed add-on" +
+            (kept == 1 ? " is" : "s are") +
+            " reinstalled for the new base, so you keep " +
+            (kept == 1 ? "it" : "them");
+  }
+  if (lost > 0) {
+    const char *object = lost == 1 ? "it" : "them";
+    note += ". Warning: " + std::to_string(lost) + " installed add-on" +
+            (lost == 1 ? " has" : "s have") +
+            " no version for the new base yet. The Engine stops loading " +
+            object + " until one is published; you can uninstall " + object +
+            " under Add-ons";
+  }
+  return note;
+}
+
 BackendPackActionDecision
 CheckOperationBoundary(BackendPackAction action,
                        const BackendPackManagerContext &context) {
@@ -366,6 +387,50 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     (IsPluginRecord(*record) ? plan.plugin_pack_ids : plan.pack_ids)
         .push_back(record->pack_id);
   }
+  // The Engine loads an add-on only on the base it was built for: a base
+  // update queues the new base's pack of every installed add-on, so the user
+  // keeps it. One with no such pack is counted for the warning.
+  std::size_t kept_add_ons = 0;
+  std::size_t lost_add_ons = 0;
+  if (plan.update_base) {
+    std::set<std::string> installed_add_ons;
+    for (const auto &record : catalog_records) {
+      if (IsPluginRecord(record) && record.installed &&
+          !record.plugin_id.empty()) {
+        installed_add_ons.insert(record.plugin_id);
+      }
+    }
+    for (const auto &plugin_id : installed_add_ons) {
+      const auto match = std::find_if(
+          catalog_records.begin(), catalog_records.end(),
+          [&](const auto &candidate) {
+            return IsPluginRecord(candidate) &&
+                   candidate.plugin_id == plugin_id &&
+                   !candidate.pack_id.empty() &&
+                   candidate.companion_base_id == base->pack_id &&
+                   candidate.catalog_support ==
+                       BackendPackCatalogSupport::Supported &&
+                   candidate.delivery_metadata_available;
+          });
+      if (match == catalog_records.end()) {
+        ++lost_add_ons;
+        continue;
+      }
+      ++kept_add_ons;
+      if (std::find(plan.plugin_pack_ids.begin(), plan.plugin_pack_ids.end(),
+                    match->pack_id) != plan.plugin_pack_ids.end()) {
+        continue;
+      }
+      if (match->download_size_bytes >
+          std::numeric_limits<std::uint64_t>::max() -
+              plan.download_size_bytes) {
+        plan.message = "Selected pack download size is too large";
+        return plan;
+      }
+      plan.download_size_bytes += match->download_size_bytes;
+      plan.plugin_pack_ids.push_back(match->pack_id);
+    }
+  }
   plan.valid = true;
   const std::string add_ons =
       plan.plugin_pack_ids.empty()
@@ -387,6 +452,7 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     }
     plan.message += add_ons;
     plan.message += "; the new base activates CPU-only before optional packs";
+    plan.message += BaseUpdateAddOnNote(kept_add_ons, lost_add_ons);
   } else if (!plan.deactivate_backends.empty()) {
     plan.message = std::to_string(plan.deactivate_backends.size()) +
                    " optional backend route(s) will be deactivated; package "
@@ -432,6 +498,22 @@ std::vector<std::string> OptionalPacksForThisComputer(
     }
   }
   return backends;
+}
+
+std::string BackendPackCatalogSummary(
+    const std::string &catalog_id,
+    const std::vector<BackendPackManagerRecord> &records) {
+  const auto optional_packs = std::count_if(
+      records.begin(), records.end(), [](const auto &record) {
+        return record.backend != "cpu" && !IsPluginRecord(record);
+      });
+  const auto add_ons =
+      static_cast<std::size_t>(std::count_if(records.begin(), records.end(),
+                                             IsPluginRecord));
+  return "Signed catalog " + catalog_id + " verified; " +
+         std::to_string(optional_packs) + " optional pack(s)" +
+         (add_ons > 0 ? " and " + AddOnCount(add_ons) : std::string{}) +
+         " for this computer.";
 }
 
 std::filesystem::path ParseInstallLocationText(std::string_view text) {

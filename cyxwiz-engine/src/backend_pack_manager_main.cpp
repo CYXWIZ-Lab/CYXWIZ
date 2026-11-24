@@ -1,3 +1,4 @@
+#include "core/addon_pack_presentation.h"
 #include "core/backend_pack_manager_model.h"
 #include "installer/backend_pack_installer_platform.h"
 #include "installer/installer_frame_pacing.h"
@@ -343,24 +344,15 @@ int RunInstaller(const std::vector<std::string> &arguments,
   view_state.install_location_message = install_location.message;
   // The Engine opens the installer for one component: show the components
   // page; tick the component only when it can be installed or updated (its
-  // card says why not otherwise).
-  // An add-on may be named by its plugin id; it selects the add-on's catalog
-  // pack when the catalog has one.
+  // card says why not otherwise). An add-on, named by its plugin id or pack
+  // id, ticks the pack its card offers.
   if (!parsed.selected_pack.empty()) {
     view_state.requested_page = 1;
     view_state.focus_pack_id = parsed.selected_pack;
-    const auto record = std::find_if(
-        catalog.records.begin(), catalog.records.end(),
-        [&](const cyxwiz::BackendPackManagerRecord &candidate) {
-          return candidate.pack_id == parsed.selected_pack ||
-                 (candidate.pack_kind == cyxwiz::BackendPackRecordKind::Plugin &&
-                  candidate.plugin_id == parsed.selected_pack &&
-                  candidate.delivery_metadata_available);
-        });
-    if (record != catalog.records.end() &&
-        cyxwiz::IsBackendPackSelectableForInstaller(*record) &&
-        (!record->installed || record->update_available)) {
-      view_state.custom_selection.insert(record->pack_id);
+    const auto pack_id =
+        cyxwiz::ResolvePackToSelect(catalog.records, parsed.selected_pack);
+    if (!pack_id.empty()) {
+      view_state.custom_selection.insert(pack_id);
       view_state.choice = cyxwiz::BackendPackInstallChoice::Custom;
     }
   }

@@ -32,6 +32,7 @@ opens the installer with the add-on ticked.
 | Update available | A newer signed package exists; tick the add-on to install it |
 | Update blocked | The catalog offers an older or conflicting package; the installed one stays |
 | Needs Engine update | It is built for another CyxWiz Engine release: update the CPU Engine first, then add it |
+| Needs reinstall | It was installed for another CyxWiz Engine release, so the Engine no longer loads it. Tick it to install the version for this release, or uninstall it |
 | Unavailable | Its signed details could not be verified, or the release does not offer it |
 | Not published | No signed package for this platform and release (macOS and Linux today) |
 
@@ -40,6 +41,14 @@ the package includes (for MuJoCo: MuJoCo by Google DeepMind, Apache-2.0, and
 the Gymnasium task models, MIT). The licence files are in the package's
 `THIRD_PARTY_LICENSES` folder. In the Engine, **Details** lists the pack id,
 the plugin id, the CPU Engine it is built for and the licence files.
+
+## When the CPU Engine is updated
+
+An add-on is built for one CPU Engine release. An update of the CPU Engine
+also installs the new release's version of every installed add-on, and the
+installation summary says so. When the new release has no version of an
+add-on yet, the summary warns that the Engine will stop loading it; its card
+then shows **Needs reinstall** and keeps **Uninstall add-on**.
 
 ## Uninstalling one
 

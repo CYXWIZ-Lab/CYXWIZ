@@ -69,6 +69,9 @@ struct BackendPackManagerRecord {
       BackendPackCatalogSupport::Unavailable;
   bool installed = false;
   bool active = false;
+  // An add-on that active-plugins.json lists for another CPU base: the Engine
+  // no longer loads it, and it can be uninstalled.
+  bool installed_for_other_base = false;
   bool integrity_verified = false;
   bool qualification_evidence_available = false;
   bool training_authorized = false;
@@ -111,7 +114,8 @@ struct BackendPackInstallerPlan {
   std::string base_pack_id;
   std::vector<std::string> pack_ids;
   // Plugin packs (add-ons) to install or update; installed after the base
-  // and the backend packs, with no route qualification.
+  // and the backend packs, with no route qualification. A base update also
+  // queues the new base's pack of every installed add-on, so none is lost.
   std::vector<std::string> plugin_pack_ids;
   std::vector<std::string> remove_pack_ids;
   std::vector<std::string> deactivate_backends;
@@ -152,6 +156,13 @@ CyxWizInstallLocation ResolveCyxWizInstallLocation(
 std::vector<std::string> OptionalPacksForThisComputer(
     const std::vector<BackendPackManagerRecord> &records,
     const std::vector<std::string> &selected_pack_ids);
+
+// The Backend Manager's catalog line: "Signed catalog <id> verified; N
+// optional pack(s) for this computer." Add-ons are named (" and 1 add-on")
+// only when the catalog offers some; the CPU base is not counted.
+std::string BackendPackCatalogSummary(
+    const std::string &catalog_id,
+    const std::vector<BackendPackManagerRecord> &records);
 
 // The installation folder as typed or pasted: surrounding spaces and one pair
 // of surrounding quotes (as Explorer's "Copy as path" adds) are removed.

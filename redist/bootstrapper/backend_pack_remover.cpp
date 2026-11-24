@@ -268,11 +268,21 @@ BackendPackRemovalResult BackendPackRemover::RemovePlugin(
         filesystem_error == std::make_error_code(std::errc::no_such_file_or_directory);
     if (target_missing) filesystem_error.clear();
     const bool target_exists = !target_missing && !filesystem_error;
-    const bool target_active = std::any_of(
+    bool target_active = std::any_of(
         plugins.plugins.begin(), plugins.plugins.end(),
         [&](const ActivePluginPackState& value) {
             return value.plugin_id == plugin_id && value.pack_id == pack_id;
         });
+    // A list written for another base is already inactive (the Engine skips
+    // it), so its packs are deleted without a deactivation step. When the
+    // active runtime cannot be read, deactivation runs and reports why.
+    ActiveRuntimeState runtime;
+    std::string runtime_error;
+    if (target_active &&
+        LoadActiveRuntimeState(runtime_root_ / "active-runtime.json", runtime, runtime_error) &&
+        runtime.base_pack_id != plugins.base_pack_id) {
+        target_active = false;
+    }
     if (!target_exists) {
         if (filesystem_error) {
             return Finish(BackendPackRemovalStatus::FilesystemFailure,
