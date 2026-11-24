@@ -875,6 +875,12 @@ private Data Studio tickets (`tofix*/track*`).
   preview that could not run; the `huggingface_datasets.cyx` script template
   no longer ships. A saved graph with that node does not load and names the
   node to remove; load the data with a Data Input node instead.
+- **Server Node: Marketplace, Pool Mining and Wallet.** The three sidebar
+  pages, the wallet address in the status bar, the Models page's Marketplace
+  tab and the unused Solana wallet code are gone, as are the
+  `pool_mining` and `wallet` sections of `server_config.yaml` (an old
+  file with them still loads; the sections are ignored). Earnings no longer
+  carry a token name.
 
 ### Fixed
 

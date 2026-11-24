@@ -113,7 +113,6 @@ set(DAEMON_SOURCES
     src/security/tls_config.cpp
     src/security/audit_logger.cpp
     src/security/docker_manager.cpp
-    src/security/wallet_manager.cpp
     # P2P Authentication
     src/auth/p2p_jwt_validator.cpp
 )
@@ -148,9 +147,6 @@ if(CYXWIZ_BUILD_GUI)
         src/gui/server_probe.cpp
         src/gui/server_address_widgets.cpp
         src/gui/panels/logs_panel.cpp
-        src/gui/panels/pool_mining_panel.cpp
-        src/gui/panels/marketplace_panel.cpp
-        src/gui/panels/wallet_panel.cpp
         src/gui/panels/analytics_panel.cpp
         src/gui/panels/fine_tuning_panel.cpp
         src/gui/panels/login_panel.cpp
@@ -649,7 +645,6 @@ if(CYXWIZ_BUILD_TESTS)
         src/api/rate_limiter.cpp
         src/security/tls_config.cpp
         src/security/audit_logger.cpp
-        src/security/wallet_manager.cpp
         src/security/docker_manager.cpp
     )
 

@@ -8,7 +8,7 @@
  * a specific Engine to execute a specific job on a specific node.
  *
  * Token Structure (from Central Server auth/jwt.rs):
- * - sub: Engine wallet address or user ID
+ * - sub: Engine user ID
  * - job_id: Job UUID this token authorizes
  * - node_id: Assigned Server Node UUID
  * - exp: Expiration timestamp (Unix)
@@ -26,7 +26,7 @@ namespace cyxwiz {
  * @brief P2P authentication claims extracted from JWT
  */
 struct P2PAuthClaims {
-    std::string sub;       // Engine wallet/user ID
+    std::string sub;       // Engine user ID
     std::string job_id;    // Job UUID
     std::string node_id;   // Server Node UUID
     std::string reservation_id;   // The reservation this token belongs to

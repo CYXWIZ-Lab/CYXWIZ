@@ -28,13 +28,6 @@ enum class AuditEvent {
     MODEL_UNDEPLOYED,
     MODEL_UPDATED,
 
-    // Wallet operations
-    WALLET_CONNECTED,
-    WALLET_DISCONNECTED,
-    TRANSACTION_INITIATED,
-    TRANSACTION_COMPLETED,
-    TRANSACTION_FAILED,
-
     // Security events
     TLS_ENABLED,
     TLS_DISABLED,
@@ -57,7 +50,7 @@ const char* GetAuditEventName(AuditEvent event);
 struct AuditEntry {
     int64_t timestamp = 0;       // Unix timestamp
     AuditEvent event;
-    std::string actor;           // API key ID, wallet address, or "system"
+    std::string actor;           // API key ID, user ID, or "system"
     std::string resource;        // Model ID, endpoint, container ID, etc.
     std::string details;         // JSON extra info
     std::string ip_address;      // Client IP if applicable
