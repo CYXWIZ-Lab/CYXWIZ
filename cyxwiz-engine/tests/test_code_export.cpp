@@ -229,7 +229,7 @@ void CheckRecurrentAndLoss() {
 // from the graph, the frameworks' own spellings, and a graph with no model.
 void CheckWidthsAndNoModel() {
     Graph text;
-    const int ids = text.Add(gui::NodeType::DatasetInput, "Ids");
+    const int ids = text.Add(gui::NodeType::DataInput, "Ids");
     const int embed = text.Add(gui::NodeType::Embedding, "Embed", {{"num_embeddings", "50"}, {"embedding_dim", "12"}});
     const int drop = text.Add(gui::NodeType::Dropout, "Drop", {{"rate", "0.1"}});
     const int norm = text.Add(gui::NodeType::LayerNorm, "Norm");
@@ -250,7 +250,7 @@ void CheckWidthsAndNoModel() {
           "PyCyxWiz: the same width, and a Python bool when bidirectional is not set");
 
     Graph rows;
-    const int data = rows.Add(gui::NodeType::DatasetInput, "Data");  // its width set by preprocessing
+    const int data = rows.Add(gui::NodeType::DataInput, "Data");  // its width set by preprocessing
     const int rows_norm = rows.Add(gui::NodeType::LayerNorm, "Norm");
     const int head = rows.Add(gui::NodeType::Dense, "Head", {{"units", "3"}});
     rows.Connect(data, rows_norm);
@@ -261,7 +261,7 @@ void CheckWidthsAndNoModel() {
           "LayerNorm AUTO on the data's width: read on the first forward pass, as nn.LazyLinear");
 
     Graph simple;
-    const int steps = simple.Add(gui::NodeType::DatasetInput, "Steps", {{"shape", "[6,3]"}});
+    const int steps = simple.Add(gui::NodeType::DataInput, "Steps", {{"shape", "[6,3]"}});
     const int rnn = simple.Add(gui::NodeType::RNN, "RNN",
                                {{"hidden_size", "4"}, {"nonlinearity", "Tanh"}, {"bidirectional", "true"}});
     simple.Connect(steps, rnn);
@@ -272,7 +272,7 @@ void CheckWidthsAndNoModel() {
     Check(Contains(rnn_code, "bidirectional=True)"), "a bidirectional RNN stays bidirectional");
 
     Graph analysis;
-    const int table = analysis.Add(gui::NodeType::DatasetInput, "Table", {{"shape", "[4]"}});
+    const int table = analysis.Add(gui::NodeType::DataInput, "Table", {{"shape", "[4]"}});
     const int pca = analysis.Add(gui::NodeType::PCANode, "PCA");
     analysis.Connect(table, pca);
     Check(Contains(PyTorchOf(analysis), "raise ValueError('the graph has no model layers"),

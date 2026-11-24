@@ -2050,7 +2050,7 @@ std::string GraphCodeExporter::InferredInputWidth(const MLNode& node) const {
             return value.empty() ? std::string(fallback) : value;
         };
         switch (source->type) {
-            case NodeType::DatasetInput:
+            case NodeType::DataInput:
             case NodeType::Reshape:
             case NodeType::View: {
                 // Rows [features] or a sequence [steps, features]: the last
