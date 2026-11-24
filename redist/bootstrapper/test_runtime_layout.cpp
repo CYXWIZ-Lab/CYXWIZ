@@ -237,6 +237,9 @@ int main() {
             diagnostic.find("launched runtime_set=set-v1") != std::string::npos &&
                 diagnostic.find("engine DLL search configured") != std::string::npos,
             "successful launch must record package-local runtime diagnostics");
+        failures += !Expect(
+            diagnostic.find("exited with code") == std::string::npos,
+            "a clean Engine exit must add no exit-code line");
         {
             cyxwiz::runtime::RuntimeOperationLock maintenance;
             std::string ownership_error;
@@ -264,6 +267,21 @@ int main() {
             "stable launcher must resolve and start the installed manager from the active base; exit=" +
                 std::to_string(installer_exit) + " log=" +
                 installer_diagnostic);
+
+        // An Engine that Windows ends at once (a missing DLL) is logged with
+        // its exit code and what the code means.
+        ::SetEnvironmentVariableW(L"CYXWIZ_TEST_CHILD_EXIT_CODE", L"0xC0000135");
+        const int missing_dll_exit = RunBootstrapper(bootstrapper, fixture.root);
+        ::SetEnvironmentVariableW(L"CYXWIZ_TEST_CHILD_EXIT_CODE", nullptr);
+        const auto missing_dll_log = ReadText(fixture.root / "bootstrapper.log");
+        failures += !Expect(
+            static_cast<DWORD>(missing_dll_exit) == 0xC0000135UL &&
+                missing_dll_log.find("engine exited with code 0xC0000135 (3221225781) right after launch: "
+                                     "a DLL it needs is missing") != std::string::npos &&
+                ReadText(fixture.root / "bootstrapper-test-output.txt").find(
+                    "CyxWiz could not start") != std::string::npos,
+            "an Engine that dies at launch must be logged with its exit code and meaning; exit=" +
+                std::to_string(missing_dll_exit) + " log=" + missing_dll_log);
     }
     {
         Fixture fixture;

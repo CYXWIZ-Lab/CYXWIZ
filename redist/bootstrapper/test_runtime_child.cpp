@@ -1,6 +1,7 @@
 #include "windows_dll_search.h"
 #include "engine_runtime_ownership.h"
 
+#include <cwchar>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -24,6 +25,11 @@ std::wstring EnvironmentValue(const wchar_t* name) {
 }  // namespace
 
 int main() {
+    // Stands in for an Engine that Windows ends at once (a missing DLL).
+    const auto forced_exit = EnvironmentValue(L"CYXWIZ_TEST_CHILD_EXIT_CODE");
+    if (!forced_exit.empty()) {
+        ::ExitProcess(static_cast<UINT>(std::wcstoul(forced_exit.c_str(), nullptr, 0)));
+    }
     cyxwiz::runtime::RuntimeOperationLock engine_ownership;
     if (!EnvironmentValue(L"CYXWIZ_RUNTIME_USE_TOKEN").empty()) {
         std::vector<wchar_t> executable(32768);

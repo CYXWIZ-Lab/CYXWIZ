@@ -5,6 +5,7 @@
 #include "backend_pack_maintenance_request.h"
 #include "backend_pack_platform.h"
 
+#include <cstdio>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -145,6 +146,60 @@ int Fail(const std::filesystem::path& runtime_root, const std::string& message) 
     std::cerr << "CyxWiz launch failed: " << message << '\n';
     std::cerr << "Diagnostic log: " << (runtime_root / "bootstrapper.log").string() << '\n';
     return 78;
+}
+
+struct ChildExitExplanation {
+    const char* text = nullptr;
+    // Windows ended the child while loading it, before any of its own code
+    // ran: it printed nothing, so the launcher reports it.
+    bool start_up_failure = false;
+};
+
+ChildExitExplanation ExplainChildExit(DWORD exit_code) {
+    switch (exit_code) {
+        case 0xC0000135UL:  // STATUS_DLL_NOT_FOUND
+            return {"a DLL it needs is missing (Windows could not find it)", true};
+        case 0xC0000139UL:  // STATUS_ENTRYPOINT_NOT_FOUND
+            return {"a DLL it loaded is the wrong version (a function it needs is missing)", true};
+        case 0xC000007BUL:  // STATUS_INVALID_IMAGE_FORMAT
+            return {"a DLL it needs is damaged or built for another processor", true};
+        case 0xC0000142UL:  // STATUS_DLL_INIT_FAILED
+            return {"a DLL it needs failed to start", true};
+        case 0xC0000005UL:  // STATUS_ACCESS_VIOLATION
+            return {"it crashed (access violation)", false};
+        case 0xC00000FDUL:  // STATUS_STACK_OVERFLOW
+            return {"it crashed (stack overflow)", false};
+        case 0xC0000409UL:  // STATUS_STACK_BUFFER_OVERRUN: a fail-fast stop
+            return {"it stopped on a fatal error", false};
+        default:
+            return {};
+    }
+}
+
+// A child that ends with an error code is logged with the code, how soon it
+// ended and, for the codes Windows itself sets, what the code means.
+void ReportChildExit(
+    const std::filesystem::path& runtime_root,
+    const char* child,
+    DWORD exit_code,
+    ULONGLONG elapsed_ms) {
+    constexpr ULONGLONG kRightAfterLaunchMs = 10000;
+    char code[16] = {};
+    std::snprintf(code, sizeof(code), "0x%08lX", static_cast<unsigned long>(exit_code));
+    const auto explanation = ExplainChildExit(exit_code);
+    std::string line = std::string(child) + " exited with code " + code + " (" +
+        std::to_string(exit_code) + ") " +
+        (elapsed_ms < kRightAfterLaunchMs
+             ? std::string("right after launch")
+             : "after " + std::to_string(elapsed_ms / 1000) + " s");
+    if (explanation.text != nullptr) line += ": " + std::string(explanation.text);
+    if (explanation.start_up_failure)
+        line += "; repair or reinstall CyxWiz with the CyxWiz Installer";
+    cyxwiz::runtime::AppendBootstrapDiagnostic(runtime_root, line);
+    if (explanation.start_up_failure) {
+        std::cerr << "CyxWiz could not start: " << line << '\n';
+        std::cerr << "Diagnostic log: " << (runtime_root / "bootstrapper.log").string() << '\n';
+    }
 }
 
 std::wstring WidenIdentifier(const std::string& value) {
@@ -366,6 +421,7 @@ int wmain(int argc, wchar_t** argv) {
                         std::to_string(::GetLastError()));
     }
     ::CloseHandle(process.hThread);
+    const ULONGLONG launched_at = ::GetTickCount64();
     cyxwiz::runtime::AppendBootstrapDiagnostic(
         runtime.runtime_root,
         std::string(installer_mode      ? "launched installer runtime_set="
@@ -384,6 +440,10 @@ int wmain(int argc, wchar_t** argv) {
     DWORD exit_code = 78;
     if (wait_result == WAIT_OBJECT_0) {
         ::GetExitCodeProcess(process.hProcess, &exit_code);
+        if (exit_code != 0) {
+            ReportChildExit(runtime.runtime_root, plugin_check_mode ? "plugin check" : "engine",
+                            exit_code, ::GetTickCount64() - launched_at);
+        }
     } else {
         cyxwiz::runtime::AppendBootstrapDiagnostic(
             runtime.runtime_root,
