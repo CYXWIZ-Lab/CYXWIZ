@@ -182,7 +182,7 @@ void ScriptEditorPanel::RenderCompletionPopup() {
             const bool hovered = ImGui::IsItemHovered();
             ImGui::PopID();
             if (i == selected_completion_)
-                ldl->AddRectFilled(p, ImVec2(p.x + w, p.y + row_h), ui::ToU32(ui::WithAlpha(t.accent, 0.35f)), 4.0f);
+                ldl->AddRectFilled(p, ImVec2(p.x + w, p.y + row_h), ui::ToU32(t.selection), 4.0f);
             else if (hovered)
                 ldl->AddRectFilled(p, ImVec2(p.x + w, p.y + row_h), ui::ToU32(t.hover), 4.0f);
             // Kind chip, name (typed part highlighted), where it comes from.

@@ -32,7 +32,7 @@ std::string TypeId(gui::NodeType type) {
 void CheckGraphImportNameContract(
     const cyxwiz::NodeMetadataRegistry& registry) {
     const auto import_names = gui::GetNodeTypeImportNames();
-    Check(import_names.size() == 255,  // + PortfolioWeights (TOFIX129 D10), + TruncatedSVD, Whitening, LinearSolve, LinearProjection (TOFIX129 D9), + ClassicModelPredictor (TOFIX145), ConvTranspose2D, WordEmbeddings (TOFIX152), TestEvaluationNode (TOFIX157),
+    Check(import_names.size() == 253,  // - DatasetInput and its "Input" alias (retired, TOFIX178 4f); + PortfolioWeights (TOFIX129 D10), + TruncatedSVD, Whitening, LinearSolve, LinearProjection (TOFIX129 D9), + ClassicModelPredictor (TOFIX145), ConvTranspose2D, WordEmbeddings (TOFIX152), TestEvaluationNode (TOFIX157),
                                        // MaxAbsScaler, QuantileTransform, PowerTransform (TOFIX129 D2), HypothesisTest (D3), TSNENode, UMAPNode (D5),
                                        // the seven OpenCV image steps (TOFIX178 1.3f), Random Resized Crop, Random Affine,
                                        // Random Perspective, Gaussian Noise, Random Grayscale (TOFIX178 1.6b), IFFTNode, WaveletTransform (TOFIX129 D7),
@@ -65,7 +65,7 @@ void CheckGraphImportNameContract(
                   "graph-import target has no registered metadata: " + name);
         }
     }
-    Check(compatibility_only_count == 3,
+    Check(compatibility_only_count == 1,  // TimeSeriesCSV
           "saved-graph compatibility import count drifted");
 }
 
@@ -545,7 +545,7 @@ int main(int argc, char** argv) {
     Check(inventory_summary.graph_import_name_count ==
               gui::GetNodeTypeImportNames().size(),
           "generated node inventory graph-import name count drifted");
-    Check(inventory_summary.legacy_compatibility_import_name_count == 3,
+    Check(inventory_summary.legacy_compatibility_import_name_count == 1,
           "generated inventory compatibility import count drifted");
     Check(inventory_summary.unclassified_frontend_primitive_gap_count == 0,
           "generated inventory has an unclassified frontend primitive gap");

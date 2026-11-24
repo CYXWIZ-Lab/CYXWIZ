@@ -26,6 +26,7 @@ inline bool IsTrainingTaskAttentionStatus(std::string_view status) {
 
 struct PinMemoryTransferStatus;
 struct ArrayFireHostSyncEvent;
+struct NeuralDispatchEvent;
 struct ExecutionDeviceContext;
 
 struct TrainingTraceEvent {
@@ -166,6 +167,18 @@ struct TrainingTraceSummary {
     std::vector<TrainingTraceHostSyncGroup> arrayfire_host_sync_groups;
     std::vector<TrainingTraceStageTiming> stage_timings;
     std::string arrayfire_host_sync_summary;
+    // Host-to-device uploads the batchers made (batch_uploads.h), grouped
+    // like the reads: category = batcher, operation = part, reason = why.
+    uint64_t host_upload_count = 0;
+    uint64_t host_upload_bytes = 0;
+    std::vector<TrainingTraceHostSyncGroup> host_upload_groups;
+    std::string host_upload_summary;
+    // Native provider dispatches (cyxwiz/neural_provider_dispatch.h), grouped:
+    // category = provider, operation = "<layer> <op>", reason = ran /
+    // declined / failed, layout = device.
+    uint64_t provider_dispatch_count = 0;
+    std::vector<TrainingTraceHostSyncGroup> provider_groups;
+    std::string provider_summary;
     std::string placement_fingerprint;
     uint64_t placement_entry_count = 0;
     std::string placement_summary;
@@ -236,6 +249,9 @@ public:
     // Rebind an active preparation trace to the runtime's canonical run ID
     // without discarding already-recorded materialization evidence.
     bool ContinueRun(const std::string& run_id);
+    // When the current trace started (steady clock); ContinueRun keeps it,
+    // StartRun sets it, so it names one run across a rename.
+    long long RunStartedNs() const { return run_started_ns_.load(std::memory_order_relaxed); }
     void RecordStage(TrainingTraceStage stage,
                      int epoch,
                      int batch,
@@ -262,6 +278,13 @@ public:
         const std::string& message,
         const std::string& severity);
     void RecordArrayFireHostSync(const ArrayFireHostSyncEvent& sync);
+    // One host-to-device upload (event_count and bytes of `upload` added to
+    // its group); nothing when no run is recording.
+    void RecordHostUpload(const TrainingTraceHostSyncGroup& upload);
+    // One provider dispatch outcome; the first declined or failed outcome of
+    // a group is also a runtime warning with its detail.
+    void RecordProviderDispatch(const TrainingTraceHostSyncGroup& dispatch,
+                                const std::string& detail);
     void RecordTrainingRandomness(const TrainingRandomness& randomness);
     void RecordExecutionDeviceContext(
         const ExecutionDeviceContext& context);
@@ -356,10 +379,19 @@ private:
     uint64_t arrayfire_host_sync_bytes_ = 0;
     std::map<std::string, TrainingTraceHostSyncGroup>
         arrayfire_host_sync_groups_;
+    uint64_t host_upload_count_ = 0;
+    uint64_t host_upload_bytes_ = 0;
+    std::map<std::string, TrainingTraceHostSyncGroup> host_upload_groups_;
+    uint64_t provider_dispatch_count_ = 0;
+    std::map<std::string, TrainingTraceHostSyncGroup> provider_groups_;
     std::map<std::string, TrainingTraceStageTiming> stage_timings_;
     uint64_t declared_output_boundary_count_ = 0;
     TrainingTraceSettings settings_;
     size_t events_since_write_ = 0;
 };
+
+// The run's provider dispatch observer (ScopedNeuralDispatchObserver):
+// records the outcome into the active trace.
+void RecordNeuralDispatchForActiveTrace(const NeuralDispatchEvent& event);
 
 } // namespace cyxwiz

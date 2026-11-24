@@ -47,7 +47,20 @@ def regression_loss_matrix() -> list[dict[str, Any]]:
     prediction_values = [[-3.0, -2.0, -0.5], [0.0, 0.5, 2.0]]
     target_values = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
     cases: list[dict[str, Any]] = []
-    for name, loss_type, reduction, parameter in definitions:
+    runs = [(name, loss_type, reduction, parameter, prediction_values, target_values)
+            for name, loss_type, reduction, parameter in definitions]
+    # TOFIX228 1.4 (ORA-08): batch sizes 1, 7 (prime) and 64 and three seeds,
+    # from a local generator so the cases above keep their values.
+    sizes = torch.Generator().manual_seed(2284)
+    for seed, rows, columns in [(1, 1, 3), (2, 7, 5), (3, 64, 4)]:
+        sizes.manual_seed(2284 + seed)
+        preds = (torch.randn(rows, columns, generator=sizes) * 2.0).tolist()
+        targs = torch.randn(rows, columns, generator=sizes).tolist()
+        for loss_type, reduction, parameter in [("mse", "mean", 0.0), ("l1", "sum", 0.0),
+                                                ("smooth_l1", "mean", 0.5), ("huber", "mean", 1.0)]:
+            runs.append((f"{loss_type}_{reduction}_batch{rows}_seed{seed}", loss_type, reduction,
+                         parameter, preds, targs))
+    for name, loss_type, reduction, parameter, prediction_values, target_values in runs:
         predictions = torch.tensor(
             prediction_values, dtype=torch.float32, requires_grad=True
         )
@@ -2812,6 +2825,26 @@ def cross_entropy_matrix() -> list[dict[str, Any]]:
             "smoothing": 0.2,
         },
     ]
+    # TOFIX228 1.4 (ORA-08): batch sizes 1, 7 (prime) and 64, five classes,
+    # three seeds, index and soft targets, from a local generator so the cases
+    # above keep their values.
+    sizes = torch.Generator()
+    for seed, rows in [(1, 1), (2, 7), (3, 64)]:
+        sizes.manual_seed(2285 + seed)
+        logits = (torch.randn(rows, 5, generator=sizes) * 2.0).tolist()
+        indices = torch.randint(0, 5, (rows,), generator=sizes)
+        if rows > 1:
+            indices[0] = -100
+        soft = torch.softmax(torch.randn(rows, 5, generator=sizes), dim=1).tolist()
+        definitions += [
+            {"name": f"index_mean_weighted_smoothed_batch{rows}_seed{seed}", "logits": logits,
+             "targets": indices.tolist(), "target_form": "index", "reduction": "mean",
+             "weights": [1.0, 0.5, 2.0, 1.5, 3.0], "smoothing": 0.1},
+            {"name": f"index_sum_batch{rows}_seed{seed}", "logits": logits,
+             "targets": indices.tolist(), "target_form": "index", "reduction": "sum"},
+            {"name": f"soft_mean_batch{rows}_seed{seed}", "logits": logits,
+             "targets": soft, "target_form": "soft", "reduction": "mean"},
+        ]
     cases: list[dict[str, Any]] = []
     for definition in definitions:
         name = definition["name"]

@@ -1,3 +1,4 @@
+#include "../ui_tokens.h"
 #include "studio_debugger_panel.h"
 #include "studio_debugger_colors.h"
 #include "studio_debugger_widgets.h"
@@ -473,14 +474,16 @@ void StudioDebuggerPanel::RenderSectionRail() {
         }
         const bool hovered = ImGui::IsItemHovered();
         ImGui::PopID();
+        // The Engine's list look: the chosen row in the selection wash with the
+        // accent text tint, a hovered one in the hover wash (a 28 % accent fill
+        // turned orange into brown on Unreal Engine).
+        const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
         if (active || hovered) {
             draw->AddRectFilled(min, ImVec2(min.x + size.x, min.y + size.y),
-                                DebuggerU32(active ? DebuggerAccent() : DebuggerBorder(),
-                                            active ? 0.28f : 0.6f),
-                                6.0f);
+                                cyxwiz::ui::ToU32(active ? t.selection : t.hover), 6.0f);
         }
         draw->AddText(ImVec2(min.x + 10.0f, min.y + 6.0f),
-                      DebuggerU32(active ? DebuggerBright() : DebuggerText()), entry.label);
+                      cyxwiz::ui::ToU32(active ? t.accent_text : t.text), entry.label);
         const auto tone = view_section_tone_.find(entry.section);
         if (tone != view_section_tone_.end()) {
             draw->AddCircleFilled(ImVec2(min.x + size.x - 12.0f, min.y + size.y * 0.5f), 3.5f,
@@ -801,7 +804,9 @@ void StudioDebuggerPanel::RenderWorkbenchBody() {
     const ImVec2 available_size = ImGui::GetContentRegionAvail();
     const float rail_width = available_size.x >= 700.0f ? 150.0f : 118.0f;
 
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, DebuggerInputBg());
+    // The section rail is navigation on the window, as the Data Studio's stage
+    // list (it was in the field colour, owner 2026-11-14).
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 10.0f));
     ImGui::BeginChild("StudioDebuggerSectionRail", ImVec2(rail_width, available_size.y),
                       ImGuiChildFlags_AlwaysUseWindowPadding);

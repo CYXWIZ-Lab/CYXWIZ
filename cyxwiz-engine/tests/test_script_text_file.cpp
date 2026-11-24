@@ -84,6 +84,14 @@ int main() {
     Check(ReadAll(file) == crlf_bom, "failed write elsewhere left the file alone");
     std::filesystem::remove_all(dir);
 
-    std::cout << "script text file: writable rule, Save As path, BOM/CRLF round trip, atomic write. OK\n";
+    // Preferences > Script Editor: a new file's line endings
+    Check(NewFileLineEnding(1) == LineEnding::LF && NewFileLineEnding(2) == LineEnding::CRLF, "new file: LF / CRLF");
+#ifdef _WIN32
+    Check(NewFileLineEnding(0) == LineEnding::CRLF, "new file: as the system (CRLF on Windows)");
+#else
+    Check(NewFileLineEnding(0) == LineEnding::LF, "new file: as the system (LF)");
+#endif
+
+    std::cout << "script text file: writable rule, Save As path, BOM/CRLF round trip, atomic write, new-file line endings. OK\n";
     return 0;
 }

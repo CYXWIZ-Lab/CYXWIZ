@@ -1,4 +1,5 @@
 #include "pipeline_executor.h"
+#include "column_list.h"
 #include "dataset_lineage.h"
 #include "sha256_digest.h"
 #include "hashing_output_stream.h"
@@ -86,6 +87,7 @@ std::string OperatorOutputName(const std::string& type, int id) {
 bool TryParseFiniteDouble(const std::string& value, double& out);
 bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type);
 bool IsStringArrowType(const std::shared_ptr<arrow::DataType>& type);
+std::string NanAsNullSql(const std::string& quoted, const std::shared_ptr<arrow::DataType>& type);
 std::string ParameterOrDefault(
     const std::map<std::string, std::string>& parameters,
     const char* key,
@@ -242,15 +244,9 @@ std::string ToUpperAscii(std::string value) {
     return value;
 }
 
+// Appends the names in a column list (quoted names: core/column_list.h).
 void ParseCommaList(const std::string& value, std::vector<std::string>& out) {
-    std::stringstream parts(value);
-    std::string part;
-    while (std::getline(parts, part, ',')) {
-        const std::string trimmed = TrimString(part);
-        if (!trimmed.empty()) {
-            out.push_back(trimmed);
-        }
-    }
+    for (auto& name : cyxwiz::ParseColumnList(value)) out.push_back(std::move(name));
 }
 
 std::map<std::string, std::string> ParseRenameMapping(const std::string& mapping) {
@@ -573,17 +569,9 @@ bool BuildUnitConverterExpression(const std::string& category,
     return true;
 }
 
+// A step's column list; a name with a comma or edge spaces is quoted.
 std::vector<std::string> ParseCommaSeparatedNames(const std::string& value) {
-    std::vector<std::string> result;
-    std::stringstream stream(value);
-    std::string name;
-    while (std::getline(stream, name, ',')) {
-        name = TrimString(name);
-        if (!name.empty()) {
-            result.push_back(name);
-        }
-    }
-    return result;
+    return cyxwiz::ParseColumnList(value);
 }
 
 bool ResolveDataInputColumnProjection(
@@ -719,6 +707,13 @@ bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type) {
         default:
             return false;
     }
+}
+
+// A float column's value with NaN read as missing: training counts a NaN as
+// a missing value, so filling and the IS EMPTY test treat it as one too.
+std::string NanAsNullSql(const std::string& quoted, const std::shared_ptr<arrow::DataType>& type) {
+    if (!type || (type->id() != arrow::Type::FLOAT && type->id() != arrow::Type::DOUBLE)) return quoted;
+    return "(CASE WHEN isnan(" + quoted + ") THEN NULL ELSE " + quoted + " END)";
 }
 
 bool IsStringArrowType(const std::shared_ptr<arrow::DataType>& type) {
@@ -895,11 +890,14 @@ private:
             }
             Consume();
             const std::string name = QuoteSqlIdentifier(column);
-            const bool text = IsStringArrowType(table_->schema()->field(column_index)->type());
+            const auto& type = table_->schema()->field(column_index)->type();
+            const bool text = IsStringArrowType(type);
+            // A number column's NaN is empty too, as training counts it.
+            const std::string value = NanAsNullSql(name, type);
             if (negated) {
-                expression = text ? "(" + name + " IS NOT NULL AND " + name + " <> '')" : name + " IS NOT NULL";
+                expression = text ? "(" + name + " IS NOT NULL AND " + name + " <> '')" : value + " IS NOT NULL";
             } else {
-                expression = text ? "(" + name + " IS NULL OR " + name + " = '')" : name + " IS NULL";
+                expression = text ? "(" + name + " IS NULL OR " + name + " = '')" : value + " IS NULL";
             }
             return true;
         }
@@ -3136,7 +3134,7 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
 
     source_node_ids_.clear();
     for (const auto& node : nodes)
-        if (node.type == "DataInput" || node.type == "DatasetInput" || node.type == "FileInput") source_node_ids_.insert(node.id);
+        if (node.type == "DataInput" || node.type == "FileInput") source_node_ids_.insert(node.id);
 
     if (!ResolveAutomaticPreprocessingStatePaths(nodes)) {
         ReportError(Error().empty()
@@ -4749,17 +4747,31 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
         // DuckDB reads the input under this name
         std::string temp_table = "temp_" + std::to_string(node.id);
 
-        // Execute DISTINCT query
+        // Rows are compared on their data columns only. The internal "__"
+        // columns (the split's partition, a row's role) are not data: with
+        // them, a row in Train and its copy in Test were two distinct rows,
+        // and the copy the step exists to remove stayed (TOFIX223 0.10). Of
+        // the copies, the one with the lowest internal values is kept (the
+        // Train copy), so the result does not depend on scan order.
+        std::vector<std::string> internal_columns, data_columns;
+        for (const auto& field : input_table->schema()->fields()) {
+            (field->name().rfind("__", 0) == 0 ? internal_columns : data_columns).push_back(field->name());
+        }
         std::string sql = "SELECT DISTINCT * FROM " + temp_table;
         auto columns_it = node.parameters.find("columns");
-        if (columns_it != node.parameters.end() &&
-            !TrimString(columns_it->second).empty()) {
-            std::vector<std::string> dedupe_columns;
+        const bool named_columns = columns_it != node.parameters.end() && !TrimString(columns_it->second).empty();
+        if (named_columns || !internal_columns.empty()) {
+            std::vector<std::string> dedupe_columns = data_columns;
             std::string column_error;
-            if (!ResolveExistingColumns(input_table, diagnostic_name,
+            if (named_columns &&
+                !ResolveExistingColumns(input_table, diagnostic_name,
                                         columns_it->second, dedupe_columns,
                                         column_error)) {
                 ReportError(column_error);
+                return false;
+            }
+            if (dedupe_columns.empty()) {
+                ReportError(diagnostic_name + ": the table has no data columns to compare");
                 return false;
             }
 
@@ -4774,9 +4786,11 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
                 rank_column += "_";
             }
 
+            const std::string keep_order =
+                internal_columns.empty() ? std::string() : " ORDER BY " + JoinQuotedColumns(internal_columns);
             sql = "SELECT " + JoinQuotedColumns(output_columns) +
                   " FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY " +
-                  JoinQuotedColumns(dedupe_columns) + ") AS " +
+                  JoinQuotedColumns(dedupe_columns) + keep_order + ") AS " +
                   QuoteSqlIdentifier(rank_column) + " FROM " + temp_table +
                   ") WHERE " + QuoteSqlIdentifier(rank_column) + " = 1";
         }
@@ -5082,7 +5096,8 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                         strategy == "mean"
                             ? "AVG"
                             : (strategy == "median" ? "MEDIAN" : "MODE");
-                    aggregate_sql += aggregate + "(" + quoted + ") AS " +
+                    // NaN is missing: it is not averaged, nor counted as a value.
+                    aggregate_sql += aggregate + "(" + NanAsNullSql(quoted, field->type()) + ") AS " +
                                      quoted;
                 }
                 aggregate_sql += " FROM " + temp_table;
@@ -5109,7 +5124,7 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                         !scalar_result.ValueOrDie()->is_valid) {
                         ReportError(
                             "FillMissing: column '" + column +
-                            "' has no non-null training values, so " +
+                            "' has no training values (every Train cell is empty or NaN), so " +
                             strategy +
                             " cannot be fitted. Remove the column or use a "
                             "constant fill value.");
@@ -5171,7 +5186,8 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                     ReportError(constant_error);
                     return false;
                 }
-                expression = "COALESCE(" + quoted_column + ", " +
+                // NaN in a number column is filled as an empty cell is.
+                expression = "COALESCE(" + NanAsNullSql(quoted_column, field->type()) + ", " +
                              constant_expression + ")";
             }
 
@@ -5627,12 +5643,44 @@ std::string PipelineExecutor::PartitionedSource(int input_node, const std::strin
                      name);
         return name;
     }
+    const auto& policy = *split_policy_;
+    // The tables this source's copy is made from: its own, then the supplied
+    // Validation / Test tables when it is the training input.
+    struct SuppliedInput {
+        int8_t part;
+        std::string role, label;
+        std::shared_ptr<arrow::Table> table;
+    };
+    std::vector<SuppliedInput> supplied_inputs;
+    if (input_node == policy.training_input) {
+        for (const auto& [supplied_node, part, role, supplied_label] :
+             {std::tuple{policy.validation_input, int8_t{1}, std::string("Validation"), policy.validation_label_column},
+              std::tuple{policy.test_input, int8_t{2}, std::string("Test"), policy.test_label_column}}) {
+            if (supplied_node < 0) continue;
+            const std::string* supplied_name = ResultForOutput(ctx, supplied_node, std::nullopt);
+            const auto supplied = supplied_name ? registry.GetArrowDataset(*supplied_name) : nullptr;
+            if (!supplied || !supplied->GetArrowTable()) {
+                spdlog::warn("[Pipeline] the {} input is not in memory: training reads its rows without the steps "
+                             "before the Data Split",
+                             role);
+                continue;
+            }
+            supplied_inputs.push_back({part, role, supplied_label, supplied->GetArrowTable()});
+        }
+    }
+    std::vector<std::shared_ptr<arrow::Table>> made_from = {dataset->GetArrowTable()};
+    for (const auto& supplied : supplied_inputs) made_from.push_back(supplied.table);
+
     const std::string key = name + "|" + split_policy_key_;
     std::lock_guard<std::mutex> lock(partitioned_mutex_);
     if (const auto it = partitioned_sources_.find(key);
-        it != partitioned_sources_.end() && registry.GetArrowDataset(it->second))
-        return it->second;
-    const auto& policy = *split_policy_;
+        it != partitioned_sources_.end() && registry.GetArrowDataset(it->second.name)) {
+        bool same_tables = it->second.made_from.size() == made_from.size();
+        for (size_t i = 0; same_tables && i < made_from.size(); ++i)
+            same_tables = it->second.made_from[i].lock() == made_from[i];
+        if (same_tables) return it->second.name;
+        spdlog::info("[Pipeline] '{}' changed since its split was marked: marking it again", name);
+    }
     const bool stratify =
         policy.stratified && dataset->GetArrowTable()->schema()->GetFieldIndex(policy.label_column) >= 0;
     if (policy.stratified && !stratify)
@@ -5650,34 +5698,21 @@ std::string PipelineExecutor::PartitionedSource(int input_node, const std::strin
     std::shared_ptr<arrow::Table> rows = partitioned.ValueOrDie();
     // The supplied Validation / Test rows (TOFIX178 S0-g4): the steps after
     // the training input transform them as they transform its rows.
-    if (input_node == policy.training_input) {
-        for (const auto& [supplied_node, part, role, supplied_label] :
-             {std::tuple{policy.validation_input, int8_t{1}, std::string("Validation"), policy.validation_label_column},
-              std::tuple{policy.test_input, int8_t{2}, std::string("Test"), policy.test_label_column}}) {
-            if (supplied_node < 0) continue;
-            const std::string* supplied_name = ResultForOutput(ctx, supplied_node, std::nullopt);
-            const auto supplied = supplied_name ? registry.GetArrowDataset(*supplied_name) : nullptr;
-            if (!supplied || !supplied->GetArrowTable()) {
-                spdlog::warn("[Pipeline] the {} input is not in memory: training reads its rows without the steps "
-                             "before the Data Split",
-                             role);
-                continue;
-            }
-            auto joined = AppendSuppliedRows(rows, supplied->GetArrowTable(), part, policy.label_column,
-                                             supplied_label, role);
-            if (!joined.ok()) {
-                ReportError(joined.status().message());
-                return {};  // the step fails with the reason
-            }
-            spdlog::info("[Pipeline] the {} input's {} rows join '{}': the steps transform them as they transform "
-                         "its rows, with what they learned from its Train rows",
-                         role, supplied->GetArrowTable()->num_rows(), name);
-            rows = joined.ValueOrDie();
+    for (const auto& supplied : supplied_inputs) {
+        auto joined = AppendSuppliedRows(rows, supplied.table, supplied.part, policy.label_column, supplied.label,
+                                         supplied.role);
+        if (!joined.ok()) {
+            ReportError(joined.status().message());
+            return {};  // the step fails with the reason
         }
+        spdlog::info("[Pipeline] the {} input's {} rows join '{}': the steps transform them as they transform "
+                     "its rows, with what they learned from its Train rows",
+                     supplied.role, supplied.table->num_rows(), name);
+        rows = joined.ValueOrDie();
     }
     const std::string partitioned_name = name + "__split";
     if (!registry.RegisterArrowTable(rows, partitioned_name)) return name;
-    partitioned_sources_[key] = partitioned_name;
+    partitioned_sources_[key] = PartitionedCopy{partitioned_name, {made_from.begin(), made_from.end()}};
     {
         std::lock_guard<std::mutex> owned(owned_mutex_);
         owned_names_[input_node].insert(partitioned_name);  // released with its Data Input

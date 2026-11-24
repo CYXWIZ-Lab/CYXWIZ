@@ -301,6 +301,9 @@ int main() {
         Check(svd.size() == 1 && svd[0].type == "TruncatedSVD" && svd[0].step && !svd[0].second_input &&
                   param(svd[0], "feature_cols") == "x,y,z" && param(svd[0], "n_components") == "3" && param(svd[0], "keep_columns") == "true",
               "hand-off: SVD of rows -> Truncated SVD, Keep clipped to the columns");
+        const auto quoted = linalg::HandOffs(linalg::Op::SVD, {TableChoice{"t", {"a, x", "y"}}, std::nullopt}, 1, {});
+        Check(quoted.size() == 1 && param(quoted[0], "feature_cols") == "\"a, x\",y",
+              "hand-off: a column whose name has a comma is quoted");
         const auto cov = linalg::HandOffs(linalg::Op::Eigen, {TableChoice{"t", {"x", "y"}, FromTable::Covariance}, std::nullopt}, 1, {});
         Check(cov.size() == 2 && cov[0].type == "PCANode" && param(cov[0], "scale") == "false" && param(cov[0], "n_components") == "1" &&
                   cov[1].type == "Whitening" && param(cov[1], "method") == "pca",

@@ -261,7 +261,7 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
     for (const auto& n : nodes) {
         if (IsRLLearnerNode(n.type))
             learners.push_back(&n);
-        else if (n.type == gui::NodeType::DataInput || n.type == gui::NodeType::DatasetInput ||
+        else if (n.type == gui::NodeType::DataInput ||
                  std::any_of(n.outputs.begin(), n.outputs.end(), [](const gui::NodePin& pin) {
                      return pin.type == gui::PinType::Loss || pin.type == gui::PinType::Optimizer;
                  }))

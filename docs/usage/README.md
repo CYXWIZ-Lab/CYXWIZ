@@ -13,6 +13,8 @@ To write your own nodes in Python or C++, see
 | [The menu bar](menu_bar.md) | File to Help, the project and your account at the top right |
 | [The CyxWiz Studio bar](studio_toolbar.md) | The bar at the top of the canvas |
 | [Windows of their own](windows.md) | Moving the big windows out of the main window |
+| [Preferences](preferences.md) | How the Engine starts (start page or the last project), recent projects kept, asking before closing |
+| [Theme Editor](theme_editor.md) | Every colour the Engine draws, the accent, and saving your own theme |
 | [Asset Browser](asset_browser.md) | The project's folders and files, previews, new files |
 | [Properties](properties.md) | The Properties panel for the selected node |
 | [Console and logs](console_logs.md) | Logs, the Python REPL and commands |
@@ -23,6 +25,7 @@ To write your own nodes in Python or C++, see
 | --- | --- |
 | [Adding nodes](node_palette.md) | The Nodes panel, search and the right-click menu |
 | [Node dialogs](node_dialogs.md) | Configuring a node in its dialog |
+| [Patterns](patterns.md) | Ready-made full graphs and blocks, what data each expects, the ones not usable yet |
 | [Branched graphs](branched_graphs.md) | Split and merge inside a model |
 | [Groups, frames and names](canvas_groups_frames.md) | Grouping and naming nodes, frames, copy and paste, renaming |
 | [Your own nodes](extension_nodes.md) | Python node bundles and C++ plugins in the Engine: install, approve, use |
@@ -92,6 +95,7 @@ To write your own nodes in Python or C++, see
 
 | Page | What it covers |
 | --- | --- |
+| [The Training Dashboard](training_dashboard.md) | The run's state, where it ran and on what data, how it ended, the active model and held-out test, Run details, the cards |
 | [Testing a trained model](testing.md) | Running a test on the test split; Results > Test: errors, threshold, calibration, a decision kept with the model |
 | [Seeds and reproducibility](seeds_and_reproducibility.md) | What each seed draws; the same draws on every operating system and device |
 | [The Model window](model_tools.md) | Tools > Model: summary (parameters, multiply-adds, memory), learning-rate range test, Grad-CAM / saliency / Integrated Gradients, training health, projector |

@@ -26,10 +26,12 @@ bool FindToggle(const char* label, const char* tooltip, bool* value) {
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5.0f, 2.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, *value ? ui::WithAlpha(t.accent, 0.40f) : ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, *value ? ui::WithAlpha(t.accent, 0.55f) : t.hover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ui::WithAlpha(t.accent, 0.60f));
-    ImGui::PushStyleColor(ImGuiCol_Text, *value ? t.text_bright : t.text_dim);
+    // On: the one selection look (selection wash, accent text tint).
+    const ImVec4 on_hover = ui::WithAlpha(t.selection, t.selection.w + 0.08f);
+    ImGui::PushStyleColor(ImGuiCol_Button, *value ? t.selection : ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, *value ? on_hover : t.hover);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, on_hover);
+    ImGui::PushStyleColor(ImGuiCol_Text, *value ? t.accent_text : t.text_dim);
     const bool clicked = ImGui::SmallButton(label);
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar(2);
@@ -180,7 +182,7 @@ void ScriptEditorPanel::RenderFindWidget(CodeEditor& code, const ImVec2& code_mi
         ImGui::SetKeyboardFocusHere();
         find_.focus_input = 0;
     }
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ui::Mix(t.bg_window, ImVec4(0, 0, 0, 1), t.light ? 0.0f : 0.25f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_input);
     if (!find_.error.empty()) ImGui::PushStyleColor(ImGuiCol_Text, t.error);
     ImGui::SetNextItemWidth(input_w);
     const bool enter = ImGui::InputTextWithHint("##find_query", "Find", find_.query, sizeof(find_.query),
@@ -225,7 +227,7 @@ void ScriptEditorPanel::RenderFindWidget(CodeEditor& code, const ImVec2& code_mi
             find_.focus_input = 0;
         }
         const float buttons_w = ui::ButtonWidth("Replace", ui::ButtonSize::Small) + ui::ButtonWidth("Replace all", ui::ButtonSize::Small) + 8.0f;
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ui::Mix(t.bg_window, ImVec4(0, 0, 0, 1), t.light ? 0.0f : 0.25f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_input);
         ImGui::SetNextItemWidth(std::max(80.0f, ImGui::GetContentRegionAvail().x - buttons_w));
         const bool replace_enter = ImGui::InputTextWithHint("##find_replace", "Replace", find_.replacement,
                                                             sizeof(find_.replacement), ImGuiInputTextFlags_EnterReturnsTrue);

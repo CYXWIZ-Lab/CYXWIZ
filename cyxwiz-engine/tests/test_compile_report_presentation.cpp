@@ -301,6 +301,52 @@ void CheckTextNotTokenized() {
           "images without Resize offer Add a Resize; audio without features offers the feature nodes");
 }
 
+// Missing values (TOFIX223 0.3): the card is the verdict; "Fix and train"
+// while it is open, "Train" once it is fixed; Copy report lists the columns.
+void CheckMissingValues() {
+    namespace mv = cyxwiz::missing_values_fix;
+    mv::Input card_in;
+    card_in.input_name = "Patients CSV";
+    card_in.total_rows = 1200;
+    cyxwiz::MissingColumn age;
+    age.name = "age";
+    age.rows = 37;
+    cyxwiz::MissingColumn label;
+    label.name = "diagnosis";
+    label.rows = 4;
+    label.label = true;
+    card_in.columns = {age, label};
+    Input in;
+    in.mode = Mode::TrainBlocked;
+    in.compiled_ok = true;
+    in.missing_values = {mv::BuildCard(card_in)};
+    Report r = BuildReport(in);
+    Check(r.verdict == "Training did not start: 2 columns have missing values" && r.verdict_tone == Tone::Error,
+          "missing values verdict: " + r.verdict);
+    Check(r.offer_fix_and_train && !r.offer_train && r.fix_and_train_blocked.empty(), "Fix and train is offered");
+    Check(r.errors == 1 && r.chips.front().text == "1 error", "an open card is an error: " + r.chips.front().text);
+    Check(r.copy_text.find("Missing values") != std::string::npos &&
+              r.copy_text.find("feature age: 37 empty") != std::string::npos,
+          "Copy report lists the columns");
+    card_in.features = mv::Done::Filled;
+    card_in.label = mv::Done::Dropped;
+    in.missing_values = {mv::BuildCard(card_in)};
+    r = BuildReport(in);
+    Check(r.verdict == "Fixed: 2 steps added after Patients CSV" && r.verdict_tone == Tone::Ok && r.offer_train &&
+              !r.offer_fix_and_train && r.errors == 0,
+          "fixed: " + r.verdict);
+    Check(r.missing_value_groups == 2, "the Findings tab counts the card's two groups");
+
+    // A supplied Test input with only empty labels: no step reaches it, and
+    // Fix and train says which input to fix (not an empty name).
+    mv::Input supplied = mv::MakeInput({label}, 50, "Patients test CSV", "Test");
+    in.missing_values = {mv::BuildCard(supplied)};
+    r = BuildReport(in);
+    Check(r.fix_and_train_blocked ==
+              "The missing values of Patients test CSV cannot be fixed with a step here: fix them in its file.",
+          "blocked: " + r.fix_and_train_blocked);
+}
+
 int main() {
     CheckFailedCompile();
     CheckReady();
@@ -309,7 +355,8 @@ int main() {
     CheckAttentionFirst();
     CheckMemoryRisk();
     CheckTextNotTokenized();
+    CheckMissingValues();
     std::cout << "compile report presentation: failed, ready, training memory, blocked, placement, memory risk, text not "
-                 "tokenized. OK\n";
+                 "tokenized, missing values. OK\n";
     return 0;
 }

@@ -3,7 +3,7 @@
 // reference/generate_roc_pr_fixtures.py. Binary curves point by point with
 // AUC / AP, and one-vs-rest AUC / AP per class with the macro AP. Runs on the
 // active ArrayFire backend (CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu).
-#include "test_device_selection.h"
+#include "../oracle/oracle_test.h"
 
 #include <cyxwiz/model_evaluation.h>
 
@@ -92,7 +92,7 @@ void RunMulticlass(const json& c, const std::string& name) {
 }  // namespace
 
 int main(int, char** argv) {
-    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
+    Check(cyxwiz::test::BeginOracleTest("test_computation_truth_roc_pr"), "requested test device");
     std::ifstream in(FixturePath(argv[0]));
     Check(static_cast<bool>(in), "cannot open the ROC / PR fixture");
     const json fixture = json::parse(in);

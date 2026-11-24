@@ -91,11 +91,10 @@ std::string BuildCausalLmGraphJson(bool supplied_roles = false) {
 
     graph["nodes"].push_back({
         {"id", 1},
-        {"type", static_cast<int>(gui::NodeType::DatasetInput)},
+        {"type", static_cast<int>(gui::NodeType::DataInput)},
         {"name", "Token IDs"},
         {"parameters", {
             {"dataset_name", "causal_lm_generation_roundtrip_dataset"},
-            {"dataset", "causal_lm_generation_roundtrip_dataset"},
             {"shape", "[4]"},
             {"create_causal_lm_targets", "true"},
             {"max_sequence_length", "4"}

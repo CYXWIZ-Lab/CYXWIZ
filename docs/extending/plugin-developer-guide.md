@@ -207,9 +207,9 @@ snake.parameters = {{"initial_a", "float", "1.0", "Starting value of the frequen
 | Field | Rule and where the user sees it |
 |---|---|
 | `type_name` | Letters `A-Z a-z`, digits, `_`. With the plugin id it forms the type id `com.cyxwiz.examples.activation-nodes:Snake`, saved in graphs. Do not rename it |
-| `display_name` | The node's title on the canvas and in the Node Browser (empty: `type_name`) |
-| `category` | Your own group name; the Node Browser and search group by it |
-| `description` | Shown in the Node Browser, Info panel and Properties |
+| `display_name` | The node's title on the canvas and in the Nodes panel (empty: `type_name`) |
+| `category` | Your own group name; the Nodes panel and search group by it |
+| `description` | Shown in the Nodes panel, Info panel and Properties |
 | `version` | The version of this node's pins and settings. Saved with the graph; a different version when a graph is opened gives a warning on the node |
 | `color` | Header colour, `IM_COL32` layout (`0xAABBGGRR`). A colour with alpha 0, such as `0`, uses the Engine's plugin node colour |
 | `icon` | Leave empty: the Engine uses its plug icon |
@@ -559,7 +559,7 @@ What the fingerprint cannot see:
   Engine keeps the library loaded until the last such module is gone. You do
   not need to handle this.
 - The **Apps** menu lists your plugin under *Loaded plugins* with what it
-  adds (*2 nodes*); choosing it opens the Node Browser on your nodes.
+  adds (*2 nodes*); choosing it opens the Nodes panel on your nodes.
 
 ### Logs
 

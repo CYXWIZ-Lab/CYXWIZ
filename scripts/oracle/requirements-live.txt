@@ -1,0 +1,19 @@
+# The Python packages the fixture generators need for nightly_oracle.py --live
+# (Python 3.12; CPU wheels are enough). Install: py -3.12 -m pip install -r requirements-live.txt
+torch
+torchvision
+numpy
+scipy
+scikit-learn
+pandas
+statsmodels
+PyWavelets
+gymnasium
+gensim
+opencv-python-headless
+stable-baselines3
+nltk
+safetensors
+sympy
+vaderSentiment
+# Also imported: pycyxwiz and torch_to_cyxgraph (this repository).

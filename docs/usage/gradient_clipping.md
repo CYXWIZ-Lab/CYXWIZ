@@ -57,7 +57,7 @@ problem appears; clipping cannot repair gradients that are already NaN.
 
 ## Checked against PyTorch
 
-`gradient_clipping_pytorch_parity` compares the Engine's three clip paths
+`oracle_computation_truth_gradient_clipping_cpu` compares the Engine's three clip paths
 (the optimizer nodes' clip, PPO's per-tensor path, and the clip inside the
 fused Adam step PPO uses on an NVIDIA GPU) with `clip_grad_norm_` followed by
 `torch.optim.Adam`: a clip that bites, one that does not, a NaN norm and an

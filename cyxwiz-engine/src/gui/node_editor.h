@@ -7,6 +7,7 @@
 #include <map>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include "../core/rl_device_presentation.h"
 #include <memory>
 #include <optional>
@@ -23,6 +24,7 @@ struct ImNodesEditorContext;
 
 // Forward declarations
 // Forward declare ScriptingEngine in global scripting namespace
+#include "../core/code_export.h"
 #include "../core/graph_model.h"
 #include "../core/graph_simulation_session.h"
 #include "../core/simulation_commands.h"
@@ -76,6 +78,7 @@ enum class IconPack {
 };
 
 // The canvas icon of a node type in an icon pack (the Studio's Icon pack choice).
+// The pack in use is an appearance setting (appearance_settings NodeIconPack).
 const char* NodeIconFor(IconPack pack, NodeType type);
 // The codepoints NodeIconFor uses from a pack, as ImGui glyph ranges (pairs, 0
 // at the end). The font atlas keeps only these from the extra packs instead
@@ -102,23 +105,6 @@ struct DataBoundaryMigrationResult {
 };
 
 // Graph snapshot for undo/redo
-struct GraphSnapshot {
-    std::vector<SubgraphData> subgraphs;
-    std::map<int, ImVec2> positions;
-    std::vector<MLNode> nodes;
-    std::vector<NodeLink> links;
-    int next_node_id;
-    int next_pin_id;
-    int next_link_id;
-};
-
-// Supported code generation frameworks
-enum class CodeFramework {
-    PyTorch,
-    TensorFlow,
-    Keras,
-    PyCyxWiz
-};
 
 // Execution modes for the unified canvas (Unified Canvas Phase 2)
 enum class ExecutionMode {
@@ -224,6 +210,18 @@ struct CanvasAnnotation {
         , size(200, 100)
         , color(0)  // set by the creator: DefaultAnnotationColour() or the saved colour
         , is_minimized(false) {}
+};
+
+struct GraphSnapshot {
+    std::vector<SubgraphData> subgraphs;
+    std::map<int, ImVec2> positions;
+    std::vector<MLNode> nodes;
+    std::vector<NodeLink> links;
+    int next_node_id;
+    int next_pin_id;
+    int next_link_id;
+    std::vector<CanvasAnnotation> annotations;  // notes undo with the graph
+    int next_annotation_id = 1;
 };
 
 // Canvas Frame - visual organization box (drag from Node Browser)
@@ -336,16 +334,17 @@ public:
     // Policy Playback's window, for View > Panels (it says how to get a policy when none plays)
     bool* GetPolicyPlaybackVisiblePtr();
 
-    // Icon pack selection (for node icons)
-    void SetIconPack(IconPack pack) { icon_pack_ = pack; }
-    IconPack GetIconPack() const { return icon_pack_; }
-
     // Access to graph data for compilation
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
     // Configure a node as a double-click does (Properties "Open Dialog...").
     void OpenNodeConfiguration(int node_id) { ConfigureNode(node_id); }
+    // The Edit menu while the canvas has the focus: what the canvas's own keys do.
+    enum class EditCommand { Undo, Redo, Cut, Copy, Paste, Delete, SelectAll, Find };
+    void RunEditCommand(EditCommand command);
     // "Edit roles in Data Studio" in a Dashboard window (MainWindow opens the Profile tab).
     void SetOpenDataStudioProfileCallback(std::function<void(const std::string&)> cb) { open_data_studio_profile_ = std::move(cb); }
+    // Shows a pattern in the Pattern Browser (the link after Save selection as pattern).
+    void SetOpenPatternCallback(std::function<void(const std::string&)> cb) { open_pattern_ = std::move(cb); }
     // Add to Dashboard from Data Studio (TOFIX134 P3.11): the Dashboard nodes and
     // whether each shows `dataset`; the Data Input a new one would read; the add
     // itself is applied in the editor's next frame (node 0: a new Dashboard node).
@@ -385,6 +384,10 @@ public:
     // File > Save: writes the graph to its file, asking for one the first time.
     // An empty graph is nothing to save and returns true.
     bool SaveCurrentGraph();
+    // The canvas holds changes not written to its file (an empty canvas never does)
+    bool HasUnsavedGraph() const { return unsaved_ && !nodes_.empty(); }
+    // "mnist_mlp.cyxgraph", or "Untitled graph" before its first save
+    std::string GraphDisplayName() const;
     std::string GetNodeTypeDisplayName(NodeType type) const { return GetNodeTypeName(type); }
 
     // The graph simulation run: Properties reads Scope history and sends
@@ -421,9 +424,8 @@ public:
     using DebugCallback = std::function<void()>;
     void SetDebugCallback(DebugCallback callback) { debug_callback_ = callback; }
 
-    // Open Custom Node Editor callback - opens the CustomNodeEditorPanel from the Studio toolbar
-    using OpenCustomNodeEditorCallback = std::function<void()>;
-    void SetOpenCustomNodeEditorCallback(OpenCustomNodeEditorCallback callback) { open_custom_node_editor_callback_ = callback; }
+    // Make a Python node, from the Studio toolbar's More menu
+    void SetOpenPythonNodeMakerCallback(std::function<void()> callback) { open_python_node_maker_callback_ = std::move(callback); }
 
     // Open Studio Debugger callback - opens the debugger panel from the Studio toolbar
     using OpenStudioDebuggerCallback = std::function<void()>;
@@ -439,8 +441,9 @@ public:
     using ExplainNodeCallback = std::function<void(int)>;
     void SetExplainNodeCallback(ExplainNodeCallback callback) { explain_node_callback_ = std::move(callback); }
 
-    // A node newly selected on the canvas (the Info panel shows it).
-    using NodeSelectedCallback = std::function<void(const MLNode&)>;
+    // A node newly selected on the canvas (the Info panel shows it), or
+    // nullptr when the node last sent is gone (deleted, undone, another graph).
+    using NodeSelectedCallback = std::function<void(const MLNode*)>;
     void SetNodeSelectedCallback(NodeSelectedCallback callback) { node_selected_callback_ = std::move(callback); }
 
     // The table node `node_id` holds from the canvas runs when it and every step
@@ -543,8 +546,6 @@ public:
     void SetNodeExecutionError(int node_id, const std::string& error);
     void ClearExecutionStates();
 
-    // Update DatasetInput node name based on loaded dataset
-    void UpdateDatasetNodeName(const std::string& dataset_name);
 
     // Dynamic pins: rebuild a node's pins from plugin-provided data.
     // Called when a trigger parameter changes on a supports_dynamic_pins node.
@@ -552,9 +553,15 @@ public:
     // looked for again), not an edit the user can undo
     void ResolveDynamicPins(int node_id, bool record_undo = true);
 
+    // Where an inserted pattern goes: below the graph (a block, or an empty
+    // canvas), to its right, or in place of it (one undo step brings the graph
+    // back; its saved file is untouched until the next Save).
+    enum class PatternPlacement { Below, Beside, Replace };
     // Pattern insertion - add multiple nodes and links from a pattern template
-    // (fresh ids, so a pattern never shares an id with the canvas).
-    void InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    // (fresh ids, so a pattern never shares an id with the canvas). Returns
+    // why nothing was added (a run or a load is using the graph), or empty.
+    std::string InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links,
+                              PatternPlacement placement = PatternPlacement::Below);
     // Replace the graph with an edited copy of it (Neural Architecture
     // Search): unchanged nodes keep their id, place and group; new or retyped
     // nodes are built for their type and placed between their neighbours.
@@ -576,10 +583,15 @@ public:
     // name (a starter or template opened from the Engine's own files must not
     // be overwritten).
     void DetachFromFile();
+    // An example opened to work on: DetachFromFile, and each Data Input's
+    // relative data path (examples/datasets/..., found from the example's
+    // folder) points at the file it found, so the copy still finds its data
+    // after Save As anywhere (project-relative inside the open project).
+    void DetachFromExample();
     // The generated code for a framework, synchronously and without the
     // script editor (headless export: cyxwiz-engine --export-code; TOFIX112
     // export harness). Empty with a log line when the graph cannot be sorted.
-    std::string GenerateCodeText(CodeFramework framework);
+    std::string GenerateCodeText(cyxwiz::CodeFramework framework);
 
     // Load pattern template format as graph (converts string IDs to int, resolves parameters)
     bool LoadPatternAsGraph(const nlohmann::json& j);
@@ -596,15 +608,6 @@ public:
     void Show() { show_window_ = true; }
     // Show and bring the CyxWiz Studio tab to the front (gui::BringToFront).
     void Raise();
-
-    // ===== Data Studio Integration (Phase 5 Week 7) =====
-
-    /**
-     * Set dataset from Data Studio deployment
-     * Finds or creates a DatasetInput node and populates it with the dataset
-     * Automatically frames the node after creation
-     */
-    void SetDatasetFromDataStudio(const std::string& dataset_name);
 
     // ===== Skip/Residual Connection Helpers =====
 
@@ -793,6 +796,10 @@ public:
     // The node the last RequestStepAfter / RequestBranchAfter added (-1: none
     // yet); Data Studio's Prepare picks it once it is on the canvas.
     int LastAddedStep() const { return last_added_step_; }
+    // Step inserts, replacements or moves still waiting for the next canvas frame.
+    bool HasPendingStepRequests() const {
+        return !pending_steps_after_.empty() || !pending_replacements_.empty() || !pending_step_moves_.empty();
+    }
     int ReplacedBy(int old_id) const {
         const auto it = replaced_by_.find(old_id);
         return it == replaced_by_.end() ? -1 : it->second;
@@ -912,10 +919,19 @@ private:
     void CarryDockFromOldName();
     bool dock_carried_ = false;
     void DrawStudioDialogs();
+    // Actions > Save selection as pattern... (TOFIX178 4e): the dialog, and the
+    // notice on the canvas after a save.
+    void OpenSavePatternDialog();
+    void DrawSavePatternDialog();
+    void RenderSavedPatternNotice();
     // An empty canvas says how to start (TOFIX129 A3-3).
     void RenderEmptyCanvas();
     std::function<void()> open_nodes_panel_callback_;
     std::vector<StarterGraph> starter_graphs_;  // found once, on the first empty canvas
+    // An example picked on the empty canvas, opened at the start of the next
+    // frame: opening it while the canvas draws put nodes ImNodes had not seen
+    // in front of the minimap, which crashed the Engine.
+    std::string pending_example_path_;
     bool starter_graphs_found_ = false;
     void InsertFlatten();
     // Save and Save As from the Studio on an empty canvas say why nothing was written.
@@ -1045,8 +1061,11 @@ private:
     std::vector<int> NodesInsideFrame(const CanvasFrame& frame) const;
     void DuplicateSelection();
 
-    // Helper for finding empty position
-    ImVec2 FindEmptyPosition();
+    // The free spot nearest the middle of the view for something of `size`
+    // (grid units); the default is a node's box with its labels and pins.
+    static constexpr ImVec2 kNodeFootprint{140.0f, 110.0f};
+    static constexpr ImVec2 kNoteSize{200.0f, 100.0f};
+    ImVec2 FindEmptyPosition(ImVec2 size = kNodeFootprint);
 
     // Keyboard shortcuts
     void HandleKeyboardShortcuts();
@@ -1055,6 +1074,9 @@ private:
     // Pans (and for FrameNodes zooms, at most to 100%) so grid-space points
     // sit in the middle of the canvas at the current zoom.
     void CenterViewOn(ImVec2 grid_point);
+    // Centres the view on a box (grid space) that is not fully on screen: a node
+    // or note placed in a free spot off the visible area stays in sight.
+    void RevealIfOffScreen(ImVec2 grid_min, ImVec2 size);
     void FrameNodes(const std::vector<int>& node_ids);
 
     // Search functionality
@@ -1098,6 +1120,8 @@ private:
     // Annotation rendering and interaction
     void RenderAnnotations();
     void RenderAnnotationEditPopup();
+    void RenderNoteMenu();          // right-click on a note: Edit, Minimise, Delete
+    void DeleteNote(int note_id);   // undoable
     void HandleAnnotationInteraction();
     void ShowAnnotationContextMenu(int annotation_id);
     void ShowAnnotationEditPopup();
@@ -1120,37 +1144,6 @@ private:
     bool SetSubgraphPreparationRecipe(int node_id, bool recipe);
     bool IsSubgraphMember(int node_id) const;
 
-    // Framework-specific generators
-    std::string GeneratePyTorchCode(const std::vector<int>& sorted_ids);
-    // PyTorch export of the optimizer node's training recipe (tofix112).
-    const MLNode* FindExportOptimizerNode() const;
-    const MLNode* FindExportSchedulerNode() const;
-    std::string PyTorchOptimizerSetup() const;
-    std::string PyTorchPenaltyLines() const;
-    std::string PyTorchStepLines() const;
-    std::string GenerateTensorFlowCode(const std::vector<int>& sorted_ids);
-    std::string GenerateKerasCode(const std::vector<int>& sorted_ids);
-    std::string GeneratePyCyxWizCode(const std::vector<int>& sorted_ids);
-    std::optional<std::string> FindDenseActivationConfigurationError(
-        const std::vector<int>& sorted_ids) const;
-    std::optional<std::string> FindUnsupportedSequentialLayerError(
-        const std::vector<int>& sorted_ids) const;
-
-    // RL-specific code generation
-    bool IsRLGraph(const std::vector<int>& sorted_ids) const;
-    std::string GenerateRLCode(const std::vector<int>& sorted_ids) const;
-
-    // Framework-specific layer conversion
-    std::string NodeTypeToPythonLayer(const MLNode& node);
-    // Output width of the layer feeding `node` (embedding dim, recurrent
-    // hidden size - doubled when bidirectional - or dense units); empty when
-    // it cannot be read from the graph (TOFIX112 export harness).
-    std::string InferredInputWidth(const MLNode& node) const;
-    std::string NodeTypeToTensorFlowLayer(const MLNode& node, int layer_idx);
-    std::string NodeTypeToKerasLayer(const MLNode& node);
-    std::string NodeTypeToPyCyxWizLayer(const MLNode& node);
-
-    std::vector<int> TopologicalSort();
     const MLNode* FindNodeById(int node_id) const;
     MLNode* FindNodeById(int node_id);  // Non-const version
 
@@ -1179,7 +1172,7 @@ private:
     bool show_context_menu_;
     int context_menu_node_id_;  // -1 if clicking on canvas
     int selected_node_id_;  // Currently selected node for properties panel (-1 = none)
-    CodeFramework selected_framework_;  // Current code generation framework
+    cyxwiz::CodeFramework selected_framework_;  // Current code generation framework
     ExecutionMode execution_mode_;      // Unified Canvas Phase 2: Current execution mode
 
     // ImNodes editor context
@@ -1199,6 +1192,9 @@ private:
     std::function<void()> open_debugger_callback_;
 
     // Deferred node addition (to avoid modifying nodes_ while ImNodes is rendering)
+    // A queued node's position meaning "the free spot nearest the middle of
+    // the view", found when it is created (FindEmptyPosition).
+    static constexpr ImVec2 kPlaceInFreeSpot{-99999.0f, -99999.0f};
     struct PendingNode {
         PendingNode(
             NodeType type_value,
@@ -1232,8 +1228,8 @@ private:
     // Local Debug callback (runs one forward + backward pass on synthetic data)
     DebugCallback debug_callback_;
 
-    // Open Custom Node Editor callback (opens CustomNodeEditorPanel)
-    OpenCustomNodeEditorCallback open_custom_node_editor_callback_;
+    // Opens Make a Python node
+    std::function<void()> open_python_node_maker_callback_;
     OpenPluginManagerCallback open_plugin_manager_callback_;
 
     // Open Studio Debugger callback (opens StudioDebuggerPanel)
@@ -1242,7 +1238,10 @@ private:
     // Explain selected node in Studio Debugger.
     ExplainNodeCallback explain_node_callback_;
     NodeSelectedCallback node_selected_callback_;
-    int info_node_id_ = -1;  // the node last sent to node_selected_callback_
+    int info_node_id_ = -1;   // the selection last seen
+    int info_shown_id_ = -1;  // the node last sent to node_selected_callback_
+    NodeType info_shown_type_ = NodeType::Dense;  // and its type: a loaded graph reuses ids
+    std::string info_shown_extension_;
 
     // Deferred focus request so sidebar actions never touch ImNodes outside
     // the live editor render scope.
@@ -1328,9 +1327,6 @@ private:
     ImVec2 canvas_size_ = ImVec2(800.0f, 600.0f);  // the node canvas, read each frame
     ImVec2 canvas_origin_ = ImVec2(0.0f, 0.0f);    // its top-left corner on the screen
 
-    // Icon pack selection (for node icons)
-    IconPack icon_pack_ = IconPack::FontAwesome;  // Default to FontAwesome
-
     // Minimap state
     bool show_minimap_ = true;
     ImVec2 minimap_size_ = ImVec2(180.0f, 140.0f);  // Size of minimap in pixels
@@ -1357,6 +1353,9 @@ private:
     // (positions keyed by the old node id); returns old id -> new id.
     std::map<int, int> AddWithFreshIds(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links,
                                        const std::map<int, ImVec2>& positions);
+    // Empties the canvas (nodes, links, groups, notes, the data they
+    // registered); the caller has checked CanReplaceGraph and saved undo.
+    void ResetGraphContents();
 
     // Deferred position setting (for nodes created outside render context)
     std::map<int, ImVec2> pending_positions_;  // node_id -> position
@@ -1365,6 +1364,10 @@ private:
     // Cached node positions (updated each frame inside BeginNodeEditor/EndNodeEditor scope)
     // Used by FindEmptyPosition() which may be called outside the editor scope
     std::map<int, ImVec2> cached_node_positions_;
+    // The nodes ImNodes drew this frame (filled with the cache inside the
+    // editor scope; Undo / Redo also write the cache, for nodes ImNodes has
+    // not seen yet). The minimap asks ImNodes only about these.
+    std::unordered_set<int> placed_this_frame_;
 
     // Auto-insert Flatten dialog state
     bool show_auto_insert_flatten_dialog_ = false;
@@ -1439,6 +1442,13 @@ private:
     std::vector<CanvasAnnotation> annotations_;
     int next_annotation_id_ = 1;
     int selected_annotation_id_ = -1;
+    int hovered_note_id_ = -1;   // the note under the mouse this frame (RenderAnnotations)
+    int note_menu_id_ = -1;      // the note a right-click opened the note menu on
+    bool open_note_menu_ = false;
+    // A note's move is one undo step: the graph as it was when the title
+    // was pressed, pushed on release if the note moved.
+    std::optional<GraphSnapshot> note_press_snapshot_;
+    ImVec2 note_press_position_{0.0f, 0.0f};
     int dragging_annotation_id_ = -1;
     ImVec2 annotation_drag_offset_ = ImVec2(0, 0);
     bool editing_annotation_ = false;
@@ -1518,6 +1528,18 @@ private:
     std::map<int, std::shared_ptr<cyxwiz::dashboard::DashboardWindow>> dashboard_windows_;
     std::map<int, uint64_t> dashboard_data_versions_;
     std::function<void(const std::string&)> open_data_studio_profile_;
+    std::function<void(const std::string&)> open_pattern_;
+    struct SavePatternState {
+        bool open_request = false;
+        std::vector<int> selected;     // the nodes chosen when the dialog opened
+        char name[128] = "";
+        char description[1024] = "";
+        int category = 0;              // index into the dialog's category list
+        std::string error;             // why the last Save failed
+        std::string saved_id;          // the notice after a save
+        std::string saved_text;
+        double saved_until = 0.0;      // ImGui time the notice goes away
+    } save_pattern_;
     std::function<void(const std::string&, const std::string&)> open_data_studio_query_;
     void OpenDashboardNode(int node_id);
     // The Data Input node whose dataset this is (its ds_datainput_<id> or dataset_name), or -1.
@@ -1549,6 +1571,7 @@ private:
     // .cyxmodel (rl_policy_file_: its file name; empty for the run's)
     std::shared_ptr<cyxwiz::rl::TrainedPolicy> rl_policy_;
     std::string rl_policy_file_;
+    bool rl_policy_from_run_ = false;  // the policy is the last run's (not an earlier run's or a file's)
     std::string rl_policy_message_;  // the last Save / Load outcome, for Properties
     std::unique_ptr<cyxwiz::PolicyPlaybackPanel> rl_playback_;
 
@@ -1602,6 +1625,8 @@ public:
     // Training Dashboard. False with the reason while one runs.
     bool StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfiguration> config, std::string& error);
     bool IsRLTrainingActive() const;
+    // Train > RL Training Dashboard: shows the dashboard (with no run it says how to start one)
+    void ShowRLDashboard();
     void StopRLTraining();
 
     // The trained RL policy (TOFIX195 S5): play it, save it, load one.

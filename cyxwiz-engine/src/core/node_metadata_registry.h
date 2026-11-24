@@ -3,7 +3,6 @@
 #include "node_metadata.h"
 #include <unordered_map>
 #include <vector>
-#include <set>
 #include <string>
 #include <mutex>
 
@@ -209,7 +208,7 @@ private:
     // Storage
     std::unordered_map<NodeType, NodeMetadata> metadata_;
     std::vector<NodeType> recent_nodes_;  // Most recent first
-    std::set<NodeType> favorites_;
+    std::vector<NodeType> favorites_;  // in the order starred (the Nodes panel shows them so)
     bool initialized_ = false;
 
     // Category display order

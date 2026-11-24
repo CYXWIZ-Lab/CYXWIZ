@@ -449,7 +449,7 @@ struct TrainingConfiguration {
 
     // Dataset configuration
     std::string dataset_name;           // Name of dataset in DataRegistry
-    int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
+    int data_source_node_id = -1;       // Selected DataInput node
     ResolvedDatasetPartitions dataset_roles;  // Typed partition resolution
     // Columns the Data Input's column roles keep out of the features (TOFIX129
     // D7a G1): the ID, Group, Weight and Ignore columns set in Explore >
@@ -753,6 +753,27 @@ inline bool UsesContinuousTargetMetrics(
            config.loss_type == gui::NodeType::HuberLoss;
 }
 
+// How many target columns a continuous target has (0 for a class target):
+// the label, then <label>_1 ... <label>_{width-1}, as the batchers read them.
+inline size_t RegressionTargetWidth(const TrainingConfiguration& config) {
+    if (!UsesContinuousTargetMetrics(config)) return 0;
+    return config.target.width > 0 ? config.target.width
+                                   : (config.is_time_series ? config.time_series_target_width
+                                                            : std::max<size_t>(1, config.output_size));
+}
+
+// The target columns a batcher reads for `label_column`: the label itself,
+// and for a continuous target of width > 1 the ordered <label>_1 ... columns.
+inline std::vector<std::string> TrainingTargetColumns(const TrainingConfiguration& config,
+                                                      const std::string& label_column) {
+    std::vector<std::string> columns;
+    if (label_column.empty()) return columns;
+    columns.push_back(label_column);
+    for (size_t target = 1; target < RegressionTargetWidth(config); ++target)
+        columns.push_back(label_column + "_" + std::to_string(target));
+    return columns;
+}
+
 /**
  * GraphCompiler - Compiles visual node graph into executable training configuration
  *
@@ -832,7 +853,7 @@ private:
     ) const;
 
     // Find specific node types
-    const gui::MLNode* FindDatasetInputNode(
+    const gui::MLNode* FindDataInputNode(
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links) const;
     const gui::MLNode* FindLossNode(const std::vector<gui::MLNode>& nodes) const;

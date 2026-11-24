@@ -164,10 +164,10 @@ void NodeEditor::DrawGraphMenu() {
     if (ItemOrReason(ICON_FA_FOLDER_OPEN "  Load...", nullptr, menu.load)) ShowLoadDialog();
     ImGui::Separator();
     if (ItemOrReason(ICON_FA_COPY "  Export a copy of the graph...", nullptr, menu.export_graph)) ExportGraphCopy();
-    if (open_custom_node_editor_callback_ && ImGui::MenuItem(ICON_FA_WAND_MAGIC_SPARKLES "  Custom Node Editor"))
-        open_custom_node_editor_callback_();
-    if (open_custom_node_editor_callback_ && ImGui::IsItemHovered())
-        ImGui::SetTooltip("Create or edit custom node types (pins, parameters, code templates)");
+    if (open_python_node_maker_callback_ && ImGui::MenuItem(ICON_FA_WAND_MAGIC_SPARKLES "  Make a Python node..."))
+        open_python_node_maker_callback_();
+    if (open_python_node_maker_callback_ && ImGui::IsItemHovered())
+        ImGui::SetTooltip("Write a node in Python; it appears in the Nodes panel");
     ImGui::Separator();
     ImGui::PushStyleColor(ImGuiCol_Text, menu.clear.enabled ? t.error : t.text_faint);
     const bool clear = ImGui::MenuItem(ICON_FA_ERASER "  Clear the canvas...", nullptr, false, menu.clear.enabled);
@@ -247,7 +247,7 @@ void NodeEditor::DrawViewItems() {
 void NodeEditor::DrawFrameworkItems() {
     for (int i = 0; i < 4; ++i)
         if (ImGui::MenuItem(kFrameworks[i], nullptr, static_cast<int>(selected_framework_) == i)) {
-            selected_framework_ = static_cast<CodeFramework>(i);
+            selected_framework_ = static_cast<cyxwiz::CodeFramework>(i);
             code_result_.clear();
             spdlog::info("Code generation framework: {}", kFrameworks[i]);
         }
@@ -393,8 +393,7 @@ void NodeEditor::ShowToolbar() {
     };
 
     // ---- Every item's width (approved mockup).
-    const std::string name = current_file_path_.empty() ? std::string("Untitled graph")
-                                                       : std::filesystem::path(current_file_path_).filename().string();
+    const std::string name = GraphDisplayName();
     const std::string chip = std::string(ICON_FA_DIAGRAM_PROJECT "  ") + name + (unsaved_ ? "    " : "  ") +
                              ICON_FA_CHEVRON_DOWN "##graph_chip";
     // The narrowest bar: the icon and the unsaved mark (the window's tab names the graph)

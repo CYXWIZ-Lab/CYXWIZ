@@ -2,13 +2,22 @@
 
 #include <algorithm>
 #include <map>
+#include <regex>
 #include <set>
 
 namespace cyxwiz::weight_match {
 namespace {
 
+// An LSTM / GRU / RNN parameter: "layer0_W_ih", "layer1.reverse.b_hh".
+const std::regex& RecurrentKeyPattern() {
+    static const std::regex pattern(R"(layer(\d+)(?:_|\.(forward|reverse)\.)(W|b)_(ih|hh))");
+    return pattern;
+}
+
+bool IsRecurrentKey(const std::string& key) { return std::regex_match(key, RecurrentKeyPattern()); }
+
 // The name PyTorch gives a parameter the Engine's module calls `key`.
-std::string FileSuffix(const std::string& key) {
+std::string LeafFileSuffix(const std::string& key) {
     if (key == "weights") return "weight";  // the convolutions
     if (key == "gamma") return "weight";    // the normalisations
     if (key == "beta") return "bias";
@@ -19,7 +28,43 @@ std::string FileSuffix(const std::string& key) {
     if (key == "reduce_bias") return "fc1.bias";
     if (key == "expand_weight") return "fc2.weight";
     if (key == "expand_bias") return "fc2.bias";
+    // LSTM / GRU / RNN: layer N's input / hidden weights and biases, the
+    // reverse direction of a bidirectional one with "_reverse". The Engine keeps
+    // torch's layout (gates stacked in torch's order), so only the name differs:
+    // "layer0_W_ih" / "layer1.reverse.b_hh" are "weight_ih_l0" / "bias_hh_l1_reverse".
+    std::smatch m;
+    if (std::regex_match(key, m, RecurrentKeyPattern()))
+        return std::string(m[3] == "W" ? "weight_" : "bias_") + m[4].str() + "_l" + m[1].str() +
+               (m[2] == "reverse" ? "_reverse" : "");
     return key;                             // weight, bias, running_mean, running_var
+}
+
+// Where in a PyTorch file a parameter the Engine calls `key` is: the entry's
+// name and, when torch packs several of the Engine's tensors into one, which
+// of its `blocks` equal row blocks it is.
+struct FileSource {
+    std::string name;
+    size_t block = 0;
+    size_t blocks = 1;
+};
+
+FileSource SourceOf(const std::string& key) {
+    if (IsRecurrentKey(key)) return {LeafFileSuffix(key)};
+    // A module inside the layer (a transformer block's self_attn, linear1,
+    // norm1): its own part of the name is kept, the last part is torch's.
+    const size_t dot = key.rfind('.');
+    const std::string head = dot == std::string::npos ? std::string() : key.substr(0, dot + 1);
+    const std::string leaf = dot == std::string::npos ? key : key.substr(dot + 1);
+    // nn.MultiheadAttention packs the query, key and value projections into
+    // in_proj_weight [3d, d] / in_proj_bias [3d] (in that order); the Engine
+    // keeps W_q / W_k / W_v in the same [out, in] layout.
+    static const std::map<std::string, std::pair<std::string, size_t>> packed = {
+        {"W_q", {"in_proj_weight", 0}}, {"W_k", {"in_proj_weight", 1}}, {"W_v", {"in_proj_weight", 2}},
+        {"b_q", {"in_proj_bias", 0}},   {"b_k", {"in_proj_bias", 1}},   {"b_v", {"in_proj_bias", 2}}};
+    if (const auto it = packed.find(leaf); it != packed.end()) return {head + it->second.first, it->second.second, 3};
+    if (leaf == "W_o") return {head + "out_proj.weight"};
+    if (leaf == "b_o") return {head + "out_proj.bias"};
+    return {head + LeafFileSuffix(leaf)};
 }
 
 // The axes of the Engine's layout in terms of PyTorch's, for a layer's kernels;
@@ -31,8 +76,8 @@ std::vector<size_t> KernelAxes(gui::NodeType type, const std::string& key, size_
         case gui::NodeType::DepthwiseConv2D:  // [C x M, 1, k, k] -> [k, k, 1, C x M]
         case gui::NodeType::ConvTranspose2D:  // [in, out, kh, kw] -> [kh, kw, out, in]
             return rank == 4 ? std::vector<size_t>{2, 3, 1, 0} : std::vector<size_t>{};
-        case gui::NodeType::Conv1D:           // [out, in, k] -> [k, in, out]
-            return rank == 3 ? std::vector<size_t>{2, 1, 0} : std::vector<size_t>{};
+        // Conv1D needs none: its kernel is [out, in, k], PyTorch's own order
+        // (TOFIX223 0.15: it was permuted to [k, in, out]).
         default:
             return {};
     }
@@ -123,7 +168,8 @@ Report Match(const weight_file::WeightFile& file, const std::vector<LayerSlot>& 
         std::vector<LoadedTensor> tensors;
         std::vector<std::string> taken;
         for (const auto& [key, shape] : layer.parameters) {
-            const std::string name = layer.node_name + "." + FileSuffix(key);
+            const FileSource source = SourceOf(key);
+            const std::string name = layer.node_name + "." + source.name;
             const auto found = by_name.find(name);
             if (found == by_name.end()) {
                 if (row.reason.empty()) row.reason = "the file has no " + name;
@@ -139,7 +185,10 @@ Report Match(const weight_file::WeightFile& file, const std::vector<LayerSlot>& 
             }
             const auto axes = KernelAxes(layer.type, key, entry.shape.size());
             std::vector<size_t> arrives = entry.shape;
-            if (!axes.empty()) {
+            const bool sliced = source.blocks > 1 && !arrives.empty() && arrives[0] % source.blocks == 0;
+            if (sliced) {
+                arrives[0] /= source.blocks;  // one row block of the packed entry
+            } else if (!axes.empty()) {
                 for (size_t i = 0; i < axes.size(); ++i) arrives[i] = entry.shape[axes[i]];
             } else if (arrives != shape && shape.size() == 2 && entry.shape.size() > 2 && entry.shape[0] == shape[0] &&
                        Elements(entry.shape) == Elements(shape)) {
@@ -157,6 +206,10 @@ Report Match(const weight_file::WeightFile& file, const std::vector<LayerSlot>& 
                                          shape[1] > layer.flattened_channels;
             if (entry.values.empty()) {
                 // read without values: the report only
+            } else if (sliced) {
+                const size_t count = entry.values.size() / source.blocks;
+                const auto first = entry.values.begin() + static_cast<std::ptrdiff_t>(source.block * count);
+                tensor.values.assign(first, first + static_cast<std::ptrdiff_t>(count));
             } else if (!axes.empty()) {
                 tensor.values = Permute(entry.values, entry.shape, axes);
             } else if (flattened_input) {

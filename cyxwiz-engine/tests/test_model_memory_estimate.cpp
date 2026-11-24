@@ -207,7 +207,7 @@ int main() {
         for (auto& node : graph["nodes"]) {
             auto& params = node["parameters"];
             if (params.contains("shape")) params["shape"] = "[128]";
-            for (const char* key : {"max_len", "max_length"}) {
+            for (const char* key : {"max_sequence_length", "max_length"}) {
                 if (params.contains(key)) params[key] = "128";
             }
             if (params.contains("batch_size")) params["batch_size"] = "32";

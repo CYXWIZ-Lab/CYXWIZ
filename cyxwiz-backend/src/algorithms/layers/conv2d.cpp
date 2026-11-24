@@ -5,6 +5,7 @@
 // ArrayFire's CPU backend.
 #include "cyxwiz/layers/convolution.h"
 #include "cyxwiz/neural_provider.h"
+#include "cyxwiz/neural_provider_dispatch.h"
 #include <spdlog/spdlog.h>
 #include "layer_arrayfire_utils.h"
 #include "layer_utils.h"
@@ -220,7 +221,12 @@ Conv2DLayer::Conv2DLayer(int in_channels,
     const int fan_in = static_cast<int>(fan_in_size);
     const af::dim4 weight_dims(
         kernel_size_, kernel_size_, in_channels_, out_channels_);
-    weights_ = AfToTensor(KaimingUniform(fan_in, weight_dims));
+    // An explicit shape: guessing it from the array would drop a trailing 1
+    // (one filter: [k, k, C, 1] became [k, k, C]; TOFIX223 0.14).
+    weights_ = Tensor::FromSemanticArray(
+        KaimingUniform(fan_in, weight_dims),
+        {static_cast<size_t>(kernel_size_), static_cast<size_t>(kernel_size_),
+         static_cast<size_t>(in_channels_), static_cast<size_t>(out_channels_)});
     if (use_bias_) {
         bias_ = AfToTensor(
             af::constant(0.0f, af::dim4(out_channels_)));
@@ -447,21 +453,17 @@ namespace {
 
 NeuralOpRequest Conv2DRequest(NeuralOp op, const Tensor& input, int in_channels, int out_channels,
                               int kernel_size, int stride, int padding, bool use_bias) {
-    NeuralOpRequest request;
-    request.op = op;
-    request.target = CaptureCurrentNeuralDeviceTarget();
-    request.device_resident = true;
-    request.dtype = DataType::Float32;
-    request.batch = input.Shape()[3];
-    request.input = static_cast<size_t>(in_channels);
-    request.hidden = static_cast<size_t>(out_channels);
-    request.conv_height = input.Shape()[0];
-    request.conv_width = input.Shape()[1];
-    request.conv_kernel = static_cast<size_t>(kernel_size);
-    request.conv_stride = static_cast<size_t>(stride);
-    request.conv_padding = static_cast<size_t>(padding);
-    request.conv_bias = use_bias;
-    return request;
+    Conv2dProviderShape shape;
+    shape.batch = input.Shape()[3];
+    shape.height = input.Shape()[0];
+    shape.width = input.Shape()[1];
+    shape.in_channels = static_cast<size_t>(in_channels);
+    shape.out_channels = static_cast<size_t>(out_channels);
+    shape.kernel = static_cast<size_t>(kernel_size);
+    shape.stride = static_cast<size_t>(stride);
+    shape.padding = static_cast<size_t>(padding);
+    shape.bias = use_bias;
+    return Conv2dProviderRequest(op, CaptureCurrentNeuralDeviceTarget(), shape);
 }
 
 }  // namespace
@@ -471,22 +473,22 @@ bool Conv2DLayer::TryProviderForward(const Tensor& input, const std::vector<size
     if (provider_disabled_ || input.Shape().size() != 4) return false;
     const NeuralOpRequest request = Conv2DRequest(NeuralOp::Conv2dForward, input, in_channels_, out_channels_,
                                                   kernel_size_, stride_, padding_, use_bias_);
-    auto provider = NeuralProviderRegistry::Instance().FindSupporting(request);
-    if (!provider) return false;
     std::vector<const Tensor*> inputs{&input, &weights_};
     if (use_bias_) inputs.push_back(&bias_);
     std::vector<Tensor> outputs;
-    const NeuralOpStatus status = ExecuteNeuralOpOnDevice(*provider, request, inputs, {output_shape}, outputs);
-    if (!status.ok) {
-        provider_disabled_ = true;
-        spdlog::warn("Conv2D: provider {} failed ({}); this layer uses the ArrayFire path from now on",
-                     provider->ProviderId(), status.detail);
+    std::string provider_id;
+    if (!DispatchNeuralProviderOp(request, "Conv2D", [&](INeuralNetworkProvider& provider) {
+            provider_id = provider.ProviderId();
+            return ExecuteNeuralOpOnDevice(provider, request, inputs, {output_shape}, outputs);
+        })) {
+        // A provider that failed is not asked again in this layer
+        if (!provider_id.empty()) provider_disabled_ = true;
         return false;
     }
     if (!provider_logged_) {
         provider_logged_ = true;
         spdlog::info("Conv2D: convolution via {} ({} -> {}, kernel {}, stride {}, padding {})",
-                     provider->ProviderId(), in_channels_, out_channels_, kernel_size_, stride_, padding_);
+                     provider_id, in_channels_, out_channels_, kernel_size_, stride_, padding_);
     }
     output = std::move(outputs[0]);
     return true;
@@ -496,17 +498,16 @@ bool Conv2DLayer::TryProviderBackward(const Tensor& grad_output, Tensor& grad_in
     if (provider_disabled_ || cached_input_.Shape().size() != 4) return false;
     const NeuralOpRequest request = Conv2DRequest(NeuralOp::Conv2dBackward, cached_input_, in_channels_,
                                                   out_channels_, kernel_size_, stride_, padding_, use_bias_);
-    auto provider = NeuralProviderRegistry::Instance().FindSupporting(request);
-    if (!provider) return false;
     std::vector<const Tensor*> inputs{&cached_input_, &weights_, &grad_output};
     std::vector<std::vector<size_t>> shapes{cached_input_.Shape(), weights_.Shape()};
     if (use_bias_) shapes.push_back({static_cast<size_t>(out_channels_)});
     std::vector<Tensor> outputs;
-    const NeuralOpStatus status = ExecuteNeuralOpOnDevice(*provider, request, inputs, shapes, outputs);
-    if (!status.ok) {
-        provider_disabled_ = true;
-        spdlog::warn("Conv2D: provider {} backward failed ({}); this layer uses the ArrayFire path from now on",
-                     provider->ProviderId(), status.detail);
+    bool asked = false;
+    if (!DispatchNeuralProviderOp(request, "Conv2D", [&](INeuralNetworkProvider& provider) {
+            asked = true;
+            return ExecuteNeuralOpOnDevice(provider, request, inputs, shapes, outputs);
+        })) {
+        if (asked) provider_disabled_ = true;
         return false;
     }
     grad_input = std::move(outputs[0]);

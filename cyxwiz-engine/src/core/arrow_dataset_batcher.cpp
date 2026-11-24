@@ -1,7 +1,11 @@
 #include "dataset_batcher.h"
+#include "batch_uploads.h"
 #include "label_vocabulary.h"
 #include "label_column_resolver.h"
+#include "feature_column_gather.h"
 #include "split_partitioning.h"
+#include "class_label_range.h"
+#include "missing_values.h"
 #include "class_balance.h"
 #include "data_budget.h"
 #include "device_data_budget.h"
@@ -27,6 +31,8 @@ namespace cyxwiz {
 namespace {
 
 constexpr size_t kBatchInspectionColumnPreviewLimit = 32;
+// The copy budget's name for this batcher's uploads (batch_uploads.h).
+constexpr const char* kUploader = "ArrowDatasetBatcher";
 
 bool IsTokenSlotColumnName(const std::string& name) {
     if (name.rfind("tok_", 0) != 0 || name.size() == 4) {
@@ -142,57 +148,6 @@ void PopulateBatchInspection(
     if (inspection.null_summary_available) {
         count_nulls(label_columns, inspection.label_null_count);
     }
-}
-
-float ReadNumericChunkedValue(
-    const std::shared_ptr<arrow::ChunkedArray>& column,
-    int64_t global_row_idx) {
-    if (!column || global_row_idx < 0) return 0.0f;
-    int64_t offset = 0;
-    for (int chunk_index = 0; chunk_index < column->num_chunks(); ++chunk_index) {
-        const auto& chunk = column->chunk(chunk_index);
-        const int64_t chunk_length = chunk->length();
-        if (global_row_idx >= offset + chunk_length) {
-            offset += chunk_length;
-            continue;
-        }
-        const int64_t local = global_row_idx - offset;
-        if (chunk->IsNull(local)) return 0.0f;
-        switch (chunk->type_id()) {
-        case arrow::Type::FLOAT:
-            return std::static_pointer_cast<arrow::FloatArray>(chunk)->Value(local);
-        case arrow::Type::DOUBLE:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::DoubleArray>(chunk)->Value(local));
-        case arrow::Type::INT64:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::Int64Array>(chunk)->Value(local));
-        case arrow::Type::INT32:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::Int32Array>(chunk)->Value(local));
-        case arrow::Type::INT16:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::Int16Array>(chunk)->Value(local));
-        case arrow::Type::INT8:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::Int8Array>(chunk)->Value(local));
-        case arrow::Type::UINT64:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::UInt64Array>(chunk)->Value(local));
-        case arrow::Type::UINT32:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::UInt32Array>(chunk)->Value(local));
-        case arrow::Type::UINT16:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::UInt16Array>(chunk)->Value(local));
-        case arrow::Type::UINT8:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::UInt8Array>(chunk)->Value(local));
-        default:
-            return 0.0f;
-        }
-    }
-    return 0.0f;
 }
 
 }  // namespace
@@ -426,17 +381,7 @@ void ArrowDatasetBatcher::InitializeColumns() {
             continue;
         }
 
-        auto type = field->type();
-        if (type->id() == arrow::Type::DOUBLE ||
-            type->id() == arrow::Type::FLOAT ||
-            type->id() == arrow::Type::INT64 ||
-            type->id() == arrow::Type::INT32 ||
-            type->id() == arrow::Type::INT16 ||
-            type->id() == arrow::Type::INT8 ||
-            type->id() == arrow::Type::UINT64 ||
-            type->id() == arrow::Type::UINT32 ||
-            type->id() == arrow::Type::UINT16 ||
-            type->id() == arrow::Type::UINT8) {
+        if (IsNumericBatchFeatureType(field->type())) {
             feature_cols_.push_back(i);
         }
     }
@@ -509,42 +454,23 @@ void ArrowDatasetBatcher::SetRegressionTargetWidth(
         label_col_indices_.size(), num_features_);
 }
 
+// An empty batch means the epoch is over and nothing else: a failure while
+// building a batch throws, so the run fails with the reason instead of ending
+// the epoch early (TOFIX223 0.2).
 Batch ArrowDatasetBatcher::GetNextBatch() {
-    Batch batch;
-
-    try {
-        if (!dataset_ || indices_.empty()) {
-            spdlog::warn("ArrowDatasetBatcher::GetNextBatch: No dataset or empty indices");
-            return batch;
-        }
-
-        // Validate indices to catch potential memory corruption
-        int64_t num_total_rows = dataset_->GetNumRows();
-        for (size_t i = 0; i < std::min(indices_.size(), size_t(10)); ++i) {
-            if (indices_[i] < 0 || indices_[i] >= num_total_rows) {
-                spdlog::error("ArrowDatasetBatcher: Invalid index[{}]={} (max={})",
-                              i, indices_[i], num_total_rows);
-            }
-        }
-
-        if (IsEpochComplete()) {
-            return batch;
-        }
-
-        const size_t batch_start = current_index_;
-        const size_t batch_end = std::min(current_index_ + batch_size_, indices_.size());
-        bool assembled = false;
-        batch = AssembleBatch(indices_.data() + batch_start, batch_end - batch_start, assembled);
-        if (assembled) current_index_ = batch_end;
-        return batch;
-
-    } catch (const std::exception& e) {
-        spdlog::error("ArrowDatasetBatcher::GetNextBatch exception: {}", e.what());
-        return batch;
-    } catch (...) {
-        spdlog::error("ArrowDatasetBatcher::GetNextBatch unknown exception");
-        return batch;
+    if (!dataset_ || indices_.empty()) {
+        spdlog::warn("ArrowDatasetBatcher::GetNextBatch: No dataset or empty indices");
+        return Batch();
     }
+    if (IsEpochComplete()) {
+        return Batch();
+    }
+
+    const size_t batch_start = current_index_;
+    const size_t batch_end = std::min(current_index_ + batch_size_, indices_.size());
+    Batch batch = AssembleBatch(indices_.data() + batch_start, batch_end - batch_start);
+    current_index_ = batch_end;
+    return batch;
 }
 
 size_t ArrowDatasetBatcher::SourceSampleCount() const {
@@ -561,10 +487,7 @@ std::optional<Batch> ArrowDatasetBatcher::GetSourceSamples(const std::vector<siz
                                     std::to_string(dataset_->GetNumRows()) + " rows");
         rows.push_back(static_cast<int64_t>(index));
     }
-    bool assembled = false;
-    Batch batch = AssembleBatch(rows.data(), rows.size(), assembled);
-    if (!assembled) throw std::runtime_error("the rows could not be read as a batch");
-    return batch;
+    return AssembleBatch(rows.data(), rows.size());
 }
 
 std::optional<BatcherPhase> ArrowDatasetBatcher::SourceSamplePart(size_t index) const {
@@ -574,17 +497,52 @@ std::optional<BatcherPhase> ArrowDatasetBatcher::SourceSamplePart(size_t index) 
                : std::nullopt;
 }
 
+std::optional<std::vector<size_t>> ArrowDatasetBatcher::TrainClassCounts() const {
+    if (split_phase_ != BatcherPhase::Train || !is_training_ || !dataset_ || label_col_idx_ < 0 ||
+        (!partition_column_.empty() && partition_value_ != 0))
+        return std::nullopt;
+    // Empty or NaN labels are refused with their own message, not reported as
+    // classes that cannot be counted.
+    if (const auto table = dataset_->GetArrowTable()) RefuseMissingValues(table);
+    auto labels = ReadNumericLabelColumn(dataset_->GetArrowTable(), label_column_);
+    if (!labels.ok()) return std::nullopt;
+    const auto& values = labels.ValueOrDie();
+    std::vector<size_t> counts;
+    for (const int64_t row : base_indices_) {
+        if (row < 0 || static_cast<size_t>(row) >= values.size()) continue;
+        // A negative class (a -1 / +1 label) has no output: the class-range
+        // refusal, as at the first batch, not a row left out of the counts.
+        const int64_t label = values[static_cast<size_t>(row)];
+        if (!CountClass(counts, label)) ThrowNegativeClassLabel("ArrowDatasetBatcher", label);
+    }
+    return counts;
+}
+
+void ArrowDatasetBatcher::RefuseMissingValues(const std::shared_ptr<arrow::Table>& table) const {
+    if (missing_values_checked_) return;
+    std::vector<MissingColumn> columns;
+    for (const int col : feature_cols_) {
+        if (col < 0 || col >= table->num_columns()) continue;
+        columns.push_back(CountMissingColumn(table->schema()->field(col)->name(), *table->column(col), false));
+    }
+    std::vector<int> labels = label_col_indices_;
+    if (labels.empty() && label_col_idx_ >= 0) labels.push_back(label_col_idx_);
+    for (const int col : labels) {
+        if (col < 0 || col >= table->num_columns()) continue;
+        columns.push_back(CountMissingColumn(table->schema()->field(col)->name(), *table->column(col), true));
+    }
+    ThrowIfMissingValues("ArrowDatasetBatcher", columns, table->num_rows());
+    missing_values_checked_ = true;
+}
+
 // These rows as one batch: features (device-resident when they fit),
-// Normalize, the label form and the inspection. `assembled` false: nothing
-// usable (logged).
-Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actual_batch_size, bool& assembled) {
+// Normalize, the label form and the inspection. Throws when the rows cannot
+// be read as a batch.
+Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actual_batch_size) {
     Batch batch;
-    assembled = false;
     {
-        // Validate we have features
         if (num_features_ == 0) {
-            spdlog::error("ArrowDatasetBatcher::GetNextBatch: No feature columns found");
-            return batch;
+            throw std::runtime_error("ArrowDatasetBatcher: the table has no numeric feature columns");
         }
 
         batch.size = actual_batch_size;
@@ -593,9 +551,9 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
         // Get Arrow table
         auto table = dataset_->GetArrowTable();
         if (!table) {
-            spdlog::error("ArrowDatasetBatcher: No Arrow table");
-            return batch;
+            throw std::runtime_error("ArrowDatasetBatcher: the dataset holds no table");
         }
+        RefuseMissingValues(table);
 
         int64_t num_rows = table->num_rows();
         int num_cols = table->num_columns();
@@ -645,8 +603,11 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
                     std::copy_n(resident_host_.data() + static_cast<size_t>(positions[b]) * num_features_,
                                 num_features_, rows_data.data() + b * num_features_);
                 }
-                batch.data = Tensor({actual_batch_size, num_features_}, rows_data.data());
+                batch.data = HostBatchTensor(kUploader, "features", {actual_batch_size, num_features_},
+                                             rows_data.data());
             } else if (resident) {
+                RecordBatchUpload(kUploader, "row positions", BatchUploadReason::Index, {actual_batch_size},
+                                  DataType::Int32);
                 const af::array on_device(static_cast<dim_t>(actual_batch_size), positions.data());
                 batch.data = Tensor::FromSemanticArray(
                     af::lookup(resident_features_.GetSemanticArray(), on_device, 0),
@@ -659,134 +620,34 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
             GatherFeatures(table, batch_rows, actual_batch_size, batch_data.data());
         }
 
-        // Extract labels - handles both single-chunk (fast path) and multi-chunk
-        // (correct path) columns. The previous implementation always read chunk(0)
-        // and crashed whenever Arrow's CSV reader split the table into multiple
-        // chunks, which it does for any file >~1 MB block size.
+        // The label and any further regression targets through the one typed
+        // reader the features use: every number type and bool, any chunking
+        // (a uint64 label, or a bool label in scalar mode, was read as 0).
+        // Missing cells were refused before the first batch.
         if (label_col_idx_ >= 0 && label_col_idx_ < num_cols) {
-            auto column = table->column(label_col_idx_);
+            RequireNumberColumns("ArrowDatasetBatcher", *table, {label_col_idx_}, "label", /*allow_bool=*/true);
+            const auto& column = table->column(label_col_idx_);
             if (column && column->num_chunks() > 0) {
-                // Generic per-row read that handles any number of chunks. Slower
-                // than a type-specific raw_values() loop on a single chunk, but
-                // correct regardless of chunking. Labels are small (1 element per
-                // row), so per-batch cost here is trivial.
-                auto read_label = [&](int64_t global_row_idx) -> int {
-                    // Find which chunk holds this row
-                    int64_t offset = 0;
-                    for (int c = 0; c < column->num_chunks(); ++c) {
-                        auto chk = column->chunk(c);
-                        int64_t chk_len = chk->length();
-                        if (global_row_idx < offset + chk_len) {
-                            int64_t local_idx = global_row_idx - offset;
-                            if (chk->IsNull(local_idx)) return 0;
-                            switch (chk->type_id()) {
-                                case arrow::Type::INT64:
-                                    return static_cast<int>(
-                                        std::static_pointer_cast<arrow::Int64Array>(chk)->Value(local_idx));
-                                case arrow::Type::INT32:
-                                    return std::static_pointer_cast<arrow::Int32Array>(chk)->Value(local_idx);
-                                case arrow::Type::INT16:
-                                    return std::static_pointer_cast<arrow::Int16Array>(chk)->Value(local_idx);
-                                case arrow::Type::INT8:
-                                    return std::static_pointer_cast<arrow::Int8Array>(chk)->Value(local_idx);
-                                case arrow::Type::UINT8:
-                                    return std::static_pointer_cast<arrow::UInt8Array>(chk)->Value(local_idx);
-                                case arrow::Type::UINT16:
-                                    return std::static_pointer_cast<arrow::UInt16Array>(chk)->Value(local_idx);
-                                case arrow::Type::UINT32:
-                                    return static_cast<int>(
-                                        std::static_pointer_cast<arrow::UInt32Array>(chk)->Value(local_idx));
-                                case arrow::Type::DOUBLE:
-                                    return static_cast<int>(
-                                        std::static_pointer_cast<arrow::DoubleArray>(chk)->Value(local_idx));
-                                case arrow::Type::FLOAT:
-                                    return static_cast<int>(
-                                        std::static_pointer_cast<arrow::FloatArray>(chk)->Value(local_idx));
-                                case arrow::Type::BOOL:
-                                    return std::static_pointer_cast<arrow::BooleanArray>(chk)->Value(local_idx) ? 1 : 0;
-                                default:
-                                    return 0;  // refused at construction
-                            }
-                        }
-                        offset += chk_len;
-                    }
-                    return 0;  // row not found across any chunk
-                };
-
-                // Scalar-label mode preserves both fractional regression
-                // targets and binary 0/1 targets. The int-cast path above
-                // loses precision on non-integer regression labels.
-                auto read_label_float = [&](int64_t global_row_idx) -> float {
-                    int64_t offset = 0;
-                    for (int c = 0; c < column->num_chunks(); ++c) {
-                        auto chk = column->chunk(c);
-                        int64_t chk_len = chk->length();
-                        if (global_row_idx < offset + chk_len) {
-                            int64_t local_idx = global_row_idx - offset;
-                            if (chk->IsNull(local_idx)) return 0.0f;
-                            switch (chk->type_id()) {
-                                case arrow::Type::FLOAT:
-                                    return std::static_pointer_cast<arrow::FloatArray>(chk)->Value(local_idx);
-                                case arrow::Type::DOUBLE:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::DoubleArray>(chk)->Value(local_idx));
-                                case arrow::Type::INT64:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::Int64Array>(chk)->Value(local_idx));
-                                case arrow::Type::INT32:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::Int32Array>(chk)->Value(local_idx));
-                                case arrow::Type::INT16:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::Int16Array>(chk)->Value(local_idx));
-                                case arrow::Type::INT8:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::Int8Array>(chk)->Value(local_idx));
-                                case arrow::Type::UINT8:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::UInt8Array>(chk)->Value(local_idx));
-                                case arrow::Type::UINT16:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::UInt16Array>(chk)->Value(local_idx));
-                                case arrow::Type::UINT32:
-                                    return static_cast<float>(
-                                        std::static_pointer_cast<arrow::UInt32Array>(chk)->Value(local_idx));
-                                default:
-                                    return 0.0f;
-                            }
-                        }
-                        offset += chk_len;
-                    }
-                    return 0.0f;
-                };
-
+                std::vector<float> values(actual_batch_size, 0.0f);
+                GatherNumberColumn(*column, batch_rows, actual_batch_size, num_rows, values.data(), 1);
                 for (size_t b = 0; b < actual_batch_size; ++b) {
-                    int64_t row_idx = batch_rows[b];
-                    if (row_idx >= 0 && row_idx < num_rows) {
-                        if (scalar_label_mode_) {
-                            batch_labels_float[b * regression_target_width] =
-                                read_label_float(row_idx);
-                        } else {
-                            batch_labels[b] = read_label(row_idx);
-                        }
+                    if (scalar_label_mode_) {
+                        batch_labels_float[b * regression_target_width] = values[b];
+                    } else {
+                        batch_labels[b] = ClassLabelFromValue(values[b]);
                     }
                 }
             }
         }
 
         if (scalar_label_mode_ && label_col_indices_.size() > 1) {
+            RequireNumberColumns("ArrowDatasetBatcher", *table,
+                                 std::vector<int>(label_col_indices_.begin() + 1, label_col_indices_.end()), "target");
             for (size_t target = 1; target < label_col_indices_.size(); ++target) {
                 const int column_index = label_col_indices_[target];
                 if (column_index < 0 || column_index >= num_cols) continue;
-                const auto& target_column = table->column(column_index);
-                for (size_t b = 0; b < actual_batch_size; ++b) {
-                    const int64_t row_idx = batch_rows[b];
-                    if (row_idx >= 0 && row_idx < num_rows) {
-                        batch_labels_float[
-                            b * regression_target_width + target] =
-                            ReadNumericChunkedValue(target_column, row_idx);
-                    }
-                }
+                GatherNumberColumn(*table->column(column_index), batch_rows, actual_batch_size, num_rows,
+                                   batch_labels_float.data() + target, regression_target_width);
             }
         }
 
@@ -794,13 +655,14 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
 
         // Validate data before creating tensor
         if ((!resident && batch_data.empty()) || actual_batch_size == 0 || num_features_ == 0) {
-            spdlog::error("ArrowDatasetBatcher: Empty batch data - size={}, features={}",
-                          actual_batch_size, num_features_);
-            return batch;
+            throw std::runtime_error("ArrowDatasetBatcher: empty batch data (rows " +
+                                     std::to_string(actual_batch_size) + ", features " +
+                                     std::to_string(num_features_) + ")");
         }
 
         // Create data tensor [batch_size, num_features]
-        if (!resident) batch.data = Tensor({actual_batch_size, num_features_}, batch_data.data());
+        if (!resident)
+            batch.data = HostBatchTensor(kUploader, "features", {actual_batch_size, num_features_}, batch_data.data());
 
         // Create labels tensor
         // Float labels [batch, target_width] are used for regression and
@@ -808,22 +670,20 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
         if (scalar_label_mode_ && !batch_labels_float.empty()) {
             std::vector<size_t> label_shape = {
                 actual_batch_size, regression_target_width};
-            batch.labels = Tensor(label_shape, batch_labels_float.data());
+            batch.labels = HostBatchTensor(kUploader, "labels", label_shape, batch_labels_float.data());
         } else if (class_index_label_mode_ && !batch_labels.empty()) {
             std::vector<size_t> label_shape = {actual_batch_size};
-            batch.labels = Tensor(
-                label_shape, batch_labels.data(), DataType::Int32);
+            batch.labels = HostBatchTensor(kUploader, "labels", label_shape, batch_labels.data(), DataType::Int32);
         } else if (one_hot_ && !batch_labels.empty()) {
             // One-hot encoding
             std::vector<float> onehot_data(actual_batch_size * num_classes_, 0.0f);
             for (size_t i = 0; i < batch_labels.size(); ++i) {
-                int label = batch_labels[i];
-                if (label >= 0 && static_cast<size_t>(label) < num_classes_) {
-                    onehot_data[i * num_classes_ + label] = 1.0f;
-                }
+                const int label = batch_labels[i];
+                CheckClassLabelInWidth("ArrowDatasetBatcher", label, num_classes_);
+                onehot_data[i * num_classes_ + static_cast<size_t>(label)] = 1.0f;
             }
             std::vector<size_t> label_shape = {actual_batch_size, num_classes_};
-            batch.labels = Tensor(label_shape, onehot_data.data());
+            batch.labels = HostBatchTensor(kUploader, "labels", label_shape, onehot_data.data());
         } else if (!batch_labels.empty()) {
             // Integer labels
             std::vector<float> label_data;
@@ -832,10 +692,9 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
                 label_data.push_back(static_cast<float>(label));
             }
             std::vector<size_t> label_shape = {actual_batch_size};
-            batch.labels = Tensor(label_shape, label_data.data());
+            batch.labels = HostBatchTensor(kUploader, "labels", label_shape, label_data.data());
         }
 
-        assembled = true;
         return batch;
     }
 }
@@ -900,157 +759,13 @@ void ArrowDatasetBatcher::GatherFeatures(const std::shared_ptr<arrow::Table>& ta
                 spdlog::warn("ArrowDatasetBatcher: Null or empty column at idx={}", col_idx);
                 continue;
             }
-
-            // For single-chunk columns (most common case), use direct pointer access
-            if (column->num_chunks() == 1) {
-                auto chunk = column->chunk(0);
-
-                // Get raw data pointer based on type
-                switch (chunk->type_id()) {
-                    case arrow::Type::DOUBLE: {
-                        auto arr = std::static_pointer_cast<arrow::DoubleArray>(chunk);
-                        const double* data = arr->raw_values();
-                        for (size_t b = 0; b < count; ++b) {
-                            int64_t row_idx = rows[b];
-                            if (row_idx >= 0 && row_idx < num_rows) {
-                                out[b * num_features_ + feat_idx] = static_cast<float>(data[row_idx]);
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::FLOAT: {
-                        auto arr = std::static_pointer_cast<arrow::FloatArray>(chunk);
-                        const float* data = arr->raw_values();
-                        for (size_t b = 0; b < count; ++b) {
-                            int64_t row_idx = rows[b];
-                            if (row_idx >= 0 && row_idx < num_rows) {
-                                out[b * num_features_ + feat_idx] = data[row_idx];
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::INT64: {
-                        auto arr = std::static_pointer_cast<arrow::Int64Array>(chunk);
-                        const int64_t* data = arr->raw_values();
-                        for (size_t b = 0; b < count; ++b) {
-                            int64_t row_idx = rows[b];
-                            if (row_idx >= 0 && row_idx < num_rows) {
-                                out[b * num_features_ + feat_idx] = static_cast<float>(data[row_idx]);
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::INT32: {
-                        auto arr = std::static_pointer_cast<arrow::Int32Array>(chunk);
-                        const int32_t* data = arr->raw_values();
-                        for (size_t b = 0; b < count; ++b) {
-                            int64_t row_idx = rows[b];
-                            if (row_idx >= 0 && row_idx < num_rows) {
-                                out[b * num_features_ + feat_idx] = static_cast<float>(data[row_idx]);
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::INT16: {
-                        auto arr = std::static_pointer_cast<arrow::Int16Array>(chunk);
-                        const int16_t* data = arr->raw_values();
-                        for (size_t b = 0; b < count; ++b) {
-                            int64_t row_idx = rows[b];
-                            if (row_idx >= 0 && row_idx < num_rows) {
-                                out[b * num_features_ + feat_idx] = static_cast<float>(data[row_idx]);
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::INT8: {
-                        auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
-                        const int8_t* data = arr->raw_values();
-                        for (size_t b = 0; b < count; ++b) {
-                            int64_t row_idx = rows[b];
-                            if (row_idx >= 0 && row_idx < num_rows) {
-                                out[b * num_features_ + feat_idx] = static_cast<float>(data[row_idx]);
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::UINT8: {
-                        auto arr = std::static_pointer_cast<arrow::UInt8Array>(chunk);
-                        const uint8_t* data = arr->raw_values();
-                        for (size_t b = 0; b < count; ++b) {
-                            int64_t row_idx = rows[b];
-                            if (row_idx >= 0 && row_idx < num_rows) {
-                                out[b * num_features_ + feat_idx] = static_cast<float>(data[row_idx]);
-                            }
-                        }
-                        break;
-                    }
-                    default:
-                        // Fallback to Value() method for other types
-                        for (size_t b = 0; b < count; ++b) {
-                            int64_t row_idx = rows[b];
-                            if (row_idx >= 0 && row_idx < chunk->length()) {
-                                // Use generic scalar access
-                                auto result = chunk->GetScalar(row_idx);
-                                if (result.ok()) {
-                                    auto scalar = result.ValueOrDie();
-                                    if (scalar->is_valid) {
-                                        // Try to cast to double
-                                        auto cast_result = scalar->CastTo(arrow::float64());
-                                        if (cast_result.ok()) {
-                                            auto dbl = std::static_pointer_cast<arrow::DoubleScalar>(cast_result.ValueOrDie());
-                                            out[b * num_features_ + feat_idx] = static_cast<float>(dbl->value);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        break;
-                }
-            } else {
-                // Multi-chunk fallback (slower, but handles chunked data)
-                for (size_t b = 0; b < count; ++b) {
-                    int64_t row_idx = rows[b];
-                    if (row_idx < 0 || row_idx >= num_rows) continue;
-
-                    // Find the right chunk
-                    int64_t local_idx = row_idx;
-                    std::shared_ptr<arrow::Array> chunk = nullptr;
-                    for (int c = 0; c < column->num_chunks(); ++c) {
-                        auto ch = column->chunk(c);
-                        if (local_idx < ch->length()) {
-                            chunk = ch;
-                            break;
-                        }
-                        local_idx -= ch->length();
-                    }
-
-                    if (chunk) {
-                        float value = 0.0f;
-                        switch (chunk->type_id()) {
-                            case arrow::Type::DOUBLE:
-                                value = static_cast<float>(std::static_pointer_cast<arrow::DoubleArray>(chunk)->Value(local_idx));
-                                break;
-                            case arrow::Type::FLOAT:
-                                value = std::static_pointer_cast<arrow::FloatArray>(chunk)->Value(local_idx);
-                                break;
-                            case arrow::Type::INT64:
-                                value = static_cast<float>(std::static_pointer_cast<arrow::Int64Array>(chunk)->Value(local_idx));
-                                break;
-                            case arrow::Type::INT32:
-                                value = static_cast<float>(std::static_pointer_cast<arrow::Int32Array>(chunk)->Value(local_idx));
-                                break;
-                            case arrow::Type::UINT8:
-                                value = static_cast<float>(std::static_pointer_cast<arrow::UInt8Array>(chunk)->Value(local_idx));
-                                break;
-                            default:
-                                break;
-                        }
-                        out[b * num_features_ + feat_idx] = value;
-                    }
-                }
-            }
+            GatherNumberColumn(*column, rows, count, num_rows, out + feat_idx, num_features_);
         }
     };
+
+    // Checked here, on the calling thread: a throw inside a worker thread would
+    // end the process.
+    RequireNumberColumns("ArrowDatasetBatcher", *table, feature_cols_, "feature");
 
     if (num_workers_ > 1 && feature_cols_.size() > 1) {
         size_t worker_count = std::min(static_cast<size_t>(num_workers_), feature_cols_.size());
@@ -1117,6 +832,8 @@ bool ArrowDatasetBatcher::PrepareResidentFeatures(const std::shared_ptr<arrow::T
         } else {
             Tensor features({rows, num_features_}, values.data());
             (void)features.GetSemanticArray();  // uploaded now, once
+            RecordBatchUpload(kUploader, "features", BatchUploadReason::Resident, {rows, num_features_},
+                              DataType::Float32);
             resident_features_ = std::move(features);
         }
         resident_position_ = std::move(position);

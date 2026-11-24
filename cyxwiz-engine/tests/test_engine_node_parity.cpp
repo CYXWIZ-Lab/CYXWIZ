@@ -2,6 +2,7 @@
 // data and seed trained through the Engine's Train path (graph loader,
 // compiler, launcher preparation, MainWindow's dispatch, TrainingManager) and
 // through the node's RunGraphTrainingJob give the same per-epoch losses.
+#include "oracle/training_oracle_test.h"
 #include "../src/core/async_task_manager.h"
 #include "../src/core/checkpoint_tokenizer.h"
 #include "../src/core/data_registry.h"
@@ -88,6 +89,7 @@ bool Same(const std::vector<float>& a, const std::vector<float>& b, float tolera
 }  // namespace
 
 int main() {
+    if (!cyxwiz::test::BeginTrainingOracleTest("test_engine_node_parity")) return 1;
     const fs::path root = CYXWIZ_SOURCE_ROOT;
     const fs::path work = fs::temp_directory_path() / "cyxwiz_engine_node_parity";
     std::error_code ec;
@@ -98,7 +100,6 @@ int main() {
         std::cerr << "could not write the Parquet fixture\n";
         return EXIT_FAILURE;
     }
-    cyxwiz::test::InstallQualifiedRouteSnapshot();
 
     constexpr int kEpochs = 3;
     const std::string dataset = "tiny_causal_lm_tokens";
@@ -235,6 +236,8 @@ int main() {
         Check(stored && built.metadata.tokenizer_sha256 == stored->Sha256(), "metadata names the stored tokenizer");
     }
 
+    const std::string device_problem = cyxwiz::test::TrainingDeviceProblem();
+    Check(device_problem.empty(), "every run on the requested device: " + device_problem);
     fs::remove_all(work, ec);
     if (g_failures > 0) {
         std::cout << g_failures << " check(s) failed\n";

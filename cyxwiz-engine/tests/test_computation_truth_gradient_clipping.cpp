@@ -17,7 +17,7 @@
 #include <cyxwiz/optimizers/gradient_clipping.h>
 #include <cyxwiz/tensor.h>
 
-#include "computation_truth/test_device_selection.h"
+#include "oracle/oracle_test.h"
 
 #include <nlohmann/json.hpp>
 
@@ -214,7 +214,7 @@ void CheckAdam(const json& cases, bool fused_available) {
 }  // namespace
 
 int main(int, char** argv) {
-    if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) return EXIT_FAILURE;
+    if (!cyxwiz::test::BeginOracleTest("test_computation_truth_gradient_clipping")) return EXIT_FAILURE;
     std::ifstream in(FixturePath(argv[0]));
     if (!in) {
         std::printf("FAIL: no fixture at %s\n", FixturePath(argv[0]).string().c_str());

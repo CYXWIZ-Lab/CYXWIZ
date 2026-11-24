@@ -155,6 +155,23 @@ void CheckOperators() {
                                   0.5833333333333334},
                "Target encoder: category means from the Train rows; green (no Train row) gets the Train mean");
     }
+    {
+        // A missing target on a Train row is left out of the fit, not spread
+        // as NaN into every value (TOFIX223 0.9). Row 5 (blue, Train) has no
+        // target: Train rows 0, 1, 2 give mean 2/3, red (2 * 1 + 2/3) / 3,
+        // blue (0 + 2/3) / 2.
+        arrow::DoubleBuilder y;
+        (void)y.AppendValues({1, 0, 1, 1, 0});
+        (void)y.AppendNull();
+        std::shared_ptr<arrow::Array> yy;
+        (void)y.Finish(&yy);
+        auto missing = *table->SetColumn(table->schema()->GetFieldIndex("y"), arrow::field("y", arrow::float64()),
+                                         std::make_shared<arrow::ChunkedArray>(yy));
+        TargetEncoderOperator op;
+        auto out = Run(op, {{"columns", "c"}, {"target_col", "y"}, {"smoothing", "1"}}, missing);
+        Expect(Column(out, "c"), {8.0 / 9.0, 1.0 / 3.0, 8.0 / 9.0, 1.0 / 3.0, 2.0 / 3.0, 1.0 / 3.0},
+               "Target encoder: a row with a missing target is left out of the fit");
+    }
     const std::map<std::string, std::string> text_params = {
         {"text_col", "text"}, {"label_col", ""}, {"norm", "none"}, {"ngram_range", "1,1"}, {"stop_words", "none"},
         {"output_format", "dense"}};
@@ -300,8 +317,62 @@ void CheckExecutor() {
     std::getline(in, header);
     Check(header.find(kSplitPartitionColumn) == std::string::npos, "the export leaves out the partition: " + header);
     in.close();
+
+    // The file changes and the same executor runs again (TOFIX223 0.8): the
+    // steps read the new rows, not the partitioned copy of the old ones.
+    {
+        std::ofstream csv(csv_path, std::ios::binary | std::ios::trunc);
+        csv << "a,y\n";
+        for (int i = 1; i <= 30; ++i) csv << i * 3 << ',' << (i % 2 ? "odd" : "even") << '\n';
+    }
+    Check(split.ExecutePipeline(pipeline(true)), "the run after the file changed: " + split.GetLastError());
+    const auto reloaded = registry.GetArrowDataset(split.NodeResults().at(1));
+    Check(reloaded && reloaded->GetNumRows() == 30, "the Data Input re-read the changed file");
+    const auto rescaled = scaled(split);
+    Check(rescaled->num_rows() == 30,
+          "the scaler reads the changed file's 30 rows, not the 20 of the old split copy (got " +
+              std::to_string(rescaled->num_rows()) + ")");
+    Check(TrainRowMask(rescaled).size() == 30, "the new rows carry their partition");
     fs::remove_all(dir, ec);
 }
+// Remove Duplicates in a training graph compares the data, not the split's
+// partition column (TOFIX223 0.10): 40 distinct rows, each twice, shuffled
+// 80 / 10 / 10. A copy in Train and its twin in Test once both stayed.
+void CheckRemoveDuplicatesAcrossSplit() {
+    const fs::path dir = fs::temp_directory_path() / "cyxwiz_test_dedup_split";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    const fs::path csv_path = dir / "twins.csv";
+    {
+        std::ofstream csv(csv_path, std::ios::binary);
+        csv << "a,y\n";
+        for (int copy = 0; copy < 2; ++copy)
+            for (int i = 1; i <= 40; ++i) csv << i * 7 << ',' << (i % 2 ? "odd" : "even") << '\n';
+    }
+    nlohmann::json j;
+    j["nodes"] = nlohmann::json::array(
+        {{{"id", 1}, {"type", "DataInput"}, {"name", "Rows"},
+          {"parameters", {{"source_type", "file"}, {"file_path", csv_path.string()}, {"type", "csv"},
+                          {"has_header", "true"}, {"delimiter", ","}, {"label_column", "y"},
+                          {"force_disk_backed", "false"}}}},
+         {{"id", 2}, {"type", "RemoveDuplicates"}, {"name", "Dedup"}, {"parameters", nlohmann::json::object()}}});
+    j["links"] = nlohmann::json::array({{{"start_node", 1}, {"end_node", 2}}});
+    j["training_split"] = {{"label_column", "y"}, {"train", 0.8}, {"val", 0.1}, {"test", 0.1},
+                           {"seed", 42}, {"stratified", false}, {"shuffle", true}};
+    PipelineExecutor executor;
+    Check(executor.ExecutePipeline(j.dump()), "the dedup run: " + executor.GetLastError());
+    const auto it = executor.NodeResults().find(2);
+    Check(it != executor.NodeResults().end(), "Remove Duplicates' result is named");
+    const auto dataset = DataRegistry::Instance().GetArrowDataset(it->second);
+    Check(dataset && dataset->GetArrowTable(), "Remove Duplicates' result is in memory");
+    const auto out = dataset->GetArrowTable();
+    Check(out->num_rows() == 40, "40 distinct rows stay, whatever partition each copy fell in (got " +
+                                     std::to_string(out->num_rows()) + ")");
+    Check(out->schema()->GetFieldIndex(kSplitPartitionColumn) >= 0, "the kept rows carry their partition");
+    fs::remove_all(dir, ec);
+}
+
 // Supplied Validation / Test inputs (S0-g4): their rows join the training
 // rows with partition 1 / 2; the scaler learns from the training rows only
 // and transforms them all.
@@ -473,6 +544,44 @@ void CheckPCA() {
     Expect(Column(beside, "pc_0"), want, "PCA beside the input");
     Check(beside->GetColumnByName("text") != nullptr, "PCA beside the input: the other columns kept");
     {
+        // The label passes through unchanged (TOFIX223 0.7): a float target
+        // keeps its fractions, a missing target stays missing, a text label
+        // stays text. It once came out as int32: 2.75 -> 2, null -> class 0.
+        arrow::DoubleBuilder target_builder;
+        (void)target_builder.AppendValues({0.25, 2.75, -1.5});
+        (void)target_builder.AppendNull();
+        (void)target_builder.AppendValues({7.125, 3.5});
+        std::shared_ptr<arrow::Array> target;
+        (void)target_builder.Finish(&target);
+        auto with_target = *Table()->AddColumn(0, arrow::field("target", arrow::float64()),
+                                                 std::make_shared<arrow::ChunkedArray>(target));
+        PCAOperator labelled;
+        const auto out_target = Run(labelled, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"label_col", "target"}}, with_target);
+        const auto y = out_target->GetColumnByName("y");
+        Check(y != nullptr && y->type()->Equals(arrow::float64()), "PCA: the label keeps its float type");
+        Check(y && y->length() == 6 && y->null_count() == 1, "PCA: the missing label stays missing");
+        if (y && y->length() == 6 && y->type()->Equals(arrow::float64())) {
+            std::vector<double> values;
+            std::vector<bool> present;
+            for (const auto& chunk : y->chunks()) {
+                const auto& doubles = static_cast<const arrow::DoubleArray&>(*chunk);
+                for (int64_t i = 0; i < doubles.length(); ++i) {
+                    present.push_back(doubles.IsValid(i));
+                    values.push_back(doubles.IsValid(i) ? doubles.Value(i) : 0.0);
+                }
+            }
+            Check(!present[3], "PCA: row 3's label is the missing one");
+            Check(values[0] == 0.25 && values[1] == 2.75 && values[2] == -1.5 && values[4] == 7.125 && values[5] == 3.5,
+                  "PCA: the label values pass through unchanged");
+        }
+        PCAOperator text_labelled;
+        const auto out_text = Run(text_labelled, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"label_col", "c"}}, Table());
+        const auto text_y = out_text->GetColumnByName("y");
+        Check(text_y && text_y->type()->Equals(arrow::utf8()) &&
+                  std::static_pointer_cast<arrow::StringScalar>(*text_y->GetScalar(1))->ToString() == "blue",
+              "PCA: a text label stays text");
+    }
+    {
         // A second PCA beside the first would add pc_0 twice: refused with the reason.
         PCAOperator twice;
         std::string error;
@@ -543,6 +652,28 @@ void CheckLinearSteps() {
                   "svd_0"),
            {1.2287401639, 1.9288812994, 4.122062113, 9.9087060113, 6.751084548, 3.1576214633}, "Truncated SVD from its saved values");
     fs::remove(state);
+
+    // A feature whose name holds a comma: quoted in feature_cols, and its
+    // output name survives the saved values.
+    const auto rename = [](std::shared_ptr<arrow::Table> t) {
+        std::vector<std::string> names = t->ColumnNames();
+        for (auto& n : names)
+            if (n == "a") n = "a, x";
+        return *t->RenameColumns(names);
+    };
+    const fs::path comma_state = fs::temp_directory_path() / "cyxwiz_fit_on_train_zca_comma.cyxstate.json";
+    fs::remove(comma_state);
+    WhiteningOperator comma_fit;
+    const auto cz = Run(comma_fit, {{"feature_cols", "\"a, x\",y"}, {"method", "zca"}, {"save_state", "true"}, {"state_path", comma_state.string()}},
+                        rename(Table()));
+    Expect(Column(cz, "a, x_white"), {-1.2189321934, -0.281099197, 1.143805273, 5.8692802058, 3.6567965803, 0.3562261175}, "ZCA on a name with a comma");
+    WhiteningOperator comma_reuse;
+    Expect(Column(Run(comma_reuse, {{"feature_cols", "\"a, x\",y"}, {"method", "zca"}, {"operation_mode", "transform_only"},
+                                    {"state_path", comma_state.string()}},
+                      rename(Table(false))),
+                  "a, x_white"),
+           {-1.2189321934, -0.281099197, 1.143805273, 5.8692802058, 3.6567965803, 0.3562261175}, "ZCA from saved values on a name with a comma");
+    fs::remove(comma_state);
 }
 
 int main() {
@@ -551,6 +682,7 @@ int main() {
     CheckLinearSteps();
     CheckSolveAndProjection();
     CheckExecutor();
+    CheckRemoveDuplicatesAcrossSplit();
     CheckSuppliedInputs();
     std::cout << "fit on Train rows: scaler, target encoder, PCA, Truncated SVD, Whitening, Linear Solve, TF-IDF, count and tokenizer learn from the Train rows "
                  "(scikit-learn values); the run marks rows with the shared split rule; supplied Validation / Test rows join and are transformed; exports leave the partition out. OK\n";

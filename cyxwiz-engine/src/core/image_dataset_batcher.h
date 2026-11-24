@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <optional>
 #include <vector>
 #include <random>
 
@@ -33,6 +34,13 @@ public:
 
     Batch GetNextBatch() override;
     void Reset() override;
+    // The next Train Reset orders the epoch from `seed` alone (the epoch's
+    // seed from the executor), so a resumed run replays its order (TOFIX228
+    // 1.6, ORA-28: the order followed how many Resets had run).
+    bool SetEpochShuffleSeed(uint64_t seed) override {
+        pending_epoch_seed_ = seed;
+        return true;
+    }
     bool IsEpochComplete() const override;
     size_t GetNumBatches() const override;
     // The images of the current phase's part.
@@ -58,6 +66,7 @@ public:
     size_t SourceSampleCount() const override;
     std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
     std::string SourceSampleName(size_t index) const override;
+    std::optional<std::vector<size_t>> TrainClassCounts() const override;
 
     // The images in a part (Train, Val or Test), whatever the current phase.
     size_t SamplesIn(BatcherPhase phase) const { return Part(phase).size(); }
@@ -111,6 +120,7 @@ private:
     bool resident_tried_ = false;
 
     std::mt19937 rng_;
+    std::optional<uint64_t> pending_epoch_seed_;  // see SetEpochShuffleSeed
 };
 
 } // namespace cyxwiz

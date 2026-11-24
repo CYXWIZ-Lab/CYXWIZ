@@ -732,6 +732,7 @@ void TestTrainingRunComparisonRecord() {
     metrics.test_accuracy = 0.71f;
     metrics.has_test_metrics = true;
     metrics.checkpoint_used = "runs/sentiment/best_checkpoint.cyxckpt";
+    metrics.last_executed_epoch = 3;
 
     const auto record = cyxwiz::MakeTrainingRunComparisonRecord(
         "run-001", config, metrics, 12.5f,
@@ -906,6 +907,19 @@ void TestTrainingRunComparisonRecord() {
     Check(record.final_test_accuracy == 0.71f,
           "run comparison should keep final test accuracy");
 
+    Check(record.epochs_run == 3, "run comparison should keep the epochs that ran");
+    auto ended = record;
+    ended.finished_at = "11:06";
+    ended.device_backend = "arrayfire_cuda";
+    ended.device_name = "GeForce GTX 1050 Ti";
+    ended.device_fallback = true;
+    const std::string ended_csv = cyxwiz::TrainingRunComparisonTableSummary({ended});
+    const std::string ended_tail = ",11:06,3,arrayfire_cuda,GeForce GTX 1050 Ti,true";
+    Check(ended_csv.find("elapsed_seconds,finished_at,epochs_run,device_backend,device_name,device_fallback\n") !=
+                  std::string::npos &&
+              ended_csv.size() > ended_tail.size() &&
+              ended_csv.compare(ended_csv.size() - ended_tail.size(), ended_tail.size(), ended_tail) == 0,
+          "run comparison CSV ends with the finish time, epochs run and device");
     const std::string csv = cyxwiz::TrainingRunComparisonTableSummary({record});
     Check(csv.find("run_id,run_status,dataset_name,preprocessing_domain,"
                    "sequence_batch_enabled") == 0,

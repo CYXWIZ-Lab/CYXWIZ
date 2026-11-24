@@ -13,6 +13,12 @@ output, a fixed upstream gradient and torch's parameter gradients. The Engine
 test sets the parameters on the built model, runs forward and backward and
 compares.
 
+The rows case is also saved as a PyTorch state-dict (weight_files/
+conv1d_rows.pth, keys named after the graph's nodes "Conv" and "Dense"), so
+the Engine's weights-file loader is checked against torch's own layout: the
+Conv1d kernel [Cout, Cin, k] and the Linear columns after flatten(1), which
+are channel first (TOFIX223 0.15).
+
     py -3.12 generate_conv1d_graph_fixtures.py
 """
 
@@ -30,6 +36,7 @@ SCHEMA_VERSION = 1
 DEFAULT_OUTPUT = (
     Path(__file__).resolve().parent.parent / "fixtures" / "conv1d_graph_pytorch.json"
 )
+DEFAULT_WEIGHTS_DIR = DEFAULT_OUTPUT.parent / "weight_files"
 
 
 def plain(tensor: torch.Tensor) -> dict[str, Any]:
@@ -53,7 +60,7 @@ def finish(name: str, x: torch.Tensor, params: dict[str, torch.Tensor], forward)
     }
 
 
-def rows_case() -> dict[str, Any]:
+def rows_case(weights_dir: Path) -> dict[str, Any]:
     n, f = 3, 10
     x = torch.randn(n, f)
     params = {
@@ -70,6 +77,12 @@ def rows_case() -> dict[str, Any]:
 
     case = finish("rows_flatten", x, params, forward)
     case["graph"] = {"features": f, "filters": 4, "kernel_size": 3, "padding": "same", "units": 3}
+    weights_dir.mkdir(parents=True, exist_ok=True)
+    torch.save({"Conv.weight": params["conv.weights"].detach().clone(),
+                "Conv.bias": params["conv.bias"].detach().clone(),
+                "Dense.weight": params["dense.weight"].detach().clone(),
+                "Dense.bias": params["dense.bias"].detach().clone()},
+               weights_dir / "conv1d_rows.pth")
     return case
 
 
@@ -101,13 +114,14 @@ def embedding_case(pool: str = "avg") -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--weights-dir", type=Path, default=DEFAULT_WEIGHTS_DIR)
     args = parser.parse_args()
     torch.manual_seed(20261008)
     fixture = {
         "schema_version": SCHEMA_VERSION,
         "torch_version": torch.__version__,
         "tolerance": {"atol": 1e-5, "rtol": 1e-4},
-        "cases": [rows_case(), embedding_case(), embedding_case("max")],
+        "cases": [rows_case(args.weights_dir), embedding_case(), embedding_case("max")],
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")

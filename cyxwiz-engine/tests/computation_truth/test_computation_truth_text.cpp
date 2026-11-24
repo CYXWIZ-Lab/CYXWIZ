@@ -6,6 +6,7 @@
 // CYXWIZ_TEXT_TRUTH_LOCAL names the local fixture of real rows (written with
 // --local, not committed), it is checked the same way.
 
+#include "../oracle/oracle_header.h"
 #include <cyxwiz/text_processing.h>
 
 #include <nlohmann/json.hpp>
@@ -84,6 +85,7 @@ json Load(const char* path) {
 }  // namespace
 
 int main() {
+    cyxwiz::test::BeginHostOracleTest("test_computation_truth_text");
     const json fixture = Load(CYXWIZ_TEXT_FIXTURE);
 
     // The stop words are sklearn's list plus the contractions, exactly.

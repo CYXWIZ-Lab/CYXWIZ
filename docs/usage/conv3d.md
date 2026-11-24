@@ -82,7 +82,7 @@ code runs on ArrayFire's CPU backend.
   Conv3D yet and says so; train it in Studio.
 - The weight is stored as `[filters, C x k^3]`, PyTorch's
   `conv.weight.flatten(1)`.
-- Checked against PyTorch: `conv3d_pytorch_parity` covers the compiled shapes,
+- Checked against PyTorch: `oracle_conv3d_training_<device>` (ctest) covers the compiled shapes,
   the forward output, the input gradient and every parameter gradient. Its
   cases use one, two and three channels, `same` and `valid`, stride 2, a 1x1x1
   kernel, and two Conv3D layers with a ReLU between them.

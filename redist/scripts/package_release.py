@@ -550,6 +550,53 @@ def copy_build_payload(
     copy_file(require_file(paths.root / "KNOWN_ISSUES.md", "CyxWiz KNOWN_ISSUES.md"), stage / "KNOWN_ISSUES.md")
     copy_vcpkg_notices(paths, stage, system)
     install_plugin_sdk(paths, stage / "sdk")
+    copy_examples(paths.root, stage)
+
+
+# What users get under examples/: the starter graphs and their data, the
+# scripts and guides. The repository's test folders stay out.
+SHIPPED_EXAMPLES = ("README.md", "c_api", "cyx", "cyxgraph", "data", "datasets", "guides", "python",
+                    "python_nodes", "training", "utilities")
+
+
+def example_files(root: Path) -> list[Path]:
+    """The files under examples/ to ship, relative to the source root.
+
+    In a git checkout only the tracked files ship, so a model, a run's output
+    or anything else saved into the examples on the packaging machine stays
+    out; a checkout git cannot read fails rather than shipping them. Without
+    git (a source archive) every file ships, except caches.
+    """
+    examples = require_directory(root / "examples", "examples (starter graphs and their sample data)")
+    require_directory(examples / "cyxgraph", "examples/cyxgraph (the start page's starter graphs)")
+    wanted = [Path("examples") / name for name in SHIPPED_EXAMPLES]
+
+    def shipped(relative: Path) -> bool:
+        return (any(relative == w or w in relative.parents for w in wanted) and relative.name != ".gitignore"
+                and "__pycache__" not in relative.parts and relative.suffix != ".pyc")
+
+    if (root / ".git").exists():
+        try:
+            listed = subprocess.run(
+                ["git", "-C", str(root), "ls-files", "-z", "--", "examples"],
+                check=True, capture_output=True,
+            ).stdout.decode("utf-8")
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise PackageError(f"git could not list the tracked examples in {root}: {error}") from error
+        tracked = [Path(item) for item in listed.split("\0") if item]
+        return [item for item in tracked if shipped(item) and (root / item).is_file()]
+    found = []
+    for path in sorted(examples.rglob("*")):
+        relative = path.relative_to(root)
+        if path.is_file() and shipped(relative):
+            found.append(relative)
+    return found
+
+
+def copy_examples(root: Path, stage: Path) -> None:
+    """examples/ beside the Engine: the start page finds its starter graphs there."""
+    for relative in example_files(root):
+        copy_file(root / relative, stage / relative)
 
 
 def cmake_build_root(build: Path) -> Path:
@@ -951,6 +998,8 @@ def classify_source(relative_path: Path) -> str:
         return "python-tools"
     if value.startswith("sdk/"):
         return "cyxwiz-plugin-sdk"
+    if value.startswith("examples/"):
+        return "cyxwiz-examples"
     if value in ("README.md", "LICENSE", "KNOWN_ISSUES.md", "start_cyxwiz.bat", "cyxwiz"):
         return "cyxwiz-package"
     return "cyxwiz-build"

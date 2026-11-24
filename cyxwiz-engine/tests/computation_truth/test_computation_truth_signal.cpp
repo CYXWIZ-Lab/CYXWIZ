@@ -6,7 +6,7 @@
 // apply, numpy.convolve's three modes, wavedec / waverec, denoising at the
 // universal threshold, and find_peaks by prominence and distance.
 
-#include "test_device_selection.h"
+#include "../oracle/oracle_test.h"
 
 #include <cyxwiz/signal_processing.h>
 
@@ -206,7 +206,7 @@ void RunCase(const json& c) {
 }  // namespace
 
 int main() {
-    if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) return 1;
+    if (!cyxwiz::test::BeginOracleTest("test_computation_truth_signal")) return 1;
     std::ifstream in(CYXWIZ_SIGNAL_FIXTURE);
     Check(in.good(), std::string("cannot open ") + CYXWIZ_SIGNAL_FIXTURE);
     const json fixture = json::parse(in);

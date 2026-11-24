@@ -515,6 +515,106 @@ void CheckDataBoundaryVersionGuard() {
 
 } // namespace
 
+// Save selection as pattern: a Dense -> ReLU -> Dropout row fed by a Flatten
+// outside the selection saves as a block with a Block input, keeps its
+// settings, places and pins, and inserts again as it was saved.
+void CheckSaveSelectionRoundTrip() {
+    auto& library = gui::patterns::PatternLibrary::Instance();
+    const auto dir = std::filesystem::temp_directory_path() / "cyxwiz_pattern_guard_user";
+    std::filesystem::remove_all(dir);
+    const std::string kept_dir = library.GetUserPatternsDirectory();
+    library.SetUserPatternsDirectory(dir.string());
+
+    int pin = 1;
+    const auto make = [&pin](int id, gui::NodeType type, const std::string& name) {
+        gui::MLNode node = MinimalNode(type, name);
+        node.id = id;
+        node.inputs[0].id = pin++;
+        node.outputs[0].id = pin++;
+        return node;
+    };
+    std::vector<gui::MLNode> nodes = {make(1, gui::NodeType::Flatten, "Flatten"),
+                                      make(2, gui::NodeType::Dense, "Dense 512"),
+                                      make(3, gui::NodeType::ReLU, "ReLU 1"),
+                                      make(4, gui::NodeType::Dropout, "Dropout 0.4")};
+    nodes[1].parameters["units"] = "512";
+    nodes[3].parameters["rate"] = "0.4";
+    const auto wire = [&nodes](int id, int from, int to) {
+        gui::NodeLink link;
+        link.id = id;
+        link.from_node = from;
+        link.to_node = to;
+        link.from_pin = nodes[from - 1].outputs[0].id;
+        link.to_pin = nodes[to - 1].inputs[0].id;
+        return link;
+    };
+    const std::vector<gui::NodeLink> links = {wire(1, 1, 2), wire(2, 2, 3), wire(3, 3, 4)};
+    const std::map<int, ImVec2> positions = {
+        {1, ImVec2(0, 100)}, {2, ImVec2(300, 100)}, {3, ImVec2(500, 120)}, {4, ImVec2(700, 100)}};
+    using gui::patterns::PatternCategory;
+
+    std::string error;
+    const std::string id = library.SavePatternFromSelection(nodes, links, positions, {2, 3, 4}, "Dense-ReLU-Dropout",
+                                                            "Saved by the guard", PatternCategory::BuildingBlocks,
+                                                            &error);
+    Check(id == "user:dense-relu-dropout", "the saved pattern is known by its file name: " + id + " " + error);
+    Check(std::filesystem::exists(dir / "dense-relu-dropout.cyxgraph"), "the file is in the user's patterns folder");
+    const auto* saved = library.GetPattern(id);
+    Check(saved != nullptr && saved->user, "the saved pattern is one of My patterns");
+    if (saved) {
+        Check(saved->kind == gui::patterns::PatternKind::Block, "a selection without Data Input and Output is a block");
+        Check(saved->category == PatternCategory::BuildingBlocks, "the category is kept");
+        Check(saved->template_data.nodes.size() == 4, "three nodes and a Block input");
+        Check(saved->template_data.links.size() == 3, "the Block input link and the two inside links");
+        bool input_first = false;
+        for (const auto& node : saved->template_data.nodes) {
+            if (node.name == "Block input") input_first = node.type == "Identity" && node.pos_x == 0.0f;
+            if (node.name == "Dense 512")
+                Check(node.type == "Dense" && node.params.at("units") == "512" && node.pos_x == 220.0f &&
+                          node.pos_y == 0.0f,
+                      "Dense keeps its file type name, settings and place after the Block input");
+            if (node.name == "ReLU 1") Check(node.pos_x == 420.0f && node.pos_y == 20.0f, "places are relative");
+        }
+        Check(input_first, "the Block input is an Identity at the left");
+    }
+
+    std::vector<gui::MLNode> out_nodes;
+    std::vector<gui::NodeLink> out_links;
+    int next_node = 1, next_link = 1;
+    const auto creator = [](gui::NodeType type, const std::string& name) { return MinimalNode(type, name); };
+    Check(library.InstantiatePatternWithCreator(id, {}, out_nodes, out_links, next_node, next_link, ImVec2(0, 0),
+                                                creator, &error),
+          "the saved pattern inserts: " + error);
+    Check(out_nodes.size() == 4 && out_links.size() == 3, "it inserts as it was saved");
+
+    // The same name again replaces it; an empty selection or a blank name is refused.
+    Check(library.SavePatternFromSelection(nodes, links, positions, {2, 3}, "Dense-ReLU-Dropout", "",
+                                           PatternCategory::BuildingBlocks, &error) == id,
+          "saving under the same name replaces the pattern");
+    Check(library.GetPattern(id) && library.GetPattern(id)->template_data.nodes.size() == 3,
+          "the replaced one is read");
+    Check(library.SavePatternFromSelection(nodes, links, positions, {}, "Empty", "", PatternCategory::Basic, &error)
+                  .empty() &&
+              error == "no nodes are selected",
+          "an empty selection is refused: " + error);
+    Check(library.SavePatternFromSelection(nodes, links, positions, {2}, "   ", "", PatternCategory::Basic, &error)
+                  .empty() &&
+              error == "it needs a name",
+          "a blank name is refused: " + error);
+
+    // Delete takes it out of the library; a shipped pattern is not deleted. The
+    // file is removed first, so the test never fills the developer's Recycle
+    // Bin: a pattern whose file is already gone still leaves My patterns.
+    std::filesystem::remove(dir / "dense-relu-dropout.cyxgraph");
+    Check(library.DeleteUserPattern(id, &error), "a pattern whose file is gone is deleted: " + error);
+    Check(library.GetPattern(id) == nullptr, "the deleted pattern is gone from the library");
+    Check(!library.DeleteUserPattern(id, &error), "it cannot be deleted twice");
+    Check(!library.DeleteUserPattern("guard_dense", &error), "a shipped pattern is not deleted");
+
+    library.SetUserPatternsDirectory(kept_dir);
+    std::filesystem::remove_all(dir);
+}
+
 int main() {
     const auto training_graph = [](std::initializer_list<gui::NodeType> types) {
         std::vector<gui::MLNode> nodes;
@@ -531,8 +631,10 @@ int main() {
           NodeType::TransformerDecoder, NodeType::LayerNorm, NodeType::TimeDistributed,
           NodeType::Output, NodeType::CrossEntropyLoss, NodeType::Adam}),
           "transformer language-model graphs must enable the training entry point");
-    Check(training_graph({NodeType::DatasetInput, NodeType::Dense, NodeType::MSELoss}),
-          "legacy dataset input and dense training must remain eligible");
+    Check(training_graph({NodeType::DataInput, NodeType::Dense, NodeType::MSELoss}),
+          "a data input, a dense layer and a loss enable training");
+    Check(!training_graph({NodeType::DatasetInput, NodeType::Dense, NodeType::MSELoss}),
+          "the retired Dataset Input is no data source");
     Check(!training_graph({NodeType::DataInput, NodeType::DataSplit, NodeType::DataLoader}),
           "data-only pipelines must not enable training");
     Check(!training_graph({NodeType::DataInput, NodeType::CrossEntropyLoss}),
@@ -650,55 +752,35 @@ int main() {
     Check(nodes.empty() && links.empty(), "unknown rejection should leave no partial graph");
     Check(creator_calls == 6, "unknown rejection should not call node creator");
 
+    // Its second link leaves output 2 of Data Input, which has one output: the whole
+    // pattern is refused with that reason, not inserted without the link.
     nodes.clear();
     links.clear();
-    Check(library.InstantiatePatternWithCreator(
+    std::string error;
+    Check(!library.InstantiatePatternWithCreator(
               "guard_data_boundary", {}, nodes, links, next_node_id,
-              next_link_id, ImVec2(0, 0), creator),
-          "creator data-boundary pattern should instantiate");
-    Check(creator_calls == 9,
-          "data-boundary pattern should call node creator for each node");
-    Check(nodes.size() == 3 && links.size() == 2,
-          "creator data-boundary pattern should skip stale legacy pin links");
-
-    int next_pin_id = 2000;
+              next_link_id, ImVec2(0, 0), creator, &error),
+          "a pattern with a link to a pin its node lacks is refused");
+    Check(nodes.empty() && links.empty(), "a refused pattern leaves no partial graph");
+    Check(error == "a link comes from output 2 of \"Data Input\", which has 1 output",
+          "the refusal names the pin and the node: " + error);
 
     nodes.clear();
     links.clear();
-    Check(library.InstantiatePattern(
-              "guard_data_boundary", {}, nodes, links, next_node_id,
-              next_pin_id, next_link_id, ImVec2(0, 0)),
-          "legacy/no-editor data-boundary pattern should instantiate");
-    Check(nodes.size() == 3 && links.size() == 2,
-          "data-boundary fallback should create three nodes and two links");
-    const gui::MLNode* data_input = nullptr;
-    const gui::MLNode* data_split = nullptr;
-    const gui::MLNode* data_loader = nullptr;
-    for (const auto& node : nodes) {
-        if (node.type == gui::NodeType::DataInput) data_input = &node;
-        if (node.type == gui::NodeType::DataSplit) data_split = &node;
-        if (node.type == gui::NodeType::DataLoader) data_loader = &node;
-    }
-    Check(data_input != nullptr && data_split != nullptr && data_loader != nullptr,
-          "data-boundary fallback should create DataInput/DataSplit/DataLoader");
-    Check(data_input->outputs.size() == 1 &&
-              data_input->outputs[0].name == "Dataset" &&
-              data_input->outputs[0].type == gui::PinType::Dataset,
-          "fallback DataInput should expose one Dataset output");
-    Check(data_split->inputs.size() == 3 && data_split->outputs.size() == 1 &&
-              data_split->inputs[0].name == "Training Dataset" &&
-              data_split->inputs[0].type == gui::PinType::Dataset &&
-              data_split->outputs[0].name == "Partitions" &&
-              data_split->outputs[0].type == gui::PinType::Dataset,
-          "fallback DataSplit should expose Dataset role inputs and Partitions output");
-    Check(data_loader->inputs.size() == 1 && data_loader->outputs.size() == 2 &&
-              data_loader->inputs[0].name == "Partitions" &&
-              data_loader->inputs[0].type == gui::PinType::Dataset &&
-              data_loader->outputs[0].name == "Data" &&
-              data_loader->outputs[0].type == gui::PinType::Tensor &&
-              data_loader->outputs[1].name == "Labels" &&
-              data_loader->outputs[1].type == gui::PinType::Labels,
-          "fallback DataLoader should consume Partitions and emit Data/Labels");
+    Check(!library.InstantiatePatternWithCreator(
+              "guard_typo", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator, &error),
+          "unknown node pattern is refused again");
+    Check(error.find("DefinitelyNotANode") != std::string::npos && error.find("does not know") != std::string::npos,
+          "an unknown type is named in the reason: " + error);
+    Check(!library.InstantiatePatternWithCreator(
+              "guard_lambda", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator, &error),
+          "template pattern is refused again");
+    Check(error.find("template") != std::string::npos, "a template node is named in the reason: " + error);
+    Check(!library.InstantiatePatternWithCreator(
+              "no_such_pattern", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator, &error),
+          "a pattern the library lacks is refused");
+    Check(error == "the pattern is not in the library", "a missing pattern says so: " + error);
+    const int calls_before_refusals = creator_calls;
 
     nodes.clear();
     links.clear();
@@ -706,31 +788,26 @@ int main() {
               "guard_ner_name", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "Dense-encoded NER placeholder-name pattern should be rejected");
     Check(nodes.empty() && links.empty(), "Dense-encoded NER name rejection should leave no partial graph");
-    Check(creator_calls == 9, "Dense-encoded NER name rejection should not call node creator");
+    Check(creator_calls == calls_before_refusals, "Dense-encoded NER name rejection should not call node creator");
+    Check(!library.InstantiatePatternWithCreator(
+              "guard_ner_param", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator, &error),
+          "Dense-encoded NER parameter-marker pattern should be rejected");
+    Check(nodes.empty() && links.empty(), "Dense-encoded NER parameter rejection should leave no partial graph");
+    Check(creator_calls == calls_before_refusals, "a refused pattern calls the node creator for none of its nodes");
 
-    Check(!library.InstantiatePattern(
-              "guard_ner_name", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
-          "legacy instantiation should reject Dense-encoded NER placeholder names");
-    Check(nodes.empty() && links.empty(), "legacy Dense-encoded NER name rejection should leave no partial graph");
-
-    Check(!library.InstantiatePattern(
-              "guard_ner_param", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
-          "legacy instantiation should reject Dense-encoded NER parameter markers");
-    Check(nodes.empty() && links.empty(), "legacy Dense-encoded NER parameter rejection should leave no partial graph");
-
-    Check(!library.InstantiatePattern(
-              "guard_lambda", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
-          "legacy instantiation should also reject template nodes");
-
-    Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "NERSequenceBuilder"),
+    const auto placeholder_name = [](gui::NodeType type, const std::string& name) {
+        std::string marker;
+        return gui::detail::IsDenseEncodedSequencePlaceholderName(type, name, marker);
+    };
+    Check(placeholder_name(gui::NodeType::Dense, "NERSequenceBuilder"),
           "Dense-encoded NERSequenceBuilder placeholder should be rejected");
-    Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "Sentence Sequences"),
+    Check(placeholder_name(gui::NodeType::Dense, "Sentence Sequences"),
           "Dense-encoded friendly NER placeholder name should be rejected");
-    Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "TokenCrossEntropyLoss"),
+    Check(placeholder_name(gui::NodeType::Dense, "TokenCrossEntropyLoss"),
           "Dense-encoded token loss placeholder should be rejected");
-    Check(!gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "Dense (128)"),
+    Check(!placeholder_name(gui::NodeType::Dense, "Dense (128)"),
           "ordinary Dense layer names should not be rejected");
-    Check(!gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Embedding, "NERSequenceBuilder"),
+    Check(!placeholder_name(gui::NodeType::Embedding, "NERSequenceBuilder"),
           "first-class non-Dense node types should not be rejected by the Dense placeholder guard");
 
     gui::MLNode dense_encoded_ner;
@@ -750,6 +827,7 @@ int main() {
     CheckModernPinConnectivityFixtures();
     CheckSerializedPinIndexGuard();
     CheckDataBoundaryVersionGuard();
+    CheckSaveSelectionRoundTrip();
 
     std::cout << "Pattern template guard passed\n";
     return 0;

@@ -76,11 +76,10 @@ std::string BuildLayerNormGraphJson() {
 
     graph["nodes"].push_back({
         {"id", 1},
-        {"type", static_cast<int>(gui::NodeType::DatasetInput)},
+        {"type", static_cast<int>(gui::NodeType::DataInput)},
         {"name", "Input"},
         {"parameters", {
             {"dataset_name", "layernorm_roundtrip_dataset"},
-            {"dataset", "layernorm_roundtrip_dataset"},
             {"shape", "[4]"}
         }}
     });

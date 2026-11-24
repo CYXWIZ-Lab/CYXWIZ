@@ -69,11 +69,15 @@ bool IntField(const char* label, const char* id, int* value, int min, int max, c
 
 bool ArchitectureSearchFields(NASSearchConfig& config, int* train_best) {
     bool changed = false;
-    if (!ImGui::BeginTable("##nas_search_fields", 4, ImGuiTableFlags_SizingFixedFit)) return false;
+    // Two label / field pairs a row; one when the window is too narrow
+    const int columns = ImGui::GetContentRegionAvail().x >= 660.0f ? 4 : 2;
+    if (!ImGui::BeginTable("##nas_search_fields", columns, ImGuiTableFlags_SizingFixedFit)) return false;
     ImGui::TableSetupColumn("a", ImGuiTableColumnFlags_WidthFixed, 170.0f);
     ImGui::TableSetupColumn("b", ImGuiTableColumnFlags_WidthFixed, 160.0f);
-    ImGui::TableSetupColumn("c", ImGuiTableColumnFlags_WidthFixed, 170.0f);
-    ImGui::TableSetupColumn("d", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+    if (columns == 4) {
+        ImGui::TableSetupColumn("c", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+        ImGui::TableSetupColumn("d", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+    }
     ImGui::TableNextRow();
     changed |= IntField("Versions per round", "##versions", &config.population_size, 2,
                         core::kArchitectureSearchMaxVersions);

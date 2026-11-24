@@ -127,31 +127,6 @@ struct StreamingConfig {
 };
 
 /**
- * HuggingFace dataset configuration
- */
-struct HuggingFaceConfig {
-    std::string dataset_name;          // e.g., "mnist", "cifar10", "imdb"
-    std::string subset;                // Optional subset name
-    std::string split = "train";       // "train", "validation", "test"
-    std::string cache_dir;             // Local cache directory
-    bool streaming = false;            // Use streaming mode
-    std::string auth_token;            // Optional HF auth token
-};
-
-/**
- * Kaggle dataset configuration
- */
-struct KaggleConfig {
-    std::string dataset_slug;          // e.g., "zalando-research/fashionmnist", "uciml/iris"
-    std::string competition;           // Competition name (alternative to dataset_slug)
-    std::string file_name;             // Specific file to load (optional, loads all if empty)
-    std::string cache_dir;             // Local cache directory
-    std::string username;              // Kaggle username (optional, uses ~/.kaggle/kaggle.json)
-    std::string api_key;               // Kaggle API key (optional)
-    bool unzip = true;                 // Auto-unzip downloaded files
-};
-
-/**
  * Custom dataset configuration
  * Supports loading from various file formats with user-defined schema
  */
@@ -260,8 +235,6 @@ public:
     DatasetHandle LoadImageCSV(const std::string& image_folder, const std::string& csv_path,
                                 const std::string& name = "", int target_width = 224, int target_height = 224,
                                 size_t cache_size = 100);
-    DatasetHandle LoadHuggingFace(const HuggingFaceConfig& config, const std::string& name = "");
-    DatasetHandle LoadKaggle(const KaggleConfig& config, const std::string& name = "");
     DatasetHandle LoadCustom(const CustomConfig& config, const std::string& name = "");
 
     // Streaming dataset loading

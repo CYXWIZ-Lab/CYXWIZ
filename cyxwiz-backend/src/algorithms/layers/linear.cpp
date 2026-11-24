@@ -173,6 +173,41 @@ Tensor LinearLayer::Forward(const Tensor& input) {
     }
 }
 
+// The batch's CSR on the device and the host view it came from: the backward
+// of the same batch (the same host buffers and sizes) reuses it.
+struct LinearLayer::SparseCsrDevice {
+    LinearSparseCsrBatchView view;
+    af::array matrix;
+};
+
+namespace {
+
+bool SameCsrView(const LinearSparseCsrBatchView& a, const LinearSparseCsrBatchView& b) {
+    return a.rows == b.rows && a.columns == b.columns && a.nnz == b.nnz && a.row_offsets == b.row_offsets &&
+           a.column_indices == b.column_indices && a.values == b.values;
+}
+
+}  // namespace
+
+LinearLayer::SparseCsrDevice& LinearLayer::SparseCsrFor(const LinearSparseCsrBatchView& input, bool reuse) {
+    if (!reuse || !sparse_device_ || !SameCsrView(sparse_device_->view, input)) {
+        auto made = std::make_shared<SparseCsrDevice>();
+        made->view = input;
+        made->matrix = af::sparse(
+            static_cast<dim_t>(input.rows),
+            static_cast<dim_t>(input.columns),
+            static_cast<dim_t>(input.nnz),
+            input.values,
+            input.row_offsets,
+            input.column_indices,
+            f32,
+            AF_STORAGE_CSR,
+            afHost);
+        sparse_device_ = std::move(made);
+    }
+    return *sparse_device_;
+}
+
 Tensor LinearLayer::ForwardSparseCsr(
     const LinearSparseCsrBatchView& input) {
     ValidateLinearSparseCsrBatchView(input, in_features_);
@@ -186,16 +221,7 @@ Tensor LinearLayer::ForwardSparseCsr(
                 static_cast<dim_t>(out_features_),
                 f32);
         } else {
-            af::array sparse_input = af::sparse(
-                static_cast<dim_t>(input.rows),
-                static_cast<dim_t>(input.columns),
-                static_cast<dim_t>(input.nnz),
-                input.values,
-                input.row_offsets,
-                input.column_indices,
-                f32,
-                AF_STORAGE_CSR,
-                afHost);
+            const af::array& sparse_input = SparseCsrFor(input, false).matrix;
             af::array weight_transposed = af::transpose(
                 weight_.GetArrayRowMajor2D().as(af::dtype::f32));
             output_gpu = af::matmul(
@@ -360,16 +386,7 @@ void LinearLayer::BackwardSparseCsr(
                 static_cast<dim_t>(in_features_),
                 f32);
         } else {
-            af::array sparse_input = af::sparse(
-                static_cast<dim_t>(input.rows),
-                static_cast<dim_t>(input.columns),
-                static_cast<dim_t>(input.nnz),
-                input.values,
-                input.row_offsets,
-                input.column_indices,
-                f32,
-                AF_STORAGE_CSR,
-                afHost);
+            const af::array& sparse_input = SparseCsrFor(input, true).matrix;
             af::array feature_by_output = af::matmul(
                 sparse_input,
                 grad_gpu,
@@ -385,6 +402,7 @@ void LinearLayer::BackwardSparseCsr(
             bias_grad_gpu.eval();
             bias_grad_ = Tensor(bias_grad_gpu);
         }
+        sparse_device_.reset();  // the batch is done with
         return;
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("LinearLayer::BackwardSparseCsr failed on the ArrayFire device: ") + e.what());

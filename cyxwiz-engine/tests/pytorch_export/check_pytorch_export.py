@@ -26,15 +26,58 @@ from pathlib import Path
 import torch
 
 
-# gui::NodeType values (cyxwiz-engine/src/core/graph_model.h).
-EMBEDDING = 21
-CONCATENATE = 46
+# gui::NodeType values (cyxwiz-engine/src/core/graph_model.h); a pattern
+# template names the type instead.
+EMBEDDING = (21, "Embedding")
+CONCATENATE = (46, "Concatenate")
+
+
+def load_graph(path: Path) -> dict:
+    """The graph's nodes and links in one form, from either file the Engine
+    opens: a saved graph (`nodes` / `links`, numeric types, `parameters`) or a
+    pattern template (`template` with `nodes` / `links`, type names, `params`
+    whose "$name" values are the template's parameter defaults)."""
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    if doc.get("nodes"):
+        return {"nodes": doc["nodes"], "links": doc.get("links", [])}
+    template = doc.get("template") or {}
+    if not template.get("nodes"):
+        raise ValueError("neither a saved graph nor a pattern template (no nodes)")
+    defaults = {p["name"]: str(p.get("default_value", "")) for p in doc.get("parameters", [])}
+
+    def value(v):
+        v = str(v)
+        return defaults.get(v[1:], v) if v.startswith("$") else v
+
+    nodes = [{"id": n["id"], "type": n.get("type"), "name": n.get("name", ""),
+              "parameters": {k: value(v) for k, v in (n.get("params") or n.get("parameters") or {}).items()}}
+             for n in template["nodes"]]
+    links = [{"from_node": l.get("from"), "to_node": l.get("to"),
+              "to_pin_index": l.get("to_pin", 0)} for l in template.get("links", [])]
+    return {"nodes": nodes, "links": links}
+
+
+# Why the Engine's headless tool cannot count a model's parameters, when the
+# reason is this PC and not the graph: nothing to compare the export with.
+OFFLINE_REASONS = (
+    ("could not open", "a file the model needs is not on this PC"),
+    ("the graph has no nodes and links arrays", "the headless loader does not read pattern templates yet"),
+)
 
 
 def cyxwiz_parameter_count(compile_check: Path, graph: Path):
+    """(count, None) for the model CyxWiz builds; (None, why) when it cannot
+    build it: `why` names an OFFLINE_REASONS case, or starts with "FAIL" for
+    any other reason (the Engine refuses or cannot build the graph)."""
     out = subprocess.run([str(compile_check), "--parameters", str(graph)], capture_output=True, text=True)
     match = re.search(r"parameters=(\d+)", out.stdout)
-    return int(match.group(1)) if match else None
+    if match:
+        return int(match.group(1)), None
+    text = (out.stdout + out.stderr).strip()
+    for marker, why in OFFLINE_REASONS:
+        if marker in text:
+            return None, why
+    return None, "FAIL " + text[-300:]
 
 
 def word_pos_embeddings(graph_json: dict):
@@ -43,12 +86,12 @@ def word_pos_embeddings(graph_json: dict):
     address inputs by to_pin_index."""
     nodes = {n["id"]: n for n in graph_json.get("nodes", [])}
     for concat in nodes.values():
-        if concat.get("type") != CONCATENATE:
+        if concat.get("type") not in CONCATENATE:
             continue
         sources = {l.get("to_pin_index", 0): nodes.get(l["from_node"])
                    for l in graph_json.get("links", []) if l["to_node"] == concat["id"]}
         pair = (sources.get(0), sources.get(1))
-        if all(n is not None and n.get("type") == EMBEDDING for n in pair):
+        if all(n is not None and n.get("type") in EMBEDDING for n in pair):
             return pair
     return None
 
@@ -56,9 +99,7 @@ def word_pos_embeddings(graph_json: dict):
 def synthetic_input(graph_json: dict, batch: int = 2):
     """Token ids for graphs that start with an Embedding (shorter than every
     length limit in the graph), floats shaped like the Data Input otherwise."""
-    nodes = graph_json.get("nodes", [])
-    if not nodes:
-        raise ValueError("not a saved graph (no nodes)")
+    nodes = graph_json["nodes"]
     limits = [16]
     for node in nodes:
         for key in ("max_len", "max_length", "sequence_length", "max_sequence_length"):
@@ -104,6 +145,16 @@ def check(graph: Path, bin_dir: Path, work: Path):
     if blocked:
         return {**result, "ok": None, "stage": "blocked", "detail": blocked[len("raise ValueError("):-1][:200]}
 
+    # An RL graph exports a Stable-Baselines3 training run on the Engine's own
+    # environments, not a GeneratedModel: it is compiled here, not trained.
+    text = code.read_text(encoding="utf-8")
+    if "from stable_baselines3 import" in text:
+        try:
+            compile(text, str(code), "exec")
+        except SyntaxError as error:
+            return {**result, "ok": False, "stage": "rl", "detail": f"SyntaxError: {error}"}
+        return {**result, "ok": None, "stage": "rl", "detail": "a Stable-Baselines3 training script: compiled, not run"}
+
     script = subprocess.run([sys.executable, str(code)], capture_output=True, text=True, cwd=work)
     if script.returncode != 0:
         return {**result, "ok": False, "stage": "script", "detail": script.stderr[-600:]}
@@ -114,7 +165,7 @@ def check(graph: Path, bin_dir: Path, work: Path):
         spec.loader.exec_module(module)
         torch.manual_seed(0)
         model = module.GeneratedModel()
-        x, vocab = synthetic_input(json.loads(graph.read_text(encoding="utf-8")))
+        x, vocab = synthetic_input(load_graph(graph))
         y = model(x)  # materializes lazy layers
         if vocab is not None and y.dim() == 3:
             loss = torch.nn.functional.cross_entropy(y.reshape(-1, y.shape[-1]), x.reshape(-1))
@@ -130,8 +181,14 @@ def check(graph: Path, bin_dir: Path, work: Path):
     except Exception as error:  # the export ran but the model does not train
         return {**result, "ok": False, "stage": "forward/backward", "detail": f"{type(error).__name__}: {error}"}
 
-    expected = cyxwiz_parameter_count(bin_dir / "cyxwiz-graph-compile-check.exe", graph)
+    expected, unavailable = cyxwiz_parameter_count(bin_dir / "cyxwiz-graph-compile-check.exe", graph)
     result["cyxwiz_parameters"] = expected
+    if unavailable and unavailable.startswith("FAIL "):
+        return {**result, "ok": False, "stage": "parameters",
+                "detail": f"the Engine cannot build the model: {unavailable[5:]}"[:400]}
+    if unavailable:  # this PC, not the graph: nothing to compare with
+        return {**result, "ok": None, "stage": "skipped",
+                "detail": f"the Engine's parameter count is not available here: {unavailable}"}
     same = expected is not None and expected == result["pytorch_parameters"]
     finite = torch.isfinite(torch.tensor(result["loss"])).item()
     result["ok"] = bool(same and finite and result["parameters_without_grad"] == 0)

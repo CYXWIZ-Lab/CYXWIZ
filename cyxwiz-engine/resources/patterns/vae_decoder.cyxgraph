@@ -1,6 +1,8 @@
 {
   "id": "vae_decoder",
   "name": "VAE Decoder",
+  "kind": "graph",
+  "needs": "VAE sampling and the KL term are not built yet.",
   "description": "Variational Autoencoder decoder block. Takes sampled latent vector and reconstructs the original input. Use with VAE Encoder for complete VAE.",
   "category": "Generative",
   "tags": ["vae", "variational", "decoder", "generative", "reconstruction"],
@@ -32,7 +34,6 @@
   ],
   "template": {
     "nodes": [
-      {"id": "input", "type": "DatasetInput", "name": "Latent Input", "pos": [0, 200]},
       {"id": "dec1", "type": "Dense", "name": "Decoder Dense 1", "pos": [200, 200], "params": {"units": "128"}},
       {"id": "act1", "type": "ReLU", "name": "ReLU 1", "pos": [400, 200]},
       {"id": "dec2", "type": "Dense", "name": "Decoder Dense 2", "pos": [600, 200], "params": {"units": "$hidden_size"}},
@@ -42,7 +43,6 @@
       {"id": "output", "type": "Output", "name": "Output", "pos": [1400, 200]}
     ],
     "links": [
-      {"from": "input", "to": "dec1"},
       {"from": "dec1", "to": "act1"},
       {"from": "act1", "to": "dec2"},
       {"from": "dec2", "to": "act2"},

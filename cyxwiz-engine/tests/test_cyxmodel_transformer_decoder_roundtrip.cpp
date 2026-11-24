@@ -78,11 +78,10 @@ std::string BuildTransformerDecoderGraphJson(
 
     graph["nodes"].push_back({
         {"id", 1},
-        {"type", static_cast<int>(gui::NodeType::DatasetInput)},
+        {"type", static_cast<int>(gui::NodeType::DataInput)},
         {"name", "Input"},
         {"parameters", {
             {"dataset_name", "transformer_decoder_roundtrip_dataset"},
-            {"dataset", "transformer_decoder_roundtrip_dataset"},
             {"shape", "[4]"}
         }}
     });

@@ -8,6 +8,7 @@
 #include "common/server_ca_view.h"
 #include "../../core/backend_pack_manager_model.h"
 #include "../../core/menu_presentation.h"
+#include "../../core/engine_config.h"
 #include "../dialogs/create_project_dialog.h"
 #include "../dialogs/new_file_dialog.h"
 #include "../dialogs/about_dialog.h"
@@ -74,6 +75,7 @@ public:
     void SetSaveProjectCallback(std::function<void()> callback) { save_project_callback_ = callback; }
     void SetStopTrainingCallback(std::function<void()> callback) { stop_training_callback_ = callback; }
     void SetTrainingSettingsCallback(std::function<void()> callback) { training_settings_callback_ = callback; }
+    void SetRLDashboardCallback(std::function<void()> callback) { rl_dashboard_callback_ = std::move(callback); }
     void SetOptimizerSettingsCallback(std::function<void()> callback) { optimizer_settings_callback_ = callback; }
 
     // Node editor callbacks
@@ -90,11 +92,7 @@ public:
     // Nodes > Freeze: the command is one of NodeEditor::RunFreezeCommand's.
     void SetFreezeNodesCallback(std::function<void(const std::string&)> cb) { freeze_nodes_callback_ = cb; }
 
-    // Icon pack selection callbacks
-    void SetSetIconPackCallback(std::function<void(int)> cb) { set_icon_pack_callback_ = cb; }
-    void SetGetIconPackCallback(std::function<int()> cb) { get_icon_pack_callback_ = cb; }
-
-    void SetOpenCustomNodeEditorCallback(std::function<void()> callback) { open_custom_node_editor_callback_ = callback; }
+    void SetOpenPythonNodeMakerCallback(std::function<void()> callback) { open_python_node_maker_callback_ = callback; }
     void SetOpenThemeEditorCallback(std::function<void()> callback) { open_theme_editor_callback_ = callback; }
     void SetOpenProfilerCallback(std::function<void()> callback) { open_profiler_callback_ = callback; }
     // Tools > Monitoring opens the Monitor window on a tab ("system", "memory", "loaded_data", "frames").
@@ -134,6 +132,8 @@ public:
     // Run one menu action by id (the Command Palette and shortcuts use this).
     void Dispatch(const std::string& id, const std::string& argument = "");
     void SetSaveAllCallback(std::function<void()> callback) { save_all_callback_ = callback; }
+    // File > Auto Save: saves what already has a file (never asks for a name)
+    void SetAutoSaveCallback(std::function<void()> callback) { auto_save_callback_ = std::move(callback); }
     void SetAccountSettingsCallback(std::function<void()> callback) { account_settings_callback_ = callback; }
     void SetExitCallback(std::function<void()> callback) { exit_callback_ = callback; }
     void SetOnLoginSuccessCallback(std::function<void(const std::string&)> callback) { on_login_success_callback_ = callback; }
@@ -185,11 +185,10 @@ public:
     void SetAutoSaveEnabled(bool enabled) { auto_save_enabled_ = enabled; }
 
     // Editor settings callbacks (for Preferences -> Script Editor synchronization)
-    void SetEditorTabSizeCallback(std::function<void(int)> callback) { editor_tab_size_callback_ = callback; }
-    void SetEditorFontScaleCallback(std::function<void(float)> callback) { editor_font_scale_callback_ = callback; }
-    void SetEditorShowWhitespaceCallback(std::function<void(bool)> callback) { editor_show_whitespace_callback_ = callback; }
-    void SetEditorWordWrapCallback(std::function<void(bool)> callback) { editor_word_wrap_callback_ = callback; }
-    void SetEditorAutoIndentCallback(std::function<void(bool)> callback) { editor_auto_indent_callback_ = callback; }
+    // Preferences > Script Editor changed: the editor applies the settings
+    void SetEditorSettingsCallback(std::function<void(const core::EditorConfig&)> callback) {
+        editor_settings_callback_ = std::move(callback);
+    }
 
     // Application theme callback (called when View -> Theme changes)
     void SetAppThemeChangedCallback(std::function<void(int)> callback) { app_theme_changed_callback_ = callback; }
@@ -296,7 +295,6 @@ public:
 
     // Minimap visibility pointers (for View -> Minimaps menu)
     void SetNodeEditorMinimapPtr(bool* ptr) { node_editor_minimap_ptr_ = ptr; }
-    void SetScriptEditorMinimapPtr(bool* ptr) { script_editor_minimap_ptr_ = ptr; }
 
     // Debug logging pointers (for View -> Developer Tools)
     void SetIdleLogPtr(bool* ptr) { idle_log_ptr_ = ptr; }
@@ -310,13 +308,6 @@ public:
 
     // Python diagnostics callback (Preferences -> Python)
     void SetPythonDiagnosticsCallback(std::function<std::string()> callback) { python_diagnostics_callback_ = callback; }
-
-    // Initialize editor settings from script editor's current values
-    void SetEditorTabSize(int size) { editor_tab_size_ = size; }
-    void SetEditorFontScale(float scale);  // Converts scale to font size
-    void SetEditorShowWhitespace(bool show) { editor_show_whitespace_ = show; }
-    void SetEditorWordWrap(bool wrap) { editor_word_wrap_ = wrap; }
-    void SetEditorAutoIndent(bool indent) { editor_auto_indent_ = indent; }
 
     // Compute device selection callback
     void SetComputeDeviceChangedCallback(
@@ -348,6 +339,8 @@ private:
     void RenderSearchDialogs();
     void RenderAccountDialogs();
     void RenderPreferencesDialog();
+    bool CommitDeviceSelection();  // Use this device (false: the reason and alternatives show)
+    void RenderPreferencesRail(float footer_height);
     // Preferences > Storage (TOFIX160 P7, toolbar_preferences_storage.cpp):
     // the prepared-data caches, measured off the UI thread, with Clear.
     void RenderStorageTab();
@@ -369,6 +362,10 @@ private:
     // Preferences > Nodes panel (toolbar_preferences_nodes_panel.cpp)
     void RenderNodesPanelPreferences();
     void RenderTrainingPreferences();
+    void RenderStudioPreferences();  // Preferences > Studio
+    void RenderToolsPreferences();   // Preferences > Tools
+    void RenderRestoreDefaults(const std::string& page);  // "Restore this page's defaults"
+    void RestorePageDefaults(const std::string& page);
     // Preferences > Search (toolbar_preferences_search.cpp)
     void RenderSearchPreferences();
     void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
@@ -392,7 +389,6 @@ private:
 
     // Helper functions
     std::string OpenFolderDialog();
-    std::string OpenFileDialog(const char* filter, const char* title);
 
     bool show_account_settings_dialog_ = false;
     bool auto_save_enabled_ = false;
@@ -433,6 +429,7 @@ private:
     std::function<void()> save_project_callback_;
     std::function<void()> stop_training_callback_;
     std::function<void()> training_settings_callback_;
+    std::function<void()> rl_dashboard_callback_;
     std::function<void()> optimizer_settings_callback_;
 
     // Node editor callbacks
@@ -448,11 +445,7 @@ private:
     std::function<void()> ungroup_nodes_callback_;
     std::function<void(const std::string&)> freeze_nodes_callback_;
 
-    // Icon pack selection callbacks
-    std::function<void(int)> set_icon_pack_callback_;
-    std::function<int()> get_icon_pack_callback_;
-
-    std::function<void()> open_custom_node_editor_callback_;
+    std::function<void()> open_python_node_maker_callback_;
     std::function<void()> open_theme_editor_callback_;
     std::function<void()> open_profiler_callback_;
     std::function<void(const std::string&)> open_monitor_callback_;
@@ -467,6 +460,7 @@ private:
     std::unordered_map<std::string, std::function<void(const std::string&)>> action_handlers_;
     std::string status_hint_;
     std::function<void()> save_all_callback_;
+    std::function<void()> auto_save_callback_;
     std::function<void()> account_settings_callback_;
     std::function<void()> exit_callback_;
     std::function<void(const std::string&)> on_login_success_callback_;
@@ -565,23 +559,18 @@ private:
     char separate_central_buf_[256] = {};
     char separate_gateway_buf_[256] = {};
     char separate_api_buf_[256] = {};
+    char deployment_address_buf_[256] = {};  // Preferences > Servers > Deployment
     bool server_change_confirm_ = false;  // signed in: asked before signing out
     bool show_separate_addresses_ = false;
     std::future<cyxwiz::protocol::ServerReach> server_probe_;
     cyxwiz::protocol::ServerReach server_reach_;
     std::string server_probed_;  // what the last probe asked about
-    int preferences_tab_ = 0;  // 0 = Python/Scripting, 1 = Keyboard Shortcuts
+    std::string preferences_page_ = "General";  // the page shown (rail)
+    std::string preferences_search_;            // the rail's search
+    std::string restore_confirm_page_;          // the page asking "Restore ...?"
 
-    // Python/Scripting preferences
-    bool python_settings_changed_ = false;  // Track if restart needed
+    // Preferences > Python
     gui::PythonSettingsPanel python_settings_panel_;
-    char python_interpreter_path_[512] = "";
-    char python_startup_script_[512] = "";
-    bool python_auto_import_numpy_ = true;
-    bool python_auto_import_cyxwiz_ = true;
-    int python_output_limit_ = 1000;  // Max lines in output
-    bool show_python_diagnostics_popup_ = false;
-    std::string python_diagnostics_text_;
 
     // Keyboard shortcuts (action name -> shortcut string)
     int shortcuts_context_ = 0;        // Preferences > Shortcuts: selected window
@@ -667,22 +656,8 @@ private:
     bool show_go_to_line_dialog_ = false;
     int go_to_line_number_ = 1;
 
-    // Editor preferences
-    int editor_font_size_ = 16;  // Maps to editor atlas sizes: 14, 16, 20, 24 px
-    int editor_tab_size_ = 4;
-    bool editor_word_wrap_ = false;
-    bool editor_show_line_numbers_ = true;
-    bool editor_show_whitespace_ = true;
-    bool editor_auto_indent_ = true;
-    bool editor_highlight_current_line_ = true;
-    bool editor_show_minimap_ = false;
-
     // Editor settings callbacks
-    std::function<void(int)> editor_tab_size_callback_;
-    std::function<void(float)> editor_font_scale_callback_;
-    std::function<void(bool)> editor_show_whitespace_callback_;
-    std::function<void(bool)> editor_word_wrap_callback_;
-    std::function<void(bool)> editor_auto_indent_callback_;
+    std::function<void(const core::EditorConfig&)> editor_settings_callback_;
 
     // Application theme callback
     std::function<void(int)> app_theme_changed_callback_;
@@ -782,32 +757,15 @@ private:
     std::function<void(int)> export_model_callback_;  // int = format index (0=CyxModel, 1=Safetensors, 2=ONNX, 3=GGUF)
     std::function<void()> import_model_callback_;
 
-    // General preferences
-    bool general_restore_last_session_ = true;
-    bool general_check_updates_ = true;
-    int general_recent_files_limit_ = 10;
-    bool general_confirm_on_exit_ = true;
-
-    // Appearance preferences
-
     // Minimap visibility pointers
     bool* node_editor_minimap_ptr_ = nullptr;
-    bool* script_editor_minimap_ptr_ = nullptr;
 
     // Debug logging pointers
     bool* idle_log_ptr_ = nullptr;
     std::atomic<bool>* verbose_python_log_ptr_ = nullptr;  // read by Python worker threads
     std::function<std::string()> python_diagnostics_callback_;
 
-    // Files preferences
-    int files_default_encoding_ = 0;  // 0 = UTF-8, 1 = UTF-16, 2 = ASCII
-    int files_line_ending_ = 0;  // 0 = Auto, 1 = LF, 2 = CRLF
-    bool files_trim_trailing_whitespace_ = false;
-    bool files_insert_final_newline_ = true;
-// Performance/Compute preferences
-    int compute_device_index_ = 0;
-    std::vector<cyxwiz::DeviceInfo> compute_devices_;
-    bool compute_devices_initialized_ = false;
+    // Use this device (Preferences > Devices)
     std::function<bool(cyxwiz::DeviceType,
                        int,
                        const std::string&,

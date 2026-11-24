@@ -89,6 +89,9 @@ int main() {
     Check(cyxwiz::FormatTrainingDuration(3725) == "1h 02m", "hours format");
     Check(cyxwiz::FormatTrainingDuration(750) == "12m 30s", "minutes format");
     Check(cyxwiz::FormatTrainingDuration(45.4) == "45s", "seconds format");
+    Check(cyxwiz::FormatTrainingDuration(2.17) == "2.2s" && cyxwiz::FormatTrainingDuration(0.22) == "0.2s",
+          "a short run keeps a tenth of a second");
+    Check(cyxwiz::FormatTrainingDuration(9.96) == "10s", "10 s and more in whole seconds");
 
     if (failures) return 1;
     std::cout << "Training progress estimate test passed\n";

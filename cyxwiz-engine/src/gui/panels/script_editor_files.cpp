@@ -27,7 +27,8 @@ bool ScriptEditorPanel::LoadFileContent(const std::string& filepath, std::string
 bool ScriptEditorPanel::SaveFileContent(const std::string& filepath, const std::string& content,
                                         const scriptfile::TextFormat& format, std::string* error) {
     // Same BOM and line endings as the file had; a failed write leaves the
-    // old file in place (TOFIX133 P0 item 3).
+    // old file in place (TOFIX133 P0 item 3). The text is what the editor
+    // holds (its tidy, TidyBeforeSave, comes first), so disk and editor agree.
     return scriptfile::WriteAtomically(filepath, scriptfile::Encode(content, format), error);
 }
 

@@ -73,8 +73,12 @@ DepthwiseConv2DLayer::DepthwiseConv2DLayer(int channels, int depth_multiplier, i
     const size_t outputs = static_cast<size_t>(channels) * static_cast<size_t>(depth_multiplier);
     const std::vector<size_t> weight_shape{k, k, 1, outputs};
     // As Conv2D: Kaiming uniform over the fan-in (k*k: one input channel per group).
-    weights_ = AfToTensor(KaimingUniform(static_cast<int>(k * k),
-                                         af::dim4(kernel_size, kernel_size, 1, static_cast<dim_t>(outputs))));
+    // An explicit shape: guessing it from the array would drop trailing 1s
+    // (one output: [k, k, 1, 1] became [k, k]; TOFIX223 0.14).
+    weights_ = Tensor::FromSemanticArray(
+        KaimingUniform(static_cast<int>(k * k),
+                       af::dim4(kernel_size, kernel_size, 1, static_cast<dim_t>(outputs))),
+        weight_shape);
     if (use_bias_) bias_ = Tensor::Zeros({outputs}, DataType::Float32);
     grad_weights_ = Tensor::Zeros(weight_shape, DataType::Float32);
     if (use_bias_) grad_bias_ = Tensor::Zeros({outputs}, DataType::Float32);

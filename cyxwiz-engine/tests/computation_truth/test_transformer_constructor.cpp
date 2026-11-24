@@ -1,3 +1,4 @@
+#include "../oracle/oracle_test.h"
 #include <cyxwiz/layers/attention.h>
 #include <cyxwiz/layers/transformer.h>
 #include <cyxwiz/sequential.h>
@@ -88,12 +89,17 @@ void ValidBlocks() {
 } // namespace
 int main(int argc,char**argv) {
     try {
-        Check(argc==2,"Usage: test_transformer_constructor cpu|cuda|opencl");
-        const std::string backend=argv[1];
+        cyxwiz::test::PrintOracleHeader("test_transformer_constructor");
+        Check(argc<=2,"Usage: test_transformer_constructor [cpu|cuda|opencl] (default: CYXWIZ_TEST_ARRAYFIRE_BACKEND, else cpu)");
+        std::optional<cyxwiz::test::RequestedTestDevice> requested;
+        Check(cyxwiz::test::ReadRequestedTestDevice(requested),"CYXWIZ_TEST_ARRAYFIRE_BACKEND");
+        const std::string backend=argc==2?std::string(argv[1]):requested?requested->name:std::string("cpu");
+        const int device_id=argc==1&&requested?requested->id:0;
         Check(backend=="cpu"||backend=="cuda"||backend=="opencl","backend name");
         auto activation=cyxwiz::Device(backend=="cpu"?cyxwiz::DeviceType::CPU:
-            backend=="cuda"?cyxwiz::DeviceType::CUDA:cyxwiz::DeviceType::OPENCL,0).ActivateExact(true);
+            backend=="cuda"?cyxwiz::DeviceType::CUDA:cyxwiz::DeviceType::OPENCL,device_id).ActivateExact(true);
         Check(activation.success && activation.execution_validated,activation.message);
+        std::printf("device: %s %d\n",backend.c_str(),activation.effective_device_id);
         InvalidModule<cyxwiz::TransformerEncoderModule>("encoder module");
         InvalidModule<cyxwiz::TransformerDecoderModule>("decoder module");
         InvalidLayer<cyxwiz::TransformerEncoderLayer>("encoder layer");

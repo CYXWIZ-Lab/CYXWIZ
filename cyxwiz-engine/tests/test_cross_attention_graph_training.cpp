@@ -7,6 +7,7 @@
 // forward, input gradient and every parameter gradient match
 // torch.nn.MultiheadAttention(q, k, v): fixtures/cross_attention_graph_pytorch.json
 // (generate_cross_attention_graph_fixtures.py). Also: the compiler's refusals.
+#include "oracle/oracle_test.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_executable_model.h"
@@ -272,6 +273,7 @@ std::filesystem::path FixturePath(const char* argv0) {
 }  // namespace
 
 int main(int, char** argv) {
+    if (!cyxwiz::test::BeginOracleTest("test_cross_attention_graph_training")) return 1;
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
     cyxwiz::SetGraphCompilerDatasetHooks(hooks);

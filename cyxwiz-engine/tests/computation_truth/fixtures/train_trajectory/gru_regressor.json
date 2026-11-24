@@ -1,0 +1,23 @@
+{
+  "batch_size": 8,
+  "classes": 0,
+  "image_rows": false,
+  "input_shape": [
+    18
+  ],
+  "model": "gru_regressor",
+  "modules": [
+    {
+      "module": "layer0",
+      "node": "Recurrent"
+    },
+    {
+      "module": "layer1",
+      "node": "Head"
+    }
+  ],
+  "rows": 40,
+  "summary": "Reshape 6 x 3, GRU 5 (last state), Dense 1; mean squared error; Adam, linear warm-up per update",
+  "task": "regression",
+  "token_ids": 0
+}

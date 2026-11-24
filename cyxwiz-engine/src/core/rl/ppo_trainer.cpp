@@ -260,11 +260,16 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
         normalizer_->Reset(obs.data());
         while (metrics.timesteps < config_.total_timesteps && !stop_) {
             const auto update_start = std::chrono::steady_clock::now();
+            double paused_seconds = 0.0;  // left out of the update's speed
             policy_->SetTraining(false);
             value_->SetTraining(false);
             // ---- Collect n_steps from every copy
             for (size_t t = 0; t < steps; ++t) {
-                while (paused_ && !stop_) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                if (paused_) {
+                    const auto pause_start = std::chrono::steady_clock::now();
+                    while (paused_ && !stop_) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    paused_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - pause_start).count();
+                }
                 if (stop_) break;
                 const Tensor obs_t = Rows(obs, n, obs_size);
                 const auto [head, value] = forward_both(obs_t, false);
@@ -468,7 +473,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                 metrics.std = static_cast<float>(s / ls.size());
             }
             const double seconds =
-                std::chrono::duration<double>(std::chrono::steady_clock::now() - update_start).count();
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - update_start).count() - paused_seconds;
             metrics.steps_per_second = seconds > 0.0 ? static_cast<float>(rollout / seconds) : 0.0f;
             metrics.reached_target = recent.size() >= 100 && metrics.mean_episode_return >= config_.target_return;
             if (on_update) on_update(metrics);

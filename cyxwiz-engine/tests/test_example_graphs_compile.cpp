@@ -137,12 +137,22 @@ int main() {
         root / "text" / "test_03_sentiment_lstm_mini.cyxgraph",
         root / "text" / "test_04_sentiment_gru_mini.cyxgraph",
         root / "text" / "test_05_sentiment_transformer_mini.cyxgraph",
+        // Decoder-only causal LM on token windows (text corpus -> Tokenizer)
+        root / "text" / "causal_lm_decoder_generation_experiment.cyxgraph",
+        root / "task50_gpt_generation_controls" / "causal_lm_decoder_generation_experiment.cyxgraph",
         root / "cats_dogs_resnet_scratch.cyxgraph",
         root / "cats_dogs_image_filter.cyxgraph",
         root / "cats_dogs_edges_channel.cyxgraph",
         root / "cats_dogs_gabor_bank.cyxgraph",
         root / "cats_dogs_se_hardswish.cyxgraph",
         root / "cats_dogs_resnet18_finetune.cyxgraph",
+        // The five starters the empty canvas and the start page offer
+        // (gui/starter_graphs.cpp); each trains on a sample in examples/datasets.
+        root / "cats_dogs_classifier.cyxgraph",
+        root / "mnist_mlp.cyxgraph",
+        root / "review_sentiment_classifier.cyxgraph",
+        root / "speech_command_classifier.cyxgraph",
+        root / "timeseries" / "airline_passengers_dense.cyxgraph",
     };
     for (const auto& path : graphs) {
         std::vector<gui::MLNode> nodes;
@@ -170,6 +180,24 @@ int main() {
                   name + ": [" + issue.node_name + "] " + issue.message + " " + issue.error_code);
         }
         if (config.is_valid) std::cout << name << ": compiles (" << config.layers.size() << " layers)\n";
+    }
+    // Each starter names a sample that is in the repo, by a repo-relative path,
+    // so it trains right after it opens (owner 2026-11-17: small samples in the
+    // repo).
+    const fs::path repo = FindRepoRoot();
+    for (const char* starter : {"cats_dogs_classifier.cyxgraph", "mnist_mlp.cyxgraph",
+                                "review_sentiment_classifier.cyxgraph", "speech_command_classifier.cyxgraph",
+                                "timeseries/airline_passengers_dense.cyxgraph"}) {
+        std::ifstream in(root / starter);
+        const json document = json::parse(in);
+        std::string sample;
+        for (const auto& node : document.at("template").at("nodes")) {
+            if (node.value("type", "") != "DataInput") continue;
+            const json params = node.value("params", json::object());
+            sample = params.value("folder_path", params.value("file_path", std::string()));
+        }
+        Check(!sample.empty() && fs::path(sample).is_relative(), std::string(starter) + ": names no repo-relative sample");
+        Check(!sample.empty() && fs::exists(repo / sample), std::string(starter) + ": sample missing: " + sample);
     }
     if (failures > 0) return 1;
     std::cout << "example graphs compile\n";

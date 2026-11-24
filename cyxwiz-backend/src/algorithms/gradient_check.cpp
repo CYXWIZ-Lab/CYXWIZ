@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <map>
 #include <random>
 #include <stdexcept>
@@ -54,6 +55,13 @@ std::vector<size_t> Probe(size_t count, size_t max_elements) {
 }
 
 void Record(GradientCheckResult& result, double error, const std::string& where) {
+    // A NaN or infinite gradient fails the check (TOFIX223 0.21, audit BE-26:
+    // NaN compares false, so it was never recorded and the check passed).
+    if (!std::isfinite(error)) {
+        if (std::isfinite(result.max_relative_error)) result.worst = where;
+        result.max_relative_error = std::numeric_limits<double>::infinity();
+        return;
+    }
     if (error > result.max_relative_error) {
         result.max_relative_error = error;
         result.worst = where;

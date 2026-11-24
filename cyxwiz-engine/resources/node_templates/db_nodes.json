@@ -26,8 +26,7 @@
       "implementation_notes": "Use libpq for connection. Consider connection pooling.",
       "target_phase": "Phase 2",
       "dependencies": ["libpq"],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "MySQLConnector",
@@ -52,8 +51,7 @@
       "implementation_notes": "Use mysql-connector-c++ library",
       "target_phase": "Phase 2",
       "dependencies": ["mysql-connector-c++"],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "SQLiteConnector",
@@ -75,8 +73,7 @@
       "implementation_notes": "Already have sqlite3 dependency - easy to implement",
       "target_phase": "Phase 1",
       "dependencies": ["sqlite3"],
-      "effort_estimate": "Low",
-      "user_votes": 0
+      "effort_estimate": "Low"
     },
     {
       "type": "MongoDBConnector",
@@ -99,8 +96,7 @@
       "implementation_notes": "Use mongocxx driver",
       "target_phase": "Phase 3",
       "dependencies": ["mongocxx"],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "SnowflakeConnector",
@@ -126,8 +122,7 @@
       "implementation_notes": "Use Snowflake ODBC driver or REST API",
       "target_phase": "Phase 3",
       "dependencies": ["snowflake-odbc"],
-      "effort_estimate": "High",
-      "user_votes": 0
+      "effort_estimate": "High"
     },
     {
       "type": "DBQueryExecutor",
@@ -151,8 +146,7 @@
       "implementation_notes": "Generic executor that works with any DB connector",
       "target_phase": "Phase 2",
       "dependencies": [],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "DBTableWriter",
@@ -178,8 +172,7 @@
       "implementation_notes": "Use prepared statements for efficiency",
       "target_phase": "Phase 2",
       "dependencies": [],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     }
   ]
 }

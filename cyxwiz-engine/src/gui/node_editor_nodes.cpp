@@ -62,8 +62,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 // Helper: if this node owns a dataset (a Data Input with a non-empty
 // dataset_name parameter: its dialog loaded it), drop it from every registry
 // so the next graph rebuild doesn't see a stale entry under the same name.
-// A Dataset Input only names a dataset something else loaded (Data Studio),
-// so removing the node leaves it. Used by DeleteNode and ClearGraph.
+// Used by DeleteNode and ClearGraph.
 static void UnregisterNodeDatasetIfOwned(const MLNode& node) {
     if (node.type != NodeType::DataInput) {
         return;
@@ -224,6 +223,10 @@ void NodeEditor::DeleteNode(int node_id) {
 void NodeEditor::ClearGraph() {
     if (!CanReplaceGraph("clear the graph")) return;
     SaveUndoState();
+    ResetGraphContents();
+}
+
+void NodeEditor::ResetGraphContents() {
     ++graph_generation_;
     simulation_session_.ClearHistory();  // node ids of the next graph are not this one's Scopes
     ClearValidationState();  // Graph changed — stale compile results
@@ -271,6 +274,12 @@ void NodeEditor::ClearGraph() {
     next_group_id_ = 1;
     annotations_.clear();
     next_annotation_id_ = 1;
+    // Note state names notes of the graph that is gone (ids restart at 1).
+    selected_annotation_id_ = -1;
+    dragging_annotation_id_ = -1;
+    editing_annotation_ = false;
+    note_press_snapshot_.reset();
+    note_menu_id_ = -1;
 
     // Clear pin lookup
     pin_lookup_.clear();
@@ -278,38 +287,66 @@ void NodeEditor::ClearGraph() {
     spdlog::info("Cleared node graph");
 }
 
-void NodeEditor::InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
-    if (!CanReplaceGraph("insert a pattern")) return;
-    if (nodes.empty()) {
-        spdlog::warn("InsertPattern called with empty nodes list");
-        return;
-    }
+std::string NodeEditor::InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links,
+                                      PatternPlacement placement) {
+    if (nodes.empty()) return "the pattern has no nodes";
+    if (const auto reason = GetGraphReplacementBlockReason(); !reason.empty())
+        return "the graph is in use: " + reason + ". Wait for it to finish or stop it, then insert again";
 
     SaveUndoState();
+    if (placement == PatternPlacement::Replace) ResetGraphContents();
 
-    std::map<int, ImVec2> positions;
-    for (const auto& node : nodes)
-        if (node.has_initial_position) positions[node.id] = ImVec2(node.initial_pos_x, node.initial_pos_y);
-    // Nodes with no place of their own (a NAS suggestion) go in a row, in
-    // their order, below what is on the canvas.
-    float left = 0.0f, bottom = 0.0f;
-    bool placed = false;
+    // The pattern's own layout, moved as one piece; nodes with no place of
+    // their own (a NAS suggestion) go in a row after it.
+    bool has_layout = false;
+    ImVec2 pattern_min(0.0f, 0.0f);
+    for (const auto& node : nodes) {
+        if (!node.has_initial_position) continue;
+        pattern_min.x = has_layout ? std::min(pattern_min.x, node.initial_pos_x) : node.initial_pos_x;
+        pattern_min.y = has_layout ? std::min(pattern_min.y, node.initial_pos_y) : node.initial_pos_y;
+        has_layout = true;
+    }
+    // Where the canvas's graph is, from what was drawn (none after a replace).
+    bool occupied = false;
+    float left = 0.0f, top = 0.0f, right = 0.0f, bottom = 0.0f;
     for (const auto& node : nodes_) {
         const auto at = cached_node_positions_.find(node.id);
         if (at == cached_node_positions_.end()) continue;
-        left = placed ? std::min(left, at->second.x) : at->second.x;
-        bottom = placed ? std::max(bottom, at->second.y) : at->second.y;
-        placed = true;
+        const ImVec2 p = at->second;
+        left = occupied ? std::min(left, p.x) : p.x;
+        top = occupied ? std::min(top, p.y) : p.y;
+        right = occupied ? std::max(right, p.x) : p.x;
+        bottom = occupied ? std::max(bottom, p.y) : p.y;
+        occupied = true;
     }
-    float x = left;
+    constexpr float kGap = 220.0f;  // about one node and a margin
+    ImVec2 anchor(0.0f, 0.0f);
+    if (occupied) {
+        anchor = placement == PatternPlacement::Beside ? ImVec2(right + kGap + 100.0f, top)
+                                                       : ImVec2(left, bottom + kGap);
+    }
+    const ImVec2 shift(anchor.x - pattern_min.x, anchor.y - pattern_min.y);
+
+    std::map<int, ImVec2> positions;
+    float row_y = anchor.y;
+    for (const auto& node : nodes) {
+        if (!node.has_initial_position) continue;
+        positions[node.id] = ImVec2(node.initial_pos_x + shift.x, node.initial_pos_y + shift.y);
+        row_y = std::max(row_y, positions[node.id].y + kGap);
+    }
+    float row_x = anchor.x;
     for (const auto& node : nodes) {
         if (node.has_initial_position) continue;
-        positions[node.id] = ImVec2(x, placed ? bottom + 220.0f : 0.0f);
-        x += 220.0f;
+        positions[node.id] = ImVec2(row_x, has_layout ? row_y : anchor.y);
+        row_x += kGap;
     }
     AddWithFreshIds(nodes, links, positions);
 
-    spdlog::info("Inserted pattern with {} nodes and {} links", nodes.size(), links.size());
+    spdlog::info("Inserted pattern with {} nodes and {} links ({})", nodes.size(), links.size(),
+                 placement == PatternPlacement::Replace  ? "replacing the graph"
+                 : placement == PatternPlacement::Beside ? "beside the graph"
+                                                         : "below the graph");
+    return {};
 }
 
 std::map<int, int> NodeEditor::AddWithFreshIds(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links,

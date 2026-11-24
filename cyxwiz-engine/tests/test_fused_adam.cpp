@@ -15,7 +15,7 @@
 #include <cyxwiz/optimizers/adam.h>
 #include <cyxwiz/optimizers/gradient_clipping.h>
 #include <cyxwiz/tensor.h>
-#include "computation_truth/test_device_selection.h"
+#include "oracle/oracle_test.h"
 
 #include <algorithm>
 #include <cmath>
@@ -215,7 +215,7 @@ void CheckNonFiniteAsTorch(bool provider) {
 }  // namespace
 
 int main() {
-    if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) return EXIT_FAILURE;
+    if (!cyxwiz::test::BeginOracleTest("test_fused_adam")) return EXIT_FAILURE;
     Params probe{{"w", Random({3}, 1, 1.0f)}};
     const Params probe_grad{{"w", Random({3}, 2, 1.0f)}};
     cyxwiz::AdamOptimizer o(1e-3);

@@ -85,6 +85,16 @@ class PackageReleaseTests(unittest.TestCase):
         (resources / "resource.txt").write_text("resource", encoding="ascii")
         (self.root / "LICENSE").write_text("license", encoding="ascii")
         (self.root / "KNOWN_ISSUES.md").write_text("# Known issues", encoding="ascii")
+        examples = self.root / "examples"
+        (examples / "cyxgraph").mkdir(parents=True)
+        (examples / "datasets").mkdir()
+        (examples / "cyxgraph" / "mnist_mlp.cyxgraph").write_text("{}", encoding="ascii")
+        (examples / "datasets" / "digits_8x8.csv").write_text("a,b\n1,2\n", encoding="ascii")
+        (examples / "python" / "__pycache__").mkdir(parents=True)
+        (examples / "python" / "__pycache__" / "demo.cpython-312.pyc").write_bytes(b"cache")
+        (examples / "python_tests").mkdir()
+        (examples / "python_tests" / "test_parity.py").write_text("# a repository check", encoding="ascii")
+        (examples / "cyxgraph" / ".gitignore").write_text("generated/\n", encoding="ascii")
         notices = self.root / "build" / "vcpkg_installed" / "x64-windows" / "share" / "fmt"
         notices.mkdir(parents=True)
         (notices / "copyright").write_text("fmt license", encoding="ascii")
@@ -327,6 +337,14 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertFalse((stage / "python_tools" / "jedi" / "__pycache__").exists())
         self.assertFalse((stage / "python_tools" / ".unpacked").exists())
         self.assertIn("python-tools", {item.get("source") for item in manifest["components"]})
+        # The examples ship beside the Engine (the start page's starter
+        # graphs and their data), without caches.
+        self.assertTrue((stage / "examples" / "cyxgraph" / "mnist_mlp.cyxgraph").is_file())
+        self.assertTrue((stage / "examples" / "datasets" / "digits_8x8.csv").is_file())
+        self.assertFalse((stage / "examples" / "python" / "__pycache__").exists())
+        self.assertFalse((stage / "examples" / "python_tests").exists())
+        self.assertFalse((stage / "examples" / "cyxgraph" / ".gitignore").exists())
+        self.assertIn("cyxwiz-examples", {item.get("source") for item in manifest["components"]})
         # The known-issues list ships beside the LICENSE.
         self.assertTrue((stage / "KNOWN_ISSUES.md").is_file())
         sources = {item["path"]: item.get("source") for item in manifest["components"]}
@@ -336,6 +354,23 @@ class PackageReleaseTests(unittest.TestCase):
         (self.root / "KNOWN_ISSUES.md").unlink()
         with self.assertRaisesRegex(package_release.PackageError, "KNOWN_ISSUES"):
             package_release.build_package(self.args("minimal"), self.script)
+
+    def test_missing_starter_graphs_fail_closed(self) -> None:
+        shutil.rmtree(self.root / "examples" / "cyxgraph")
+        with self.assertRaisesRegex(package_release.PackageError, "starter graphs"):
+            package_release.build_package(self.args("minimal"), self.script)
+
+    def test_examples_ship_only_tracked_files_of_a_checkout(self) -> None:
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(["git", "-C", str(self.root), "add", "examples/cyxgraph/mnist_mlp.cyxgraph"], check=True)
+        (self.root / "examples" / "cyxgraph" / "model.cyxmodel").write_text("saved here", encoding="ascii")
+        files = package_release.example_files(self.root)
+        self.assertEqual([Path("examples/cyxgraph/mnist_mlp.cyxgraph")], files)
+
+    def test_examples_of_an_unreadable_checkout_fail_closed(self) -> None:
+        (self.root / ".git").mkdir()  # not a repository git can read
+        with self.assertRaisesRegex(package_release.PackageError, "tracked examples"):
+            package_release.example_files(self.root)
 
     def test_missing_python_tools_fail_closed(self) -> None:
         shutil.rmtree(self.root / "build" / "bin" / "Release" / "python_tools")

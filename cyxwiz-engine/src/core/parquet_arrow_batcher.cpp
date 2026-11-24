@@ -1,6 +1,10 @@
 #include "parquet_arrow_batcher.h"
+#include "batch_uploads.h"
 
 #include "label_column_resolver.h"
+#include "class_label_range.h"
+#include "missing_values.h"
+#include "feature_column_gather.h"
 #include "class_balance.h"
 #include "split_partitioning.h"
 #include "cyxwiz/portable_random.h"
@@ -10,66 +14,15 @@
 #include <arrow/table.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <numeric>
 #include <unordered_map>
 #include <stdexcept>
 #include <thread>
+#include <type_traits>
 
 namespace cyxwiz {
-
-namespace {
-
-float ReadParquetNumericValue(
-    const std::shared_ptr<arrow::ChunkedArray>& column,
-    size_t row) {
-    if (!column) return 0.0f;
-    int64_t local = static_cast<int64_t>(row);
-    for (int chunk_index = 0; chunk_index < column->num_chunks(); ++chunk_index) {
-        const auto& chunk = column->chunk(chunk_index);
-        if (local >= chunk->length()) {
-            local -= chunk->length();
-            continue;
-        }
-        if (chunk->IsNull(local)) return 0.0f;
-        switch (chunk->type_id()) {
-        case arrow::Type::FLOAT:
-            return std::static_pointer_cast<arrow::FloatArray>(chunk)->Value(local);
-        case arrow::Type::DOUBLE:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::DoubleArray>(chunk)->Value(local));
-        case arrow::Type::INT64:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::Int64Array>(chunk)->Value(local));
-        case arrow::Type::INT32:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::Int32Array>(chunk)->Value(local));
-        case arrow::Type::INT16:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::Int16Array>(chunk)->Value(local));
-        case arrow::Type::INT8:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::Int8Array>(chunk)->Value(local));
-        case arrow::Type::UINT64:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::UInt64Array>(chunk)->Value(local));
-        case arrow::Type::UINT32:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::UInt32Array>(chunk)->Value(local));
-        case arrow::Type::UINT16:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::UInt16Array>(chunk)->Value(local));
-        case arrow::Type::UINT8:
-            return static_cast<float>(
-                std::static_pointer_cast<arrow::UInt8Array>(chunk)->Value(local));
-        default:
-            return 0.0f;
-        }
-    }
-    return 0.0f;
-}
-
-}  // namespace
 
 // -----------------------------------------------------------------------------
 // Constructor
@@ -268,6 +221,9 @@ void ParquetArrowBatcher::SetRegressionTargetWidth(
 
 namespace {
 
+// The copy budget's name for this batcher's uploads (batch_uploads.h).
+constexpr const char* kUploader = "ParquetArrowBatcher";
+
 // The class of each row of one chunk as a small id (ids assigned in order of
 // first appearance); nulls are a class of their own.
 void AppendClassIds(const arrow::Array& chunk, std::unordered_map<std::string, uint32_t>& ids,
@@ -310,12 +266,77 @@ void AppendClassIds(const arrow::Array& chunk, std::unordered_map<std::string, u
     }
 }
 
+// A label cell with no value (empty, NaN, empty text): apart from a negative
+// class, which is a value the class-range check refuses.
+constexpr int64_t kMissingLabelClass = std::numeric_limits<int64_t>::min();
+
+template <typename ArrayT>
+void AppendIntegerClasses(const arrow::Array& chunk, std::vector<int64_t>& out) {
+    const auto& values = static_cast<const ArrayT&>(chunk);
+    for (int64_t i = 0; i < values.length(); ++i) {
+        if (values.IsNull(i)) {
+            out.push_back(kMissingLabelClass);
+            continue;
+        }
+        // A float label as FillRows reads it (truncated, saturated); NaN is missing.
+        if constexpr (std::is_floating_point_v<typename ArrayT::TypeClass::c_type>)
+            out.push_back(std::isnan(values.Value(i)) ? kMissingLabelClass
+                                                      : ClassLabelFromValue(static_cast<float>(values.Value(i))));
+        else
+            out.push_back(static_cast<int64_t>(values.Value(i)));
+    }
+}
+
+// The class of each label cell as FillRows reads it: a number is its class
+// (a float truncated, a negative number stays negative), a text its
+// vocabulary index (-1 when unknown); kMissingLabelClass for a missing label
+// (empty cell, NaN, empty text). False for a label type FillRows does not
+// read, or a text label without its vocabulary.
+bool AppendLabelClasses(const arrow::Array& chunk, const LabelVocabulary* vocabulary, std::vector<int64_t>& out) {
+    switch (chunk.type_id()) {
+    case arrow::Type::INT8: AppendIntegerClasses<arrow::Int8Array>(chunk, out); return true;
+    case arrow::Type::INT16: AppendIntegerClasses<arrow::Int16Array>(chunk, out); return true;
+    case arrow::Type::INT32: AppendIntegerClasses<arrow::Int32Array>(chunk, out); return true;
+    case arrow::Type::INT64: AppendIntegerClasses<arrow::Int64Array>(chunk, out); return true;
+    case arrow::Type::UINT8: AppendIntegerClasses<arrow::UInt8Array>(chunk, out); return true;
+    case arrow::Type::UINT16: AppendIntegerClasses<arrow::UInt16Array>(chunk, out); return true;
+    case arrow::Type::UINT32: AppendIntegerClasses<arrow::UInt32Array>(chunk, out); return true;
+    case arrow::Type::UINT64: AppendIntegerClasses<arrow::UInt64Array>(chunk, out); return true;
+    case arrow::Type::FLOAT: AppendIntegerClasses<arrow::FloatArray>(chunk, out); return true;
+    case arrow::Type::DOUBLE: AppendIntegerClasses<arrow::DoubleArray>(chunk, out); return true;
+    case arrow::Type::BOOL: {
+        const auto& values = static_cast<const arrow::BooleanArray&>(chunk);
+        for (int64_t i = 0; i < values.length(); ++i)
+            out.push_back(values.IsNull(i) ? kMissingLabelClass : (values.Value(i) ? 1 : 0));
+        return true;
+    }
+    case arrow::Type::STRING:
+    case arrow::Type::LARGE_STRING:
+        if (!vocabulary) return false;
+        for (int64_t i = 0; i < chunk.length(); ++i) {
+            if (chunk.IsNull(i)) {
+                out.push_back(kMissingLabelClass);
+                continue;
+            }
+            const std::string value =
+                chunk.type_id() == arrow::Type::STRING
+                    ? std::string(static_cast<const arrow::StringArray&>(chunk).GetView(i))
+                    : std::string(static_cast<const arrow::LargeStringArray&>(chunk).GetView(i));
+            out.push_back(value.empty() ? kMissingLabelClass : vocabulary->IndexOf(value));
+        }
+        return true;
+    default:
+        return false;
+    }
+}
+
 }  // namespace
 
 std::shared_ptr<const ParquetRowSplit> BuildParquetRowSplit(const ParquetBackedDataset& dataset,
                                                             const std::string& stratify_column,
                                                             const std::array<double, 3>& ratios,
-                                                            bool shuffle, uint32_t seed, std::string& error) {
+                                                            bool shuffle, bool shared_rule, uint32_t seed,
+                                                            std::string& error) {
     auto split = std::make_shared<ParquetRowSplit>();
     const int groups = dataset.GetNumRowGroups();
     int64_t rows = 0;
@@ -325,10 +346,10 @@ std::shared_ptr<const ParquetRowSplit> BuildParquetRowSplit(const ParquetBackedD
     }
     split->bucket.resize(static_cast<size_t>(rows));
 
-    if (stratify_column.empty() && shuffle) {
+    if (stratify_column.empty() && shared_rule) {
         // The shared split rule (split_partitioning.h), one class.
         SplitAssigner assigner({static_cast<uint64_t>(rows)}, static_cast<float>(ratios[0]),
-                               static_cast<float>(ratios[1]), static_cast<float>(ratios[2]), true, seed);
+                               static_cast<float>(ratios[1]), static_cast<float>(ratios[2]), shuffle, seed);
         for (int64_t row = 0; row < rows; ++row) {
             const auto bucket = static_cast<uint8_t>(assigner.Next(0));
             split->bucket[static_cast<size_t>(row)] = bucket;
@@ -593,9 +614,9 @@ bool ParquetArrowBatcher::LoadNextRowGroup() {
     const int group_idx = epoch_group_order_[current_group_position_];
     current_table_ = dataset_->ReadRowGroup(group_idx);
     if (!current_table_) {
-        spdlog::warn("ParquetArrowBatcher::LoadNextRowGroup: ReadRowGroup({}) returned null", group_idx);
-        current_group_position_++;
-        return LoadNextRowGroup();  // try the next one
+        // Its rows would vanish from every epoch (TOFIX223 0.3b, TAB-18).
+        throw std::runtime_error("ParquetArrowBatcher: row group " + std::to_string(group_idx) + " of '" +
+                                 dataset_->GetFilePath() + "' could not be read");
     }
 
     current_group_first_row_ = 0;
@@ -657,7 +678,8 @@ bool ParquetArrowBatcher::LoadNextRowGroup() {
 size_t ParquetArrowBatcher::CountPartitionRowsInGroup(int row_group_idx) const {
     auto table = dataset_->ReadRowGroup(row_group_idx);
     if (!table) {
-        return 0;
+        throw std::runtime_error("ParquetArrowBatcher: row group " + std::to_string(row_group_idx) + " of '" +
+                                 dataset_->GetFilePath() + "' could not be read");
     }
     auto column = table->GetColumnByName(partition_column_);
     if (!column || column->num_chunks() == 0) {
@@ -752,6 +774,36 @@ void ParquetArrowBatcher::SetOneHotEncoding(size_t num_classes) {
 // partial batch), materializes the Tensor and returns.
 // -----------------------------------------------------------------------------
 
+// Empty feature or label cells refuse the run, as on the in-memory path. The
+// counts come from the file's row-group statistics, so no data is read; NaN
+// in a float column is not in them and shows as a non-finite loss instead.
+void ParquetArrowBatcher::RefuseMissingValues() const {
+    if (missing_values_checked_ || !dataset_) return;
+    const auto schema = dataset_->GetSchema();
+    if (!schema) return;
+    std::vector<MissingColumn> columns;
+    const auto add = [&](int col, bool label) {
+        if (col < 0 || col >= schema->num_fields()) return;
+        const std::string& name = schema->field(col)->name();
+        const int64_t nulls = dataset_->NullCount(name);
+        if (nulls < 0) {
+            spdlog::warn("ParquetArrowBatcher: the file has no null count for column '{}'; its empty cells "
+                         "are not checked before training", name);
+            return;
+        }
+        MissingColumn c;
+        c.name = name;
+        c.rows = nulls;
+        c.label = label;
+        c.text = IsTextArrowType(schema->field(col)->type()->id());
+        columns.push_back(std::move(c));
+    };
+    for (const int col : feature_cols_) add(col, false);
+    for (const int col : label_col_indices_) add(col, true);
+    ThrowIfMissingValues("ParquetArrowBatcher", columns, dataset_->GetNumRows());
+    missing_values_checked_ = true;
+}
+
 Batch ParquetArrowBatcher::GetNextBatch() {
     Batch batch;
     batch.size = 0;
@@ -759,6 +811,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
     if (IsEpochComplete()) {
         return batch;
     }
+    RefuseMissingValues();
 
     // We don't yet know the final batch size (the epoch might end mid-batch),
     // so allocate max capacity and truncate at the end if needed.
@@ -812,127 +865,22 @@ void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* loca
                                    std::vector<float>& batch_data, std::vector<int>& batch_labels,
                                    std::vector<float>& batch_labels_float) const {
     const size_t regression_target_width = std::max<size_t>(1, label_col_indices_.size());
-    // Extract feature columns for the selected rows. Parquet row group
-    // tables are usually single-chunked (one chunk per column), so take
-    // the fast path when possible and fall back to chunked access only
-    // if a column turns out to be chunked.
     const int num_cols_in_table = table.num_columns();
+    const int64_t num_rows = table.num_rows();
+    const std::vector<int64_t> rows(local_rows, local_rows + n);
+    // Every column goes through the one typed reader, for any chunking (TOFIX223
+    // 0.3b, TAB-18: a chunked column, a uint64 column or an unread type was
+    // left 0). Types are checked here, before the workers: a throw inside one
+    // ends the process.
+    RequireNumberColumns("ParquetArrowBatcher", table, feature_cols_, "feature");
 
     auto process_feature_range = [&](size_t feat_begin, size_t feat_end) {
-    for (size_t feat_idx = feat_begin; feat_idx < feat_end; ++feat_idx) {
-        const int col_idx = feature_cols_[feat_idx];
-        if (col_idx < 0 || col_idx >= num_cols_in_table) continue;
-
-        auto column = table.column(col_idx);
-        if (!column || column->num_chunks() == 0) continue;
-
-        // Single-chunk fast path (overwhelming common case for Parquet row groups)
-        if (column->num_chunks() == 1) {
-            auto chunk = column->chunk(0);
-            switch (chunk->type_id()) {
-                case arrow::Type::DOUBLE: {
-                    auto arr = std::static_pointer_cast<arrow::DoubleArray>(chunk);
-                    const double* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        batch_data[(dst + b) * num_features_ + feat_idx] =
-                            static_cast<float>(data[local_row]);
-                    }
-                    break;
-                }
-                case arrow::Type::FLOAT: {
-                    auto arr = std::static_pointer_cast<arrow::FloatArray>(chunk);
-                    const float* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        batch_data[(dst + b) * num_features_ + feat_idx] =
-                            data[local_row];
-                    }
-                    break;
-                }
-                case arrow::Type::INT64: {
-                    auto arr = std::static_pointer_cast<arrow::Int64Array>(chunk);
-                    const int64_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        batch_data[(dst + b) * num_features_ + feat_idx] =
-                            static_cast<float>(data[local_row]);
-                    }
-                    break;
-                }
-                case arrow::Type::INT32: {
-                    auto arr = std::static_pointer_cast<arrow::Int32Array>(chunk);
-                    const int32_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        batch_data[(dst + b) * num_features_ + feat_idx] =
-                            static_cast<float>(data[local_row]);
-                    }
-                    break;
-                }
-                case arrow::Type::INT16: {
-                    auto arr = std::static_pointer_cast<arrow::Int16Array>(chunk);
-                    const int16_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        batch_data[(dst + b) * num_features_ + feat_idx] =
-                            static_cast<float>(data[local_row]);
-                    }
-                    break;
-                }
-                case arrow::Type::INT8: {
-                    auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
-                    const int8_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        batch_data[(dst + b) * num_features_ + feat_idx] =
-                            static_cast<float>(data[local_row]);
-                    }
-                    break;
-                }
-                case arrow::Type::UINT8: {
-                    auto arr = std::static_pointer_cast<arrow::UInt8Array>(chunk);
-                    const uint8_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        batch_data[(dst + b) * num_features_ + feat_idx] =
-                            static_cast<float>(data[local_row]);
-                    }
-                    break;
-                }
-                case arrow::Type::UINT16: {
-                    auto arr = std::static_pointer_cast<arrow::UInt16Array>(chunk);
-                    const uint16_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        batch_data[(dst + b) * num_features_ + feat_idx] =
-                            static_cast<float>(data[local_row]);
-                    }
-                    break;
-                }
-                case arrow::Type::UINT32: {
-                    auto arr = std::static_pointer_cast<arrow::UInt32Array>(chunk);
-                    const uint32_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        batch_data[(dst + b) * num_features_ + feat_idx] =
-                            static_cast<float>(data[local_row]);
-                    }
-                    break;
-                }
-                default:
-                    // Unsupported type - leave as 0 and log once.
-                    if (feat_idx == 0) {
-                        spdlog::warn("ParquetArrowBatcher: unsupported feature type {}",
-                                     chunk->type()->ToString());
-                    }
-                    break;
-            }
+        for (size_t feat_idx = feat_begin; feat_idx < feat_end; ++feat_idx) {
+            const int col_idx = feature_cols_[feat_idx];
+            if (col_idx < 0 || col_idx >= num_cols_in_table) continue;
+            GatherNumberColumn(*table.column(col_idx), rows.data(), n, num_rows,
+                               batch_data.data() + dst * num_features_ + feat_idx, num_features_);
         }
-        // Multi-chunk fallback omitted in first pass - row-group tables
-        // from Parquet are typically single-chunked. If we ever see a
-        // chunked column the above branch simply leaves zeros and logs.
-    }
     };
 
     if (num_workers_ > 1 && feature_cols_.size() > 1) {
@@ -955,166 +903,100 @@ void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* loca
         process_feature_range(0, feature_cols_.size());
     }
 
-    // Extract labels for the same rows
-    if (label_col_idx_ >= 0 && label_col_idx_ < num_cols_in_table) {
-        auto label_column = table.column(label_col_idx_);
-        if (label_column && label_column->num_chunks() > 0) {
-            auto chunk = label_column->chunk(0);
-            switch (chunk->type_id()) {
-                case arrow::Type::DOUBLE: {
-                    auto arr = std::static_pointer_cast<arrow::DoubleArray>(chunk);
-                    const double* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        if (scalar_label_mode_) {
-                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                        } else {
-                            batch_labels[dst + b] = static_cast<int>(data[local_row]);
-                        }
-                    }
-                    break;
-                }
-                case arrow::Type::FLOAT: {
-                    auto arr = std::static_pointer_cast<arrow::FloatArray>(chunk);
-                    const float* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        if (scalar_label_mode_) {
-                            batch_labels_float[(dst + b) * regression_target_width] = data[local_row];
-                        } else {
-                            batch_labels[dst + b] = static_cast<int>(data[local_row]);
-                        }
-                    }
-                    break;
-                }
-                case arrow::Type::INT64: {
-                    auto arr = std::static_pointer_cast<arrow::Int64Array>(chunk);
-                    const int64_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        if (scalar_label_mode_) {
-                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                        } else {
-                            batch_labels[dst + b] = static_cast<int>(data[local_row]);
-                        }
-                    }
-                    break;
-                }
-                case arrow::Type::INT32: {
-                    auto arr = std::static_pointer_cast<arrow::Int32Array>(chunk);
-                    const int32_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        if (scalar_label_mode_) {
-                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                        } else {
-                            batch_labels[dst + b] = data[local_row];
-                        }
-                    }
-                    break;
-                }
-                case arrow::Type::UINT8: {
-                    auto arr = std::static_pointer_cast<arrow::UInt8Array>(chunk);
-                    const uint8_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        if (scalar_label_mode_) {
-                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                        } else {
-                            batch_labels[dst + b] = static_cast<int>(data[local_row]);
-                        }
-                    }
-                    break;
-                }
-                case arrow::Type::UINT16: {
-                    auto arr = std::static_pointer_cast<arrow::UInt16Array>(chunk);
-                    const uint16_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        if (scalar_label_mode_) {
-                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                        } else {
-                            batch_labels[dst + b] = static_cast<int>(data[local_row]);
-                        }
-                    }
-                    break;
-                }
-                case arrow::Type::UINT32: {
-                    auto arr = std::static_pointer_cast<arrow::UInt32Array>(chunk);
-                    const uint32_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        if (scalar_label_mode_) {
-                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                        } else {
-                            batch_labels[dst + b] = static_cast<int>(data[local_row]);
-                        }
-                    }
-                    break;
-                }
-                case arrow::Type::INT16: {
-                    auto arr = std::static_pointer_cast<arrow::Int16Array>(chunk);
-                    const int16_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        if (scalar_label_mode_) {
-                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                        } else {
-                            batch_labels[dst + b] = data[local_row];
-                        }
-                    }
-                    break;
-                }
-                case arrow::Type::INT8: {
-                    auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
-                    const int8_t* data = arr->raw_values();
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        if (scalar_label_mode_) {
-                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                        } else {
-                            batch_labels[dst + b] = data[local_row];
-                        }
-                    }
-                    break;
-                }
-                case arrow::Type::STRING:
-                case arrow::Type::LARGE_STRING: {
-                    // Text class labels through the shared vocabulary.
-                    for (size_t b = 0; b < n; ++b) {
-                        const size_t local_row = local_rows[b];
-                        const std::string value =
-                            chunk->type_id() == arrow::Type::STRING
-                                ? std::string(std::static_pointer_cast<arrow::StringArray>(chunk)->GetView(local_row))
-                                : std::string(std::static_pointer_cast<arrow::LargeStringArray>(chunk)->GetView(local_row));
-                        const int32_t index = label_vocabulary_ ? label_vocabulary_->IndexOf(value) : -1;
-                        if (index < 0) spdlog::error("ParquetArrowBatcher: label '{}' is not a known class", value);
-                        batch_labels[dst + b] = std::max(0, index);
-                    }
-                    break;
-                }
-                default:
-                    spdlog::warn("ParquetArrowBatcher: unsupported label type {}",
-                                 chunk->type()->ToString());
-                    break;
+    // NaN in a float column is a missing value, as on the in-memory path. The
+    // file's statistics count no NaN, so the rows are checked as they are
+    // read, here on the calling thread after the workers.
+    std::vector<MissingColumn> nan_columns;
+    const auto count_nan = [&](int col, const float* first, size_t stride, bool label) {
+        if (col < 0 || col >= num_cols_in_table) return;
+        const auto id = table.schema()->field(col)->type()->id();
+        if (id != arrow::Type::FLOAT && id != arrow::Type::DOUBLE) return;
+        int64_t nans = 0;
+        for (size_t b = 0; b < n; ++b)
+            if (std::isnan(first[b * stride])) ++nans;
+        if (nans > 0) nan_columns.push_back({table.schema()->field(col)->name(), nans, label, true, nans, false});
+    };
+    for (size_t f = 0; f < feature_cols_.size(); ++f)
+        count_nan(feature_cols_[f], batch_data.data() + dst * num_features_ + f, num_features_, false);
+    const auto refuse_nan = [&] {
+        ThrowIfMissingValues("ParquetArrowBatcher", nan_columns, dataset_ ? dataset_->GetNumRows() : -1);
+    };
+
+    // The label of the same rows, then any further regression targets.
+    if (label_col_idx_ < 0 || label_col_idx_ >= num_cols_in_table) {
+        refuse_nan();
+        return;
+    }
+    const auto& label = *table.column(label_col_idx_);
+    const auto label_type = label.type()->id();
+    if (label_type == arrow::Type::STRING || label_type == arrow::Type::LARGE_STRING) {
+        // Text class labels through the shared vocabulary. A text it does not
+        // hold is no class: refused (it was trained as class 0).
+        std::vector<int64_t> starts;
+        int64_t start = 0;
+        for (const auto& chunk : label.chunks()) {
+            starts.push_back(start);
+            start += chunk->length();
+        }
+        int64_t missing_labels = 0;  // empty cells and empty texts: missing labels, refused below
+        for (size_t b = 0; b < n; ++b) {
+            const int64_t row = rows[b];
+            if (row < 0 || row >= num_rows) continue;
+            const size_t c =
+                static_cast<size_t>(std::upper_bound(starts.begin(), starts.end(), row) - starts.begin()) - 1;
+            const auto& chunk = *label.chunk(static_cast<int>(c));
+            const int64_t local = row - starts[c];
+            if (chunk.IsNull(local)) {
+                ++missing_labels;
+                continue;
+            }
+            const std::string value =
+                label_type == arrow::Type::STRING
+                    ? std::string(static_cast<const arrow::StringArray&>(chunk).GetView(local))
+                    : std::string(static_cast<const arrow::LargeStringArray&>(chunk).GetView(local));
+            if (value.empty()) {
+                ++missing_labels;
+                continue;
+            }
+            const int32_t index = label_vocabulary_ ? label_vocabulary_->IndexOf(value) : -1;
+            if (index < 0) {
+                throw std::runtime_error("ParquetArrowBatcher: label '" + value + "' in column '" +
+                                         table.schema()->field(label_col_idx_)->name() +
+                                         "' is not one of the training classes");
+            }
+            batch_labels[dst + b] = index;
+        }
+        if (missing_labels > 0)
+            nan_columns.push_back({table.schema()->field(label_col_idx_)->name(), missing_labels, true, true, 0, true});
+    } else {
+        RequireNumberColumns("ParquetArrowBatcher", table, {label_col_idx_}, "label", /*allow_bool=*/true);
+        std::vector<float> values(n, 0.0f);
+        GatherNumberColumn(label, rows.data(), n, num_rows, values.data(), 1);
+        count_nan(label_col_idx_, values.data(), 1, true);
+        refuse_nan();
+        for (size_t b = 0; b < n; ++b) {
+            if (scalar_label_mode_) {
+                batch_labels_float[(dst + b) * regression_target_width] = values[b];
+            } else {
+                batch_labels[dst + b] = ClassLabelFromValue(values[b]);
             }
         }
     }
 
     if (scalar_label_mode_ && label_col_indices_.size() > 1) {
+        const std::vector<int> targets(label_col_indices_.begin() + 1, label_col_indices_.end());
+        RequireNumberColumns("ParquetArrowBatcher", table, targets, "target");
         for (size_t target = 1; target < label_col_indices_.size(); ++target) {
             const int column_index = label_col_indices_[target];
             if (column_index < 0 || column_index >= num_cols_in_table) continue;
-            const auto& target_column = table.column(column_index);
-            for (size_t b = 0; b < n; ++b) {
-                const size_t local_row =
-                    local_rows[b];
-                batch_labels_float[
-                    (dst + b) * regression_target_width + target] =
-                    ReadParquetNumericValue(target_column, local_row);
-            }
+            GatherNumberColumn(*table.column(column_index), rows.data(), n, num_rows,
+                               batch_labels_float.data() + dst * regression_target_width + target,
+                               regression_target_width);
+            count_nan(column_index, batch_labels_float.data() + dst * regression_target_width + target,
+                      regression_target_width, true);
         }
     }
+    refuse_nan();
 }
 
 // The filled rows as the batch: Normalize, the feature tensor and the label
@@ -1133,34 +1015,32 @@ void ParquetArrowBatcher::FinishBatch(Batch& batch, size_t rows_filled, std::vec
 
     // Materialize the feature tensor
     std::vector<size_t> data_shape = {rows_filled, num_features_};
-    batch.data = Tensor(data_shape, batch_data.data());
+    batch.data = HostBatchTensor(kUploader, "features", data_shape, batch_data.data());
 
     // Materialize scalar float, one-hot, or index labels.
     if (scalar_label_mode_ && label_col_idx_ >= 0) {
         std::vector<size_t> label_shape = {
             rows_filled, regression_target_width};
-        batch.labels = Tensor(label_shape, batch_labels_float.data());
+        batch.labels = HostBatchTensor(kUploader, "labels", label_shape, batch_labels_float.data());
     } else if (class_index_label_mode_ && label_col_idx_ >= 0) {
         std::vector<size_t> label_shape = {rows_filled};
-        batch.labels = Tensor(
-            label_shape, batch_labels.data(), DataType::Int32);
+        batch.labels = HostBatchTensor(kUploader, "labels", label_shape, batch_labels.data(), DataType::Int32);
     } else if (one_hot_ && label_col_idx_ >= 0) {
         std::vector<float> onehot(rows_filled * num_classes_, 0.0f);
         for (size_t i = 0; i < rows_filled; ++i) {
-            int lbl = batch_labels[i];
-            if (lbl >= 0 && static_cast<size_t>(lbl) < num_classes_) {
-                onehot[i * num_classes_ + lbl] = 1.0f;
-            }
+            const int lbl = batch_labels[i];
+            CheckClassLabelInWidth("ParquetArrowBatcher", lbl, num_classes_);
+            onehot[i * num_classes_ + static_cast<size_t>(lbl)] = 1.0f;
         }
         std::vector<size_t> label_shape = {rows_filled, num_classes_};
-        batch.labels = Tensor(label_shape, onehot.data());
+        batch.labels = HostBatchTensor(kUploader, "labels", label_shape, onehot.data());
     } else if (label_col_idx_ >= 0) {
         std::vector<float> label_floats(rows_filled, 0.0f);
         for (size_t i = 0; i < rows_filled; ++i) {
             label_floats[i] = static_cast<float>(batch_labels[i]);
         }
         std::vector<size_t> label_shape = {rows_filled};
-        batch.labels = Tensor(label_shape, label_floats.data());
+        batch.labels = HostBatchTensor(kUploader, "labels", label_shape, label_floats.data());
     }
 
     batch.size = rows_filled;
@@ -1204,6 +1084,63 @@ std::optional<Batch> ParquetArrowBatcher::GetSourceSamples(const std::vector<siz
     }
     FinishBatch(batch, indices.size(), batch_data, batch_labels, batch_labels_float);
     return batch;
+}
+
+// The Train rows of the assigned row groups, as LoadNextRowGroup serves
+// them: the row split's Train bucket, or the partition column's 0. Only the
+// label (and partition) column is read.
+std::optional<std::vector<size_t>> ParquetArrowBatcher::TrainClassCounts() const {
+    if (split_phase_ != BatcherPhase::Train || !is_training_ || !dataset_ || label_col_idx_ < 0 ||
+        (!partition_column_.empty() && partition_value_ != 0))
+        return std::nullopt;
+    // Empty labels are refused with their own message, not counted as no class.
+    RefuseMissingValues();
+    const std::string label_name = dataset_->GetSchema()->field(label_col_idx_)->name();
+    std::vector<size_t> counts;
+    std::vector<int64_t> classes;
+    std::vector<int8_t> parts;
+    int64_t missing = 0;
+    for (const int g : assigned_row_groups_) {
+        const auto labels = dataset_->ReadRowGroupColumn(g, label_name);
+        if (!labels) return std::nullopt;
+        classes.clear();
+        for (const auto& chunk : labels->chunks())
+            if (!AppendLabelClasses(*chunk, label_vocabulary_.get(), classes)) return std::nullopt;
+        parts.clear();
+        if (!partition_column_.empty()) {
+            const auto column = dataset_->ReadRowGroupColumn(g, partition_column_);
+            if (!column) return std::nullopt;
+            for (const auto& chunk : column->chunks()) {
+                if (chunk->type_id() != arrow::Type::INT8) return std::nullopt;
+                const auto& values = static_cast<const arrow::Int8Array&>(*chunk);
+                for (int64_t i = 0; i < values.length(); ++i) parts.push_back(values.IsNull(i) ? -1 : values.Value(i));
+            }
+            if (parts.size() != classes.size()) return std::nullopt;
+        }
+        const size_t offset = row_split_ ? static_cast<size_t>(row_split_->group_offset[static_cast<size_t>(g)]) : 0;
+        for (size_t i = 0; i < classes.size(); ++i) {
+            if (row_split_ && (offset + i >= row_split_->bucket.size() || row_split_->bucket[offset + i] != 0)) continue;
+            if (!parts.empty() && parts[i] != 0) continue;
+            if (classes[i] == kMissingLabelClass) {
+                ++missing;
+                continue;
+            }
+            // A negative class (a -1 / +1 label, an unknown text) has no output:
+            // the class-range refusal, as at the first batch.
+            if (!CountClass(counts, classes[i]))
+                ThrowNegativeClassLabel("ParquetArrowBatcher", classes[i]);
+        }
+    }
+    // A Train row without a class (an empty cell or an empty text) is a
+    // missing label: the same refusal as at the first batch, not a class
+    // count that leaves it out.
+    if (missing > 0) {
+        const auto type = dataset_->GetSchema()->field(label_col_idx_)->type()->id();
+        // Counted in the Train rows only, out of the whole file's rows.
+        ThrowIfMissingValues("ParquetArrowBatcher",
+                             {{label_name, missing, true, true, 0, IsTextArrowType(type)}}, dataset_->GetNumRows());
+    }
+    return counts;
 }
 
 std::optional<BatcherPhase> ParquetArrowBatcher::SourceSamplePart(size_t index) const {

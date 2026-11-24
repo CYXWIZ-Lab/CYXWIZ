@@ -7,6 +7,7 @@
 #include "model_builder.h"
 
 #include <cstdint>
+#include <ctime>
 #include "crash_run_recorder.h"
 #include "training_report_window.h"
 #include "training_trace_collector.h"
@@ -141,6 +142,7 @@ bool TrainingManager::StartTrainingCommon(
             "TrainingSetup",
             "Training manager attached to existing preparation trace");
     }
+    trace_started_ns_ = TrainingTraceCollector::Instance().RunStartedNs();
     TrainingTraceCollector::Instance().RecordTaskProgress(
         0,
         task_name,
@@ -783,9 +785,10 @@ void TrainingManager::TrainingThreadFunc(
             // smoothly during long epochs (e.g. audio at 8 min/epoch) instead
             // of staying empty until the first epoch finishes.
             // The generation previews folder exists once Train has bound the
-            // previews: the first batch tells the Dashboard (TOFIX159 A4).
-            auto preview_folder_sent = std::make_shared<bool>(false);
-            auto batch_callback = [this, plot_panel, &exec, preview_folder_sent](int epoch, int batch, int total_batches,
+            // previews (TOFIX159 A4) and the split once the batchers are made:
+            // the first batch tells the Dashboard both.
+            auto first_batch_told = std::make_shared<bool>(false);
+            auto batch_callback = [this, plot_panel, &exec, first_batch_told](int epoch, int batch, int total_batches,
                                                        float batch_loss, float batch_acc) {
                 const bool regression_mode =
                     exec && UsesRegressionMetrics(exec->GetConfig());
@@ -810,10 +813,15 @@ void TrainingManager::TrainingThreadFunc(
                         TrainingTraceStage::UIPlotUpdate, epoch, batch,
                         total_batches, batch_loss, batch_acc);
                     panel->SetBatchProgress(epoch, batch, total_batches, batch_loss);
-                    if (!*preview_folder_sent && exec) {
-                        *preview_folder_sent = true;
+                    if (!*first_batch_told && exec) {
+                        *first_batch_told = true;
                         if (const auto folder = exec->GenerationPreviewDir(); !folder.empty())
                             panel->SetGenerationPreviewFolder(folder);
+                        const TrainingMetrics split = exec->GetMetrics();
+                        panel->SetRunData(exec->GetConfig().dataset_name, split.train_sample_count,
+                                          split.val_sample_count, split.test_sample_count);
+                        // The executor may have started a trace of its own.
+                        trace_started_ns_ = TrainingTraceCollector::Instance().RunStartedNs();
                     }
 
                     // Progressive curve: x = (epoch - 1) + batch / total_batches
@@ -936,13 +944,34 @@ void TrainingManager::TrainingThreadFunc(
         const std::string run_status = final_metrics.terminal_status.empty()
             ? (stop_requested_.load() ? "stopped" : "complete")
             : final_metrics.terminal_status;
-        const auto record = MakeTrainingRunComparisonRecord(
+        auto record = MakeTrainingRunComparisonRecord(
             run_id,
             completed_config,
             final_metrics,
             total_training_time,
             final_metrics.checkpoint_used,
             run_status);
+        // The Runs card's time and device: when it ended (local) and where
+        // its trace says it ran.
+        {
+            const std::time_t ended = std::time(nullptr);
+            std::tm local{};
+#ifdef _WIN32
+            localtime_s(&local, &ended);
+#else
+            localtime_r(&ended, &local);
+#endif
+            char hhmm[8] = {};
+            std::strftime(hhmm, sizeof(hhmm), "%H:%M", &local);
+            record.finished_at = hhmm;
+            // Another run (an RL run) may have started its own trace since.
+            const auto trace = TrainingTraceCollector::Instance().Snapshot();
+            if (trace_started_ns_ != 0 && TrainingTraceCollector::Instance().RunStartedNs() == trace_started_ns_) {
+                record.device_backend = trace.effective_backend;
+                record.device_name = trace.effective_device_name;
+                record.device_fallback = trace.selection_fallback_applied;
+            }
+        }
         panel->AddRunComparisonRecord(record);
         panel->SetTrainingComplete(total_training_time, final_metrics);
     }

@@ -9,8 +9,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <unordered_map>
 
@@ -20,13 +22,16 @@ namespace {
 
 constexpr float kTooltipWrap = 420.0f;
 
+// The dialogs open over the window that asks (its OS window when it has one
+// of its own); centred on the main window, a dialog asked from a panel in a
+// window of its own opened behind that window while blocking it.
 ImVec2 WorkSize() {
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImGuiViewport* viewport = ImGui::GetWindowViewport();
     return viewport ? viewport->WorkSize : ImVec2(1280.0f, 800.0f);
 }
 
 ImVec2 WorkCenter() {
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImGuiViewport* viewport = ImGui::GetWindowViewport();
     return viewport ? viewport->GetWorkCenter() : ImVec2(640.0f, 400.0f);
 }
 
@@ -49,17 +54,23 @@ void SectionHeader(const char* title, const char* subtitle) {
     ImGui::Spacing();
 }
 
-void BeginCard(const char* id) {
+void BeginCard(const char* id, bool raised) {
     const Tokens& t = CurrentTokens();
     ImGui::PushID(id);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, t.rounding_card);
     // A card is a tinted area, not an outline (owner rule 2026-10-01).
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, t.card_padding);
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
+    // Raised: halfway from the panel to the button tone (both the theme's).
+    const ImVec4 fill = raised ? Mix(t.bg_panel, t.bg_raised, 0.5f) : t.bg_panel;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, fill);
     ImGui::PushStyleColor(ImGuiCol_Border, t.border);
+    // A card grows with its content and never scrolls: while it grows (a
+    // fold opened, rows added) it neither flashes a scrollbar nor takes the
+    // wheel from the window it sits in.
     ImGui::BeginChild("##card", ImVec2(0.0f, 0.0f),
-                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 }
 
 void EndCard() {
@@ -95,6 +106,58 @@ void CardHeader(const char* title, const char* subtitle, const StatusStyle* stat
     ImGui::Spacing();
 }
 
+void CardTitle(const char* title, const char* subtitle) {
+    const Tokens& t = CurrentTokens();
+    ImGui::TextColored(t.text, "%s", title);
+    if (subtitle && subtitle[0]) {
+        ImGui::SameLine(0.0f, t.space_md);
+        ImGui::TextColored(t.text_dim, "%s", subtitle);
+    }
+}
+
+void ProgressLine(float fraction, const ImVec4& colour, float width, float height) {
+    const Tokens& t = CurrentTokens();
+    fraction = std::clamp(fraction, 0.0f, 1.0f);
+    if (width <= 0.0f) width = ImGui::GetContentRegionAvail().x;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const float line = ImGui::GetTextLineHeight();
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float y = pos.y + (line - height) * 0.5f;
+    draw->AddRectFilled(ImVec2(pos.x, y), ImVec2(pos.x + width, y + height), ImGui::GetColorU32(t.bg_raised),
+                        height * 0.5f);
+    if (fraction > 0.0f) {
+        draw->AddRectFilled(ImVec2(pos.x, y), ImVec2(pos.x + std::max(height, width * fraction), y + height),
+                            ImGui::GetColorU32(colour), height * 0.5f);
+    }
+    ImGui::Dummy(ImVec2(width, line));
+}
+
+void KpiCard(const char* id, const char* label, const ImVec4& dot, const char* value, const char* tooltip,
+             const char* line1, const ImVec4& line1_colour, const char* line2, const ImVec4& line2_colour,
+             const char* line3, const ImVec4& line3_colour) {
+    const Tokens& t = CurrentTokens();
+    BeginCard(id);
+    const float line = ImGui::GetTextLineHeight();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(at.x + 4.0f, at.y + line * 0.5f), 4.0f, ImGui::GetColorU32(dot));
+    ImGui::Dummy(ImVec2(8.0f, line));
+    ImGui::SameLine(0.0f, t.space_sm);
+    ImGui::TextColored(t.text_dim, "%s", label);
+    // The value in the bold face at 1.45 times the text size.
+    ImFont* font = GetFont(Font::Bold) ? GetFont(Font::Bold) : ImGui::GetFont();
+    const float size = ImGui::GetFontSize() * 1.45f;
+    const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, value);
+    ImGui::GetWindowDrawList()->AddText(font, size, ImGui::GetCursorScreenPos(), ImGui::GetColorU32(t.text), value);
+    ImGui::Dummy(extent);
+    if (tooltip && tooltip[0]) Tooltip(tooltip);
+    // Wrapped at spaces: ImGui's own wrap also breaks after a full stop,
+    // which split "0.09s" in a narrow card.
+    if (line1 && line1[0]) TextWrapAnywhere(line1, line1_colour);
+    if (line2 && line2[0]) TextWrapAnywhere(line2, line2_colour);
+    if (line3 && line3[0]) TextWrapAnywhere(line3, line3_colour);
+    EndCard();
+}
+
 // ---------------------------------------------------------------------------
 // Key/value details
 
@@ -118,9 +181,7 @@ void KeyValueTable(const char* id, const std::vector<KeyValue>& rows, int pairs_
         ImGui::TableNextColumn();
         ImGui::TextColored(t.text_dim, "%s", shown[i]->key.c_str());
         ImGui::TableNextColumn();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(shown[i]->value.c_str());
-        ImGui::PopTextWrapPos();
+        TextWrapAnywhere(shown[i]->value, ImGui::GetStyleColorVec4(ImGuiCol_Text));  // a path or key breaks inside the cell
         if (copy_on_click) {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -130,6 +191,59 @@ void KeyValueTable(const char* id, const std::vector<KeyValue>& rows, int pairs_
         }
     }
     ImGui::EndTable();
+}
+
+void TextWrapAnywhere(const std::string& text, const ImVec4& colour) {
+    const float width = std::max(ImGui::GetFontSize(), ImGui::GetContentRegionAvail().x);
+    const char* s = text.c_str();
+    const char* const end = s + text.size();
+    const auto next_char = [end](const char* p) {
+        unsigned int c = 0;
+        const int n = ImTextCharFromUtf8(&c, p, end);
+        return p + std::max(1, n);
+    };
+    ImFont* font = ImGui::GetFont();
+    const float font_size = ImGui::GetFontSize();
+    ImGui::BeginGroup();
+    ImGui::PushStyleColor(ImGuiCol_Text, colour);
+    // The lines of one value as close as ImGui's own wrap puts them.
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0.0f));
+    do {
+        const char* line_end = static_cast<const char*>(std::memchr(s, '\n', static_cast<size_t>(end - s)));
+        if (!line_end) line_end = end;
+        // The longest part of the line that fits.
+        const char* fit = s;
+        float x = 0.0f;
+        while (fit < line_end) {
+            const char* after = next_char(fit);
+            x += font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, fit, after).x;  // unrounded advance
+            if (x > width && fit > s) break;
+            fit = after;
+        }
+        const char* cut = fit;
+        if (fit < line_end) {
+            // Prefer the last space, then the last \ or /, inside what fits.
+            const char* at_space = nullptr;
+            const char* at_slash = nullptr;
+            for (const char* p = s; p < fit; ++p) {
+                if (*p == ' ') at_space = p + 1;
+            }
+            if (*fit == ' ') at_space = fit + 1;  // the line ends at the space that overflows
+            for (const char* p = s; p < fit; ++p) {
+                if (*p == '\\' || *p == '/') at_slash = p + 1;
+            }
+            if (at_space && at_space > s) cut = at_space;
+            else if (at_slash && at_slash > s) cut = at_slash;
+        }
+        const char* shown_end = cut;
+        while (shown_end > s && shown_end[-1] == ' ' && cut != line_end) --shown_end;
+        ImGui::TextUnformatted(s, shown_end);
+        s = cut;
+        if (s == line_end && s < end) ++s;  // the newline
+    } while (s < end);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    ImGui::EndGroup();
 }
 
 void FactsTable(const char* id, const std::vector<KeyValue>& rows) {
@@ -143,9 +257,7 @@ void FactsTable(const char* id, const std::vector<KeyValue>& rows) {
         ImGui::TableNextColumn();
         ImGui::TextColored(t.text_dim, "%s", row.key.c_str());
         ImGui::TableNextColumn();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(row.value.c_str());
-        ImGui::PopTextWrapPos();
+        TextWrapAnywhere(row.value, ImGui::GetStyleColorVec4(ImGuiCol_Text));
     }
     ImGui::EndTable();
 }
@@ -239,13 +351,14 @@ void HelpMarker(const char* text) {
 // ---------------------------------------------------------------------------
 // Search field
 
-bool SearchField(const char* id, char* buffer, size_t size, const char* hint, float width) {
+bool SearchField(const char* id, char* buffer, size_t size, const char* hint, float width,
+                 ImGuiInputTextFlags flags) {
     const Tokens& t = CurrentTokens();
     const std::string hint_text = std::string(ICON_FA_MAGNIFYING_GLASS) + "  " + (hint ? hint : "Search");
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, t.rounding_field);
     ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_input);
     ImGui::SetNextItemWidth(width > 0.0f ? width : -FLT_MIN);
-    const bool changed = ImGui::InputTextWithHint(id, hint_text.c_str(), buffer, size);
+    const bool changed = ImGui::InputTextWithHint(id, hint_text.c_str(), buffer, size, flags);
     ImGui::PopStyleColor();
     ImGui::PopStyleVar();
     return changed;
@@ -255,14 +368,16 @@ bool SearchField(const char* id, char* buffer, size_t size, const char* hint, fl
 // Flow row
 
 FlowRow::FlowRow(float right_edge)
-    : right(right_edge > 0.0f ? right_edge : ImGui::GetWindowContentRegionMax().x) {}
+    : right(right_edge > 0.0f ? right_edge : ImGui::GetWindowContentRegionMax().x + ImGui::GetScrollX()) {}
 
 bool FlowRow::Next(float item_width) {
     if (first) {
         first = false;
         return false;
     }
-    const float x = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetStyle().ItemSpacing.x;
+    // Content coordinates, as GetCursorPosX (a window scrolled sideways)
+    const float x = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetScrollX() +
+                    ImGui::GetStyle().ItemSpacing.x;
     if (x + item_width <= right) {
         ImGui::SameLine();
         return false;
@@ -456,6 +571,54 @@ bool NumberField(const char* id, int* value, int min, int max, int step, float w
     if (!NumberField(id, &v, o)) return false;
     *value = static_cast<int>(std::lround(v));
     return true;
+}
+
+bool ColourField(const char* id, ImVec4* colour, bool with_alpha) {
+    ImGui::PushID(id);
+    bool changed = false;
+    const float h = ImGui::GetFrameHeight();
+    if (ImGui::ColorButton("##swatch", *colour, ImGuiColorEditFlags_AlphaPreviewHalf, ImVec2(h, h)))
+        ImGui::OpenPopup("##picker");
+    if (ImGui::BeginPopup("##picker")) {
+        const ImGuiColorEditFlags flags = ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoSidePreview |
+                                          (with_alpha ? ImGuiColorEditFlags_AlphaBar : ImGuiColorEditFlags_NoAlpha);
+        changed |= ImGui::ColorPicker4("##picker_body", &colour->x, flags);
+        ImGui::EndPopup();
+    }
+    const auto to_byte = [](float v) { return static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+    int rgba[4] = {to_byte(colour->x), to_byte(colour->y), to_byte(colour->z), to_byte(colour->w)};
+    ImGui::SameLine();
+    char hex[16];
+    if (with_alpha)
+        std::snprintf(hex, sizeof(hex), "#%02X%02X%02X%02X", rgba[0], rgba[1], rgba[2], rgba[3]);
+    else
+        std::snprintf(hex, sizeof(hex), "#%02X%02X%02X", rgba[0], rgba[1], rgba[2]);
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("#WWWWWWWW").x + ImGui::GetStyle().FramePadding.x * 2.0f);
+    ImGui::InputText("##hex", hex, sizeof(hex), ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_AutoSelectAll);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        const char* digits = hex[0] == '#' ? hex + 1 : hex;
+        const size_t n = std::strlen(digits);
+        // Every character a hex digit ("12ZZZZ" read as #000012 before).
+        const bool all_hex = std::all_of(digits, digits + n, [](char ch) { return std::isxdigit(static_cast<unsigned char>(ch)) != 0; });
+        if ((n == 6 || (with_alpha && n == 8)) && all_hex) {
+            unsigned int value = static_cast<unsigned int>(std::strtoul(digits, nullptr, 16));
+            if (n == 6) value = (value << 8) | static_cast<unsigned int>(rgba[3]);
+            *colour = ImVec4(static_cast<float>((value >> 24) & 0xFF) / 255.0f, static_cast<float>((value >> 16) & 0xFF) / 255.0f,
+                             static_cast<float>((value >> 8) & 0xFF) / 255.0f, static_cast<float>(value & 0xFF) / 255.0f);
+            changed = true;
+        }
+    }
+    const char* names[4] = {"##r", "##g", "##b", "##a"};
+    const char* hints[4] = {"Red", "Green", "Blue", "Alpha (opacity)"};
+    for (int i = 0; i < (with_alpha ? 4 : 3); ++i) {
+        ImGui::SameLine();
+        if (NumberField(names[i], &rgba[i], 0, 255, 1, 38.0f, hints[i])) {
+            (&colour->x)[i] = static_cast<float>(rgba[i]) / 255.0f;
+            changed = true;
+        }
+    }
+    ImGui::PopID();
+    return changed;
 }
 
 void EmptyState(const char* icon, const char* title, const char* hint) {

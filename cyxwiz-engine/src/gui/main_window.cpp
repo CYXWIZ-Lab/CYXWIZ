@@ -20,6 +20,7 @@
 
 #include "../core/legacy_dataset_batchers.h"
 #include "../core/training_export_metadata.h"
+#include "../core/graph_training_prep.h"
 #include "main_window.h"
 #include "appearance_settings.h"
 #include "panel_memory.h"
@@ -73,7 +74,8 @@
 #include "panels/task_progress_panel.h"
 #include "panels/pattern_browser.h"
 #include "panels/query_console.h"
-#include "panels/custom_node_editor.h"
+#include "panels/python_node_maker_panel.h"
+#include "patterns/pattern_library.h"
 #include "panels/theme_editor.h"
 #include "panels/monitor_panel.h"
 #include "panels/variable_explorer.h"
@@ -114,7 +116,6 @@
 #include "../core/async_task_manager.h"
 #include "../core/dataset_catalog.h"
 #include "../scripting/scripting_engine.h"
-#include "../scripting/startup_script_manager.h"
 #include "../network/job_manager.h"
 #include "../network/grpc_client.h"
 #include "../network/reservation_client.h"
@@ -124,6 +125,7 @@
 #include "../core/pipeline_execution_task.h"
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
+#include "../core/project_session.h"
 #include "../core/cache_prune.h"
 #include "../core/data_budget.h"
 #include "../core/data_registry.h"
@@ -257,54 +259,6 @@ uint64_t HashGraphStructure(const std::vector<MLNode>& nodes,
         HashFnvMix(h, std::string(1, '>'));
     }
     return h;
-}
-
-std::string FindTestingLabelColumn(
-    const std::vector<MLNode>& nodes,
-    const std::string& dataset_name,
-    int data_source_node_id) {
-
-    const MLNode* fallback_data_input = nullptr;
-    for (const auto& node : nodes) {
-        if (node.type != NodeType::DataInput) {
-            continue;
-        }
-
-        if (node.id == data_source_node_id) {
-            auto label_it = node.parameters.find("label_column");
-            if (label_it != node.parameters.end() && !label_it->second.empty()) {
-                return label_it->second;
-            }
-            return {};
-        }
-
-        if (!fallback_data_input) {
-            fallback_data_input = &node;
-        }
-
-        auto dataset_it = node.parameters.find("dataset_name");
-        if (dataset_it == node.parameters.end() || dataset_it->second.empty()) {
-            dataset_it = node.parameters.find("dataset");
-        }
-        if (!dataset_name.empty() &&
-            dataset_it != node.parameters.end() &&
-            dataset_it->second == dataset_name) {
-            auto label_it = node.parameters.find("label_column");
-            if (label_it != node.parameters.end() && !label_it->second.empty()) {
-                return label_it->second;
-            }
-            return {};
-        }
-    }
-
-    if (fallback_data_input) {
-        auto label_it = fallback_data_input->parameters.find("label_column");
-        if (label_it != fallback_data_input->parameters.end() &&
-            !label_it->second.empty()) {
-            return label_it->second;
-        }
-    }
-    return {};
 }
 
 std::string JsonEscape(const std::string& value) {
@@ -562,6 +516,8 @@ MainWindow::MainWindow()
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     training_plot_panel_ = std::make_shared<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
+    training_plot_panel_->SetViewDefaults(cyxwiz::core::EngineConfig::Instance().GetTrainingDashboard());
+    WireMissingValuesDashboard();
     // Prepared-data cache actions from the dashboard's Data preparation card.
     training_plot_panel_->SetSavePathCallback([](const std::string& title, const std::string& default_name) {
         const std::string root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
@@ -622,9 +578,25 @@ MainWindow::MainWindow()
     p2p_training_panel_ = std::make_unique<cyxwiz::P2PTrainingPanel>();
     wallet_panel_ = std::make_unique<gui::WalletPanel>();
     task_progress_panel_ = std::make_unique<cyxwiz::TaskProgressPanel>();
+    // My patterns live with the user's settings, whatever folder the Engine starts in.
+    // A folder whose name the system code page cannot spell leaves My patterns
+    // off; it does not stop the Engine starting.
+    try {
+        ::gui::patterns::PatternLibrary::Instance().SetUserPatternsDirectory(
+            (cyxwiz::core::EngineConfig::Instance().GetUserConfigDir() / "patterns").string());
+    } catch (const std::system_error& e) {
+        spdlog::warn("My patterns are off: the settings folder's name cannot be used ({})", e.what());
+    }
     pattern_browser_ = std::make_unique<cyxwiz::PatternBrowserPanel>();
     query_console_ = std::make_unique<cyxwiz::QueryConsolePanel>();
-    custom_node_editor_ = std::make_unique<gui::CustomNodeEditorPanel>();
+    python_node_maker_ = std::make_unique<cyxwiz::PythonNodeMakerPanel>();
+    python_node_maker_->SetScriptingEngine(scripting_engine_);
+    python_node_maker_->SetOpenInScriptEditorCallback([this](const std::string& path) {
+        if (!script_editor_) return;
+        script_editor_->OpenFile(path);
+        script_editor_->SetVisible(true);
+        ::gui::BringToFront(script_editor_->GetName());
+    });
     theme_editor_ = std::make_unique<gui::ThemeEditorPanel>();
     monitor_panel_ = std::make_unique<cyxwiz::MonitorPanel>();
     variable_explorer_ = std::make_unique<cyxwiz::VariableExplorerPanel>();
@@ -756,11 +728,13 @@ MainWindow::MainWindow()
     }
     // A node clicked on the canvas is kept in the Info panel too.
     if (node_editor_ && node_info_panel_) {
-        node_editor_->SetNodeSelectedCallback([this](const gui::MLNode& node) {
-            if (node.type == gui::NodeType::PluginCustom && !node.extension_type_id.empty())
-                node_info_panel_->SetSelectedExtension(node.extension_type_id);
+        node_editor_->SetNodeSelectedCallback([this](const gui::MLNode* node) {
+            if (!node)
+                node_info_panel_->CanvasNodeRemoved();
+            else if (node->type == gui::NodeType::PluginCustom && !node->extension_type_id.empty())
+                node_info_panel_->ShowCanvasExtension(node->extension_type_id);
             else
-                node_info_panel_->SetSelectedNode(node.type);
+                node_info_panel_->ShowCanvasNode(node->type);
         });
     }
     cloud_dataset_manager_panel_ = std::make_unique<gui::CloudDatasetManagerPanel>();
@@ -801,6 +775,9 @@ MainWindow::MainWindow()
     });
     // A dashboard's "Edit roles in Data Studio" (TOFIX134 P3.8).
     if (node_editor_) {
+        node_editor_->SetOpenPatternCallback([this](const std::string& pattern_id) {
+            if (pattern_browser_) pattern_browser_->OpenWithPattern(pattern_id);
+        });
         node_editor_->SetOpenDataStudioProfileCallback([this](const std::string& dataset) {
             if (data_studio_panel_) data_studio_panel_->ShowProfile(dataset);
         });
@@ -833,12 +810,13 @@ MainWindow::MainWindow()
         },
         [this]() { return marked_launch_.has_value(); });
 
-    // Set pattern browser callback to insert patterns into node editor
-    pattern_browser_->SetInsertCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
-        if (node_editor_) {
-            node_editor_->InsertPattern(nodes, links);
-        }
-    });
+    // An example in the Nodes panel opens in the Pattern Browser, where its
+    // settings, the question before it replaces a graph and its result are.
+    if (node_browser_panel_) {
+        node_browser_panel_->SetExampleOpenCallback([this](const std::string& pattern_id) {
+            if (pattern_browser_) pattern_browser_->OpenWithPattern(pattern_id);
+        });
+    }
 
     // Set scripting engine for the Script Editor. The Console-owned Python
     // REPL already received the same shared engine above.
@@ -1240,12 +1218,9 @@ MainWindow::MainWindow()
         }
     });
 
-    // Open the Custom Node Editor panel from the Studio toolbar
-    node_editor_->SetOpenCustomNodeEditorCallback([this]() {
-        if (custom_node_editor_) {
-            custom_node_editor_->Show();
-            spdlog::info("Opened Custom Node Editor panel from Studio toolbar");
-        }
+    // Make a Python node, from the Studio toolbar's More menu
+    node_editor_->SetOpenPythonNodeMakerCallback([this]() {
+        if (python_node_maker_) python_node_maker_->Open();
     });
 
     // Set up callbacks in the toolbar
@@ -1397,6 +1372,9 @@ MainWindow::MainWindow()
             training_plot_panel_->SetVisible(true);
             spdlog::info("Opened Training Dashboard");
         }
+    });
+    toolbar_->SetRLDashboardCallback([this]() {
+        if (node_editor_) node_editor_->ShowRLDashboard();
     });
 
     // Optimizer Settings: training takes its optimizer from the graph, so the
@@ -1810,24 +1788,9 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up Custom Node Editor callback
-    toolbar_->SetOpenCustomNodeEditorCallback([this]() {
-        if (custom_node_editor_) {
-            custom_node_editor_->Show();
-            spdlog::info("Opened Custom Node Editor panel");
-        }
-    });
-
-    // Set up Icon Pack selection callbacks
-    toolbar_->SetSetIconPackCallback([this](int pack) {
-        if (node_editor_) {
-            node_editor_->SetIconPack(static_cast<gui::IconPack>(pack));
-            const char* pack_names[] = {"FontAwesome", "Tabler", "Remix", "Lucide", "Iconoir", "Phosphor"};
-            spdlog::info("Changed icon pack to: {}", pack < 6 ? pack_names[pack] : "Unknown");
-        }
-    });
-    toolbar_->SetGetIconPackCallback([this]() -> int {
-        return node_editor_ ? static_cast<int>(node_editor_->GetIconPack()) : 0;
+    // Nodes > Make a Python node...
+    toolbar_->SetOpenPythonNodeMakerCallback([this]() {
+        if (python_node_maker_) python_node_maker_->Open();
     });
 
     // Set up Node Editor operation callbacks (Nodes menu)
@@ -1889,6 +1852,8 @@ MainWindow::MainWindow()
     toolbar_->SetOpenThemeEditorCallback([this]() {
         if (theme_editor_) {
             theme_editor_->Show();
+            // In front also when it was already open behind another window.
+            ::gui::BringToFront(theme_editor_->GetName());
             spdlog::info("Opened Theme Editor panel");
         }
     });
@@ -2141,7 +2106,12 @@ MainWindow::MainWindow()
 
     // Set minimap visibility pointers for View -> Minimaps menu
     toolbar_->SetNodeEditorMinimapPtr(node_editor_->GetShowMinimapPtr());
-    toolbar_->SetScriptEditorMinimapPtr(script_editor_->GetShowMinimapPtr());
+    // How the Studio starts (Preferences > Studio); the menus change it for the session
+    {
+        const auto studio = cyxwiz::core::EngineConfig::Instance().GetStudio();
+        node_editor_->SetShowMinimap(studio.minimap);
+        toolbar_->SetAutoSaveEnabled(studio.auto_save_at_start);
+    }
 
     // Register callbacks with ProjectManager for project lifecycle events.
     auto& lifecycle_project_manager = cyxwiz::ProjectManager::Instance();
@@ -2241,6 +2211,7 @@ MainWindow::MainWindow()
         SaveAllFiles();
         spdlog::info("All files saved via toolbar");
     });
+    toolbar_->SetAutoSaveCallback([this]() { AutoSaveFiles(); });
 
     // Set up Exit callback (called when user confirms exit)
     toolbar_->SetExitCallback([this]() {
@@ -2252,7 +2223,11 @@ MainWindow::MainWindow()
 
     // Edit > Find / Replace: the Script Editor's inline widget (TOFIX133 P2).
     toolbar_->SetOpenFindCallback([this](bool replace) {
-        if (script_editor_) script_editor_->OpenFind(replace);
+        if (!replace && KeyboardShortcutManager::Instance().GetActiveContext() == KeyboardContext::NodeEditor) {
+            if (node_editor_) node_editor_->RunEditCommand(NodeEditor::EditCommand::Find);
+        } else if (script_editor_) {
+            script_editor_->OpenFind(replace);
+        }
     });
     // Replace in Files: editor state (TOFIX129 G3)
     toolbar_->SetFileHasUnsavedChangesCallback([this](const std::string& path) {
@@ -2262,48 +2237,26 @@ MainWindow::MainWindow()
         if (script_editor_) script_editor_->ReloadOpenFile(path);
     });
 
-    // Set up edit operation callbacks
-    toolbar_->SetUndoCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Undo();
-        }
-    });
-
-    toolbar_->SetRedoCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Redo();
-        }
-    });
-
-    toolbar_->SetCutCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Cut();
-        }
-    });
-
-    toolbar_->SetCopyCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Copy();
-        }
-    });
-
-    toolbar_->SetPasteCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Paste();
-        }
-    });
-
-    toolbar_->SetDeleteCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Delete();
-        }
-    });
-
-    toolbar_->SetSelectAllCallback([this]() {
-        if (script_editor_) {
-            script_editor_->SelectAll();
-        }
-    });
+    // Edit menu: the focused editor, the Studio canvas or the Script Editor
+    // (the menu's "Editing:" line names it).
+    const auto edit = [this](NodeEditor::EditCommand command, void (cyxwiz::ScriptEditorPanel::*script)()) {
+        return [this, command, script]() {
+            if (KeyboardShortcutManager::Instance().GetActiveContext() == KeyboardContext::NodeEditor) {
+                if (node_editor_) node_editor_->RunEditCommand(command);
+            } else if (script_editor_) {
+                (script_editor_.get()->*script)();
+            }
+        };
+    };
+    using Edit = NodeEditor::EditCommand;
+    using Script = cyxwiz::ScriptEditorPanel;
+    toolbar_->SetUndoCallback(edit(Edit::Undo, &Script::Undo));
+    toolbar_->SetRedoCallback(edit(Edit::Redo, &Script::Redo));
+    toolbar_->SetCutCallback(edit(Edit::Cut, &Script::Cut));
+    toolbar_->SetCopyCallback(edit(Edit::Copy, &Script::Copy));
+    toolbar_->SetPasteCallback(edit(Edit::Paste, &Script::Paste));
+    toolbar_->SetDeleteCallback(edit(Edit::Delete, &Script::Delete));
+    toolbar_->SetSelectAllCallback(edit(Edit::SelectAll, &Script::SelectAll));
 
     // Set up comment toggle callbacks
     toolbar_->SetToggleLineCommentCallback([this]() {
@@ -2434,76 +2387,30 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up editor settings callbacks (Preferences -> Script Editor synchronization)
-
-    toolbar_->SetEditorTabSizeCallback([this](int tab_size) {
-        if (script_editor_) {
-            script_editor_->SetTabSize(tab_size);
-            spdlog::info("Editor tab size changed to {}", tab_size);
-        }
-    });
-
-    toolbar_->SetEditorFontScaleCallback([](float scale) {
-        gui::SetCodeTextScale(scale);
-        spdlog::info("Code text scale changed to {}", scale);
-    });
-
-    toolbar_->SetEditorShowWhitespaceCallback([this](bool show) {
-        if (script_editor_) {
-            script_editor_->SetShowWhitespace(show);
-            spdlog::info("Editor show whitespace changed to {}", show);
-        }
-    });
-
-    toolbar_->SetEditorWordWrapCallback([this](bool wrap) {
-        if (script_editor_) {
-            script_editor_->SetWordWrap(wrap);
-            spdlog::info("Editor word wrap changed to {}", wrap);
-        }
-    });
-
-    toolbar_->SetEditorAutoIndentCallback([this](bool indent) {
-        if (script_editor_) {
-            script_editor_->SetAutoIndent(indent);
-            spdlog::info("Editor auto indent changed to {}", indent);
-        }
-    });
-
-    // Initialize toolbar editor settings from script editor's current values
+    // The Script Editor's settings are Engine-wide (Preferences > Script
+    // Editor, TOFIX129 B9-8): applied at start, from Preferences, and the
+    // editor's View menu saves what it changes.
     if (script_editor_) {
-        toolbar_->SetEditorTabSize(script_editor_->GetTabSize());
-        toolbar_->SetEditorFontScale(script_editor_->GetFontScale());
-        toolbar_->SetEditorShowWhitespace(script_editor_->GetShowWhitespace());
-        toolbar_->SetEditorWordWrap(script_editor_->GetWordWrap());
-        toolbar_->SetEditorAutoIndent(script_editor_->GetAutoIndent());
-
-        // Set up callback for when settings change in Script Editor (View menu)
-        // This syncs changes back to the Preferences dialog and saves to project
+        script_editor_->ApplyEditorSettings(cyxwiz::core::EngineConfig::Instance().GetEditor());
+        toolbar_->SetEditorSettingsCallback([this](const cyxwiz::core::EditorConfig& settings) {
+            if (script_editor_) script_editor_->ApplyEditorSettings(settings);
+        });
         script_editor_->SetOnSettingsChangedCallback([this]() {
-            if (toolbar_ && script_editor_) {
-                toolbar_->SetEditorTabSize(script_editor_->GetTabSize());
-                toolbar_->SetEditorFontScale(script_editor_->GetFontScale());
-                toolbar_->SetEditorShowWhitespace(script_editor_->GetShowWhitespace());
-                toolbar_->SetEditorWordWrap(script_editor_->GetWordWrap());
-                toolbar_->SetEditorAutoIndent(script_editor_->GetAutoIndent());
-            }
-            // Save settings to project file immediately
-            SaveProjectSettings();
+            if (!script_editor_) return;
+            auto& config = cyxwiz::core::EngineConfig::Instance();
+            config.SetEditor(script_editor_->EditorSettings());
+            config.Save();
         });
     }
 
     // Set up asset browser double-click callback to open files in script editor
     asset_browser_->SetOnAssetDoubleClick([this](const cyxwiz::AssetBrowserPanel::AssetItem& item) {
         if (!item.is_directory && script_editor_) {
-            std::string ext = std::filesystem::path(item.absolute_path).extension().string();
-            for (auto& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-
             // Python sources and notebooks (.py, .pyw, .cyx, .ipynb) and other
-            // text files open in the Script Editor.
-            if (cyxwiz::scriptfile::IsPythonSource(item.absolute_path) || ext == ".txt" ||
-                ext == ".json" || ext == ".md" || ext == ".csv" || ext == ".tsv" ||
-                ext == ".yaml" || ext == ".yml" || ext == ".toml" ||
-                ext == ".ini" || ext == ".cfg" || ext == ".conf") {
+            // text files open in the Script Editor (the Asset Browser offers
+            // Open / Open as text by the same rule).
+            if (cyxwiz::scriptfile::IsPythonSource(item.absolute_path) ||
+                cyxwiz::assets::OpensInScriptEditor(item.absolute_path)) {
                 script_editor_->SetVisible(true);  // a closed Script Editor opens
                 script_editor_->OpenFile(item.absolute_path);
                 spdlog::info("Opened file in script editor: {}", item.name);
@@ -2513,6 +2420,19 @@ MainWindow::MainWindow()
 
     asset_browser_->SetOnCreateDataInput([this](const std::string& path) {
         if (node_editor_) node_editor_->AddDataInputFromAsset(path);
+    });
+
+    // A data file opens in the Table Viewer: the loaded dataset when a Data
+    // Input loaded it, else the file's first rows (nothing registered).
+    asset_browser_->SetOnOpenInTableViewer([this](const std::string& path) {
+        if (!table_viewer_) return;
+        constexpr int64_t kMaxRows = 200000;
+        if (auto name = cyxwiz::DataRegistry::Instance().FindTabularDatasetBySourcePath(path))
+            table_viewer_->OpenDataset(*name, kMaxRows);
+        else
+            table_viewer_->OpenFile(path, kMaxRows);
+        table_viewer_->SetVisible(true);
+        ::gui::BringToFront(table_viewer_->GetName());
     });
 
     // A loaded dataset opens in Data Studio's Query tab (TOFIX140).
@@ -2525,17 +2445,6 @@ MainWindow::MainWindow()
     asset_browser_->SetOnOpenInNodeEditor([this](const std::string& path) {
         OpenGraphInNodeEditor(path);
     });
-
-    // Initialize startup script manager
-    startup_script_manager_ = std::make_unique<scripting::StartupScriptManager>(scripting_engine_);
-
-    // Load and execute startup scripts
-    if (startup_script_manager_->LoadConfig()) {
-        spdlog::debug("Executing startup scripts...");
-        startup_script_manager_->ExecuteAll(console_.get());
-    } else {
-        spdlog::debug("No startup scripts configured or startup_scripts.txt not found");
-    }
 
     // Install custom dock node handler for Unreal-style tabs
     DockStyle::InstallCustomHandler();
@@ -2621,8 +2530,6 @@ MainWindow::~MainWindow() {
     variable_explorer_.reset();
     spdlog::info("~MainWindow: plot_output_panel_ (holds scripting_engine)");
     plot_output_panel_.reset();
-    spdlog::info("~MainWindow: startup_script_manager_ (holds scripting_engine)");
-    startup_script_manager_.reset();
 
     // NOW reset MainWindow's scripting_engine_ - it should be the last reference
     spdlog::info("~MainWindow: scripting_engine_");
@@ -2654,8 +2561,8 @@ MainWindow::~MainWindow() {
     monitor_panel_.reset();
     spdlog::info("~MainWindow: theme_editor_");
     theme_editor_.reset();
-    spdlog::info("~MainWindow: custom_node_editor_");
-    custom_node_editor_.reset();
+    spdlog::info("~MainWindow: python_node_maker_");
+    python_node_maker_.reset();
     spdlog::info("~MainWindow: query_console_");
     query_console_.reset();
     spdlog::info("~MainWindow: pattern_browser_");
@@ -2862,28 +2769,42 @@ void MainWindow::StopRunningScript() {
     }
 }
 
+// Unsaved work: the Script Editor's scripts and the canvas's graph (closing
+// the Engine asked about scripts only, so a changed graph closed silently)
 bool MainWindow::HasUnsavedFiles() const {
-    if (script_editor_) {
-        return script_editor_->HasUnsavedFiles();
-    }
-    return false;
+    if (node_editor_ && node_editor_->HasUnsavedGraph()) return true;
+    return script_editor_ && script_editor_->HasUnsavedFiles();
 }
 
 std::vector<std::string> MainWindow::GetUnsavedFileNames() const {
+    std::vector<std::string> names;
+    if (node_editor_ && node_editor_->HasUnsavedGraph()) names.push_back(node_editor_->GraphDisplayName() + " (graph)");
     if (script_editor_) {
-        return script_editor_->GetUnsavedFileNames();
+        for (auto& name : script_editor_->GetUnsavedFileNames()) names.push_back(std::move(name));
     }
-    return {};
+    return names;
 }
 
 void MainWindow::SaveAllFiles() {
-    if (script_editor_) {
-        script_editor_->SaveAllFiles();
-    }
+    // An untitled graph asks where to save it; cancelled, it stays unsaved
+    if (node_editor_ && node_editor_->HasUnsavedGraph()) node_editor_->SaveCurrentGraph();
+    if (script_editor_) script_editor_->SaveAllFiles();
+}
+
+void MainWindow::AutoSaveFiles() {
+    // A Save dialog every minute for an untitled graph or script would be no
+    // help: those wait for File > Save
+    if (node_editor_ && node_editor_->HasUnsavedGraph() && !node_editor_->GetCurrentFilePath().empty())
+        node_editor_->SaveCurrentGraph();
+    if (script_editor_) script_editor_->SaveFilesThatHaveAPath();
 }
 
 void MainWindow::PrepareForShutdown() {
     spdlog::info("MainWindow: Preparing for shutdown...");
+
+    // The project remembers what was open (scripts, the graph) for the next
+    // time it opens, also when the Engine reopens it at start
+    if (cyxwiz::ProjectManager::Instance().HasActiveProject()) SaveProjectSettings();
 
     // Stop any running script first (this can take time to interrupt Python)
     if (scripting_engine_ && scripting_engine_->IsScriptRunning()) {
@@ -3025,7 +2946,7 @@ void MainWindow::Render() {
     TimedRender("task progress", task_progress_panel_);
     TimedRender("pattern browser", pattern_browser_);
     TimedRender("query console", query_console_);
-    TimedRender("custom node editor", custom_node_editor_);
+    TimedRender("python node maker", python_node_maker_);
     TimedRender("theme editor", theme_editor_);
     TimedRender("Monitor", monitor_panel_);
     cyxwiz::VariablesView::PollAll(scripting_engine_.get());  // results for every Variables view
@@ -3089,6 +3010,7 @@ void MainWindow::Render() {
 
     // Render the Compile Graph result popup (triggered from Train -> Compile Graph menu)
     RenderCompileResultPopup();
+    TrackMissingValuesSteps();
     RenderOperationErrorPopup();
     RenderMaterializationMemoryConfirmationPopup();
 
@@ -3099,6 +3021,9 @@ void MainWindow::Render() {
     FrameMetrics::Instance().Render();
     FrameMetrics::Instance().EndFrame();
     RenderStatusBar();
+    // Any panel's tab menu (Move to its own window / Dock back) while
+    // Preferences let every window leave (TOFIX129 A8b).
+    ::gui::WindowMenus();
 }
 
 // Helper function to draw active tab indicator on a dock node
@@ -3352,7 +3277,6 @@ void MainWindow::BuildInitialDockLayout() {
     ImGuiID dock_id_bottom = 0;
     ImGuiID dock_id_bottom_left = 0;
     ImGuiID dock_id_bottom_right = 0;
-    ImGuiID dock_id_bottom_bottom = 0;
 
     // Split left side for Asset Browser (15% width)
     dock_id_left = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Left, 0.15f, nullptr, &dock_id_center);
@@ -3360,8 +3284,14 @@ void MainWindow::BuildInitialDockLayout() {
     // Split right side for Properties (20% width)
     dock_id_right = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Right, 0.25f, nullptr, &dock_id_center);
 
-    // Split bottom for Console area (25% height of remaining)
-    dock_id_bottom = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Down, 0.30f, nullptr, &dock_id_center);
+    // Split bottom for the Console area: 42 % of the height and at least
+    // 390 px, so a terminal shows some eight lines of output above its input
+    // box. The pixels matter: the layout is built at the window's first size
+    // (720 px tall before a maximize) and a later maximize goes to the
+    // central node only. The menu, toolbar and status bars take some 40 px.
+    const float layout_height = std::max(1.0f, ImGui::GetMainViewport()->Size.y - 40.0f);
+    const float bottom_ratio = std::clamp(390.0f / layout_height, 0.42f, 0.6f);
+    dock_id_bottom = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Down, bottom_ratio, nullptr, &dock_id_center);
 
     // Split center horizontally: CyxWiz Studio (left) and Data Studio (right) side by side
     dock_id_center_right = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Right, 0.5f, nullptr, &dock_id_center_left);
@@ -3369,8 +3299,6 @@ void MainWindow::BuildInitialDockLayout() {
     // Split bottom section horizontally: left (Console) and right (Inspector)
     dock_id_bottom_right = ImGui::DockBuilderSplitNode(dock_id_bottom, ImGuiDir_Right, 0.25f, nullptr, &dock_id_bottom_left);
 
-    // Split bottom-left further for Profiler/Viewport
-    dock_id_bottom_bottom = ImGui::DockBuilderSplitNode(dock_id_bottom_left, ImGuiDir_Down, 0.40f, nullptr, &dock_id_bottom_left);
 
     // Dock windows to their designated areas
     // Window names must EXACTLY match the names in ImGui::Begin() calls in each panel
@@ -3381,7 +3309,9 @@ void MainWindow::BuildInitialDockLayout() {
     ImGui::DockBuilderDockWindow("Properties", dock_id_right);
     ImGui::DockBuilderDockWindow("Console", dock_id_bottom_left);
     ImGui::DockBuilderDockWindow("Training Dashboard", dock_id_bottom_right);
-    ImGui::DockBuilderDockWindow("Viewport", dock_id_bottom_bottom);
+    // A tab beside the Console (a split below it left the terminals too
+    // short to show their output; TOFIX129 A4).
+    ImGui::DockBuilderDockWindow("Viewport", dock_id_bottom_left);
 
     // Every other sidebar panel gets a home too, as a tab beside the panel
     // it belongs with, instead of opening as a small floating window
@@ -3429,7 +3359,7 @@ void MainWindow::RegisterPanelsWithSidebar() {
     // Workspace
     add("CyxWiz Studio", ICON_FA_DIAGRAM_PROJECT, node_editor_, "Workspace");
     add("Properties", ICON_FA_SLIDERS, properties_, "Workspace");
-    add("Node Browser", ICON_FA_CUBES, node_browser_panel_, "Workspace");
+    add("Nodes", ICON_FA_CUBES, node_browser_panel_, "Workspace");
     add("Node Info", ICON_FA_CIRCLE_INFO, node_info_panel_, "Workspace");
     add("Patterns", ICON_FA_LAYER_GROUP, pattern_browser_, "Workspace",
         cyxwiz::menu::ShortcutFor("view.patterns", cyxwiz::menu::Context::Any).c_str());
@@ -3506,7 +3436,7 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (task_progress_panel_) task_progress_panel_->SetVisible(false);
     if (pattern_browser_) pattern_browser_->SetVisible(false);
     if (query_console_) query_console_->SetVisible(false);
-    if (custom_node_editor_) custom_node_editor_->SetVisible(false);
+    if (python_node_maker_) python_node_maker_->SetVisible(false);
     if (theme_editor_) theme_editor_->SetVisible(false);
     if (monitor_panel_) monitor_panel_->SetVisible(false);
     if (variable_explorer_) variable_explorer_->SetVisible(false);
@@ -4006,6 +3936,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     accepted_materialization_memory_estimated_bytes_ = 0;
     try {
         spdlog::info("StartTrainingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
+        missing_values_.clear();  // a new attempt: its own check
+        dashboard_missing_ = MissingValuesEntry{};  // and a refused run gets a fresh card
 
         // === Pre-flight compile gate ===
         // Run the same Compile pass the explicit Compile button uses, and
@@ -4262,8 +4194,32 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         }
 
         auto dispatch_training = marked ? marked->dispatch : MakeEngineGraphTrainingDispatch(registry, tm);
+        const std::string source_dataset = config.dataset_name;  // the Data Input's own (its column roles)
         const std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel =
             marked ? std::weak_ptr<cyxwiz::TrainingPlotPanel>() : std::weak_ptr<cyxwiz::TrainingPlotPanel>(training_plot_panel_);
+
+        // Training would refuse missing values: the launch task finds them
+        // off the UI thread and the report offers the fix. Nothing started:
+        // the canvas is free again for the fix's steps (its pins unchanged).
+        // The report is for this graph only: one opened or cleared during
+        // the check gets no card for these columns and node ids.
+        const uint64_t launch_graph = node_editor_ ? node_editor_->GraphGeneration() : 0;
+        auto on_missing_values = [this, nodes, source_dataset, launch_graph, held = static_cast<bool>(node_editor_callback),
+                                  not_started = marked ? marked->not_started : nullptr](
+                                     std::vector<MissingValuesBlock> blocks) {
+            const std::string why = "Not started: the data has missing values (the report says where).";
+            if (held && node_editor_) node_editor_->SetTrainingActive(false);
+            if (not_started) not_started(why);
+            // Loading the data or running its steps first left the Dashboard
+            // preparing (its last run was cleared then): end that here.
+            if (training_plot_panel_ && training_plot_panel_->IsPreparing())
+                training_plot_panel_->SetPreparationFailed(why);
+            if (!node_editor_ || node_editor_->GraphGeneration() != launch_graph) {
+                spdlog::info("Missing values: the graph changed during the check; no report");
+                return;
+            }
+            ShowMissingValuesReport(blocks, nodes, source_dataset);
+        };
 
         auto launch_result = StartGraphTrainingFromCompiledConfig(
             nodes, links, std::move(config), registry, plot_panel,
@@ -4274,16 +4230,16 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 : std::nullopt,
             cyxwiz::ProjectManager::Instance().GetProjectRoot(),
             canvas_dataset,
-            prepared_key);
+            prepared_key,
+            std::move(on_missing_values));
 
+        // Started: the launch task checks the data, then prepares and
+        // dispatches (the Dashboard shows itself once the check passes).
         if (launch_result.started && marked) {
             marked_launch_.reset();  // the preparation runs, then its dispatch
             spdlog::info("{} started", marked->what);
         } else if (launch_result.started) {
-            spdlog::info("Training started successfully");
-            if (training_plot_panel_) {
-                training_plot_panel_->SetVisible(true);
-            }
+            spdlog::info("Training launch queued");
         } else {
             compile_result_success_ = false;
             compile_result_issues_.clear();
@@ -5993,7 +5949,7 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
             label_column);
     }
     if (label_column.empty()) {
-        label_column = FindTestingLabelColumn(
+        label_column = cyxwiz::FindGraphLabelColumn(
             nodes, dataset_name, test_source_node_id);
     }
     if (dataset_name.empty()) {
@@ -6186,16 +6142,8 @@ void MainWindow::SaveProjectSettings() {
         return;
     }
 
-    // Get current editor settings from script editor
-    cyxwiz::EditorSettings& settings = pm.GetConfig().editor_settings;
+    // The project keeps what was open (its editor settings are Engine-wide)
     if (script_editor_) {
-        settings.font_scale = script_editor_->GetFontScale();
-        settings.tab_size = script_editor_->GetTabSize();
-        settings.show_whitespace = script_editor_->GetShowWhitespace();
-        settings.word_wrap = script_editor_->GetWordWrap();
-        settings.auto_indent = script_editor_->GetAutoIndent();
-        settings.syntax_highlighting = script_editor_->GetSyntaxHighlighting();
-
         // Persist open scripts for project restore
         pm.GetConfig().open_scripts.clear();
         auto open_paths = script_editor_->GetOpenFilePaths();
@@ -6204,15 +6152,15 @@ void MainWindow::SaveProjectSettings() {
         }
         pm.GetConfig().active_script_index = script_editor_->GetActiveTabIndex();
     }
-
-    // Save application-wide settings
-    settings.app_theme = static_cast<int>(GetTheme().GetCurrentPreset());
-    settings.ui_scale = ImGui::GetIO().FontGlobalScale;
+    // The graph on the canvas, reopened with the project (Preferences > General)
+    if (node_editor_) {
+        pm.GetConfig().open_graph =
+            cyxwiz::project_session::StoredGraph(node_editor_->GetCurrentFilePath(), pm.GetProjectRoot());
+    }
 
     // Save layout file
     SaveLayout();
 
-    // Save project file (includes editor settings)
     pm.SaveProject();
     spdlog::info("Saved project settings");
 }
@@ -6223,28 +6171,8 @@ void MainWindow::LoadProjectSettings() {
         return;
     }
 
-    const cyxwiz::EditorSettings& settings = pm.GetConfig().editor_settings;
-
-    // Apply editor settings to script editor
-    if (script_editor_) {
-        script_editor_->SetTabSize(settings.tab_size);
-        script_editor_->SetShowWhitespace(settings.show_whitespace);
-        script_editor_->SetWordWrap(settings.word_wrap);
-        script_editor_->SetAutoIndent(settings.auto_indent);
-        script_editor_->SetSyntaxHighlighting(settings.syntax_highlighting);
-    }
-
-    // Sync settings to toolbar/preferences
-    if (toolbar_) {
-        toolbar_->SetEditorTabSize(settings.tab_size);
-        toolbar_->SetEditorFontScale(gui::CodeTextScale());
-        toolbar_->SetEditorShowWhitespace(settings.show_whitespace);
-        toolbar_->SetEditorWordWrap(settings.word_wrap);
-        toolbar_->SetEditorAutoIndent(settings.auto_indent);
-    }
-
-    // Theme and text sizes are Engine-wide (Preferences > Appearance); the
-    // project's older app_theme / ui_scale fields are no longer applied.
+    // Theme, text sizes and the Script Editor's settings are Engine-wide
+    // (Preferences); the project brings back what was open.
     ImGui::GetIO().FontGlobalScale = 1.0f;
 
     // Restore open scripts
@@ -6263,7 +6191,7 @@ void MainWindow::LoadProjectSettings() {
         script_editor_->SetActiveTabIndex(pm.GetConfig().active_script_index);
     }
 
-    spdlog::debug("Loaded project settings (font_scale={:.1f}, tab_size={})", settings.font_scale, settings.tab_size);
+    spdlog::debug("Loaded project settings ({} open scripts)", open_scripts.size());
 }
 
 void MainWindow::OnProjectOpened(const std::string& project_root) {

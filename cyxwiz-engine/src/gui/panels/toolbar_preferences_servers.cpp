@@ -10,6 +10,7 @@
 #include "../../core/file_dialogs.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 
 #include "common/server_address_probe.h"
 #include "common/server_address_view.h"
@@ -65,6 +66,7 @@ void ToolbarPanel::LoadServerSettings() {
     CopyTo(separate_central_buf_, sizeof(separate_central_buf_), separate.central);
     CopyTo(separate_gateway_buf_, sizeof(separate_gateway_buf_), separate.gateway);
     CopyTo(separate_api_buf_, sizeof(separate_api_buf_), separate.auth_api);
+    CopyTo(deployment_address_buf_, sizeof(deployment_address_buf_), config.GetDefaultDeploymentAddress());
     server_change_confirm_ = false;
     server_probed_.clear();
     servers_loaded_ = true;
@@ -314,6 +316,33 @@ void ToolbarPanel::RenderServersTab() {
         ImGui::TextDisabled("%s", in_use.kind_line.c_str());
     } else {
         ImGui::TextDisabled("In use and saved: %s. Central, the gateway and sign-in all follow it.", saved.c_str());
+    }
+
+    // ---- Deployment: where Deploy sends a model, and the node's P2P port
+    ImGui::Spacing();
+    SectionHeading("Deployment");
+    {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Server node");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(std::min(360.0f, ImGui::GetContentRegionAvail().x));
+        ImGui::InputTextWithHint("##deployment_address", "host:port", deployment_address_buf_,
+                                 sizeof(deployment_address_buf_));
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            config.SetDefaultDeploymentAddress(Trimmed(deployment_address_buf_));
+            config.Save();
+        }
+        ImGui::TextDisabled("Deploy (Deploy menu) opens with it; each deployment can still change it.");
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("P2P port");
+        ImGui::SameLine();
+        int port = config.GetDefaultP2PPort();
+        if (ui::NumberField("##p2p_port", &port, 1, 65535, 1, 70.0f)) {
+            config.SetDefaultP2PPort(port);
+            config.Save();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("used when a server node does not say its own (50052 by default)");
     }
 
     // ---- Account

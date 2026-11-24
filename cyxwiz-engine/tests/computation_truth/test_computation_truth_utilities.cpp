@@ -3,6 +3,7 @@
 // statistics and error places against Python's json, regex matches against
 // Python's re, and the random generators' values, statistics and histograms
 // against numpy. Fixture: reference/generate_utilities_fixtures.py.
+#include "../oracle/oracle_header.h"
 #include <cyxwiz/utilities.h>
 
 #include <nlohmann/json.hpp>
@@ -211,6 +212,7 @@ void CheckRandom(const json& cases) {
 }  // namespace
 
 int main() {
+    cyxwiz::test::BeginHostOracleTest("test_computation_truth_utilities");
     std::ifstream in(CYXWIZ_UTILITIES_FIXTURE);
     Check(static_cast<bool>(in), "cannot open the utilities fixture");
     const json fixture = json::parse(in);

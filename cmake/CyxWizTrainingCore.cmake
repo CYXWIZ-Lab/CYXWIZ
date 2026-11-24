@@ -48,6 +48,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/classification_decision.cpp
     ${_cyxwiz_engine_src}/core/arrow_dataset.cpp
     ${_cyxwiz_engine_src}/core/arrow_dataset_batcher.cpp
+    ${_cyxwiz_engine_src}/core/batch_uploads.cpp
     ${_cyxwiz_engine_src}/core/label_vocabulary.cpp
     ${_cyxwiz_engine_src}/core/model_builder.cpp
     ${_cyxwiz_engine_src}/core/model_memory_estimate.cpp
@@ -168,6 +169,7 @@ add_library(cyxwiz-training-core STATIC
     ${_cyxwiz_engine_src}/core/graph_training_prep.cpp
     ${_cyxwiz_engine_src}/core/graph_training_job.cpp
     ${_cyxwiz_engine_src}/core/compiled_graph_plan.cpp
+    ${_cyxwiz_engine_src}/core/code_export.cpp
     ${_cyxwiz_engine_src}/core/graph_topology_utils.cpp
     ${_cyxwiz_engine_src}/core/node_metadata_registry.cpp
     ${_cyxwiz_engine_src}/core/extension_node_metadata.cpp

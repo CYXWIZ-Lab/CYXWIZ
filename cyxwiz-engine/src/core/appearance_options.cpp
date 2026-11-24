@@ -40,6 +40,10 @@ int NormalizeThemePreset(int preset, int count) {
     return preset >= 0 && preset < count ? preset : 0;
 }
 
+int NormalizeNodeIconPack(int pack) {
+    return pack >= 0 && pack < static_cast<int>(kNodeIconPacks.size()) ? pack : kDefaultNodeIconPack;
+}
+
 float Luminance(float r, float g, float b) {
     const auto linear = [](float c) {
         return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);

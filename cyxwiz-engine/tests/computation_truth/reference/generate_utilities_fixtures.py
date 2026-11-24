@@ -31,6 +31,8 @@ from fractions import Fraction as F
 
 import numpy as np
 
+from portable_random import MT19937_64, below
+
 OUT = pathlib.Path(__file__).resolve().parent.parent / "fixtures" / "utilities_truth.json"
 
 # ---------------------------------------------------------------- hash
@@ -193,35 +195,6 @@ regex_replace = {"pattern": r"(\d{3})[-.](\d{4})", "replacement": "$2-$1",
 # ---------------------------------------------------------------- random
 
 
-class MT19937_64:
-    """std::mt19937_64 (the C++ standard's parameters, seed(value))."""
-    W = (1 << 64) - 1
-
-    def __init__(self, seed):
-        self.mt = [0] * 312
-        self.mt[0] = seed & self.W
-        for i in range(1, 312):
-            self.mt[i] = (6364136223846793005 * (self.mt[i - 1] ^ (self.mt[i - 1] >> 62)) + i) & self.W
-        self.i = 312
-
-    def __call__(self):
-        if self.i >= 312:
-            for k in range(312):
-                y = (self.mt[k] & 0xFFFFFFFF80000000) | (self.mt[(k + 1) % 312] & 0x7FFFFFFF)
-                v = self.mt[(k + 156) % 312] ^ (y >> 1)
-                if y & 1:
-                    v ^= 0xB5026F5AA96619E9
-                self.mt[k] = v
-            self.i = 0
-        y = self.mt[self.i]
-        self.i += 1
-        y ^= (y >> 29) & 0x5555555555555555
-        y ^= (y << 17) & 0x71D67FFFEDA60000
-        y ^= (y << 37) & 0xFFF7EEE000000000
-        y ^= y >> 43
-        return y & self.W
-
-
 def u01(r):
     return (r() >> 11) * 2.0 ** -53
 
@@ -266,15 +239,6 @@ def poisson(r, mean):
             continue
         if math.log(v) + math.log(invalpha) - math.log(a / (us * us) + b) <= -mean + k * loglam - math.lgamma(k + 1.0):
             return int(k)
-
-
-def below(r, bound):
-    mx = (1 << 64) - 1
-    limit = mx - mx % bound
-    v = r()
-    while v >= limit:
-        v = r()
-    return v % bound
 
 
 def histogram(values, integers):

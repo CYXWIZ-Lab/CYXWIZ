@@ -7,6 +7,268 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **The Pattern Browser, redesigned.** Category chips that wrap (they ran off
+  the panel's edge), with counts and a new Reinforcement learning category
+  (PPO was filed under Custom); search across every category; a card per
+  pattern with Full graph or Block, its node count and two lines of
+  description; patterns that cannot be used yet greyed at the end with the
+  reason; settings typed or stepped with - / + instead of dragged. Insert
+  says what it added, or why nothing was added (it was a log line). A full
+  graph inserted onto a canvas that has nodes asks first: Replace the canvas
+  (Undo brings it back), Add beside it, or Cancel; it used to land on top of
+  the graph. A double-click on a Nodes panel example opens it in the
+  browser. See [Patterns](usage/patterns.md).
+- **A pattern with a link to a missing pin is refused.** The link was
+  skipped and the rest inserted, leaving a hole in the graph; now nothing is
+  added and the browser names the pin and the node.
+- **Patterns insert and train again.** 26 of the 28 shipped patterns still
+  used the retired Dataset Input node and failed to insert (with only a log
+  line); the others were model pieces with no loss or optimizer, so Train
+  stayed off. The whole models are now full graphs: Data Input, Data Split,
+  DataLoader, the image or text steps, the layers, a loss, an optimizer and
+  Output; point Data Input at your data, Apply, then Train. Conv-BN-ReLU,
+  Residual Block and Multi-Head Attention Block are blocks that start with a
+  Block input node. The GAN, autoencoder, VAE, U-Net and sequence-to-sequence
+  patterns need training the Engine does not have yet: inserting one is
+  refused with the reason. The old "Phase 3 Demo" is now "Skip Connections
+  and Merges". See [Patterns](usage/patterns.md).
+- **An RNN layer reads its nonlinearity in any case.** "Tanh" passed the
+  compile check but stopped the model build with "RNNLayer nonlinearity must
+  be tanh or relu"; it now means tanh.
+- **Preferences: "Restore this page's defaults" on every page with
+  settings** (only Appearance and Search could go back before). It asks
+  first and keeps what is yours (the Python interpreter, Favourite and Recent
+  nodes, plugin settings).
+- **Preferences: pages in a rail, with a search, and Close.** The 14 tabs
+  scrolled (Storage and Servers were hidden behind arrows); the pages are
+  now in a rail in four groups with **Search settings**. Settings were
+  already saved at once, so OK / Cancel (Cancel undid only a device pick)
+  are replaced by **Close**; a compute device is taken with **Use this
+  device** on the Devices page.
+- **Preferences: defaults for choices that had none.** A new **Studio** page
+  sets whether Auto Save is on and the canvas minimap shows when the Engine
+  starts, and whether Train requires a passing Local Debug run (saved
+  before only by editing the config file). **Training** sets how the
+  Training Dashboard's charts start (auto scale, follow, log loss axis,
+  smoothing). **Servers** shows the deployment server node and P2P port.
+- **Preferences > Python: the settings that did nothing now work.** The
+  venv switch and the packages for new projects were saved but never read
+  (every project got an environment, with no packages); the startup script,
+  the two imports and the console limit were not even saved. Now a new
+  project gets an environment only when the switch is on, with the listed
+  packages installed before Python starts in it; each Python session runs
+  the chosen imports and startup scripts; the Python console keeps the chosen
+  number of commands. The interpreter is taken with **Use this Python**
+  (no separate Apply / Revert), and checking or finding interpreters no
+  longer freezes the window.
+- **Startup scripts are set in Preferences > Python.** The list of scripts
+  each Python session runs first is set there (Add a script..., order,
+  remove) and saved with the Engine settings. The old `startup_scripts.txt`
+  next to the Engine is no longer read: add its scripts in Preferences.
+  They run in each session (after Restart too), not once on the window's
+  thread at start.
+- **Preferences > Script Editor: one place for the editor's settings, for
+  every project.** Tab size, whitespace, syntax colours, minimap, word wrap
+  and auto indent were saved into the open project only, on OK, and were
+  lost with no project open; they are Engine-wide now and the Script
+  Editor's View menu saves the same values. The Files tab (all four
+  settings did nothing) is folded in and real: **Line endings of new
+  files**, **Trim trailing whitespace on save**, **Insert a final newline on
+  save**; files are written as UTF-8.
+- **A Plot or Dashboard on an image Data Input reads its images.** It said
+  "Data Input has no data yet: open it, choose a file and Apply" even with
+  the images loaded (it looked for a file, and an image folder has a
+  folder). Loaded, it reads the folder's list of images (file, class, width,
+  height, channels, size); before that it says to open the Data Input and
+  Apply. A folder of sounds says it has no table to plot. A table loaded
+  disk-backed (a large file) also counts as loaded now; the plot used to
+  read it again in a run of its own.
+- **Preferences > General does what it says.** Restore last session, Check
+  for updates, Recent Files Limit and Confirm before exit were switches
+  nothing read. Now: **When the Engine starts** (show the start page, or
+  reopen the last project with its scripts and the graph that was open),
+  **Recent projects kept** (1 to 50; File > Open Recent and the start page),
+  and **Ask before closing** (when something would be lost, or always).
+  Check for updates is gone until the Engine has an update check (the
+  installer has one). A project now remembers its open graph, and its open
+  scripts and graph are kept when the Engine closes.
+- **Closing the Engine asks about an unsaved graph.** The close dialog
+  listed unsaved scripts only, so a changed graph on the canvas closed
+  without a word. It is listed under **Unsaved work** now, and **Save and
+  close** (and File > Save All) saves it too; an untitled graph asks where.
+- **Release packages carry the examples.** The start page's starter graphs
+  (and their sample datasets), the RL graphs and the example scripts ship in
+  `examples/` beside the Engine; the start page said "No starter graphs
+  found" in an installed Engine. Only the files the repository tracks ship,
+  without its test folders.
+- **A chart's legend no longer hides a rising curve.** On line and scatter
+  charts the legend goes to the corner the data leaves free (a falling loss
+  keeps it top right; a rising accuracy curve moves it out of the way) and
+  keeps off a target line's label.
+- **A chart's toolbar fits a narrow place.** Fit, Log Y, Legend, Export and
+  the window button move under the data label when they do not fit beside
+  it, and wrap when the place is narrower than all of them; they ran past
+  the edge.
+- **Figure cards break lines between words.** "0.09s each" split after the
+  full stop in a narrow card (ImGui's wrap also breaks after punctuation).
+- **The RL Training Dashboard says what happened, on the Training
+  Dashboard's parts.** The pill reads Training, Paused, Waiting for the GPU,
+  Reached its target, Ran all its steps, Stopped or Failed (a run that
+  stopped at its target read a grey "Finished", with the bar stuck part way);
+  a sentence says how the run ended, a line says where it runs, and Run
+  details holds the route and how the networks compute. New cards: Mean
+  return (change over 10 updates, best, target, the SB3 reference at this
+  step), Episode length, Time (the updates' own time, speed, at most what is
+  left) and Updates (losses, KL, clip fraction). The charts scroll with the
+  wheel (Ctrl + wheel zooms), sit side by side in a wide window, the return
+  chart draws the target as a dashed line, and its "all N values" counts the
+  run's own updates (it counted the reference too). More > **Export updates
+  (CSV)...** writes every update's figures; **Clear all...** asks first and
+  replaces Reset metrics, which cleared at once and took Play / Save policy
+  with it. **Train > RL Training Dashboard** opens it at any time.
+- **Any window can have a window of its own.** File > Preferences >
+  General > Windows: with **Any window can have a window of its own** on,
+  every panel (Properties, Nodes, Info, the tool panels, ...) can leave the
+  main window as the big windows do: drag its tab out, or right-click its tab:
+  **Move to its own window** / **Dock back into the main window**. Off by
+  default; the sidebar, status bar, menus and canvas overlays always stay.
+- **Dock back showed nothing** when the window had been alone in its place
+  (its place left with it): it docked into the dock space's root and was not
+  drawn. It comes back as a tab in the middle of the main window.
+- **The Training Dashboard uses the Engine's own buttons, chips and cards.**
+  Its cards, pills, toggles, progress bars and run tabs were copies with
+  their own sizes and colours; they are the shared ones now (the figure
+  card and the run tab joined them), so the dashboard follows the theme
+  like the rest of the Engine. In a narrow dashboard the Charts row wraps,
+  so View is no longer pushed past the edge by "smoothed (5)".
+- **The Training Dashboard scrolls with the mouse wheel over its charts.**
+  A wheel over a chart zoomed it, so a narrow dashboard could not be
+  scrolled past its charts; the wheel now scrolls and Ctrl + wheel zooms (a
+  chart in its own window still zooms with the wheel). The Epoch window and
+  Smooth window are typed numbers with - and + instead of sliders, in the
+  View menu and the chart windows.
+- **The Training Dashboard's Accuracy chart shows every epoch.** Its epoch
+  axis was set once from the first points drawn, so it stayed at 0..2 for
+  the rest of a run; it now covers the planned epochs, as the Loss chart.
+  A plot whose range is set once (the user may pan) takes a new range again
+  when it changes, for example a new run with more epochs.
+- **The Training Dashboard's Runs table shows the key columns.** Run (when
+  it ended and the dataset), Result, best validation loss and accuracy, test
+  accuracy, epochs ("7 of 10" when it ended early), time and the device it
+  ran on (new); **All columns** shows the other 20. It keeps its own height
+  (rows scroll inside), has no outlines, and the Run column stays while it
+  scrolls sideways. **Export** saves the metrics or the runs as CSV;
+  **Clear runs...** asks first. The runs CSV gains the finish time, epochs
+  run and device columns.
+- **The Training Dashboard's exports ask where to save and say where they
+  saved.** More > Export metrics wrote `training_metrics.csv` into the
+  Engine's working folder without a word; it now asks, like Export runs, and
+  the dashboard says where each file went. **Clear all...** asks first and
+  says that the Runs table and the trained model stay. The save dialog no
+  longer holds up a running training while it is open.
+- **The Training Dashboard's header says where the run ran and how it
+  ended.** "Ran on the CPU (ArrayFire CPU) · compatibility policy"; the
+  dataset with its training, validation and test rows and the batch size;
+  "Finished: every epoch ran." (or why it stopped); the active model with its
+  validation figures; and the held-out test ("accuracy 94.15%, loss 0.2220
+  (188 rows the model never saw)"). The stop code, checkpoint step and path,
+  Execution Truth's rows, the data preparation's file, cache key and memory
+  figures and the engine tasks moved under **Run details** (nothing was
+  dropped). The run's buttons wrap in a narrow dashboard instead of being cut
+  off, and read Pause / Resume, Stop and More. Long paths wrap.
+- **The Training Dashboard's cards show the finished epoch.** They showed the
+  last batch window (0.2322 while epoch 10 ended at 0.2223), and the
+  validation card's gap was measured against it. While an epoch runs, the
+  latest batches are a second figure. "How the run is going" says what the
+  curves did in plain words; a short run's time keeps a tenth of a second.
+- **The Nodes panel, redone.** The node groups fold, with their counts,
+  and the panel remembers which are open (no more three rows and a "Show
+  all" page). A grid or list switch (the list is one row per node; File >
+  Preferences > Nodes panel sets the view a session starts in). The filter
+  in plain words: All, Trains a model, Data steps, Views and panels, Can't
+  run yet, Favourites, with the number of nodes listed. Studio Tools in one
+  row (Group is off until nodes are selected); Favourites (in the order you
+  starred them) and Recent as chips; Plugins, Advanced operations, Can't run
+  yet and Examples fold at the end. A node's tooltip says what it does, its
+  pins and what each carries, and where it runs ("Runs in training") instead
+  of the support table that showed red "Fail closed" on a loss that trains.
+  The search has a clear button; **/** and **Esc** work while the panel has
+  focus. The panel is called Nodes in View > Panels too.
+- **The Nodes panel's training filter listed no loss or optimizer.** Its
+  rule wanted a fact those nodes do not carry; *Trains a model* lists them.
+- **The five starter examples train right after they open.** Binary and
+  multiclass image, text, audio and time-series starters (start page, and
+  **Open an example graph** on an empty canvas) each read a small sample now
+  in `examples/datasets` (60 photos of cats and dogs, 1,797 8x8 handwritten
+  digits, 3,000 review sentences, 400 spoken digits, the airline passengers
+  series): press Train, offline. A starter saved with Save As keeps its data.
+  Before, four had no data and the text one pointed at a file on one PC. The text starter is now a
+  positive / negative review classifier; the audio starter classifies spoken
+  digits and has a BatchNorm after Flatten (without it, it barely learned).
+- **Opening an example graph from the empty canvas crashed the Engine.** It
+  opens now (it was loaded while the canvas drew, and the minimap read nodes
+  the canvas had not placed yet).
+- **A windowed time series compiles.** A Data Input with only a date and the
+  value column, feeding a Time Series Window, was refused ("no numeric
+  feature columns"); the window builds the features from the value itself.
+- **Starring a node in the Nodes panel** no longer gives its two cards
+  (Favourites and its group) the same ID.
+- **Fields follow the theme.** Text fields, search boxes and drop-downs in a
+  dark theme were near black (the window mixed 28 % toward black), a colour
+  no theme has. They are now a step lighter than the window, in the theme's
+  own tone and quieter than a button; light themes keep their near-white
+  fields. The theme picker's swatches show the field colour you get.
+
+- **A data file opens in the Table Viewer.** Double-click a CSV (or TSV,
+  Parquet, JSON Lines, Feather, ...) in the Asset Browser to look at its
+  first rows in the Table Viewer, read in a task; nothing is loaded into
+  the graph. A file a Data Input loaded opens as that dataset. Before, a
+  double-click added a Data Input node; that is now **Create Data Input**
+  in the file's menu and preview. The menu's **Open** for data files is
+  **Open as text**.
+- **The Nodes panel fits its column.** Cards take as many columns as the
+  panel holds and names use two lines ("Depthwise Conv2D", "Instance
+  Norm") instead of being cut after ten letters; a narrow panel no longer
+  cuts a third column at its edge. The "Real" chip over every icon is
+  gone: a small dot marks only the nodes that run in part or are blocked.
+  The panel's search lists nodes named by the words first, and nodes that
+  only mention them under **Related**.
+- **New nodes and notes go to a free spot.** A node added from the Nodes
+  panel or the canvas search, a Data Input from the Asset Browser and a new
+  note no longer land on top of the nodes at the centre of the view; the
+  view moves to show them when they are outside it (the right-click menu
+  still adds where you clicked). The minimap fades while a node is under
+  it.
+- **Notes can be edited, deleted and undone.** Right-click a note for
+  Edit, Minimise and Delete; the Delete key removes a selected note; the
+  note dialog has a title, text, a colour and Save / Cancel / Delete
+  (its buttons fell below the window, so a note could not be deleted);
+  adding, moving, minimising, editing and deleting a note are each one
+  Undo step.
+- **The Console shows a terminal's output.** In the default layout the
+  Console is taller (the Viewport is a tab beside it instead of a strip
+  below), the Python REPL's empty input is two lines, and the REPL and
+  Commands inputs have no outline.
+- **The Info panel follows Undo.** It kept showing a node that Undo or
+  Delete had removed from the canvas.
+- **The Theme Editor shows every colour the Engine draws, and every row
+  changes the screen.** Engine colours: the accent, the 24 node families,
+  the data types (pins, links, plot series) and the status words, with a
+  warning when one is hard to read on the window. Surfaces: window, text,
+  fields, buttons, bars, tabs, tables. Canvas: the grid (the old Node Editor
+  tab had 19 rows of which 14 changed nothing). Colours are typed: a hex
+  field and R, G, B with - / + steps (no drag fields); the Shape tab uses
+  typed numbers instead of sliders.
+- **Colours follow the chosen theme.** Train, OK, Publish and every
+  primary button, selection, check marks, links, the selected tab's line
+  and the canvas box selector use the theme's one accent: purple in
+  CyxWiz Dark and Cream, blue in CyxWiz Light, orange in Unreal Engine,
+  each preset its own (before,
+  the purple was fixed on every theme while Unreal marked choices in
+  orange). Text on the accent picks black or white to stay readable.
+  Secondary buttons (Save, Edit, Cancel ...) are the theme's Button fill,
+  a step off the window, in every theme. A saved custom theme keeps the
+  accent, the node colours, the data-type colours and the status colours.
 - **Safetensors import reads each tensor's type.** Importing a
   `.safetensors` model took every tensor for float32. Float16 and float64
   tensors are now converted, integer tensors are skipped with a warning, and a
@@ -404,6 +666,35 @@ private Data Studio tickets (`tofix*/track*`).
 - **Fixed: a two-choice setting turned into a dropdown once changed.** The
   reset button beside a changed value took the room the toggle needed; the
   toggle now stays a toggle, flowing onto two lines in a narrow panel.
+- **Make a Python node.** **Nodes > Make a Python node...** (also in the
+  Studio toolbar's More menu) writes a node in Python from a form: pick the
+  kind (Activation, Layer or Loss, which fixes the pins), name it, add
+  settings, and type the method bodies; each kind starts from a node that
+  works. **Check** runs the gradient check, **Create node** writes the source
+  to the project's `nodes_src` and the bundle to its `nodes`, approved for
+  you, and the node is in the Nodes panel at once (under Plugins). It
+  replaces the Custom Node Editor, whose nodes never reached the Nodes panel.
+  Example: `examples/python_nodes/node_maker`.
+- **Save selection as pattern, and My patterns.** Select nodes, right-click
+  the canvas and choose Actions > Save selection as pattern...: the dialog
+  says which links are kept and which leave the selection, and saves a block
+  (with a Block input where an outside link fed it) or, with a Data Input
+  and an Output, a full graph. Your patterns are listed under My patterns,
+  saved in `%APPDATA%\CyxWiz\patterns` (`~/.cyxwiz/patterns` on Linux and
+  macOS) whatever folder the Engine starts in, with Show in folder and
+  Delete (to the Recycle Bin or Trash). See
+  [Patterns](usage/patterns.md#my-patterns-saving-your-own).
+
+- **ResNet-18, MobileNetV2 and MobileNetV3 Small patterns.** Full graphs of
+  torchvision's networks, every layer named as torchvision names it, so
+  torchvision's ImageNet weight files fill them through **Start from > A
+  weights file**. **num_classes** sets the head (other than 1000, it starts
+  fresh) and **freeze_backbone** trains only the head. See
+  [Patterns](usage/patterns.md#starting-from-torchvisions-weights).
+- **CyxWiz Cream theme.** A warm light theme beside CyxWiz Light: a cream
+  window, ivory fields and menus, warm brown text, the CyxWiz purple accent
+  (View > Theme or Preferences > Appearance; the Theme Editor changes any
+  of it).
 - **Squeeze-Excitation node.** Scales each channel of a feature map by a
   learned gate (mean over the map, Dense - ReLU - Dense - Sigmoid), as
   torchvision's SqueezeExcitation. Settings: the hidden width (channels /
@@ -634,6 +925,63 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- **Save selection as pattern names the pattern it would replace.** Two names
+  that share a file ("Foo Bar" and "foo-bar") now warn with the existing
+  pattern's name.
+- **A pattern whose file was moved or deleted outside the Engine can be
+  deleted.** Delete takes it out of My patterns instead of refusing with "the
+  file is no longer there".
+- **A settings folder whose name Windows cannot spell in its code page no longer
+  stops the Engine starting.** My patterns are off in that case, and a file in
+  the patterns folder with such a name is skipped instead of stopping the load.
+- **The Nodes panel's Examples follow the pattern library.** The list and its
+  count update after a pattern is saved or deleted, and My patterns stay in the
+  Pattern Browser instead of mixing with the shipped examples.
+- **A CyxQL count groups by the other columns.** `RETURN type(n) AS type,
+  count(n) AS count` gave one row (the first node's type beside the count of
+  every node); it now gives one row per type, as in Cypher.
+- Query Console: Run on an example puts the query in the editor, so a
+  result or an error's line and column read against the text on screen; an
+  error says its line and column once.
+- **Every Query Console example runs.** "Count nodes by type" stopped with
+  "Expected alias after AS" and "List optimizers" with "Expected clause":
+  CyxQL refused function words (type, count, size...) as an alias, property,
+  label or key, and has no UNION. Function words now work as names, and
+  "List optimizers" lists the optimizer types in one query.
+- **Edit > Undo, Redo, Cut, Copy, Paste, Delete, Select All and Find work on
+  the Studio canvas.** The menu said "Editing: Studio canvas" but sent them
+  to the Script Editor, so nothing happened on the canvas; only the keys
+  (Ctrl+Z and the rest) worked there.
+- **Canvas menus read at the normal size at any zoom.** The right-click
+  menus (canvas, node, note, group, frame) and the rename, description and
+  freeze dialogs were drawn at the canvas zoom: zoomed out, too small to read.
+- A text link beside a button (Cancel beside Replace, Show in folder beside
+  Insert) sits on the button's line; it was 4 px higher.
+- **Arabic text is drawn.** The interface fonts had no Arabic, so Arabic
+  data (dashboard cards, tables, plot labels, legends and hover) showed as
+  "???". Noto Sans Arabic is now part of the interface fonts, and the
+  dashboard and plots draw Arabic with its letters joined and right to left
+  (numbers inside stay left to right). Other windows show the letters but do
+  not join them yet.
+- **Plot legend colours match the Colour list.** After changing the plot's
+  kind or columns, scatter, pie and grouped-bar legends could be one colour
+  (or more) off the swatches in the Plot window's Colour list; they now
+  always show the colour each series is drawn in, also a colour you picked.
+- **The decoder example graph compiles.** `examples/cyxgraph/text` (and
+  `task50_gpt_generation_controls`) `causal_lm_decoder_generation_experiment`
+  still used the old split Data/Labels pins with its label links removed, so
+  it opened with compile errors (and a data path from another machine). It
+  is rebuilt on the current graph: a text corpus, a Tokenizer making causal
+  windows, Split, Loader, two decoder blocks, a per-position token head, the
+  loss and Adam.
+- **A language model that tokenizes its text in the graph can be trained.**
+  Train refused a graph whose Tokenizer (Causal document windows) sits
+  before the Data Split, saying the source table had no token column: it
+  checked the raw text before the Tokenizer had run. That check now waits
+  for the prepared windows.
+- The node icon pack you choose is kept: View > Node Icon Pack and the new
+  Node icons row of Preferences > Appearance set it, the next launch starts
+  with it, and Reset appearance goes back to Font Awesome.
 - The node icon packs (View > Node Icon Pack: Tabler, Remix, Lucide, Iconoir,
   Phosphor) drew the right icons only by chance: most nodes showed "?",
   nothing, or a Font Awesome icon. Each pack now draws the icons it names,

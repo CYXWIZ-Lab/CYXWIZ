@@ -210,29 +210,29 @@ void RMSpropOptimizer::Step(std::map<std::string, Tensor>& parameters,
         }
 
         try {
-            af::array param_gpu = param.GetArray();
-            af::array grad_gpu = grad.GetArray();
-            af::array v_gpu = v_[name].GetArray();
+            af::array param_gpu = param.GetSemanticArray();
+            af::array grad_gpu = grad.GetSemanticArray();
+            af::array v_gpu = v_[name].GetSemanticArray();
 
             // v = alpha * v + (1 - alpha) * grad^2
             v_gpu = alpha * v_gpu + (1.0f - alpha) * grad_gpu * grad_gpu;
             v_gpu.eval();
 
             if (momentum_ > 0) {
-                af::array buf_gpu = buffer_[name].GetArray();
+                af::array buf_gpu = buffer_[name].GetSemanticArray();
                 // buf = mom * buf + grad / sqrt(v + eps)
                 buf_gpu = mom * buf_gpu + grad_gpu / (af::sqrt(v_gpu) + eps);
                 buf_gpu.eval();
                 param_gpu = param_gpu - lr * buf_gpu;
                 param_gpu.eval();
-                buffer_[name].SetFromArray(buf_gpu);
+                buffer_[name].SetFromSemanticArray(buf_gpu, buffer_[name].Shape());
             } else {
                 param_gpu = param_gpu - lr * grad_gpu / (af::sqrt(v_gpu) + eps);
                 param_gpu.eval();
             }
 
-            param.SetFromArray(param_gpu);
-            v_[name].SetFromArray(v_gpu);
+            param.SetFromSemanticArray(param_gpu, param.Shape());
+            v_[name].SetFromSemanticArray(v_gpu, v_[name].Shape());
             continue;
         } catch (const af::exception& e) {
             optimizer_detail::ThrowOptimizerDeviceError(kOperation, e);
@@ -349,9 +349,9 @@ void AdaGradOptimizer::Step(std::map<std::string, Tensor>& parameters,
         }
 
         try {
-            af::array param_gpu = param.GetArray();
-            af::array grad_gpu = grad.GetArray();
-            af::array cache_gpu = cache_[name].GetArray();
+            af::array param_gpu = param.GetSemanticArray();
+            af::array grad_gpu = grad.GetSemanticArray();
+            af::array cache_gpu = cache_[name].GetSemanticArray();
 
             // cache += grad^2
             cache_gpu = cache_gpu + grad_gpu * grad_gpu;
@@ -360,8 +360,8 @@ void AdaGradOptimizer::Step(std::map<std::string, Tensor>& parameters,
             param_gpu = param_gpu - lr * grad_gpu / (af::sqrt(cache_gpu) + eps);
             param_gpu.eval();
 
-            param.SetFromArray(param_gpu);
-            cache_[name].SetFromArray(cache_gpu);
+            param.SetFromSemanticArray(param_gpu, param.Shape());
+            cache_[name].SetFromSemanticArray(cache_gpu, cache_[name].Shape());
             continue;
         } catch (const af::exception& e) {
             optimizer_detail::ThrowOptimizerDeviceError(kOperation, e);
@@ -480,10 +480,10 @@ void AdadeltaOptimizer::Step(std::map<std::string, Tensor>& parameters,
         }
 
         try {
-            af::array param_gpu = param.GetArray();
-            af::array grad_gpu = grad.GetArray();
-            af::array acc_grad_gpu = acc_grad_[name].GetArray();
-            af::array acc_delta_gpu = acc_delta_[name].GetArray();
+            af::array param_gpu = param.GetSemanticArray();
+            af::array grad_gpu = grad.GetSemanticArray();
+            af::array acc_grad_gpu = acc_grad_[name].GetSemanticArray();
+            af::array acc_delta_gpu = acc_delta_[name].GetSemanticArray();
 
             // Accumulate squared gradient.
             acc_grad_gpu = rho * acc_grad_gpu + (1.0f - rho) * grad_gpu * grad_gpu;
@@ -501,9 +501,9 @@ void AdadeltaOptimizer::Step(std::map<std::string, Tensor>& parameters,
             param_gpu = param_gpu + lr * delta;
             param_gpu.eval();
 
-            param.SetFromArray(param_gpu);
-            acc_grad_[name].SetFromArray(acc_grad_gpu);
-            acc_delta_[name].SetFromArray(acc_delta_gpu);
+            param.SetFromSemanticArray(param_gpu, param.Shape());
+            acc_grad_[name].SetFromSemanticArray(acc_grad_gpu, acc_grad_[name].Shape());
+            acc_delta_[name].SetFromSemanticArray(acc_delta_gpu, acc_delta_[name].Shape());
             continue;
         } catch (const af::exception& e) {
             optimizer_detail::ThrowOptimizerDeviceError(kOperation, e);

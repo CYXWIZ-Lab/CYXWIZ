@@ -1,6 +1,7 @@
 #pragma once
 
 #include <imgui.h>
+#include "ui_tokens.h"
 #include <imnodes.h>
 #include <string>
 #include <vector>
@@ -42,6 +43,7 @@ enum class ThemePreset {
     CyxOSTuiMatrix,  // The Matrix digital rain aesthetic
     CyxOSTuiAmber,   // Amber CRT P3 phosphor terminal
     CyxWizLaunch,    // UX.md launch/dashboard theme
+    CyxWizCream,     // warm light: cream window, ivory popups (owner 2026-11-14)
 
     COUNT
 };
@@ -111,9 +113,11 @@ public:
     // Render theme selector UI (returns true if theme changed)
     bool RenderThemeSelector();
 
-    // Color customization
-    void SetAccentColor(const ImVec4& color);
-    ImVec4 GetAccentColor() const { return accent_color_; }
+    // The colours ImGui's style has no slot for: the accent, node families,
+    // data types and status words (TOFIX129 A4). A preset sets them; a
+    // custom theme or the Theme Editor changes them without re-applying it.
+    const cyxwiz::ui::EngineColours& GetEngineColours() const { return engine_; }
+    void SetEngineColours(const cyxwiz::ui::EngineColours& colours);
 
     // Apply matching dock style for current theme
     void ApplyDockStyle();
@@ -124,6 +128,7 @@ private:
     // Theme application methods
     void ApplyCyxWizDark();
     void ApplyCyxWizLight();
+    void ApplyCyxWizCream();
     void ApplyCyxWizLaunch();
     void ApplyVSCodeDark();
     void ApplyUnrealEngine();
@@ -151,10 +156,15 @@ private:
 
     // Apply ImNodes styling based on current theme
     void ApplyImNodesStyle();
+    // Runs one preset's Apply function (colours, accent_color_, config_).
+    void RunPresetFunction(ThemePreset preset);
+    // The accent-following ImGui, canvas and dock colours, and the tokens.
+    void ApplyEngineColours();
 
     ThemePreset current_preset_ = ThemePreset::CyxWizDark;
     ThemeConfig config_;
-    ImVec4 accent_color_ = ImVec4(0.26f, 0.59f, 0.98f, 1.0f);  // Default blue accent
+    ImVec4 accent_color_ = ImVec4(0.357f, 0.239f, 0.961f, 1.0f);  // set by each preset function
+    cyxwiz::ui::EngineColours engine_ = cyxwiz::ui::DefaultEngineColours(false);
 };
 
 // Global theme instance

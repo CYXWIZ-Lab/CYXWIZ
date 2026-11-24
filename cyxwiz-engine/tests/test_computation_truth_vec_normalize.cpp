@@ -5,6 +5,7 @@
 // Fixture: computation_truth/fixtures/vec_normalize_sb3.json
 // (reference/generate_vec_normalize_fixtures.py, TOFIX195 S4.3a).
 
+#include "oracle/oracle_header.h"
 #include "../src/core/rl/vec_normalize.h"
 
 #include <nlohmann/json.hpp>
@@ -52,6 +53,7 @@ void Close(const float* got, const std::vector<float>& want, const std::string& 
 }  // namespace
 
 int main() {
+    cyxwiz::test::BeginHostOracleTest("test_computation_truth_vec_normalize");
     std::ifstream in(CYXWIZ_VEC_NORMALIZE_FIXTURE);
     Check(in.good(), "vec_normalize_sb3.json is readable");
     if (!in.good()) return EXIT_FAILURE;

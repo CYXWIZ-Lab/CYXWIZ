@@ -9,7 +9,7 @@
 #include "core/arrow_dataset.h"
 #include "core/dataset_batcher.h"
 #include "core/prefetch_batcher.h"
-#include "computation_truth/test_device_selection.h"
+#include "oracle/oracle_test.h"
 
 #include <stdexcept>
 #include <arrow/api.h>
@@ -120,7 +120,7 @@ void CompareRuns(const std::shared_ptr<cyxwiz::ArrowDataset>& dataset, bool trai
 }  // namespace
 
 int main() {
-    if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) {
+    if (!cyxwiz::test::BeginOracleTest("test_arrow_batcher_resident")) {
         std::cerr << "the requested device could not be activated\n";
         return 1;
     }

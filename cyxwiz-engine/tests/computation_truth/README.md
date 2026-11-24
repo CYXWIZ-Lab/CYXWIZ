@@ -30,6 +30,169 @@ an explicit skip, not a global computation-coverage blocker. A qualified route
 must pass with exact requested/effective identity and may never pass by
 silently selecting another backend.
 
+## Running an oracle test: which device, which build
+
+Every oracle test (the list is `CYXWIZ_ORACLE_TESTS` in
+`cyxwiz-engine/CMakeLists.txt`) starts with `tests/oracle/oracle_test.h` and
+prints two lines before anything else:
+
+```
+oracle: test_computation_truth_spatial_layers, commit d40e7b24f... (with uncommitted changes)
+device: cpu 0 (float64)
+```
+
+- `commit` is the commit the binary was built from (the `cyxwiz-build-info`
+  library, refreshed at every build), so a result from an old build tree is
+  visible as such.
+- `CYXWIZ_TEST_ARRAYFIRE_BACKEND=cpu|cuda|opencl|oneapi` picks the device
+  (`CYXWIZ_OPENCL_TEST_DEVICE=N` the OpenCL device). The test runs on exactly
+  that device or fails; unset, it says it uses the default device.
+- Tests that train through the training executor pin every run to that
+  device (CPU when nothing is asked) with the Strict policy, and check at the
+  end that every training and test run bound it, Strict:
+  `training device: every run (N) on arrayfire_cpu 0, strict`.
+- Host-only oracles (text, utilities, VecNormalize) print `device: host`.
+- `test_computation_truth_tfidf_loss` goes over its devices itself (CPU, then
+  each CUDA / OpenCL route); with the variable set it checks only that device.
+
+Run the whole set from the build folder with ctest:
+
+```
+ctest -C Release -L oracle                 # every registered device
+ctest -C Release -L oracle -L cpu          # one device
+```
+
+Two checks run with them (Python only, no torch; labels `oracle;cpu;host`):
+
+- `oracle_coverage` (`scripts/checks/check_oracle_coverage.py`): every public
+  layer, module, activation, loss, optimizer, scheduler and batcher (read from
+  the headers) has a row in `oracle_coverage.json` naming the oracle test,
+  fixture and case that check it, or the gap and why; every evidence item must
+  exist. `coverage_inventory.json` is generated from both (`--write`); a new
+  component without a row fails.
+- `oracle_fixture_manifest` (`scripts/checks/check_oracle_fixtures.py`): every
+  fixture is recorded in `fixtures/fixture_manifest.json` with the generator
+  that writes it and both hashes; a changed generator without its fixture, or
+  a hand-edited fixture, fails. After re-running a generator:
+  `check_oracle_fixtures.py . --update <fixture>`.
+
+The per-push job is `.github/workflows/oracle-cpu.yml` (ArrayFire CPU, Windows
+and Linux); the lab machines' nightly is `scripts/oracle/nightly_oracle.py`.
+
+Each test is registered once per device as `oracle_<test>_<device>` (labels
+`oracle;<device>`, the variable set for it); the host-only ones once, as
+`oracle_<test>` (labels `oracle;cpu;host`). The devices come from the CMake
+cache variable `CYXWIZ_ORACLE_DEVICES`: `cpu` by default, and a machine with
+GPUs configures `-DCYXWIZ_ORACLE_DEVICES="cpu;cuda;opencl"`. GPU entries run
+one at a time per device. `test_transformer_dropout` gets its device and an
+output file (`<build>/oracle/transformer_dropout_<device>.json`) as arguments.
+
+## Level 2: a model trained against its own PyTorch export
+
+`test_oracle_train` (`tests/oracle/test_oracle_train.cpp`, ctest
+`oracle_oracle_train_<device>`) trains small zoo models for a few steps and
+compares every step with PyTorch running the Engine's own PyTorch export of
+the same graph (`core/code_export`, the code Studio's Generate / Save as .py
+writes), so the export is tested too:
+
+- `fixtures/train_trajectory/<model>.py` is the graph's unstamped export and
+  `<model>.json` its spec (input shape, rows, batch size, task, which node is
+  which `self.layerN`). The test fails when a fresh export differs from the
+  committed one.
+- `reference/generate_train_trajectory_fixtures.py` runs each export as a
+  user would: its setup (model, criterion, optimizer, scheduler, with the
+  `total_updates = 1000` placeholder set to the run's updates), one forward
+  pass in eval mode to materialise the lazy layers, the starting weights saved
+  as `<model>_init.pth`, then the example training loop uncommented over the
+  rows in order. It records per step the epoch's running loss and every
+  parameter and buffer (`fixtures/train_trajectory_pytorch.json`).
+- The test names the parameter nodes after the export's modules, starts the
+  run from `<model>_init.pth` the way a user's run does
+  (`initialize_from_weights_file`), trains one epoch through the
+  `TrainingExecutor` with shuffle off, and after each step compares the
+  running loss and every parameter, converted to the Engine's layouts by the
+  same weight matcher. The same run with the learning rate x 1.1 must miss by
+  more than ten tolerances (the comparison can fail).
+- Dropouts in the zoo are 0: torch's and the Engine's masks come from
+  different generators (the mask is level 1's, `test_transformer_dropout`).
+
+- Elements no gradient reaches (an attention key bias, a bias a BatchNorm
+  takes the mean of) move only by rounding noise, which Adam and RMSprop scale
+  up to steps on either side. The generator finds them (|gradient| < 1e-6 at
+  every step, `noise_mask` in the fixture) and the test holds them to an
+  absolute 1e-3; everything else to atol 2e-5, rtol 2e-4.
+- Zoo: an MLP with BatchNorm (SGD, momentum, Nesterov, decay, clipping), a
+  GRU regressor after a Reshape (MSE, Adam with warm-up), a transformer encoder
+  classifier (AdamW, warm-up + cosine, clipping), a residual block on image
+  rows (RMSprop, momentum, clipping) and a bidirectional LSTM classifier on
+  token ids after an embedding (Adam, clipping; torch gets the ids as integers). Image rows are height, width, channel for
+  the Engine; the generator gives torch the same rows channels first.
+
+After changing a zoo model or the export:
+
+```
+build/bin/Release/test_oracle_train --write-exports <repo>/cyxwiz-engine/tests/computation_truth/fixtures/train_trajectory
+py -3.12 cyxwiz-engine/tests/computation_truth/reference/generate_train_trajectory_fixtures.py
+py -3.12 scripts/checks/check_oracle_fixtures.py . --update train_trajectory_pytorch.json
+```
+
+## Level 3: a file through the Engine's data path against Python
+
+`test_oracle_data` (`tests/oracle/test_oracle_data.cpp`, ctest
+`oracle_oracle_data_<device>`), tabular: `fixtures/data_parity/tabular.csv`
+(53 rows, a text label) through Data Input -> StandardScaler with the
+training split (a pipeline run) -> `BuildArrowTrainingBatchers`, as a
+training run builds them, the Train batcher wrapped by a recording decorator
+-> `TrainingExecutor`, 2 epochs, shuffled. Compared with
+`fixtures/data_parity_tabular_pytorch.json`
+(`reference/generate_data_parity_fixtures.py`), which works it out in Python
+without the Engine:
+
+- every row's part: the split rule (`split_partitioning.h`) ported to Python
+  (`reference/portable_random.py`: std::mt19937 / mt19937_64, the bounded
+  draw and Fisher-Yates of `portable_random.h`);
+- the scaled columns: StandardScaler's formula fitted on the Train rows;
+- each epoch's order (`TrainingEpochSeed(dataloader seed, epoch)` into the
+  ported shuffle), every batch's values, class ids and size;
+- the training: a torch DataLoader with that order as its sampler runs the
+  model's own export (as level 2): every step's running loss, each epoch's
+  validation loss and every parameter;
+- scenario B: no preparation step, a Data Split that neither shuffles nor
+  stratifies: the batchers' rows against the rule unshuffled.
+
+The other kinds, batch level (`reference/generate_data_parity_kinds.py`,
+`fixtures/data_parity_<kind>.json`): each kind's batchers are read as a
+training run reads them (the epoch's seed, then Reset; Validation and Test
+once) and every Train epoch's order, the Validation and Test rows, and every
+row's values and label are compared with Python reading the same files:
+
+- text: `text.csv` through TextTokenizer (Word tokens, the vocabulary from
+  the Train rows by count then token, ids padded / truncated);
+- series: `series.csv` through TimeSeriesWindow and TimeSeriesSplit (the
+  value window then each feature's, chronological parts);
+- image: PNG class folders (RGB, grey, RGBA, an 8 x 8 shrunk by its block
+  means) at 4 x 4, u8 / 255 in height, width, channel order;
+- audio: WAV class folders, the magnitude spectrogram (centred, symmetric
+  Hann) z-scored per clip;
+- sparse: `text.csv` through TFIDFVectorizer (vocabulary and idf from the
+  Train rows, l2 rows), the CSR batches compared as dense rows; then a
+  linear model (`sparse_linear.py`) trained 2 epochs on those batches against
+  PyTorch running its export on the dense rows in the same order.
+
+The copy budget (tabular): the same training run with nothing reading the
+model, and the trace's device-to-host reads per training batch: at most three
+scalars (the running loss and accuracy, the report window's weight). Reads
+with no recorded reason are printed (ORA-30). Host-to-device uploads are the
+batchers' (`core/batch_uploads.h`, the trace's `host_upload_groups`): at most
+two per batch (its features, or its row positions when the set stays on the
+device, and its labels), and a set kept on the device goes up once per
+batcher. On CPU every batch uploads features and labels; on CUDA the features
+go up once and a batch sends its row positions and labels.
+
+After changing the model or the export: `test_oracle_data --write-exports
+<repo>/cyxwiz-engine/tests/computation_truth/fixtures/data_parity`, then the
+generator, then `check_oracle_fixtures.py . --update data_parity_tabular_pytorch.json`.
+
 Initial target cases:
 
 - TF-IDF bounded materialization values and shape.
@@ -43,7 +206,8 @@ Initial target cases:
 
 The broad tracking ticket is:
 
-`docs/Data Studio/done39.md`
+`internal/repository-private/engineering/Data Studio/Done work/done39.md`
+(the Engine 2.0 oracle harness: TOFIX228)
 
 ## Current tests
 
@@ -405,7 +569,7 @@ final partial accumulation flush.
 The graph scheduler nodes (Step, Cosine, Exponential, Warmup, Reduce LR) bind
 into this boundary (TOFIX140 A3): GraphCompiler turns the node fed by the
 training optimizer into `TrainingConfiguration::scheduler`, and
-`scheduler_node_pytorch_parity` (test_scheduler_node_training.cpp, fixture from
+`oracle_scheduler_node_training_cpu` (test_scheduler_node_training.cpp, fixture from
 generate_scheduler_node_fixtures.py) trains a compiled graph per node and
 matches torch's learning rate after every epoch, replays Reduce LR's
 validation losses through the backend scheduler, and resumes a run from its
@@ -415,7 +579,7 @@ The regularization nodes (L1, L2, Elastic Net; TOFIX140 A4) sit between the
 loss and the optimizer. GraphCompiler turns the one on that wire into
 `TrainingConfiguration::regularization_l1/l2`, and TrainingExecutor adds
 `l1 x sign(w) + 2 x l2 x w` to each trainable parameter's gradient once per
-optimizer step, before clipping. `regularization_node_pytorch_parity`
+optimizer step, before clipping. `oracle_regularization_node_training_cpu`
 (test_regularization_node_training.cpp, fixture from
 generate_regularization_node_fixtures.py) first checks that the Engine's
 model_seed 52 initialisation is the fixture's start, then trains a compiled
@@ -426,7 +590,7 @@ PPO (cyxwiz/rl/ppo.h; TOFIX195 S4.1) has no autograd either: the loss of
 Stable-Baselines3 2.7 (normalised advantages, clipped surrogate, optional
 clipped value, entropy bonus) writes its gradients with respect to the
 policy's means or logits, the log standard deviation and the values by
-hand. `ppo_pytorch_parity` (test_computation_truth_ppo.cpp, fixture from
+hand. `oracle_computation_truth_ppo_cpu` (test_computation_truth_ppo.cpp, fixture from
 generate_ppo_fixtures.py, which copies SB3's PPO.train on
 torch.distributions) matches the losses, approximate KL, clip fraction and
 every gradient for Gaussian and categorical policies under three settings
@@ -467,7 +631,7 @@ Gradient clipping by the global norm has three implementations: the host
 clip (ClipGradientsByGlobalNorm, the optimizer nodes' Gradient clip norm),
 the device clip (ClipGradientsByGlobalNormOnDevice, PPO's per-tensor path)
 and the clip inside the fused Adam kernel (AdamOptimizer::StepTogether, PPO
-on the NVIDIA provider). `gradient_clipping_pytorch_parity`
+on the NVIDIA provider). `oracle_computation_truth_gradient_clipping_cpu`
 (test_computation_truth_gradient_clipping.cpp, fixture from
 generate_gradient_clipping_fixtures.py) matches each of them against
 torch.nn.utils.clip_grad_norm_ with its default error_if_nonfinite=False,
@@ -480,7 +644,7 @@ runs it.
 
 The PPO trainer's observation and reward normalisation (core/rl/vec_normalize,
 TOFIX195 S4.3a) is checked against Stable-Baselines3's own VecNormalize:
-`vec_normalize_sb3_parity` (test_computation_truth_vec_normalize.cpp, fixture
+`oracle_computation_truth_vec_normalize` (test_computation_truth_vec_normalize.cpp, fixture
 from generate_vec_normalize_fixtures.py) replays a recorded stream of three
 copies through it and matches the normalised observations, the scaled and
 clipped rewards, the final observations of ended episodes and the running

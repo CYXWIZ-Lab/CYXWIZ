@@ -46,7 +46,7 @@ enum class NodeCategory {
 
     // Data Processing
     Preprocessing,    // Normalize, Scale, Encode (existing nodes)
-    DataPipeline,     // DatasetInput, DataLoader, Augmentation
+    DataPipeline,     // DataLoader, DataSplit, image and text steps
     TextProcessing,   // Tokenizer, Vocabulary, Padding
     TimeSeries,       // Window, Features, Split
     Audio,            // AudioInput, Spectrogram, MFCC
@@ -218,7 +218,7 @@ enum class NodeType {
     SignalScope,        // Real-time signal plotter (input visualization)
 
     // ===== Data Pipeline Nodes =====
-    DatasetInput,       // Load dataset from DataRegistry
+    DatasetInput,       // Retired 2026-03-26 (replaced by DataInput); kept so later type numbers stay
     DataLoader,         // Batch iterator with shuffle/drop_last
     Augmentation,  // Retired (the image transform nodes and Augmentation Preset replaced it): the slot stays so later ids
                    // do not move; a saved graph with one fails to load.
@@ -701,6 +701,21 @@ enum class PinType {
 // Pin capacity constants for variadic connections
 constexpr int PIN_UNLIMITED = -1;  // No limit on connections
 constexpr int PIN_SINGLE = 1;      // Standard single connection
+
+// What a pin carries, in words: the canvas pin tooltip, the Info panel and
+// the Nodes panel's tooltip say the same thing.
+inline const char* PinTypeName(PinType type) {
+    switch (type) {
+    case PinType::Tensor: return "Tensor";
+    case PinType::Labels: return "Labels";
+    case PinType::Parameters: return "Parameters";
+    case PinType::Loss: return "Loss";
+    case PinType::Optimizer: return "Optimizer";
+    case PinType::Dataset: return "Dataset";
+    case PinType::Environment: return "Environment";
+    }
+    return "Unknown";
+}
 
 // Node pin structure
 struct NodePin {

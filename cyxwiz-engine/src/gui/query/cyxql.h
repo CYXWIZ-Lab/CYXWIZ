@@ -15,7 +15,7 @@
  *   MATCH (n:Dense) WHERE n.units > 256 RETURN n.name, n.units
  *
  *   // Find path from input to output
- *   MATCH (a:DatasetInput)-[*]->(b:Output) RETURN a, b
+ *   MATCH (a:DataInput)-[*]->(b:Output) RETURN a, b
  *
  *   // Find residual connections
  *   MATCH (a)-[r:ResidualSkip]->(b) RETURN a.name, b.name

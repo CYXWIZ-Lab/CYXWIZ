@@ -5,6 +5,7 @@
 
 #include "dashboard_window.h"
 
+#include "../../core/display_text.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/dashboard/sparse_summary.h"
 #include "../../core/data_registry.h"
@@ -170,7 +171,7 @@ void DashboardWindow::DrawSparse() {
         ImGui::SameLine();
         std::string text;
         for (const auto& k : sparse_keep_) text += (text.empty() ? "" : ", ") + k;
-        ImGui::Text("label = %s", text.c_str());
+        ImGui::Text("label = %s", cyxwiz::core::DisplayText(text).c_str());
         ImGui::SameLine();
         if (ui::LinkButton("Clear all")) {
             sparse_keep_.clear();
@@ -318,12 +319,12 @@ void DashboardWindow::DrawSparse() {
                 ImGui::TextColored(t.text_dim, "%zu", r.row);
                 if (!s.classes.empty()) {
                     ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(r.label.c_str());
+                    ImGui::TextUnformatted(cyxwiz::core::DisplayText(r.label).c_str());
                 }
                 ImGui::TableNextColumn();
                 ImGui::Text("%zu", r.used);
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(r.strongest.c_str());
+                ImGui::TextUnformatted(cyxwiz::core::DisplayText(r.strongest).c_str());
             }
             ImGui::EndTable();
         }

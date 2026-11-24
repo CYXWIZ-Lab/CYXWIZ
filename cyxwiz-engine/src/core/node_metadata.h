@@ -164,7 +164,6 @@ struct NodeMetadata {
         std::vector<ParameterDefinition> parameters_value = {},
         NodeImplementationStatus status_value =
             NodeImplementationStatus::Implemented,
-        int user_votes_value = 0,
         std::string badge_value = {},
         std::vector<SupportAxisDefinition> support_axes_value = {},
         NodePropertiesEditor properties_editor_value =
@@ -183,7 +182,6 @@ struct NodeMetadata {
           outputs(std::move(outputs_value)),
           parameters(std::move(parameters_value)),
           status(status_value),
-          user_votes(user_votes_value),
           badge(std::move(badge_value)),
           support_axes(std::move(support_axes_value)),
           properties_editor(properties_editor_value) {}
@@ -213,7 +211,6 @@ struct NodeMetadata {
 
     // Status
     NodeImplementationStatus status = NodeImplementationStatus::Implemented;
-    int user_votes = 0;         // For template nodes (feature requests)
     std::string badge;          // Optional badge text (e.g., "Coming Soon", "Beta")
     std::vector<SupportAxisDefinition> support_axes;
     NodePropertiesEditor properties_editor = NodePropertiesEditor::Automatic;

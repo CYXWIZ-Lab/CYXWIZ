@@ -206,7 +206,7 @@ const gui::MLNode* FindUpstreamDataInput(const std::vector<gui::MLNode>& nodes,
             if (link.to_node != current || !seen.insert(link.from_node).second) continue;
             const auto* source = NodeById(nodes, link.from_node);
             if (!source) continue;
-            if (source->type == gui::NodeType::DataInput || source->type == gui::NodeType::DatasetInput) {
+            if (source->type == gui::NodeType::DataInput) {
                 return source;
             }
             queue.push_back(source->id);

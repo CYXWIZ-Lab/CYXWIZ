@@ -26,8 +26,7 @@
       "implementation_notes": "Use aws-sdk-cpp",
       "target_phase": "Phase 3",
       "dependencies": ["aws-sdk-cpp"],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "AWSS3Writer",
@@ -53,8 +52,7 @@
       "implementation_notes": "Use aws-sdk-cpp with multipart upload",
       "target_phase": "Phase 3",
       "dependencies": ["aws-sdk-cpp"],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "AzureBlobReader",
@@ -77,8 +75,7 @@
       "implementation_notes": "Use azure-storage-cpp",
       "target_phase": "Phase 3",
       "dependencies": ["azure-storage-cpp"],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "AzureBlobWriter",
@@ -104,8 +101,7 @@
       "implementation_notes": "Use azure-storage-cpp",
       "target_phase": "Phase 3",
       "dependencies": ["azure-storage-cpp"],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "GCSReader",
@@ -128,8 +124,7 @@
       "implementation_notes": "Use google-cloud-cpp",
       "target_phase": "Phase 3",
       "dependencies": ["google-cloud-cpp"],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "GoogleSheetsConnector",
@@ -153,8 +148,7 @@
       "implementation_notes": "Use Google Sheets API v4 with OAuth2",
       "target_phase": "Phase 3",
       "dependencies": ["google-api-cpp-client"],
-      "effort_estimate": "High",
-      "user_votes": 0
+      "effort_estimate": "High"
     },
     {
       "type": "GoogleDriveConnector",
@@ -177,8 +171,7 @@
       "implementation_notes": "Use Google Drive API v3 with OAuth2",
       "target_phase": "Phase 3",
       "dependencies": ["google-api-cpp-client"],
-      "effort_estimate": "High",
-      "user_votes": 0
+      "effort_estimate": "High"
     }
   ]
 }

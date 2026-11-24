@@ -1,5 +1,7 @@
 #include "training_health.h"
 
+#include "algorithms/arrayfire_backend_utils.h"
+
 #include <cyxwiz/sequential.h>
 
 #include <arrayfire.h>
@@ -7,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -69,6 +72,10 @@ void TrainingHealthRecorder::OnValidationOutput(size_t module_index, const Modul
         found->second = af::max(found->second, unit_max);
 }
 
+// One device read per weight tensor (its norm, range, histogram and mean
+// gradient norm together) and one for every ReLU's dead units, each named in
+// the run's trace: the epoch report's reads (ORA-30 was these histograms,
+// read without a name, and the scalars beside them, not counted at all).
 EpochHealth TrainingHealthRecorder::EndEpoch(int epoch, const std::map<std::string, Tensor>& parameters) {
     EpochHealth health;
     health.epoch = epoch;
@@ -78,31 +85,52 @@ EpochHealth TrainingHealthRecorder::EndEpoch(int epoch, const std::map<std::stri
         w.parameter = name;
         w.layer = HealthLayerIndex(name);
         const af::array values = tensor.GetRowMajorFlatArray().as(f32);
-        w.count = static_cast<size_t>(values.elements());
-        w.norm = std::sqrt(af::sum<double>(values * values));
-        w.low = af::min<double>(values);
-        w.high = af::max<double>(values);
-        w.histogram.assign(kHealthHistogramBins, 0);
-        if (w.high > w.low) {
-            const Tensor counts = Tensor::FromRowMajorFlatArray(
-                af::histogram(values, kHealthHistogramBins, w.low, w.high).as(f32),
-                {static_cast<size_t>(kHealthHistogramBins)});
-            const float* read = counts.ReadData<float>();
-            for (int b = 0; b < kHealthHistogramBins; ++b) w.histogram[b] = static_cast<long long>(std::llround(read[b]));
-        } else {
-            w.histogram[0] = static_cast<long long>(w.count);
-        }
+        const dim_t count = values.elements();
+        w.count = static_cast<size_t>(count);
+        const af::array low = af::min(values);
+        const af::array high = af::max(values);
+        const af::array span = high - low;
+        // The bins over [low, high], as af::histogram with that range; one
+        // value (span 0) puts every weight in the first bin.
+        const unsigned n = static_cast<unsigned>(count);
+        const af::array unit = af::select(af::tile(span, n) > 0.0f,
+                                          (values - af::tile(low, n)) / af::tile(span, n), 0.0f);
+        const af::array bins = af::histogram(unit, kHealthHistogramBins, 0.0, 1.0).as(f32);
         const auto sum = state_->gradient_norm_sums.find(name);
-        if (sum != state_->gradient_norm_sums.end() && state_->steps > 0)
-            w.mean_gradient_norm = sum->second.scalar<float>() / static_cast<double>(state_->steps);
+        const bool has_gradient = sum != state_->gradient_norm_sums.end() && state_->steps > 0;
+        const af::array gradient = has_gradient ? af::flat(sum->second).as(f32) : af::constant(0.0f, 1);
+        const Tensor stats = Tensor::FromRowMajorFlatArray(
+            af::join(0, af::join(0, af::flat(af::sum(values * values)), low, high), af::flat(bins), gradient),
+            {static_cast<size_t>(3 + kHealthHistogramBins + 1)});
+        const ScopedArrayFireHostSyncAttribution attribution(ArrayFireHostSyncCategory::MetricScalarReadback,
+                                                             "TrainingHealth::EpochWeights");
+        const float* read = stats.ReadData<float>();
+        w.norm = std::sqrt(static_cast<double>(read[0]));
+        w.low = read[1];
+        w.high = read[2];
+        w.histogram.assign(kHealthHistogramBins, 0);
+        for (int b = 0; b < kHealthHistogramBins; ++b) w.histogram[b] = static_cast<long long>(std::llround(read[3 + b]));
+        if (has_gradient) w.mean_gradient_norm = read[3 + kHealthHistogramBins] / static_cast<double>(state_->steps);
         health.weights.push_back(std::move(w));
     }
-    for (const auto& [index, unit_max] : state_->relu_max) {
-        ReluHealth relu;
-        relu.layer = index;
-        relu.units = static_cast<long long>(unit_max.elements());
-        relu.dead = static_cast<long long>(af::count<unsigned>(unit_max <= 0.0f));
-        health.relus.push_back(relu);
+    if (!state_->relu_max.empty()) {
+        std::vector<af::array> dead;
+        for (const auto& [index, unit_max] : state_->relu_max)
+            dead.push_back(af::flat(af::count(unit_max <= 0.0f)).as(f32));
+        af::array joined = dead.front();
+        for (size_t i = 1; i < dead.size(); ++i) joined = af::join(0, joined, dead[i]);
+        const Tensor counts = Tensor::FromRowMajorFlatArray(joined, {dead.size()});
+        const ScopedArrayFireHostSyncAttribution attribution(ArrayFireHostSyncCategory::MetricScalarReadback,
+                                                             "TrainingHealth::DeadUnits");
+        const float* read = counts.ReadData<float>();
+        size_t k = 0;
+        for (const auto& [index, unit_max] : state_->relu_max) {
+            ReluHealth relu;
+            relu.layer = index;
+            relu.units = static_cast<long long>(unit_max.elements());
+            relu.dead = static_cast<long long>(std::llround(read[k++]));
+            health.relus.push_back(relu);
+        }
     }
     std::sort(health.weights.begin(), health.weights.end(),
               [](const WeightHealth& a, const WeightHealth& b) { return a.layer < b.layer; });

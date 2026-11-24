@@ -106,4 +106,4 @@ CYXWIZ may publish a revised licence for future versions of the Software. A revi
 
 ## 15. Contact
 
-Legal and licensing enquiries: https://web-psi-drab.vercel.app/
+Legal and licensing enquiries: https://cyxwiz.ai

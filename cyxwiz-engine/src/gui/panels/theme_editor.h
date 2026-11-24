@@ -2,17 +2,23 @@
 
 #include "../panel.h"
 #include "../theme.h"
+
 #include <string>
+#include <utility>
 #include <vector>
-#include <map>
 
 namespace gui {
 
-/**
- * Theme Editor Panel
- * Provides a comprehensive UI for customizing ImGui and ImNodes themes.
- * Changes are applied live for immediate preview.
- */
+// Theme Editor (TOFIX129 A4, one colour system). Every colour the Engine draws
+// is in it and every row changes the screen:
+//  - Engine colours: the accent, the node families, the data types (pins,
+//    links, plot series) and the status words (with a contrast warning);
+//  - Surfaces: window, text, fields, buttons, tabs, tables (what follows the
+//    accent - check marks, selection, the tab line - has no row of its own);
+//  - Canvas: the grid (nodes, pins and links use the Engine colours);
+//  - Shape: rounding, borders, padding and sizes as typed numbers;
+//  - Saved themes: custom themes kept over the base preset.
+// Edits apply at once; Save as custom theme keeps them after a restart.
 class ThemeEditorPanel : public cyxwiz::Panel {
 public:
     ThemeEditorPanel();
@@ -20,75 +26,37 @@ public:
 
     void Render() override;
 
-    // Theme import/export
+private:
+    void RenderPresetSelector();
+    void RenderEngineColoursTab();
+    void RenderSurfacesTab();
+    void RenderCanvasTab();
+    void RenderShapeTab();
+    void RenderSavedThemesTab();
+    void RenderSaveDialog();
+
     bool SaveTheme(const std::string& name);
     bool LoadTheme(const std::string& path);
-    bool ExportTheme(const std::string& path);
-
-    // Get/set if changes have been made
-    bool HasUnsavedChanges() const { return has_unsaved_changes_; }
-
-private:
-    // Tab rendering functions
-    void RenderPresetSelector();
-    void RenderImGuiColorsTab();
-    void RenderImNodesColorsTab();
-    void RenderStyleTab();
-    void RenderSaveLoadTab();
     void LoadThemeFromFileDialog();
 
-    // Color group rendering
-    void RenderColorGroup(const char* group_name, const std::vector<std::pair<ImGuiCol_, const char*>>& colors);
-    void RenderImNodesColorGroup(const char* group_name, const std::vector<std::pair<int, const char*>>& colors);
+    // One row of a two-column colour table: the label, then the typed field;
+    // `note` (may be empty) under the field, in `note_colour`.
+    bool ColourRow(const char* label, ImVec4* colour, bool with_alpha = false, const char* note = nullptr,
+                   const ImVec4* note_colour = nullptr);
+    void MarkChanged() { has_unsaved_changes_ = true; }
 
-    // Style section rendering
-    void RenderRoundingSection();
-    void RenderBorderSection();
-    void RenderPaddingSection();
-    void RenderSizeSection();
-
-    // Backup/restore
-    void BackupCurrentStyle();
-    void RestoreBackupStyle();
-
-    // Check if style differs from backup
-    bool StyleDiffersFromBackup() const;
-
-    // UI state
-    int current_tab_ = 0;
     bool has_unsaved_changes_ = false;
     bool show_save_dialog_ = false;
     std::string status_message_;
     bool status_error_ = false;
     char theme_name_buffer_[256] = "";
+    char surface_filter_[128] = "";
 
-    // Backup of original style
-    ImGuiStyle backup_style_;
-    bool has_backup_ = false;
-
-    // Color filter
-    char color_filter_[128] = "";
-
-    // Collapsed state for color groups
-    std::map<std::string, bool> group_collapsed_;
-
-    // Available custom themes
-    std::vector<std::string> custom_themes_;
-    int selected_custom_theme_ = -1;
-
-    // ImGui color definitions organized by group
-    struct ColorGroupDef {
+    struct ColourGroup {
         const char* name;
-        std::vector<std::pair<ImGuiCol_, const char*>> colors;
+        std::vector<std::pair<ImGuiCol_, const char*>> colours;
     };
-    static const std::vector<ColorGroupDef> kImGuiColorGroups;
-
-    // ImNodes color definitions
-    struct ImNodesColorDef {
-        int id;
-        const char* name;
-    };
-    static const std::vector<ImNodesColorDef> kImNodesColors;
+    static const std::vector<ColourGroup> kSurfaceGroups;
 };
 
-} // namespace gui
+}  // namespace gui

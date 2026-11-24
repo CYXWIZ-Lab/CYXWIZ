@@ -1,0 +1,208 @@
+name: Oracle tests (CPU)
+
+# Engine 2.0 core Phase 1 (TOFIX228 1.3, owner P1): on every push, build only
+# the oracle tests (the Engine against PyTorch / scikit-learn / scipy fixtures
+# committed in the repo, and the training contracts they rest on) and run them
+# on ArrayFire CPU. No GPU and no PyTorch here: the fixtures are committed; the
+# GPU and live-PyTorch runs are the lab machines' nightly (owner P2).
+
+on:
+  pull_request:
+  push:
+    branches:
+      - Nodes_Implementation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oracle-cpu-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VCPKG_BINARY_SOURCES: >-
+    clear;files,${{ github.workspace }}/vcpkg-binary-cache,readwrite
+  CYXWIZ_TEST_ARRAYFIRE_BACKEND: cpu
+
+jobs:
+  oracle-cpu:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64 oracle (ArrayFire CPU)
+            os: windows-2022
+            artifact: windows-x64
+            warnings_cache: compiler-warnings-windows-2022-windows-x64-vcpkg-v1
+            cpu_cache: cpu-base-windows-2022-vcpkg
+          - name: Linux x64 oracle (ArrayFire CPU)
+            os: ubuntu-22.04
+            artifact: linux-x64
+            warnings_cache: compiler-warnings-ubuntu-22.04-linux-x64-vcpkg-v1
+            cpu_cache: cpu-base-linux-x64-vcpkg-v3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # For the oracle's own checks (coverage rows, fixture manifest); no torch.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Free Linux disk space
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo apt-get clean
+          docker system prune -af || true
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config \
+            libgl1-mesa-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libxi-dev libxext-dev libwayland-dev libxkbcommon-dev \
+            libgtk-3-dev autoconf autoconf-archive automake libtool libcrypt-dev gperf
+
+      # The same dependency set as the warning gate: start from its cache.
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: vcpkg-binary-cache
+          key: oracle-cpu-${{ matrix.os }}-${{ matrix.artifact }}-vcpkg-v1-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            oracle-cpu-${{ matrix.os }}-${{ matrix.artifact }}-vcpkg-v1-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-
+            ${{ matrix.warnings_cache }}-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-
+            ${{ matrix.cpu_cache }}-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-
+
+      - name: Prepare vcpkg binary cache
+        shell: bash
+        run: mkdir -p vcpkg-binary-cache
+
+      - name: Use CI vcpkg manifest on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item vcpkg-ci.json vcpkg.json -Force
+
+      - name: Use CI vcpkg manifest on Linux
+        if: runner.os == 'Linux'
+        run: cp vcpkg-ci.json vcpkg.json
+
+      - name: Set up vcpkg on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          Set-Location vcpkg
+          git checkout 594ad8871e1e8e45f8e626c015fd611163430207
+          .\bootstrap-vcpkg.bat
+          "VCPKG_ROOT=$PWD" | Out-File -Append $env:GITHUB_ENV
+
+      - name: Set up vcpkg on Linux
+        if: runner.os == 'Linux'
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          cd vcpkg
+          git checkout 594ad8871e1e8e45f8e626c015fd611163430207
+          ./bootstrap-vcpkg.sh
+          echo "VCPKG_ROOT=$PWD" >> "$GITHUB_ENV"
+
+      # The installer's PATH change does not reach later steps: add the
+      # library folder for the test runs.
+      - name: Install ArrayFire on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://arrayfire.gateway.scarf.sh/windows/3.10.0/ArrayFire.exe -OutFile af.exe
+          Start-Process -FilePath af.exe -ArgumentList /S -Wait
+          "C:\Program Files\ArrayFire\v3\lib" | Out-File -Append $env:GITHUB_PATH
+
+      - name: Install ArrayFire on Linux
+        if: runner.os == 'Linux'
+        run: |
+          wget -q https://arrayfire.gateway.scarf.sh/linux/3.10.0/ArrayFire.sh -O ArrayFire.sh
+          chmod +x ArrayFire.sh
+          yes | sudo ./ArrayFire.sh --prefix=/opt/arrayfire || true
+          af_lib=$(dirname "$(find /opt/arrayfire -name 'libafcpu.so*' | head -1)")
+          echo "LD_LIBRARY_PATH=${af_lib}:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
+      - name: Configure Windows Release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_OVERLAY_PORTS="$env:GITHUB_WORKSPACE/vcpkg-ports" `
+            -DCYXWIZ_BUILD_ENGINE=ON `
+            -DCYXWIZ_BUILD_SERVER_NODE=OFF `
+            -DCYXWIZ_BUILD_TESTS=ON `
+            -DCYXWIZ_ORACLE_DEVICES=cpu `
+            -DCYXWIZ_BUILD_TUI=OFF `
+            -DCYXWIZ_ENABLE_PYTHON=OFF `
+            -DCYXWIZ_ENABLE_ONNX=OFF `
+            -DCYXWIZ_ENABLE_GGUF=OFF `
+            -DCYXWIZ_ENABLE_PYTORCH=OFF `
+            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF `
+            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF `
+            -DCYXWIZ_ENABLE_CUDA=OFF `
+            -DCYXWIZ_ENABLE_OPENCL=OFF
+
+      - name: Configure Linux Release
+        if: runner.os == 'Linux'
+        run: |
+          AF_DIR=$(find /opt/arrayfire -name ArrayFireConfig.cmake -exec dirname {} \; 2>/dev/null | head -1)
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_OVERLAY_PORTS="$GITHUB_WORKSPACE/vcpkg-ports" \
+            -DCYXWIZ_BUILD_ENGINE=ON \
+            -DCYXWIZ_BUILD_SERVER_NODE=OFF \
+            -DCYXWIZ_BUILD_TESTS=ON \
+            -DCYXWIZ_ORACLE_DEVICES=cpu \
+            -DCYXWIZ_BUILD_TUI=OFF \
+            -DCYXWIZ_ENABLE_PYTHON=OFF \
+            -DCYXWIZ_ENABLE_ONNX=OFF \
+            -DCYXWIZ_ENABLE_GGUF=OFF \
+            -DCYXWIZ_ENABLE_PYTORCH=OFF \
+            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF \
+            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF \
+            -DCYXWIZ_ENABLE_CUDA=OFF \
+            -DCYXWIZ_ENABLE_OPENCL=OFF \
+            ${AF_DIR:+-DArrayFire_DIR="$AF_DIR"}
+
+      # Before the build, so a compile failure or timeout keeps the dependencies.
+      - name: Save vcpkg binary cache
+        if: ${{ always() && !cancelled() }}
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-binary-cache
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+
+      - name: Build the oracle tests
+        run: cmake --build build --config Release --target cyxwiz-oracle-tests --parallel
+
+      # Every oracle test prints the commit it was built from and the device it
+      # ran on; the training tests check that every run stayed on ArrayFire CPU.
+      - name: Run the oracle tests
+        run: >-
+          ctest --test-dir build --build-config Release
+          -L oracle -L cpu --output-on-failure --timeout 1200
+          --parallel 2 --output-junit oracle-cpu-junit.xml
+
+      - name: Upload the oracle logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-cpu-${{ matrix.artifact }}
+          path: |
+            build/oracle-cpu-junit.xml
+            build/Testing/Temporary/LastTest*.log
+            build/oracle/
+          if-no-files-found: warn

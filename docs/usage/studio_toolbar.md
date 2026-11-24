@@ -24,7 +24,7 @@ title when the Studio is moved out of the main window).
     was on the canvas before.
   - **Export a copy of the graph...**: writes a copy where you choose; the
     open graph stays on its own file.
-  - **Custom Node Editor**.
+  - **Make a Python node...**.
   - **Clear the canvas...**: asks first; Ctrl+Z brings the nodes back. The
     file changes only when you save.
   - While a run keeps the graph busy (training, a test, a pipeline, a Data
@@ -54,7 +54,8 @@ Script Editor they save the script); see Preferences > Shortcuts.
 - **View · 100%** (the zoom on the button): **Zoom** with **-** and **+**
   (greyed at 25% and 200%, with the reason on hover; the view keeps its
   centre), **Zoom to 100%**, **Fit all nodes** (F), **Minimap** (M) and
-  **Find in the graph** (Ctrl+F).
+  **Find in the graph** (Ctrl+F). The minimap fades while a node is under
+  it (unless the pointer is on it), so the node stays readable.
 
 ## The mode, the framework and Code
 
@@ -191,7 +192,16 @@ An empty canvas says **Start a graph** and how to add a node, with three
 buttons: **Search nodes** (the box at the top right of the canvas takes the
 keyboard), **Open the Nodes panel** (drag a node from it onto the canvas)
 and **Open an example graph** (the five task starters of the start page;
-it opens as *Untitled graph*, so Save asks for a name).
+it opens as *Untitled graph*, so Save asks for a name). Each starter reads a
+small sample in `examples/datasets` (photos of cats and dogs, 8x8 handwritten
+digits, review sentences, spoken digits, airline passengers), so **Train**
+works at once, offline; the samples and their sources are listed in
+`examples/datasets/README.md`. The starters and samples ship in release
+packages (`examples/` beside the Engine) and are in a source checkout. A
+starter's Data Input is
+pointed at the sample it found when it opens, so Save As anywhere keeps the
+data. Point the Data Input at your own data to go
+further.
 
 ## Find in the graph
 
@@ -297,6 +307,57 @@ Compile (F7) shows what the graph compiles to, in a window titled
   estimate never blocks training.
 - **Copy report** puts all of it on the clipboard as text for a bug report.
   When the graph is ready, **Train** sits next to **Close**.
+
+### Missing values: the fix in the report
+
+Training never uses an empty cell, or NaN in a number column, as 0 or as
+class 0. Before a run starts, Train counts them in the table the Data Split
+reads (after the steps before it ran, or as kept on disk from an earlier
+session) and in each supplied Validation / Test input. The count runs in the
+background (Task Progress: *Prepare graph training*, "Checking the data for
+missing values..."), so the Engine stays responsive on a large table; the
+Training Dashboard keeps the last run until the check passes (when Train first
+had to load the data or run its steps, the Dashboard says the run did not
+start). When there are some, *Cannot start training* says how many columns
+have them and shows a card per group (not when another graph was opened
+during the check: Train it again to see its own):
+
+- **Feature columns** (training reads number columns): a row per column
+  (how many cells are empty and how many are NaN, what Fill would use).
+  **Fill numbers with** Mean / Median / 0, then **Fill these columns** adds a
+  Missing Value step. The value is learned from the Train rows only. **Drop
+  these rows** adds a Row Filter that keeps the rows where each of these
+  columns IS NOT EMPTY. A column more than half empty can be left out of the
+  features instead (**Actions**: its Data Input role becomes Ignore). A
+  column whose name has a comma, spaces at its ends or a leading `"` is
+  written in double quotes in the step's **Feature columns** list
+  (`age, "income, net"`, a quote inside doubled), the way every step reads
+  its column list.
+- **The label**: **Drop rows without a label** adds a Row Filter
+  (`"<label>" IS NOT EMPTY`). A label is never filled in. A regression target
+  of several columns (`y`, `y_1`, ...) is a label in each of them: one Row
+  Filter keeps the rows that have every target.
+
+The steps go after the step that feeds the Data Split, one after the other in
+the card's order, so Train runs them first. After an action the card says
+what was added, with **Undo**. The card follows the canvas: Ctrl+Z on the
+canvas removes the last step added and its group opens again, Redo puts it
+back, and opening another graph starts the card over. **Fix and train** fills
+the feature columns and drops the rows without a label, then trains (when the
+canvas could not add a step, the report opens again instead); once every
+group is fixed the button is **Train**. Missing Value and Row Filter treat
+NaN in a number column as an empty cell.
+
+A supplied Validation / Test input is read from its own file, so a step
+after it would not apply: its card says to fix the file and Apply its Data
+Input again (on the Dashboard too, when such an input is refused during the
+run).
+
+A table on disk (Parquet) counts its empty cells from the file before the
+run, but NaN only as the rows are read: such a run stops at that batch, and
+the Training Dashboard shows the same card under "Failed: the data has
+missing values the check before training could not see", with **Train
+again** once a step is added. Example: `examples/cyxgraph/missing_values_fix.cyxgraph`.
 
 When the data a step prepares before training may not fit in memory, *Memory
 risk before training* shows the estimate, the free memory and the safe

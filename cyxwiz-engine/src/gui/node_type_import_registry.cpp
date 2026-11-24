@@ -5,7 +5,8 @@
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 255> kNodeTypeImportNames = {{
+// Sized by its entries: a fixed size left room for empty names when one was removed.
+constexpr auto kNodeTypeImportNames = std::to_array<NodeTypeImportName>({
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
@@ -114,7 +115,6 @@ constexpr std::array<NodeTypeImportName, 255> kNodeTypeImportNames = {{
         {"Parameter", NodeType::Parameter},
         {"DataInput", NodeType::DataInput},
         {"DataOutput", NodeType::DataOutput},
-        {"DatasetInput", NodeType::DatasetInput, true},
         {"DataLoader", NodeType::DataLoader},
         {"DataSplit", NodeType::DataSplit},
         {"Normalize", NodeType::Normalize},
@@ -155,7 +155,6 @@ constexpr std::array<NodeTypeImportName, 255> kNodeTypeImportNames = {{
         {"ARIMAForecaster", NodeType::ARIMAForecaster},
         {"ExponentialSmoothing", NodeType::ExponentialSmoothing},
         {"DeployToNodeEditorNode", NodeType::DeployToNodeEditorNode},
-        {"Input", NodeType::DatasetInput, true},
         {"GlobalAvgPool2D", NodeType::GlobalAvgPool},
         {"BatchNorm2D", NodeType::BatchNorm},
         {"Concat", NodeType::Concatenate},
@@ -263,7 +262,7 @@ constexpr std::array<NodeTypeImportName, 255> kNodeTypeImportNames = {{
         {"SAC", NodeType::SAC},
         {"TD3", NodeType::TD3},
         {"DQN", NodeType::DQN},
-}};
+});
 
 } // namespace
 

@@ -8,6 +8,7 @@
 #include "../../core/project_manager.h"
 #include "../../core/data_input_formats.h"
 #include "../file_browser_launch.h"
+#include "table_viewer.h"
 #include <imgui.h>
 #include <filesystem>
 #include <future>
@@ -809,9 +810,9 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
     // a 50 % orange, so the clicked file glowed and the selection vanished.
     {
         const ui::Tokens& tokens = ui::CurrentTokens();
-        ImGui::PushStyleColor(ImGuiCol_Header, ui::WithAlpha(tokens.accent, 0.28f));
+        ImGui::PushStyleColor(ImGuiCol_Header, tokens.selection);
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, tokens.hover);
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::WithAlpha(tokens.accent, 0.36f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::WithAlpha(tokens.selection, tokens.selection.w + 0.08f));
     }
     bool node_open = ImGui::TreeNodeEx(item.absolute_path.c_str(), flags, "%s", "");
     ImGui::PopStyleColor(3);
@@ -868,7 +869,13 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
         if (item.type == AssetType::Graph) {
             open_graph_in_studio();
         }
-        // Dataset files create a configured Data Input; only that node applies a load.
+        // A table file opens in the Table Viewer to look at (owner, A4-5);
+        // "Create Data Input" (menu, preview) brings it into the graph.
+        else if (OpensInTableViewer(item)) {
+            on_open_in_table_viewer_(item.absolute_path);
+        }
+        // Other dataset files (images, audio, ...) create a configured Data
+        // Input; only that node applies a load.
         else if (IsDatasetFile(item)) {
             CreateDataInputFromItem(item);
         }
@@ -903,7 +910,13 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
 
         // Open (for files only)
         if (!item.is_directory) {
-            if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Open")) {
+            if (OpensInTableViewer(item) && ImGui::MenuItem(ICON_FA_TABLE " Open in Table Viewer")) {
+                on_open_in_table_viewer_(item.absolute_path);
+            }
+            // A data file's text is its second way to open; a file the Script
+            // Editor cannot show (Parquet, images, ...) has no Open.
+            if (assets::OpensInScriptEditor(item.absolute_path) &&
+                ImGui::MenuItem(IsDatasetFile(item) ? ICON_FA_FILE_LINES " Open as text" : ICON_FA_FOLDER_OPEN " Open")) {
                 if (on_double_click_) {
                     on_double_click_(item);
                 }
@@ -1737,6 +1750,10 @@ bool AssetBrowserPanel::IsDatasetFile(const AssetItem& item) const {
     return item.type == AssetType::Dataset;
 }
 
+bool AssetBrowserPanel::OpensInTableViewer(const AssetItem& item) const {
+    return IsDatasetFile(item) && on_open_in_table_viewer_ && TableViewerPanel::OpensFile(item.absolute_path);
+}
+
 bool AssetBrowserPanel::IsPreviewableFile(const AssetItem& item) const {
     if (item.is_directory) return false;
 
@@ -2057,12 +2074,13 @@ void AssetBrowserPanel::RenderPreviewActions(const AssetItem& item) {
     } else if (IsDatasetFile(item)) {
         if (primary("Create Data Input")) CreateDataInputFromItem(item);
     }
+    if (OpensInTableViewer(item) && secondary("Open in Table Viewer")) on_open_in_table_viewer_(item.absolute_path);
     if (kind == assets::FileKind::Graph && primary("Open in CyxWiz Studio") && on_open_in_node_editor_) {
         on_open_in_node_editor_(item.absolute_path);
     }
     if (kind == assets::FileKind::Python) {
         if (secondary("Open in Script Editor") && on_double_click_) on_double_click_(item);
-    } else if ((kind == assets::FileKind::Table || assets::PeeksAsText(kind)) && on_double_click_) {
+    } else if (assets::OpensInScriptEditor(item.absolute_path) && on_double_click_) {
         row.Next(ImGui::CalcTextSize("Open as text").x);
         if (ui::LinkButton("Open as text")) on_double_click_(item);
     }

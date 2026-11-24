@@ -6,7 +6,9 @@
 
 #include "training_plot_panel.h"
 
-#include "training_dashboard_look.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../icons.h"
 
 #include <imgui.h>
@@ -19,8 +21,6 @@
 
 namespace cyxwiz {
 
-using namespace dash;
-
 namespace {
 
 constexpr int kWordVectorColour = 4;
@@ -30,7 +30,7 @@ double SteadySeconds() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-ImVec4 PillColour(const std::string& pill, const DashColors& c) {
+ImVec4 PillColour(const std::string& pill, const ui::Tokens& c) {
     if (pill == "Preparing") return c.info;
     if (pill == "Completed" || pill == "Training") return c.success;
     if (pill == "Failed") return c.error;
@@ -131,7 +131,7 @@ std::string TrainingPlotPanel::ModelRunSummary() const {
 }
 
 void TrainingPlotPanel::RenderRunSwitcher() {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     const auto& runs = word_vector_runs_.Runs();
     // Back to the model once its training starts, unless a run was picked.
     if (!shown_run_chosen_ && shown_run_ != 0 && is_training_ && !is_preparing_) {
@@ -139,10 +139,10 @@ void TrainingPlotPanel::RenderRunSwitcher() {
         if (!shown || !shown->Live()) shown_run_ = 0;
     }
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(c.muted, "Run");
+    ImGui::TextColored(c.text_dim, "Run");
     ImGui::SameLine(0.0f, 10.0f);
     const std::string model = ModelRunSummary();
-    if (DashRunTab("##run_model", "Model", model.c_str(), c.info, shown_run_ == 0, c)) {
+    if (ui::RunTab("##run_model", "Model", model.c_str(), c.info, shown_run_ == 0)) {
         shown_run_ = 0;
         shown_run_chosen_ = true;
     }
@@ -158,8 +158,8 @@ void TrainingPlotPanel::RenderRunSwitcher() {
         if (ImGui::GetContentRegionAvail().x < ImGui::CalcTextSize((label + view.switcher_sub).c_str()).x + 60.0f) {
             ImGui::NewLine();
         }
-        if (DashRunTab(id.c_str(), label.c_str(), view.switcher_sub.c_str(), c.accent_text,
-                       shown_run_ == runs[i].number, c)) {
+        if (ui::RunTab(id.c_str(), label.c_str(), view.switcher_sub.c_str(), c.accent_text,
+                       shown_run_ == runs[i].number)) {
             shown_run_ = runs[i].number;
             shown_run_chosen_ = true;
         }
@@ -179,31 +179,32 @@ void TrainingPlotPanel::RenderWordVectorRun(const WordVectorRun& run) {
 }
 
 void TrainingPlotPanel::RenderWordVectorStatus(const WordVectorRun& run, const WordVectorRunView& view) {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     const ImVec4 colour = PillColour(view.pill, c);
-    if (BeginDashCard("##wv_status", c)) {
+    ui::BeginCard("##wv_status");
+    {
         ImGui::AlignTextToFramePadding();
-        DashPill(view.pill.c_str(), colour);
+        ui::Chip(view.pill.c_str(), colour);
         ImGui::SameLine(0.0f, 10.0f);
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(c.text, "%s", view.title.c_str());
         ImGui::SameLine(0.0f, 10.0f);
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(c.muted, "%s", view.subtitle.c_str());
+        ImGui::TextColored(c.text_dim, "%s", view.subtitle.c_str());
 
         // Cancel (live) or Open node dialog, then Actions, on the right.
         const char* first = run.Live() ? "Cancel" : "Open node dialog";
         const char* actions = "Actions " ICON_FA_CHEVRON_DOWN;
-        const float needed = DashButtonWidth(first) + DashButtonWidth(actions) + ImGui::GetStyle().ItemSpacing.x;
+        const float needed = ui::ButtonWidth(first, ui::ButtonSize::Small) + ui::ButtonWidth(actions, ui::ButtonSize::Small) + ImGui::GetStyle().ItemSpacing.x;
         ImGui::SameLine();
         if (ImGui::GetContentRegionAvail().x < needed) ImGui::NewLine();
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - needed));
-        if (DashButton(first, DashButtonKind::Secondary, c)) {
+        if (ui::SecondaryButton(first)) {
             if (run.Live() && word_vector_hooks_.cancel) word_vector_hooks_.cancel(run.node_id);
             if (!run.Live() && word_vector_hooks_.open_node_dialog) word_vector_hooks_.open_node_dialog(run.node_id);
         }
         ImGui::SameLine();
-        if (DashButton(actions, DashButtonKind::Secondary, c)) ImGui::OpenPopup("##wv_actions");
+        if (ui::SecondaryButton(actions)) ImGui::OpenPopup("##wv_actions");
         if (ImGui::BeginPopup("##wv_actions")) {
             const std::string folder = word_vector_hooks_.export_folder ? word_vector_hooks_.export_folder() : "";
             if (ImGui::MenuItem("Export curve CSV", nullptr, false, !run.figures.empty() && !folder.empty())) {
@@ -222,7 +223,7 @@ void TrainingPlotPanel::RenderWordVectorStatus(const WordVectorRun& run, const W
             }
             ImGui::EndPopup();
         }
-        DashProgress(view.progress, colour, c);
+        ui::ProgressLine(view.progress, colour);
         if (!view.error.empty()) {
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextColored(c.caution, "%s", view.error.c_str());
@@ -230,15 +231,15 @@ void TrainingPlotPanel::RenderWordVectorStatus(const WordVectorRun& run, const W
         }
         if (!word_vector_export_message_.empty()) {
             ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextColored(c.faint, "%s", word_vector_export_message_.c_str());
+            ImGui::TextColored(c.text_faint, "%s", word_vector_export_message_.c_str());
             ImGui::PopTextWrapPos();
         }
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::RenderWordVectorSteps(const WordVectorRunView& view) {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     const int count = static_cast<int>(view.steps.size());
     const float available = ImGui::GetContentRegionAvail().x;
     const int columns = std::clamp(static_cast<int>(available / 170.0f), 1, std::max(1, count));
@@ -249,22 +250,23 @@ void TrainingPlotPanel::RenderWordVectorSteps(const WordVectorRunView& view) {
             const auto& step = view.steps[static_cast<size_t>(i)];
             ImGui::TableNextColumn();
             ImGui::PushID(i);
-            if (BeginDashCard("##step", c)) {
+            ui::BeginCard("##step");
+            {
                 using State = WordVectorRunView::Step::State;
                 const char* icon = step.state == State::Done  ? ICON_FA_CIRCLE_CHECK
                                    : step.state == State::Now ? ICON_FA_SPINNER
                                                               : ICON_FA_CIRCLE;
                 const ImVec4 icon_colour = step.state == State::Done  ? c.success
                                            : step.state == State::Now ? c.accent_text
-                                                                      : c.faint;
+                                                                      : c.text_faint;
                 ImGui::TextColored(icon_colour, "%s", icon);
                 ImGui::SameLine(0.0f, 6.0f);
-                ImGui::TextColored(step.state == State::Todo ? c.faint : c.text, "%s", step.name.c_str());
+                ImGui::TextColored(step.state == State::Todo ? c.text_faint : c.text, "%s", step.name.c_str());
                 ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextColored(c.faint, "%s", step.detail.empty() ? " " : step.detail.c_str());
+                ImGui::TextColored(c.text_faint, "%s", step.detail.empty() ? " " : step.detail.c_str());
                 ImGui::PopTextWrapPos();
             }
-            EndDashCard();
+            ui::EndCard();
             ImGui::PopID();
         }
         ImGui::EndTable();
@@ -273,7 +275,7 @@ void TrainingPlotPanel::RenderWordVectorSteps(const WordVectorRunView& view) {
 }
 
 void TrainingPlotPanel::RenderWordVectorCards(const WordVectorRunView& view) {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     const int count = static_cast<int>(view.cards.size());
     const float available = ImGui::GetContentRegionAvail().x;
     const int columns = std::clamp(static_cast<int>(available / 190.0f), 1, std::max(1, count));
@@ -284,14 +286,14 @@ void TrainingPlotPanel::RenderWordVectorCards(const WordVectorRunView& view) {
             const auto& card = view.cards[static_cast<size_t>(i)];
             ImGui::TableNextColumn();
             std::string line1 = card.line1;
-            ImVec4 line1_colour = c.muted;
+            ImVec4 line1_colour = c.text_dim;
             if (card.trend != 0) {
                 line1 = std::string(card.trend < 0 ? ICON_FA_CARET_DOWN : ICON_FA_CARET_UP) + " " + line1;
                 line1_colour = card.trend < 0 ? c.success : c.caution;
             }
             const std::string id = "##wv_card_" + std::to_string(i);
-            DashKpiCard(id.c_str(), card.label.c_str(), dots[i % 4], card.value.c_str(), "", line1.c_str(),
-                        line1_colour, card.line2.c_str(), c.faint, c);
+            ui::KpiCard(id.c_str(), card.label.c_str(), dots[i % 4], card.value.c_str(), "", line1.c_str(),
+                        line1_colour, card.line2.c_str(), c.text_faint);
         }
         ImGui::EndTable();
     }
@@ -299,15 +301,15 @@ void TrainingPlotPanel::RenderWordVectorCards(const WordVectorRunView& view) {
 }
 
 void TrainingPlotPanel::RenderWordVectorChart(const WordVectorRun& run, const WordVectorRunView& view) {
-    const DashColors c = CurrentDashColors();
-    ImGui::Spacing();
-    if (BeginDashCard("##wv_chart", c)) {
-        DashCardTitle(view.chart_title.c_str(), "hover a point for its value", c);
+    const ui::Tokens& c = ui::CurrentTokens();
+    ui::BeginCard("##wv_chart");
+    {
+        ui::CardTitle(view.chart_title.c_str(), "hover a point for its value");
         if (run.figures.empty()) {
             ImGui::Dummy(ImVec2(0.0f, 40.0f));
             const float width = ImGui::CalcTextSize(view.chart_empty.c_str()).x;
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - width) * 0.5f));
-            ImGui::TextColored(c.faint, "%s", view.chart_empty.c_str());
+            ImGui::TextColored(c.text_faint, "%s", view.chart_empty.c_str());
             ImGui::Dummy(ImVec2(0.0f, 40.0f));
         } else {
             WordVectorChart& chart = word_vector_chart_;
@@ -338,6 +340,7 @@ void TrainingPlotPanel::RenderWordVectorChart(const WordVectorRun& run, const Wo
             }
             plot::PlotView::Options o;
             o.export_name = "word_vector_run_" + std::to_string(run.number) + "_" + view.figure_name;
+            o.zoom_with_ctrl = true;  // the wheel scrolls the dashboard
             // Every planned epoch on the axis, so the curve fills in as it runs.
             o.x_range = {true, 0.5, std::max<double>(run.epochs, static_cast<double>(run.figures.size())) + 0.5,
                          true};
@@ -348,11 +351,11 @@ void TrainingPlotPanel::RenderWordVectorChart(const WordVectorRun& run, const Wo
             chart.view->Draw(ImVec2(-1.0f, kWordVectorChartHeight), o);
         }
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::RenderWordVectorResult(const WordVectorRun& run, const WordVectorRunView& view) {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     ImGui::Spacing();
     const bool wide = ImGui::GetContentRegionAvail().x >= 760.0f;
     if (!ImGui::BeginTable("##wv_result_row", wide ? 2 : 1,
@@ -364,15 +367,16 @@ void TrainingPlotPanel::RenderWordVectorResult(const WordVectorRun& run, const W
         ImGui::TableSetupColumn("check", ImGuiTableColumnFlags_WidthStretch, 1.0f);
     }
     ImGui::TableNextColumn();
-    if (BeginDashCard("##wv_result", c)) {
-        DashCardTitle("Result", "", c);
+    ui::BeginCard("##wv_result");
+    {
+        ui::CardTitle("Result", "");
         if (ImGui::BeginTable("##wv_result_rows", 2, ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("Lined up").x + 16.0f);
             ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
             for (const auto& [label, value] : view.result) {
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(c.muted, "%s", label.c_str());
+                ImGui::TextColored(c.text_dim, "%s", label.c_str());
                 ImGui::TableNextColumn();
                 ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextColored(c.text, "%s", value.c_str());
@@ -381,14 +385,14 @@ void TrainingPlotPanel::RenderWordVectorResult(const WordVectorRun& run, const W
             ImGui::EndTable();
         }
     }
-    EndDashCard();
+    ui::EndCard();
     ImGui::TableNextColumn();
     RenderWordVectorQuickCheck(run);
     ImGui::EndTable();
 }
 
 void TrainingPlotPanel::RenderWordVectorQuickCheck(const WordVectorRun& run) {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     QuickCheck& check = quick_checks_[run.number];
     if (!check.looked_up && word_vector_hooks_.nearest && !run.saved.empty()) {
         // Starts on a frequent word of the vocabulary.
@@ -399,9 +403,10 @@ void TrainingPlotPanel::RenderWordVectorQuickCheck(const WordVectorRun& run) {
         if (!check.word.empty()) check.rows = word_vector_hooks_.nearest(run.saved, check.word, check.note);
         check.looked_up = true;
     }
-    if (BeginDashCard("##wv_check", c)) {
+    ui::BeginCard("##wv_check");
+    {
         const std::string title = "Quick check \xC2\xB7 nearest to \"" + check.word + "\"";
-        DashCardTitle(check.word.empty() ? "Quick check" : title.c_str(), "", c);
+        ui::CardTitle(check.word.empty() ? "Quick check" : title.c_str(), "");
         ImGui::SetNextItemWidth(std::min(240.0f, ImGui::GetContentRegionAvail().x));
         if (ImGui::InputTextWithHint("##wv_word", "another word, then Enter", check.input, sizeof(check.input),
                                      ImGuiInputTextFlags_EnterReturnsTrue) &&
@@ -424,7 +429,7 @@ void TrainingPlotPanel::RenderWordVectorQuickCheck(const WordVectorRun& run) {
                 ImGui::TableNextColumn();
                 ImGui::TextColored(c.text, "%s", check.rows[i].first.c_str());
                 ImGui::TableNextColumn();
-                ImGui::TextColored(c.muted, "%.3f", check.rows[i].second);
+                ImGui::TextColored(c.text_dim, "%.3f", check.rows[i].second);
             }
             ImGui::EndTable();
         }
@@ -436,15 +441,15 @@ void TrainingPlotPanel::RenderWordVectorQuickCheck(const WordVectorRun& run) {
             if (ImGui::IsItemClicked()) word_vector_hooks_.open_node_dialog(run.node_id);
         }
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::RenderWordVectorRunsTable() {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     const auto& runs = word_vector_runs_.Runs();
-    ImGui::Spacing();
-    if (BeginDashCard("##wv_runs", c)) {
-        DashCardTitle("Word vector runs", "this session", c);
+    ui::BeginCard("##wv_runs");
+    {
+        ui::CardTitle("Word vector runs", "this session");
         const char* headers[] = {"Run", "Method", "Settings", "Words", "Per epoch", "First to last", "Time",
                                  "Saved"};
         // Columns as wide as their text; a narrow dashboard scrolls the table.
@@ -475,9 +480,9 @@ void TrainingPlotPanel::RenderWordVectorRunsTable() {
             }
             ImGui::EndTable();
         }
-        ImGui::TextColored(c.faint, "Model runs keep their own Run Comparison table; the two kinds are not mixed.");
+        ImGui::TextColored(c.text_faint, "Model runs keep their own Run Comparison table; the two kinds are not mixed.");
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 }  // namespace cyxwiz

@@ -2742,17 +2742,28 @@ void CheckCustomerSegmentsDemoGraph() {
     const auto pca = run_plot(7);
     Check(pca->num_rows() == 248 && pca->GetColumnByName("pc_0") && pca->GetColumnByName("pc_1"),
           "demo graph: PCA gives pc_0, pc_1 for 248 rows");
-    const std::vector<int> segment = int_column(pca, "y");
-    std::map<int, int> segment_sizes;
-    for (int code : segment) ++segment_sizes[code];
-    int outlier_code = -1;
-    for (const auto& [code, size] : segment_sizes) if (size == 8) outlier_code = code;
-    Check(segment_sizes.size() == 5 && outlier_code >= 0, "demo graph: 4 segments of 60 and 8 outliers");
+    // The label passes through PCA as it is (TOFIX223 0.7): the segment names.
+    const auto segment_column = pca->GetColumnByName("y");
+    Check(segment_column && segment_column->type()->id() == arrow::Type::STRING,
+          "demo graph: PCA keeps the text segment label as text");
+    std::map<std::string, int> segment_sizes;
+    for (const auto& chunk : segment_column->chunks()) {
+        const auto& names = static_cast<const arrow::StringArray&>(*chunk);
+        for (int64_t i = 0; i < names.length(); ++i) ++segment_sizes[names.GetString(i)];
+    }
+    std::string outlier_name;
+    for (const auto& [name, size] : segment_sizes) if (size == 8) outlier_name = name;
+    Check(segment_sizes.size() == 5 && !outlier_name.empty(), "demo graph: 4 segments of 60 and 8 outliers");
+    std::vector<std::string> segment;
+    for (const auto& chunk : segment_column->chunks()) {
+        const auto& names = static_cast<const arrow::StringArray&>(*chunk);
+        for (int64_t i = 0; i < names.length(); ++i) segment.push_back(names.GetString(i));
+    }
 
     // K-Means: each cluster is (almost) one segment.
     const std::vector<int> kmeans = int_column(run_plot(8), "cluster_id");
-    std::map<int, std::map<int, int>> counts;
-    for (size_t i = 0; i < kmeans.size(); ++i) if (segment[i] != outlier_code) ++counts[kmeans[i]][segment[i]];
+    std::map<int, std::map<std::string, int>> counts;
+    for (size_t i = 0; i < kmeans.size(); ++i) if (segment[i] != outlier_name) ++counts[kmeans[i]][segment[i]];
     int agree = 0;
     for (const auto& [cluster, by_segment] : counts) {
         int best = 0;
@@ -2768,7 +2779,7 @@ void CheckCustomerSegmentsDemoGraph() {
     int noise_outliers = 0;
     for (size_t i = 0; i < dbscan.size(); ++i) {
         if (dbscan[i] >= 0) clusters.insert(dbscan[i]);
-        if (dbscan[i] == -1 && segment[i] == outlier_code) ++noise_outliers;
+        if (dbscan[i] == -1 && segment[i] == outlier_name) ++noise_outliers;
     }
     Check(clusters.size() == 4 && noise_outliers >= 5, "demo graph: DBSCAN finds 4 clusters and flags " +
                                                            std::to_string(noise_outliers) + " of 8 outliers");
@@ -6594,6 +6605,124 @@ int main(int argc, char** argv) {
         Check(run(93109, "score IS NOT EMPTY AND score >= 2") == 2, "an empty test joins comparisons");
         Check(run(93111, "score IS 5") == -1, "IS needs EMPTY");
         fs::remove(empty_csv);
+    }
+
+    // NaN in a number column is a missing value, as training counts it: the
+    // Row Filter's IS EMPTY / IS NOT EMPTY see it, and Missing Value fills it
+    // (its mean leaves the NaN out). A Parquet file keeps NaN as NaN.
+    {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const fs::path nan_parquet = fs::temp_directory_path() / "cyxwiz_nan_missing.parquet";
+        {
+            arrow::DoubleBuilder score;
+            (void)score.AppendValues({1.0, nan, 3.0, 5.0});
+            (void)score.AppendNull();
+            arrow::Int64Builder label;
+            (void)label.AppendValues({0, 1, 0, 1, 0});
+            std::shared_ptr<arrow::Array> score_array, label_array;
+            (void)score.Finish(&score_array);
+            (void)label.Finish(&label_array);
+            auto nan_table = arrow::Table::Make(
+                arrow::schema({arrow::field("score", arrow::float64()), arrow::field("label", arrow::int64())}),
+                {score_array, label_array});
+            cyxwiz::ArrowDataset source(nan_table, "nan_missing_source");
+            Check(source.ExportParquet(nan_parquet.string()), "the NaN Parquet fixture is written");
+        }
+        const auto input = [&](int id) {
+            return nlohmann::json{{"id", id}, {"type", "DataInput"}, {"name", "Input"},
+                                  {"parameters", {{"source_type", "file"}, {"file_path", nan_parquet.string()},
+                                                  {"type", "parquet"}}}};
+        };
+        const auto filter = [&](int id, const std::string& condition) -> int64_t {
+            nlohmann::json graph = {
+                {"nodes", nlohmann::json::array({input(id), {{"id", id + 1}, {"type", "FilterRows"}, {"name", "Filter"},
+                                                             {"parameters", {{"condition", condition}}}}})},
+                {"links", nlohmann::json::array({{{"start_node", id}, {"end_node", id + 1}}})}};
+            cyxwiz::PipelineExecutor executor;
+            if (!executor.ExecutePipeline(graph.dump())) {
+                std::cerr << condition << ": " << executor.GetLastError() << "\n";
+                return -1;
+            }
+            auto out = registry.GetArrowDataset("ds_filter_" + std::to_string(id + 1));
+            return out ? out->GetArrowTable()->num_rows() : -1;
+        };
+        Check(filter(93121, "score IS NOT EMPTY") == 3, "a NaN number is empty: IS NOT EMPTY keeps 3 of 5 rows");
+        Check(filter(93123, "score IS EMPTY") == 2, "IS EMPTY finds the empty cell and the NaN");
+        {
+            nlohmann::json graph = {
+                {"nodes", nlohmann::json::array({input(93125), {{"id", 93126}, {"type", "FillMissing"}, {"name", "Fill"},
+                                                                {"parameters", {{"strategy", "mean"},
+                                                                                {"columns", "score"},
+                                                                                {"label_col", "label"}}}}})},
+                {"links", nlohmann::json::array({{{"start_node", 93125}, {"end_node", 93126}}})}};
+            cyxwiz::PipelineExecutor fill_executor;
+            Check(fill_executor.ExecutePipeline(graph.dump()),
+                  "Missing Value runs on a NaN column: " + fill_executor.GetLastError());
+            auto out = registry.GetArrowDataset("ds_fillmissing_93126");
+            const auto filled_nan = out ? out->GetArrowTable() : nullptr;
+            bool filled = filled_nan && filled_nan->num_rows() == 5;
+            for (int64_t r = 0; filled && r < 5; ++r) {
+                const double v = ReadNumericValue(filled_nan, "score", r);
+                const double want = r == 0 ? 1.0 : r == 2 ? 3.0 : r == 3 ? 5.0 : 3.0;  // mean of 1, 3, 5
+                filled = !std::isnan(v) && std::fabs(v - want) < 1e-9;
+                if (!filled) std::cerr << "  row " << r << ": " << v << "\n";
+            }
+            Check(filled, "Missing Value fills the NaN and the empty cell with the mean of the numbers (3)");
+        }
+        std::error_code ec;
+        fs::remove(nan_parquet, ec);
+    }
+
+    // Column names with a comma or edge spaces, quoted in Missing Value's
+    // column list (the one-click fix writes them so): both are filled, the
+    // unlisted column is left as it is.
+    {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const fs::path odd_parquet = fs::temp_directory_path() / "cyxwiz_odd_names_missing.parquet";
+        {
+            arrow::DoubleBuilder income, pad, other;
+            (void)income.AppendValues({2.0, nan, 4.0});
+            (void)pad.AppendValues({10.0, 20.0});
+            (void)pad.AppendNull();
+            (void)other.AppendValues({1.0, nan, 1.0});
+            arrow::Int64Builder label;
+            (void)label.AppendValues({0, 1, 0});
+            std::shared_ptr<arrow::Array> income_array, pad_array, other_array, label_array;
+            (void)income.Finish(&income_array);
+            (void)pad.Finish(&pad_array);
+            (void)other.Finish(&other_array);
+            (void)label.Finish(&label_array);
+            auto odd_table = arrow::Table::Make(
+                arrow::schema({arrow::field("income, net", arrow::float64()), arrow::field(" pad", arrow::float64()),
+                               arrow::field("other", arrow::float64()), arrow::field("label", arrow::int64())}),
+                {income_array, pad_array, other_array, label_array});
+            cyxwiz::ArrowDataset source(odd_table, "odd_names_missing_source");
+            Check(source.ExportParquet(odd_parquet.string()), "the odd-names Parquet fixture is written");
+        }
+        nlohmann::json graph = {
+            {"nodes", nlohmann::json::array(
+                          {{{"id", 93131}, {"type", "DataInput"}, {"name", "Input"},
+                            {"parameters", {{"source_type", "file"}, {"file_path", odd_parquet.string()},
+                                            {"type", "parquet"}}}},
+                           {{"id", 93132}, {"type", "FillMissing"}, {"name", "Fill"},
+                            {"parameters", {{"strategy", "mean"},
+                                            {"columns", "\"income, net\", \" pad\""},
+                                            {"label_col", "label"}}}}})},
+            {"links", nlohmann::json::array({{{"start_node", 93131}, {"end_node", 93132}}})}};
+        cyxwiz::PipelineExecutor odd_executor;
+        Check(odd_executor.ExecutePipeline(graph.dump()),
+              "Missing Value reads quoted column names: " + odd_executor.GetLastError());
+        auto out = registry.GetArrowDataset("ds_fillmissing_93132");
+        const auto filled = out ? out->GetArrowTable() : nullptr;
+        Check(filled && filled->num_rows() == 3, "the filled table keeps its 3 rows");
+        if (filled) {
+            Check(std::fabs(ReadNumericValue(filled, "income, net", 1) - 3.0) < 1e-9,
+                  "'income, net' is filled with its mean (3)");
+            Check(std::fabs(ReadNumericValue(filled, " pad", 2) - 15.0) < 1e-9, "' pad' is filled with its mean (15)");
+            Check(std::isnan(ReadNumericValue(filled, "other", 1)), "a column not listed keeps its NaN");
+        }
+        std::error_code ec;
+        fs::remove(odd_parquet, ec);
     }
 
     // A time series Data Input keeps its rows in the order of its time column.

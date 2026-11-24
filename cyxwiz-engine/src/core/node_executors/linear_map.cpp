@@ -1,7 +1,6 @@
 #include "linear_map.h"
 
 #include "../split_partitioning.h"
-#include "text_column_utils.h"  // ReadLabelColumnAsInt
 
 #include <cyxwiz/linear_algebra.h>
 
@@ -32,20 +31,6 @@ bool IsNumberColumn(const std::shared_ptr<arrow::ChunkedArray>& col) {
 }
 
 }  // namespace
-
-std::vector<std::string> ParseColumnList(const std::string& text) {
-    std::vector<std::string> out;
-    size_t start = 0;
-    while (start <= text.size()) {
-        const size_t comma = text.find(',', start);
-        std::string name = text.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
-        const size_t first = name.find_first_not_of(" \t"), last = name.find_last_not_of(" \t");
-        if (first != std::string::npos) out.push_back(name.substr(first, last - first + 1));
-        if (comma == std::string::npos) break;
-        start = comma + 1;
-    }
-    return out;
-}
 
 bool ReadBoolParameter(const std::map<std::string, std::string>& params, const char* key, bool fallback, bool& out,
                        const std::string& op_name, std::string& error) {
@@ -211,7 +196,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> LinearMapTable(const std::shared_pt
         return out;
     }
     std::vector<std::shared_ptr<arrow::Field>> fields;
-    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    std::vector<std::shared_ptr<arrow::ChunkedArray>> arrays;
     for (size_t c = 0; c < k; ++c) {
         arrow::FloatBuilder b;
         ARROW_RETURN_NOT_OK(b.Reserve(n));
@@ -220,23 +205,22 @@ arrow::Result<std::shared_ptr<arrow::Table>> LinearMapTable(const std::shared_pt
         std::shared_ptr<arrow::Array> a;
         ARROW_RETURN_NOT_OK(b.Finish(&a));
         fields.push_back(arrow::field(map.outputs[c], arrow::float32()));
-        arrays.push_back(a);
+        arrays.push_back(std::make_shared<arrow::ChunkedArray>(a));
     }
     if (!label_col.empty()) {
+        // The label of each kept row as it is - same type, same values, nulls
+        // kept - named y as the other projection steps name it. The step never
+        // changes a target (TOFIX223 0.7: it once read the label as int32, so a
+        // float target was truncated and a missing one became class 0).
         const auto column = input->GetColumnByName(label_col);
         if (!column) return arrow::Status::KeyError(op_name + ": label column '" + label_col + "' not found");
-        std::vector<int> labels;
-        std::vector<std::string> class_names;
-        std::string bad;
-        if (!ReadLabelColumnAsInt(column, labels, class_names, bad))
-            return arrow::Status::TypeError(op_name + ": label column '" + label_col + "' has unsupported type '" + bad + "'");
-        arrow::Int32Builder b;
-        ARROW_RETURN_NOT_OK(b.Reserve(n));
-        for (const int64_t row : rows.rows) b.UnsafeAppend(labels[static_cast<size_t>(row)]);
-        std::shared_ptr<arrow::Array> a;
-        ARROW_RETURN_NOT_OK(b.Finish(&a));
-        fields.push_back(arrow::field("y", arrow::int32()));
-        arrays.push_back(a);
+        arrow::Int64Builder index_builder;
+        ARROW_RETURN_NOT_OK(index_builder.AppendValues(rows.rows));
+        std::shared_ptr<arrow::Array> indices;
+        ARROW_RETURN_NOT_OK(index_builder.Finish(&indices));
+        ARROW_ASSIGN_OR_RAISE(const arrow::Datum kept, arrow::compute::Take(column, indices));
+        fields.push_back(arrow::field("y", column->type(), true, input->schema()->GetFieldByName(label_col)->metadata()));
+        arrays.push_back(kept.chunked_array());
     }
     // The split the step learned from, for the rows kept.
     const std::vector<int8_t> parts = PartitionValues(input);
@@ -247,7 +231,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> LinearMapTable(const std::shared_pt
         std::shared_ptr<arrow::Array> a;
         ARROW_RETURN_NOT_OK(b.Finish(&a));
         fields.push_back(arrow::field(kSplitPartitionColumn, arrow::int8()));
-        arrays.push_back(a);
+        arrays.push_back(std::make_shared<arrow::ChunkedArray>(a));
     }
     return arrow::Table::Make(arrow::schema(fields), arrays, n);
 }
@@ -260,9 +244,7 @@ FittedPreprocessingState LinearMapState(const LinearMap& map, const std::string&
     state.fit_rows = fit_rows;
     state.input_schema_fingerprint = FingerprintPreprocessingSchema(schema);
     state.configuration = configuration;
-    std::string outputs;
-    for (const auto& name : map.outputs) outputs += (outputs.empty() ? "" : ",") + name;
-    state.configuration["outputs"] = outputs;
+    state.configuration["outputs"] = FormatColumnList(map.outputs);
     for (size_t j = 0; j < map.inputs.size(); ++j) {
         PreprocessingFeatureState f;
         f.name = map.inputs[j];
@@ -279,14 +261,7 @@ bool LinearMapFromState(const FittedPreprocessingState& state, LinearMap& map, s
     map = LinearMap{};
     const auto outputs = state.configuration.find("outputs");
     if (outputs == state.configuration.end() || outputs->second.empty()) return error = "the saved values name no output columns", false;
-    size_t start = 0;
-    const std::string& list = outputs->second;
-    while (start <= list.size()) {
-        const size_t comma = list.find(',', start);
-        map.outputs.push_back(list.substr(start, comma == std::string::npos ? std::string::npos : comma - start));
-        if (comma == std::string::npos) break;
-        start = comma + 1;
-    }
+    map.outputs = ParseColumnList(outputs->second);
     for (const auto& f : state.features) {
         const auto value = [&](const std::string& key, double& v) {
             const auto it = f.numeric_values.find(key);

@@ -7,7 +7,7 @@ reference: RMSNorm vs LayerNorm, gated (GLU-family) vs plain MLP feed-forward,
 each supported feed-forward activation, and feed-forward bias on/off, in both
 post-norm and pre-norm layouts, as two-block causal stacks. The reference class
 is executed from the text the Engine's PyTorch export emits
-(ConfigurableCausalDecoderBlock in node_editor_codegen.cpp), so this also proves
+(ConfigurableCausalDecoderBlock in core/code_export.cpp), so this also proves
 exported code matches the backend.
 
 Compares outputs, input gradients and every parameter gradient
@@ -43,7 +43,7 @@ assert activation.success and activation.execution_validated, activation.message
 D_MODEL, HEADS, FF = 16, 4, 12
 
 
-CODEGEN = Path(__file__).resolve().parents[3] / 'src' / 'gui' / 'node_editor_codegen.cpp'
+CODEGEN = Path(__file__).resolve().parents[3] / 'src' / 'core' / 'code_export.cpp'
 
 
 def exported_block_source():

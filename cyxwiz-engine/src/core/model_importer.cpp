@@ -155,7 +155,11 @@ static bool CompileModelGraph(
             for (const auto& node_json : j["nodes"]) {
                 gui::MLNode node;
                 node.id = node_json["id"];
-                node.type = static_cast<gui::NodeType>(node_json["type"].get<int>());
+                std::string type_error;
+                if (!ReadLoadableNodeType(node_json, node.type, type_error)) {
+                    error_message = "Could not load the model graph: " + type_error;
+                    return false;
+                }
                 node.name = node_json["name"];
                 if (node_json.contains("parameters")) {
                     node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();

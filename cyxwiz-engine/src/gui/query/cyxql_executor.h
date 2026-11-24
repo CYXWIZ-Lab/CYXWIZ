@@ -79,9 +79,7 @@ private:
 
     // Type conversion
     std::string nodeTypeToString(gui::NodeType type) const;
-    gui::NodeType stringToNodeType(const std::string& str) const;
     std::string linkTypeToString(gui::LinkType type) const;
-    gui::LinkType stringToLinkType(const std::string& str) const;
 
     // Node/link access by ID
     const gui::MLNode* findNodeById(int id) const;

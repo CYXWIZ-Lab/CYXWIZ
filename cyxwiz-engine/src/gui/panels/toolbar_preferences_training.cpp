@@ -5,6 +5,7 @@
 
 #include "../../core/engine_config.h"
 #include "../ui_buttons.h"
+#include "../ui_widgets.h"
 
 #include <imgui.h>
 
@@ -33,6 +34,42 @@ void ToolbarPanel::RenderTrainingPreferences() {
 
     if (!(settings == saved)) {
         engine_config.SetTrainingDefaults(settings);
+        engine_config.Save();
+    }
+
+    // How the Training Dashboard's charts start; its View options change
+    // them for the session
+    using TD = core::TrainingDashboardConfig;
+    const TD saved_view = engine_config.GetTrainingDashboard();
+    TD view = saved_view;
+    ImGui::Spacing();
+    ImGui::Spacing();
+    ImGui::Text("Training Dashboard");
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("How the charts start each time the Engine starts. The dashboard's View options change them "
+                        "for the session.");
+    ImGui::PopTextWrapPos();
+    ImGui::Checkbox("Auto scale", &view.auto_scale);
+    ImGui::Checkbox("Follow the latest epoch", &view.follow_current_epoch);
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!view.follow_current_epoch);
+    ImGui::TextDisabled("epochs shown");
+    ImGui::SameLine();
+    ui::NumberField("##dash_epoch_window", &view.epoch_window, TD::kMinEpochWindow, TD::kMaxEpochWindow, 1, 44.0f);
+    ImGui::EndDisabled();
+    ImGui::Checkbox("Log loss axis", &view.log_loss_axis);
+    ImGui::Checkbox("Smooth", &view.smooth);
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!view.smooth);
+    ImGui::TextDisabled("points in the moving average");
+    ImGui::SameLine();
+    ui::NumberField("##dash_smooth_window", &view.smooth_window, TD::kMinSmoothWindow, TD::kMaxSmoothWindow, 1,
+                    44.0f);
+    ImGui::EndDisabled();
+    if (!(view == saved_view)) {
+        engine_config.SetTrainingDashboard(view);
         engine_config.Save();
     }
 }

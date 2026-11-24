@@ -20,6 +20,7 @@
 #include "training_profile_fence.h"
 #include <cyxwiz/debug_hooks.h>
 #include <cyxwiz/neural_provider.h>
+#include <cyxwiz/neural_provider_dispatch.h>
 #include <cyxwiz/utilities.h>
 #include "execution_device_context.h"
 #include "execution_device_preferences.h"
@@ -803,6 +804,20 @@ void TrainingExecutor::Train(
         is_paused_.store(false);
         is_training_.store(false);
     };
+    // A missing-values refusal keeps its columns on the run for the fix.
+    auto keep_missing_columns = [&](const MissingValuesError& e) {
+        UpdateMetrics([&](TrainingMetrics& m) {
+            m.missing_columns = e.Columns();
+            m.missing_values_total_rows = e.TotalRows();
+            m.missing_values_supplied_role = e.SuppliedRole();
+        });
+    };
+    // A supplied Validation / Test read from its own Data Input (not joined
+    // to the Training table): a refusal there names that role, since a step
+    // after the training input does not reach it.
+    const auto supplied_role_input = [](const ResolvedDatasetRole& role) {
+        return role.IsSupplied() && !role.joined_to_training;
+    };
     // Stopped before the first batch (while waiting for the GPU, while the
     // data was being prepared): cancelled, not failed
     auto cancel_run = [&](const std::string& message) {
@@ -884,6 +899,11 @@ void TrainingExecutor::Train(
                     execution_placement_plan.summary));
     const ScopedArrayFireHostSyncObserver host_sync_observer(
         &RecordArrayFireHostSyncForActiveTrace);
+    // Every provider dispatch goes into the trace; under Strict a provider
+    // failure stops the run instead of changing its route (TOFIX232).
+    const ScopedNeuralDispatchObserver provider_observer(&RecordNeuralDispatchForActiveTrace);
+    const ScopedNeuralProviderFailurePolicy provider_policy(
+        config_.strict_execution ? NeuralProviderFailurePolicy::Fail : NeuralProviderFailurePolicy::FallBack);
     training_trace.RecordRuntimeEvent(
         "TrainingDevicePolicy",
         std::string("Execution policy: ") +
@@ -1076,6 +1096,28 @@ void TrainingExecutor::Train(
         spdlog::error("TrainingExecutor: no batcher for this dataset mode");
         fail_run("unsupported_dataset_mode");
         return;
+    }
+
+    // class_weight=balanced, for every kind of data: from the Train part's
+    // class counts, now that the batchers exist; the loss is rebuilt with the
+    // weights. When the counts cannot be had, the run stops with the reason
+    // instead of training unweighted (TOFIX223 0.16).
+    if (IsBalancedClassWeightRequest(config_)) {
+        try {
+            ResolveBalancedClassWeights(config_, active_train_ibatcher);
+            loss_ = BuildLossFromConfig(config_);
+        } catch (const MissingValuesError& e) {
+            // Counting the classes met the missing values first: the run
+            // stops with that refusal and its columns, as at the first batch.
+            keep_missing_columns(e);
+            fail_run(errors::FormatError(errors::Training::TrainingExecutionFailed, "Training failed", e.what()));
+            spdlog::error("TrainingExecutor: {}", e.what());
+            return;
+        } catch (const std::exception& e) {
+            spdlog::error("TrainingExecutor: {}", e.what());
+            fail_run(std::string("class_weight_failed: ") + e.what());
+            return;
+        }
     }
 
     // Layer snapshots on items by number (6.1c): from the batchers built
@@ -1608,7 +1650,12 @@ void TrainingExecutor::Train(
             // Not without a validation part (an image Data Split at 0.9 / 0 /
             // 0.1): it scored 0 samples and gave early stopping metrics of 0.
             active_val_ibatcher->SetPhase(val_batcher_phase);
-            RunValidationArrow(*active_val_ibatcher);
+            try {
+                RunValidationArrow(*active_val_ibatcher);
+            } catch (MissingValuesError& e) {
+                if (supplied_role_input(config_.dataset_roles.dev)) e.SetSuppliedRole("Validation");
+                throw;
+            }
             active_val_ibatcher->SetPhase(train_batcher_phase);
             validation_ran_this_epoch = true;
             if ((config_.pair_metrics || config_.retrieval_metrics) && metric_eval_val) {
@@ -1873,7 +1920,8 @@ void TrainingExecutor::Train(
                         100.0 * static_cast<double>(sampler.RowsLeftOut()) /
                             static_cast<double>(std::max<size_t>(sampler.RowsSeen(), 1)));
                 }
-                active_train_ibatcher->Reset();
+                // The Train batcher is reset at the start of the next epoch
+                // (RunTrainingEpochArrow), with that epoch's seed.
                 if (active_val_ibatcher != active_train_ibatcher) {
                     active_val_ibatcher->Reset();
                 }
@@ -2025,7 +2073,14 @@ void TrainingExecutor::Train(
         // follows its phase; out of it, a wired test set reads 0).
         model_->SetTraining(false);
         active_test_ibatcher->SetPhase(test_batcher_phase);
-        const auto test_evaluation = EvaluateArrowBatcher(*active_test_ibatcher);
+        const auto test_evaluation = [&] {
+            try {
+                return EvaluateArrowBatcher(*active_test_ibatcher);
+            } catch (MissingValuesError& e) {
+                if (supplied_role_input(config_.dataset_roles.test)) e.SetSuppliedRole("Test");
+                throw;
+            }
+        }();
         active_test_ibatcher->SetPhase(train_batcher_phase);
         UpdateMetrics([test_evaluation](TrainingMetrics& m) {
             m.test_loss = test_evaluation.loss;
@@ -2144,6 +2199,15 @@ void TrainingExecutor::Train(
     }
 
     spdlog::info("TrainingExecutor: Training complete");
+    } catch (const MissingValuesError& e) {
+        keep_missing_columns(e);
+        const std::string coded_error = errors::FormatError(
+            errors::Training::TrainingExecutionFailed,
+            "Training failed",
+            e.what());
+        fail_run(coded_error);
+        spdlog::error("TrainingExecutor: {}", coded_error);
+        throw;
     } catch (const std::exception& e) {
         const std::string coded_error = errors::FormatError(
             errors::Training::TrainingExecutionFailed,
@@ -3026,8 +3090,11 @@ void TrainingExecutor::RunTrainingEpochSequence(
             TrainingTraceCollector::Instance().RecordStage(
                 TrainingTraceStage::BatchCallback, epoch, batch_num,
                 static_cast<int>(total_batches), batch_loss, current_acc);
+            // The epoch's running loss with its running accuracy, as the
+            // Arrow epoch reports them (the batch's own loss went here, beside
+            // the running accuracy: ORA-33).
             batch_cb(epoch, batch_num, static_cast<int>(total_batches),
-                     batch_loss, current_acc);
+                     current_loss, current_acc);
         }
 
         // Mid-epoch resume checkpoint (TOFIX118 P4e-2): every N optimizer
@@ -3236,6 +3303,13 @@ void TrainingExecutor::RunTrainingEpochArrow(
     // it impossible to tell "alive but slow" from "hung". This is
     // the fix for the tofix.md entry "Training logs silent mid-epoch".
     const auto epoch_start_time = std::chrono::steady_clock::now();
+
+    // The epoch's order comes from its own seed (set just before, from
+    // (run seed, epoch)), as in RunTrainingEpochSequence. Without this Reset
+    // the seed took effect only at the epoch's end: epoch 1 trained in the
+    // batcher's construction order and epoch k in epoch k-1's, so a resumed
+    // run did not replay its data order (TOFIX228 1.6, the level 3 oracle).
+    batcher.Reset();
 
     spdlog::debug("RunTrainingEpochArrow: Entering batch loop");
     while (!batcher.IsEpochComplete()) {
@@ -3478,6 +3552,23 @@ void TrainingExecutor::RunTrainingEpochArrow(
             }
         }
 
+        // A NaN or infinite loss fails the run, before the optimizer step, as
+        // the sequence loop does (TOFIX223 0.6). The classification loss is
+        // summed on the device and read on the report interval (always on an
+        // epoch's last batch), so it is checked there: no extra device sync.
+        // A learning rate range test ends on a non-finite loss itself (its
+        // Record, after the step): that is its result, not a failure.
+        if (!range_test_ && (regression_metrics || should_report)) {
+            const float checked_loss = regression_metrics ? batch_loss : current_loss;
+            if (!std::isfinite(checked_loss)) {
+                throw std::runtime_error("the training loss became " +
+                                         std::string(std::isnan(checked_loss) ? "NaN" : "infinite") +
+                                         " at epoch " + std::to_string(epoch) + ", batch " +
+                                         std::to_string(batch_num) +
+                                         " (a learning rate too high, or NaN / infinite values in the data)");
+            }
+        }
+
         // Update metrics
         const float current_mae = regression.Mae();
         const float current_rmse = regression.Rmse();
@@ -3659,6 +3750,13 @@ ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
                 ? &device_loss_weight_sum
                 : nullptr,
             "TrainingExecutor::ReadValidationLoss");
+    }
+    if (batch_num > 0 && !std::isfinite(final_loss)) {
+        // As the sequence evaluation does: early stopping and the best model
+        // cannot use a NaN or infinite loss (TOFIX223 0.6).
+        throw std::runtime_error("the evaluation loss became " +
+                                 std::string(std::isnan(final_loss) ? "NaN" : "infinite") +
+                                 " (NaN / infinite values in the evaluation data, or a diverged model)");
     }
     float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
 

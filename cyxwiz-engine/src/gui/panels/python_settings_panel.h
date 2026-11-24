@@ -1,89 +1,56 @@
 #pragma once
 
+#include <functional>
+#include <future>
+#include <map>
 #include <string>
 #include <vector>
 
 namespace gui {
 
-/**
- * @brief Python Settings panel for Edit → Settings menu.
- *
- * Allows users to configure Python interpreter settings:
- * - View/change system Python path
- * - Auto-detect Python installations
- * - Configure default packages for new venvs
- * - Toggle auto-create venv for new projects
- */
+// Preferences > Python (TOFIX129 B9-9): the interpreter, new projects'
+// environments, what each Python session starts with, the console's
+// history. Every setting saves at once; another interpreter is taken with
+// "Use this Python". Checking and finding interpreters run Python, so they
+// run off the UI thread.
 class PythonSettingsPanel {
 public:
-    PythonSettingsPanel();
-    ~PythonSettingsPanel() = default;
-
-    /**
-     * @brief Render the Python settings panel.
-     *
-     * Call this inside a settings window or as a tab in settings dialog.
-     */
-    void Render();
-
-    /**
-     * @brief Check if settings were modified.
-     *
-     * @return true if user changed any settings
-     */
-    bool IsModified() const { return is_modified_; }
-
-    /**
-     * @brief Apply and save the current settings.
-     */
-    void ApplySettings();
-
-    /**
-     * @brief Revert to saved settings (discard changes).
-     */
-    void RevertSettings();
+    // `runtime_details` gives the running Python's details (Runtime details)
+    void Render(const std::function<std::string()>& runtime_details);
+    // Read the settings again (after Restore this page's defaults)
+    void Reload() { loaded_ = false; }
 
 private:
-    /**
-     * @brief Load settings from EngineConfig.
-     */
-    void LoadSettings();
-
-    /**
-     * @brief Run Python auto-detection and populate detected_pythons_.
-     */
-    void RunAutoDetection();
-
-    /**
-     * @brief Open file browser to manually select Python executable.
-     */
-    void BrowsePythonExecutable();
-
-    // Current settings (editable)
-    char system_python_path_[512] = {};
-    bool auto_create_venv_ = true;
-    char default_packages_[1024] = {};  // Comma-separated package names
-
-    // Auto-detection results
-    struct DetectedPython {
+    struct Check {
+        std::string version;
+        std::string error;  // empty: usable
+    };
+    struct Found {
         std::string path;
         std::string version;
-        bool has_venv;
-        bool has_pip;
     };
-    std::vector<DetectedPython> detected_pythons_;
-    bool loaded_ = false;  // LoadSettings ran (on the first Render)
-    bool detection_in_progress_ = false;
-    bool show_detection_results_ = false;
+    void Load();
+    void StartCheck(const std::string& path);
+    void Poll();
+    void RenderInterpreter(const std::function<std::string()>& runtime_details);
+    void RenderNewProjects();
+    void RenderSessionStart();
+    void RenderConsole();
 
-    // Python status (for current path)
-    std::string python_version_;
-    bool python_valid_ = false;
-    std::string python_error_;
-
-    // UI state
-    bool is_modified_ = false;
-    int selected_detected_index_ = -1;
+    bool loaded_ = false;
+    std::string saved_path_;  // the interpreter set (EngineConfig)
+    std::string path_;        // the field
+    bool changed_this_run_ = false;
+    std::map<std::string, Check> checks_;  // by path
+    std::future<Check> checking_;
+    std::string checking_path_;
+    std::string next_check_path_;  // asked while another check runs
+    std::future<std::vector<Found>> finding_;
+    std::vector<Found> found_;
+    bool found_shown_ = false;
+    std::string packages_;
+    std::vector<std::string> packages_ignored_;
+    std::string details_text_;
 };
 
-} // namespace gui
+}  // namespace gui

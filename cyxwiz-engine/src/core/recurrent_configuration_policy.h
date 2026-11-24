@@ -31,6 +31,16 @@ inline std::string TrimLower(std::string value) {
 
 } // namespace recurrent_configuration_policy_detail
 
+// The RNN cell activation as every reader takes it: the setting trimmed and
+// lower-cased ("ReLU" is relu), "tanh" when it is absent or empty. The
+// compile check refuses anything else.
+inline std::string RnnNonlinearity(const std::map<std::string, std::string>& parameters) {
+    const auto it = parameters.find("nonlinearity");
+    if (it == parameters.end()) return "tanh";
+    const std::string value = recurrent_configuration_policy_detail::TrimLower(it->second);
+    return value.empty() ? std::string("tanh") : value;
+}
+
 // Parameter-dependent gaps for otherwise supported recurrent model layers.
 // Header-only by design: focused model tests compile ModelBuilder directly and
 // must receive the same fail-closed policy without linking the full Engine

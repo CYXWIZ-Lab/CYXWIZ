@@ -486,7 +486,7 @@ against the manifest before Python is needed, with the same messages as
 **In the Engine's windows** a Python node shows as one: Properties reads
 *Python node · com.example.acts 1.0.0 · Activation* and shows the check
 from bundling next to its own **Check gradient**; Info lists the bundle,
-its approval and code hash; the Node Browser counts *nodes from 2 plugins
+its approval and code hash; the Nodes panel counts *nodes from 2 plugins
 and 1 Python bundle*; **Apps > Python node bundles** opens a bundle's
 nodes.
 
@@ -550,6 +550,10 @@ A node whose check fails is still created; fix its `backward` and create it
 again. A Python error while reading the script shows its message and
 traceback in the dialog. The dialog imports the file afresh each time, so
 an edited file needs no restart.
+
+In the Engine, **Nodes > Make a Python node...** writes such a file for
+you from a form (one node per file, in `<project>/nodes_src/`) and creates
+its bundle: see [Make a Python node](../usage/extension_nodes.md#make-a-python-node).
 
 ## 12. Speed
 

@@ -5,6 +5,7 @@
 #include "data_studio_panel.h"
 
 #include "../node_type_import_registry.h"
+#include "../../core/column_list.h"
 #include "../../core/node_executors/hypothesis_test_operator.h"
 #include "../../core/groups_presentation.h"
 #include "../../core/stats_presentation.h"
@@ -115,10 +116,8 @@ DataStudioPanel::DataStudioPanel() {
                                              {{"feature_col", r.predictors.front()}, {"target_col", r.response}, {"degree", std::to_string(r.degree)}},
                                              name);
         } else {
-            std::string features;
-            for (const auto& p : r.predictors) features += (features.empty() ? "" : ",") + p;
             node_editor_->RequestBranchAfter(from->id, ::gui::NodeType::LinearRegressionNode,
-                                             {{"feature_cols", features}, {"target_col", r.response}, {"fit_intercept", "true"}}, name);
+                                             {{"feature_cols", cyxwiz::FormatColumnList(r.predictors)}, {"target_col", r.response}, {"fit_intercept", "true"}}, name);
         }
         return std::string("Added the ") + (r.polynomial ? "Polynomial" : "Linear") + " Regression node \"" + name + "\" reading \"" +
                from->name + "\" (Ctrl+Z on the canvas undoes it). " + explore_view::BranchAddedNote();
@@ -157,7 +156,7 @@ DataStudioPanel::DataStudioPanel() {
     // Missing > Fill in Prepare and Outliers > Flag / Clip / Drop rows (TOFIX129
     // D7a G2): steps on the data path, so training reads their result.
     missing_->on_fill = [add_node](const std::string& column, const std::string& strategy, const std::string& value) {
-        std::map<std::string, std::string> params{{"columns", column}, {"strategy", strategy}};
+        std::map<std::string, std::string> params{{"columns", cyxwiz::FormatColumnList({column})}, {"strategy", strategy}};
         if (strategy == "constant") params["value"] = value;
         return add_node(::gui::NodeType::FillMissingValues, "Fill " + column + " (" + strategy + ")", std::move(params), true);
     };
@@ -168,7 +167,7 @@ DataStudioPanel::DataStudioPanel() {
         char factor_text[32];
         std::snprintf(factor_text, sizeof(factor_text), "%g", factor);
         return add_node(::gui::NodeType::OutlierDetector, std::string(verb) + " outliers in " + column,
-                        {{"columns", column}, {"method", method}, {"threshold", factor_text}, {"action", action}}, true);
+                        {{"columns", cyxwiz::FormatColumnList({column})}, {"method", method}, {"threshold", factor_text}, {"action", action}}, true);
     };
     visualizer_ = std::make_unique<Visualizer>();
     prepare_ = std::make_unique<PrepareView>();

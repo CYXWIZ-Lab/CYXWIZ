@@ -45,6 +45,24 @@ void NodeEditor::DetachFromFile() {
     unsaved_ = true;
 }
 
+void NodeEditor::DetachFromExample() {
+    const std::string& project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+    for (auto& node : nodes_) {
+        if (node.type != NodeType::DataInput) continue;
+        for (const char* key : {"file_path", "folder_path", "labels_csv", "audio_labels_csv"}) {
+            const auto it = node.parameters.find(key);
+            if (it == node.parameters.end() || it->second.empty() || std::filesystem::path(it->second).is_absolute())
+                continue;
+            const std::string resolved = cyxwiz::ResolveProjectDataPath(it->second, project_root);
+            std::error_code ec;
+            if (!std::filesystem::exists(resolved, ec)) continue;  // the Data Input says it is missing
+            it->second = cyxwiz::MakeProjectRelativePath(
+                std::filesystem::absolute(resolved, ec).lexically_normal().generic_string(), project_root);
+        }
+    }
+    DetachFromFile();
+}
+
 bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
     if (!CanReplaceGraph("load a graph")) return false;
     // Clear existing graph
@@ -586,9 +604,9 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
         int loaded_next_group_id = 1;
         int loaded_next_annotation_id = 1;
 
-        CodeFramework loaded_framework = selected_framework_;
+        cyxwiz::CodeFramework loaded_framework = selected_framework_;
         if (graph_json.contains("framework")) {
-            loaded_framework = static_cast<CodeFramework>(
+            loaded_framework = static_cast<cyxwiz::CodeFramework>(
                 graph_json["framework"].get<int>());
         }
 
@@ -740,6 +758,9 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
             graph_json["template"].is_object() &&
             graph_json["template"].contains("nodes")) {
             spdlog::info("Detected pattern template format, converting to graph format");
+            // A template example names its data relative to its own folder
+            // (or a parent, e.g. examples/datasets/...), as a saved graph does.
+            cyxwiz::SetGraphDataSearchDirectoryFromGraphFile(filepath);
             return LoadPatternAsGraph(graph_json);
         }
 
@@ -825,6 +846,11 @@ void NodeEditor::SaveAsFromStudio() {
         return;
     }
     ShowSaveDialog();
+}
+
+std::string NodeEditor::GraphDisplayName() const {
+    return current_file_path_.empty() ? std::string("Untitled graph")
+                                      : std::filesystem::path(current_file_path_).filename().string();
 }
 
 bool NodeEditor::SaveCurrentGraph() {
