@@ -1,9 +1,44 @@
-# Node dialogs
+---
+title: Node dialogs
+description: The windows that set up nodes which read, preview or prepare data, tab by tab.
+type: reference
+area: graph-editor
+audience: user
+status: stable
+since: 1.0.7
+owner: graph-editor
+last_reviewed: 2026-11-24
+related:
+  - properties.md
+  - ../user-guide/graph-editor/node-properties.md
+  - ../user-guide/graph-editor/compile-and-run.md
+redirect_from:
+  - ../usage/node_dialogs.md
+---
 
-Double-click a node (or right-click it and choose **Configure...**; Data Studio
-has **Open dialog**) to open its dialog.
-The node's settings are saved into the graph when you press **Apply** or
-**OK**.
+Nodes that read, preview or prepare data are set up in a dialog of their
+own; the rest are set in the [Properties panel](properties.md). Open a
+node's dialog by double-clicking the node, right-clicking it and choosing
+**Configure...**, or clicking **Open Dialog...** at the top of Properties
+(Data Studio has **Open dialog**). The node's settings are saved into the
+graph when you press **Apply** or **OK**.
+
+| Node | Dialog title |
+| --- | --- |
+| Data Input | **Data Input** |
+| Data Output | **Data Output** |
+| Data Convert | **Data Convert** |
+| Data Loader | **Data Loader** |
+| Data Split | **Data Split** |
+| Tokenizer | **Text Tokenizer Configuration** |
+| Vocabulary, Padding (older graphs) | **Text Vocabulary Configuration**, **Text Padding Configuration** |
+| Embedding | **Embedding Configuration** |
+| Row Filter | **Row Filter** |
+| SQL Query | **SQL Workbench** (see [SQL Workbench](../usage/sql-workbench.md)) |
+| Quality Analyzer | **Quality Analyzer** (see [Quality Analyzer](../usage/quality_analyzer.md)) |
+| Word Embeddings | **Word Embeddings** (see [Word embeddings](../usage/word_embeddings.md)) |
+
+Double-click on any other node only selects it.
 
 ## The buttons every dialog shares
 
@@ -17,8 +52,9 @@ Convert run), Apply and OK are off; hover them to see why. Dialogs that know
 when you changed something (Embedding, Word Embeddings) keep Apply off until
 you do ("Nothing changed").
 
-A file field is a path box with **Browse...** beside it; typing a path works
-as well as browsing.
+A file field is a path box with a browse button beside it (**Browse
+file...**, **Browse folder...**, **Browse...** or **Save as...**); typing a
+path works as well as browsing.
 
 ## Data Input
 
@@ -53,9 +89,11 @@ plugin.
   empty to read quotes as ordinary text. Preview, Apply and pipeline runs use
   the same character.
 - Files are read as UTF-8; a byte order mark at the start is skipped.
-- **Limit Rows** skips the first rows and caps how many are loaded. To keep
-  only some rows, filter them in Data Studio's Prepare step or with a Filter
-  or SQL node.
+- The **Rows and columns** tab sets which columns load (**Include all
+  columns**, or pick them), **Skip first N source rows:** and **Limit
+  dataset rows** (Apply loads at most that many rows; only those are
+  split and trained on). To keep only some rows by value, filter them in
+  Data Studio's Prepare step or with a Row Filter or SQL Query node.
 
 ### HDF5 files
 
@@ -124,7 +162,7 @@ feature node, with **Show on canvas** (and **Open it** for nodes with a
 dialog); when one is missing it offers **Add a Resize**, **Add Normalize**
 (after the Resize) or **Add Mel Spectrogram / Spectrogram / MFCC**. An image
 folder holds nothing in memory: when training starts the images are decoded
-once at the Resize size into cache/images (see image_transforms.md).
+once at the Resize size into cache/images (see [Image transforms](../usage/image_transforms.md)).
 
 ### The data strip and the tabs
 
@@ -152,6 +190,19 @@ For an image folder, **Preview** shows its first 24 images with
 their class once it is loaded (Explore > Images in Data Studio shows them
 all), and **Profile** shows the image profile (counts, classes, sizes,
 prepared sets; see Data Studio > Profile).
+
+### The Memory and Audit tabs
+
+- **Memory** shows **Current Status:** (*In Memory*, *On disk (Parquet)*,
+  *Lazy-loaded*, *On Disk (streaming)* or *Not Loaded*), the rows and
+  columns, and **Unload from memory**. Under **Advanced**, **Force
+  disk-backed cache** keeps even a small table on disk instead of in
+  memory. See [Loaded data](../usage/loaded_data.md) and
+  [Big data](../usage/big_data.md).
+- **Audit** (**Dataset audit**) checks the loaded dataset: *Failed*,
+  *Warnings* or *Passed*, with the dataset name, rows, columns, what read
+  it, and a table of errors and warnings. Before a load it says "Click
+  Apply to load data and run the audit."
 
 ### Source: the file or folder, then how its rows are used
 
@@ -181,7 +232,7 @@ test roles come from the graph's Data Split, not from this node.
 
 ## Text Tokenizer
 
-The tabs are named by what you decide:
+The **Tokenizer** node opens **Text Tokenizer Configuration**. The tabs are named by what you decide:
 
 - **Words**: the text and label columns, **Split into** (Spaces, Words,
   Characters, WordPiece, Byte BPE; Byte BPE adds its starting units and
@@ -203,10 +254,9 @@ Help for each field is the hover text on its label.
 ## Data Split
 
 A bar shows the three parts with their rows from the graph's data (*train 80%
-about 42,145, val 5,268, test 5,268*), above the Train / Validation / Test
-sliders and their sum (Apply scales them to 1.00). **Seed** sets the
-shuffled order the parts are cut from; **Stratified** keeps each class's
-share in every part. *From the graph* names the dataset and its samples, with
+about 42,145, val 5,268, test 5,268*), above the **Train**, **Validation** and
+**Test** sliders and their sum (Apply scales them to 1.00). **Seed** sets the
+shuffled order the parts are cut from; **Stratified: keep each class's share in every part** does what it says. *From the graph* names the dataset and its samples, with
 **Refresh from graph**; **Details** holds the resolved manifest (origins,
 schemas, policy, source ids, leakage checks). An old graph using Data
 Boundary v1 shows a caution and **Migrate graph to Dataset v2**.
@@ -220,9 +270,16 @@ balancing for training batches: mode, target per class, seed),
 **Checkpoints** (best validation checkpoint, early stop patience, checkpoint
 folder, start from an earlier checkpoint), **Generation** (samples the model
 writes during training: prompts, chat template, stop texts, decoding, when;
-see [Generation previews](generation_previews.md)) and **Advanced** (worker
+see [Generation previews](../usage/generation_previews.md)) and **Advanced** (worker
 threads, pin memory, report interval). The Data Loader is the one place
 batching is set.
+
+## Embedding
+
+The **Embedding** node opens **Embedding Configuration**, with the tabs
+**Shape** (vocabulary size and vector size), **Weights** (start from
+pretrained word vectors) and **Advanced**. Apply stays off until you change
+something ("Nothing changed"). See [Word embeddings](../usage/word_embeddings.md).
 
 ## Row Filter
 
@@ -290,3 +347,9 @@ manifest. Six tabs:
   the output path, rows written, columns, size and manifest. The write
   finishes even if the dialog closes; the footer's Apply saves the settings.
 - **Log**: the messages of this dialog session, with **Clear**.
+
+## Related
+
+- [Properties panel](properties.md)
+- [Set node properties](../user-guide/graph-editor/node-properties.md)
+- [Compile and run a graph](../user-guide/graph-editor/compile-and-run.md)
