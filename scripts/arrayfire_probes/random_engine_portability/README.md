@@ -7,7 +7,7 @@ the first values of `randu` and `randn`, the first values of a 65,536-value
 draws. It depends on ArrayFire only. Compare the output
 line by line between machines and backends.
 
-Result on 2026-11-10 (ArrayFire 3.10.0; dev PC GTX 1050 Ti on Windows, hp-linux
+Result on 2026-11-10 (ArrayFire 3.10.0; dev PC GTX 1050 Ti on Windows, a Linux test machine
 Arch with GCC 16):
 
 - **The operating system doesn't change the numbers.** CPU on Windows and CPU

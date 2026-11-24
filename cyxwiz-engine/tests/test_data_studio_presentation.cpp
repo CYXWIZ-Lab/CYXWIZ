@@ -77,8 +77,8 @@ int main() {
     {
         Input images;
         GraphNode cats = Node(1, NodeType::DataInput, "Cats_Dogs Data");
-        cats.folder_path = "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog";
-        cats.labels_csv = "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog.csv";
+        cats.folder_path = "D:/data/Cats_Dogs/cat_dog";
+        cats.labels_csv = "D:/data/Cats_Dogs/cat_dog.csv";
         cats.dataset_name = "cat_dog";
         images.nodes = {cats};
         const View before = Build(images);

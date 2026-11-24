@@ -165,7 +165,7 @@ int main() {
         NodeMetadata meta(gui::NodeType::DataInput, gui::NodeCategory::DataSources, "Data Input", "I");
         meta.properties_editor = NodePropertiesEditor::Dialog;
         auto input = MakeNode(1, gui::NodeType::DataInput, "Spotify");
-        input.parameters["file_path"] = "D:/demo/mrcj/datasets/spotify_data clean.csv";
+        input.parameters["file_path"] = "D:/data/spotify_data clean.csv";
         input.parameters["dataset_name"] = "spotify";
         std::vector<gui::MLNode> nodes{input};
         std::vector<gui::NodeLink> links;
@@ -197,7 +197,7 @@ int main() {
 
         // An image folder not loaded yet names its folder (it said "No file chosen").
         nodes[0].parameters.erase("file_path");
-        nodes[0].parameters["folder_path"] = "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog/";
+        nodes[0].parameters["folder_path"] = "D:/data/Cats_Dogs/cat_dog/";
         fact = {};
         v = Build(in);
         Check(v.data && v.data->label == "cat_dog" && !v.data->loaded &&

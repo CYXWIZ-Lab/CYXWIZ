@@ -65,6 +65,19 @@ __pycache__/
 venv/
 .env
 
+# Local configuration. Private details (lab machines, their addresses, remote
+# logins, personal folders, keys) live only in these files, never in tracked ones.
+# scripts/check_private_details.py reads its patterns from
+# config/private-patterns.local.txt.
+.env.*
+!.env.example
+*.local.json
+*.local.yaml
+*.local.yml
+*.local.txt
+*.local.env
+config/local/
+
 # Logs
 *.log
 logs/

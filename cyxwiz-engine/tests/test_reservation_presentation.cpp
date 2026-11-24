@@ -25,7 +25,7 @@ std::string Detail(const cyxwiz::ReservationDetails& details, const std::string&
 
 cyxwiz::ReservationNodeFacts Dell() {
     cyxwiz::ReservationNodeFacts node;
-    node.name = "dell-pc";
+    node.name = "gpu-box";
     node.device_type = "OpenCL";
     node.vram_bytes = 8375186227LL;  // 7.8 GB shared
     node.reputation = 0.92;
@@ -55,7 +55,7 @@ int main() {
     reserve.duration_minutes = 120;
     reserve.has_account = true;
     const auto quote = BuildReserveQuote(reserve);
-    Check(quote.title == "dell-pc", "the node's name is the title");
+    Check(quote.title == "gpu-box", "the node's name is the title");
     Check(quote.subtitle == "OpenCL · 7.8 GB · reputation 92% · 14 jobs", "subtitle: " + quote.subtitle);
     Check(quote.price == "$0.25 / hour (fee included)", "the listed price includes the fee: " + quote.price);
     Check(quote.hold == "$0.50", "two hours are held: " + quote.hold);
@@ -84,7 +84,7 @@ int main() {
     ActiveReservationInputs active;
     active.node = Dell();
     active.node_known = true;
-    active.endpoint = "192.168.1.222:50052";
+    active.endpoint = "192.168.10.22:50052";
     active.start_time = start;
     active.end_time = start + 7200;
     active.now = start + 47 * 60;
@@ -105,9 +105,9 @@ int main() {
     Check(local_card.has_bar && local_card.fill > 0.39 && local_card.fill < 0.40, "bar: 47 of 120 minutes used");
     Check(local_card.price == "$0.50 (2 h 00 min)", "price of the reserved time: " + local_card.price);
     Check(!local_card.stale, "a local clock is not stale");
-    Check(local_card.title == "dell-pc" && local_card.connection == "Connected to node", "name, not the endpoint");
+    Check(local_card.title == "gpu-box" && local_card.connection == "Connected to node", "name, not the endpoint");
     Check(!local_card.warn, "no warning with over an hour left");
-    Check(Detail(local_card.details, "Endpoint") == "192.168.1.222:50052" &&
+    Check(Detail(local_card.details, "Endpoint") == "192.168.10.22:50052" &&
               Detail(local_card.details, "Epochs / batch") == "10 / 32",
           "details keep the endpoint and settings");
 
@@ -142,7 +142,7 @@ int main() {
     reconnected.start_time = 0;  // the reconnect token gives time left only
     const auto re_card = BuildActiveReservationCard(reconnected);
     Check(!re_card.has_bar && re_card.price == "-", "no invented start after a reconnect");
-    Check(re_card.subtitle == "192.168.1.222:50052", "unknown node shows its endpoint");
+    Check(re_card.subtitle == "192.168.10.22:50052", "unknown node shows its endpoint");
 
     std::cout << "extend and leave\n";
     const auto options = BuildExtendOptions(0.25);
@@ -151,7 +151,7 @@ int main() {
           "extend options with their cost");
     Check(BuildExtendOptions(0.0)[0].cost == "-", "no price, no cost");
     const auto leave = BuildLeaveSummary(active);
-    Check(leave.title == "Leave dell-pc? The clock keeps running", leave.title);
+    Check(leave.title == "Leave gpu-box? The clock keeps running", leave.title);
     Check(leave.ends.rfind("Your reservation ends at ", 0) == 0 &&
               leave.ends.find("(1 h 13 min left) whether you are connected or not. Leaving does not pause it.") !=
                   std::string::npos,
@@ -174,14 +174,14 @@ int main() {
 
     std::cout << "receipt\n";
     ReservationEndFacts ended;
-    ended.node_name = "dell-pc";
+    ended.node_name = "gpu-box";
     ended.ended_at = start + 7200;
     ended.reason = ReservationEndReason::TimeRanOut;
     ended.seconds_used = 7200;
     ended.jobs_started = 2;
     ended.reservation_id = "4f1c0000-a92e";
     const auto receipt = BuildReservationReceipt(ended);
-    Check(receipt.title.rfind("The reservation on dell-pc ended at ", 0) == 0 && receipt.why == "time ran out",
+    Check(receipt.title.rfind("The reservation on gpu-box ended at ", 0) == 0 && receipt.why == "time ran out",
           receipt.title);
     Check(receipt.time_used == "2 h 00 min" && receipt.jobs == "2 jobs started", "receipt facts");
     Check(receipt.paid.find("not live") != std::string::npos, "no invented charge");
@@ -190,13 +190,13 @@ int main() {
     lost.reason = ReservationEndReason::Lost;
     lost.error = "Reservation not found";
     const auto lost_receipt = BuildReservationReceipt(lost);
-    Check(lost_receipt.failed && lost_receipt.title == "The reservation on dell-pc is over" &&
+    Check(lost_receipt.failed && lost_receipt.title == "The reservation on gpu-box is over" &&
               lost_receipt.why == "the central server no longer knows it" &&
               lost_receipt.note.rfind("Reservation not found", 0) == 0,
           "a lost reservation says why");
 
     std::cout << "reconnect\n";
-    ActiveReservationListing dell{"r1", "8b27aaaa-03d1", "dell-pc", start + 2285, false, 0};
+    ActiveReservationListing dell{"r1", "8b27aaaa-03d1", "gpu-box", start + 2285, false, 0};
     ActiveReservationListing mac{"r2", "5c01bbbb-7700", "", start + 6690, true, 1};
     ActiveReservationListing gone{"r3", "aaaa0000-0000", "old-pc", start - 5, false, 0};
     const auto rows = BuildReconnectRows({dell, mac, gone}, start);
@@ -205,7 +205,7 @@ int main() {
               rows[0].time_left.find("(1 h 52 min left)") != std::string::npos,
           "unknown node by id; row says when it ends: " + rows[0].time_left);
     Check(rows[0].note == "open in another Engine · 1 job done", rows[0].note);
-    Check(rows[1].node == "dell-pc" && rows[1].note.empty(), "known node by name");
+    Check(rows[1].node == "gpu-box" && rows[1].note.empty(), "known node by name");
 
     if (failures) {
         std::cout << failures << " check(s) failed\n";

@@ -171,8 +171,8 @@ TEST_CASE("service address: host shown, website derived", "[sign-in]") {
     CHECK(ServiceHost("http://127.0.0.1:3002/api") == "127.0.0.1:3002");
     CHECK(ServiceHost("https://cyxwiz.com/api") == "cyxwiz.com");
     CHECK(ServiceHost("https://cyxwiz.com:443/api") == "cyxwiz.com");
-    CHECK(ServiceHost("http://192.168.1.116:3002/api") == "192.168.1.116:3002");
-    CHECK(ServiceHost("  http://192.168.1.116:3002/api \n") == "192.168.1.116:3002");
+    CHECK(ServiceHost("http://192.168.10.16:3002/api") == "192.168.10.16:3002");
+    CHECK(ServiceHost("  http://192.168.10.16:3002/api \n") == "192.168.10.16:3002");
     CHECK(WebsiteOf("https://cyxwiz.com/api") == "https://cyxwiz.com");
     CHECK(WebsiteOf("http://127.0.0.1:3002/api") == "http://127.0.0.1:3002");
     CHECK(WebsiteOf("") == "");
@@ -203,7 +203,7 @@ TEST_CASE("change the CyxWiz server", "[sign-in]") {
     CHECK(dialog.address_problem.empty());
     CHECK(dialog.note.rfind("\"Create an account\" opens this server's website.", 0) == 0);
 
-    const auto bad = BuildServiceDialog("192.168.1.216:8000", up);
+    const auto bad = BuildServiceDialog("192.168.10.20:8000", up);
     CHECK_FALSE(bad.use_enabled);
     CHECK(bad.view.rows.empty());  // no reach claim for an address that can't be used
     CHECK(bad.address_problem.find("can't be used") != std::string::npos);
@@ -212,10 +212,10 @@ TEST_CASE("change the CyxWiz server", "[sign-in]") {
     CHECK_FALSE(blank.use_enabled);
     CHECK(blank.address_problem == "Enter the server address, for example http://localhost:8000.");
 
-    const auto three = BuildServiceDialog("192.168.1.216", ServerReach{});
+    const auto three = BuildServiceDialog("192.168.10.20", ServerReach{});
     CHECK(three.use_enabled);
-    CHECK(three.view.rows[0].address == "192.168.1.216:50051");
-    CHECK(three.view.rows[1].address == "http://192.168.1.216:3002/api");
+    CHECK(three.view.rows[0].address == "192.168.10.20:50051");
+    CHECK(three.view.rows[1].address == "http://192.168.10.20:3002/api");
     CHECK(three.view.rows[0].reach == ServiceReach::NotChecked);
 }
 

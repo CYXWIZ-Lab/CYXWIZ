@@ -19,7 +19,7 @@ void Check(bool condition, const std::string& message) {
 
 StripInput SentimentCsv() {
     StripInput in;
-    in.source = "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv";
+    in.source = "D:/data/sentiment analysis/sentiment_mental_health.csv";
     in.kind = "CSV table";
     in.file_size = 31457280;
     return in;
@@ -89,7 +89,7 @@ void CheckLoaded() {
     Check(BuildStrip(series).detail == "as sales (time series by date)", "time series detail");
 
     StripInput images;
-    images.source = "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog";
+    images.source = "D:/data/Cats_Dogs/cat_dog";
     images.loaded = true;
     images.dataset_name = "cat_dog";
     images.rows = 25000;
