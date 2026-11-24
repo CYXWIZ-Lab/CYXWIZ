@@ -118,6 +118,27 @@ const cyxwiz::BackendPackManagerRecord* FindRecord(
     return record == records.end() ? nullptr : &*record;
 }
 
+// The Installer's cards and --select for an installation (Maintenance).
+std::vector<cyxwiz::AddOnCardView> InstallerCards(
+    const std::vector<cyxwiz::BackendPackManagerRecord>& records,
+    const std::set<std::string>& selected_pack_ids) {
+    return cyxwiz::BuildAddOnCards(records, selected_pack_ids, cyxwiz::AddOnCardContext::Installer,
+                                   cyxwiz::CyxWizInstallerMode::Maintenance);
+}
+
+std::string Resolve(const std::vector<cyxwiz::BackendPackManagerRecord>& records,
+                    const std::string& requested) {
+    return cyxwiz::ResolvePackToSelect(records, requested,
+                                       cyxwiz::CyxWizInstallerMode::Maintenance);
+}
+
+// The Engine's Installed packs cards.
+std::vector<cyxwiz::AddOnCardView> EngineCards(
+    const std::vector<cyxwiz::BackendPackManagerRecord>& records) {
+    return cyxwiz::BuildAddOnCards(records, {}, cyxwiz::AddOnCardContext::EngineManager,
+                                   cyxwiz::CyxWizInstallerMode::Maintenance);
+}
+
 std::string Detail(const cyxwiz::AddOnCardView& card, const std::string& key) {
     for (const auto& [name, value] : card.details) {
         if (name == key) return value;
@@ -173,7 +194,7 @@ void TestProfilesNeverIncludeAnAddOn() {
 
 void TestNotInstalledCard() {
     const auto records = cyxwiz::BuildBackendPackCatalogRecords(Catalog(), {});
-    const auto cards = cyxwiz::BuildAddOnCards(records, {});
+    const auto cards = InstallerCards(records, {});
     Check(cards.size() == 1, "One add-on card for one add-on");
     const auto card = MuJoCoCard(cards);
     Check(card.title == "Simulation (MuJoCo)" &&
@@ -204,7 +225,7 @@ void TestNotInstalledCard() {
 void TestTickedCardAndPlan() {
     const auto records = cyxwiz::BuildBackendPackCatalogRecords(Catalog(), {});
     const std::set<std::string> ticked{kMuJoCoPack};
-    const auto card = MuJoCoCard(cyxwiz::BuildAddOnCards(records, ticked));
+    const auto card = MuJoCoCard(InstallerCards(records, ticked));
     Check(card.status == cyxwiz::AddOnCardStatus::Selected && card.status_text == "Selected" &&
               card.tone == cyxwiz::InstallerPackPresentationTone::Accent && card.checked,
           "Ticking selects the add-on");
@@ -242,7 +263,7 @@ void TestInstalledCard() {
     Check(record && record->installed && record->active &&
               record->installed_pack_id == kMuJoCoPack,
           "active-plugins.json marks the add-on installed");
-    const auto card = MuJoCoCard(cyxwiz::BuildAddOnCards(records, {}));
+    const auto card = MuJoCoCard(InstallerCards(records, {}));
     Check(card.status == cyxwiz::AddOnCardStatus::Installed && card.status_text == "Installed" &&
               card.tone == cyxwiz::InstallerPackPresentationTone::Success && card.checked &&
               !card.can_select && card.can_uninstall && !card.can_install &&
@@ -279,7 +300,7 @@ void TestInstalledCard() {
     base_only.records = {BaseRecord()};
     const auto unlisted =
         cyxwiz::BuildBackendPackCatalogRecords(base_only, ActiveBase(), ActiveMuJoCo());
-    const auto unlisted_card = MuJoCoCard(cyxwiz::BuildAddOnCards(unlisted, {}));
+    const auto unlisted_card = MuJoCoCard(InstallerCards(unlisted, {}));
     Check(unlisted_card.status == cyxwiz::AddOnCardStatus::Installed &&
               unlisted_card.can_uninstall && unlisted_card.installed_pack_id == kMuJoCoPack,
           "An installed add-on missing from the catalog can still be uninstalled");
@@ -295,7 +316,7 @@ void TestUpdateAvailableCard() {
     const auto* record = FindRecord(records, kNext);
     Check(record && record->installed && !record->active && record->update_available,
           "A newer signed package of the installed add-on is an update");
-    const auto card = MuJoCoCard(cyxwiz::BuildAddOnCards(records, {}));
+    const auto card = MuJoCoCard(InstallerCards(records, {}));
     Check(card.status == cyxwiz::AddOnCardStatus::UpdateAvailable &&
               card.status_text == "Update available" &&
               card.tone == cyxwiz::InstallerPackPresentationTone::Warning && card.can_select &&
@@ -303,7 +324,7 @@ void TestUpdateAvailableCard() {
               card.action_hint == "Select this add-on to review and install its signed update." &&
               card.facts.rfind("Version 2", 0) == 0,
           "Update available asks to select the update");
-    const auto ticked = MuJoCoCard(cyxwiz::BuildAddOnCards(records, {kNext}));
+    const auto ticked = MuJoCoCard(InstallerCards(records, {kNext}));
     Check(ticked.checked && ticked.status_text == "Update selected" && ticked.action_hint.empty(),
           "A ticked update says it installs with the other changes");
     const auto plan = cyxwiz::BuildBackendPackInstallerPlan(
@@ -317,7 +338,7 @@ void TestUpdateAvailableCard() {
     older.installed_manifests.push_back(*MuJoCoRecord(kNext, "2").manifest);
     const auto blocked = cyxwiz::BuildBackendPackCatalogRecords(
         older, ActiveBase(), ActiveMuJoCo(kNext));
-    const auto blocked_card = MuJoCoCard(cyxwiz::BuildAddOnCards(blocked, {}));
+    const auto blocked_card = MuJoCoCard(InstallerCards(blocked, {}));
     Check(blocked_card.status == cyxwiz::AddOnCardStatus::UpdateBlocked &&
               !blocked_card.can_select && blocked_card.can_uninstall,
           "An older catalog package never replaces the installed add-on");
@@ -327,7 +348,7 @@ void TestBuiltForAnotherEngineCard() {
     auto snapshot = Catalog();
     snapshot.records[1] = MuJoCoRecord(kMuJoCoPack, "1", "cyxwiz-base-0.2.0-2-win64-x86_64");
     const auto records = cyxwiz::BuildBackendPackCatalogRecords(snapshot, ActiveBase());
-    const auto card = MuJoCoCard(cyxwiz::BuildAddOnCards(records, {}));
+    const auto card = MuJoCoCard(InstallerCards(records, {}));
     Check(card.status == cyxwiz::AddOnCardStatus::NeedsEngineUpdate &&
               card.status_text == "Needs Engine update" &&
               card.tone == cyxwiz::InstallerPackPresentationTone::Warning && !card.can_select &&
@@ -361,7 +382,7 @@ void TestNotPublishedAndUnavailableCards() {
     cyxwiz::runtime::VerifiedBackendPackCatalogSnapshot base_only;
     base_only.records = {BaseRecord()};
     const auto missing =
-        MuJoCoCard(cyxwiz::BuildAddOnCards(cyxwiz::BuildBackendPackCatalogRecords(base_only, {}), {}));
+        MuJoCoCard(InstallerCards(cyxwiz::BuildBackendPackCatalogRecords(base_only, {}), {}));
     Check(missing.status == cyxwiz::AddOnCardStatus::NotPublished &&
               missing.status_text == "Not published" && !missing.can_select &&
               missing.pack_id.empty() &&
@@ -374,7 +395,7 @@ void TestNotPublishedAndUnavailableCards() {
     other_platform.records[1].manifest->platform =
         cyxwiz::runtime::CurrentBackendPackPlatformId() == std::string_view("win64") ? "linux64"
                                                                                       : "win64";
-    Check(MuJoCoCard(cyxwiz::BuildAddOnCards(
+    Check(MuJoCoCard(InstallerCards(
                          cyxwiz::BuildBackendPackCatalogRecords(other_platform, {}), {}))
                   .status == cyxwiz::AddOnCardStatus::NotPublished,
           "Another platform's pack does not count as published here");
@@ -385,7 +406,7 @@ void TestNotPublishedAndUnavailableCards() {
     diagnostic.records[1].manifest->compatibility.support_status =
         cyxwiz::runtime::BackendPackSupportStatus::Diagnostic;
     const auto diagnostic_records = cyxwiz::BuildBackendPackCatalogRecords(diagnostic, {});
-    const auto diagnostic_card = MuJoCoCard(cyxwiz::BuildAddOnCards(diagnostic_records, {}));
+    const auto diagnostic_card = MuJoCoCard(InstallerCards(diagnostic_records, {}));
     Check(diagnostic_card.status == cyxwiz::AddOnCardStatus::Unavailable &&
               !diagnostic_card.can_select &&
               !cyxwiz::ResolveBackendPackInstallerSelection(
@@ -401,7 +422,7 @@ void TestUnknownAddOnGetsAGenericCard() {
     other.manifest->licenses = {"cyxwiz-package"};
     snapshot.records.push_back(other);
     const auto cards =
-        cyxwiz::BuildAddOnCards(cyxwiz::BuildBackendPackCatalogRecords(snapshot, {}), {});
+        InstallerCards(cyxwiz::BuildBackendPackCatalogRecords(snapshot, {}), {});
     Check(cards.size() == 2 && cards[0].key == kMuJoCoPlugin && cards[1].key == "com.example.other" &&
               cards[1].title == "com.example.other" &&
               cards[1].licence == "Its licence files come with the add-on." &&
@@ -427,7 +448,7 @@ void TestAddOnInstalledForAnotherBase() {
     Check(stale && stale->installed && !stale->active && stale->installed_for_other_base &&
               stale->plugin_id == kMuJoCoPlugin && stale->companion_base_id == kOldBase,
           "An add-on listed for another base is an installed, inactive record");
-    const auto lost_card = MuJoCoCard(cyxwiz::BuildAddOnCards(lost, {}));
+    const auto lost_card = MuJoCoCard(InstallerCards(lost, {}));
     Check(lost_card.status == cyxwiz::AddOnCardStatus::NeedsReinstall &&
               lost_card.status_text == "Needs reinstall" &&
               lost_card.tone == cyxwiz::InstallerPackPresentationTone::Warning &&
@@ -441,11 +462,11 @@ void TestAddOnInstalledForAnotherBase() {
           "With no pack for this base the card offers only Uninstall add-on");
     Check(cyxwiz::BuildPackRemovalWording(lost, kOldPack).title == "Uninstall add-on",
           "Its uninstall confirmation speaks of an add-on");
-    Check(cyxwiz::ResolvePackToSelect(lost, kMuJoCoPlugin).empty(),
+    Check(Resolve(lost, kMuJoCoPlugin).empty(),
           "Nothing is ticked for it");
 
     const auto offered = cyxwiz::BuildBackendPackCatalogRecords(Catalog(), ActiveBase(), old_list);
-    const auto offered_card = MuJoCoCard(cyxwiz::BuildAddOnCards(offered, {}));
+    const auto offered_card = MuJoCoCard(InstallerCards(offered, {}));
     Check(offered_card.status == cyxwiz::AddOnCardStatus::NeedsReinstall &&
               offered_card.status_text == "Needs reinstall" && offered_card.can_select &&
               offered_card.can_install && offered_card.can_uninstall &&
@@ -453,7 +474,7 @@ void TestAddOnInstalledForAnotherBase() {
               Detail(offered_card, "Installed pack") == kOldPack &&
               Detail(offered_card, "Installed for CPU Engine") == kOldBase,
           "With a pack for this base the card offers to reinstall it");
-    const auto ticked = MuJoCoCard(cyxwiz::BuildAddOnCards(offered, {kMuJoCoPack}));
+    const auto ticked = MuJoCoCard(InstallerCards(offered, {kMuJoCoPack}));
     Check(ticked.checked && ticked.status_text == "Reinstall selected" &&
               ticked.tone == cyxwiz::InstallerPackPresentationTone::Accent,
           "A ticked reinstall says so");
@@ -462,7 +483,7 @@ void TestAddOnInstalledForAnotherBase() {
                   "Installed for another CyxWiz Engine release, so the Engine no longer loads "
                   "it. The version for this release installs with the other changes.",
           "Select it ... shows only while the card is unticked: " + ticked.explanation);
-    Check(cyxwiz::ResolvePackToSelect(offered, kMuJoCoPlugin) == kMuJoCoPack,
+    Check(Resolve(offered, kMuJoCoPlugin) == kMuJoCoPack,
           "The Engine's Reinstall add-on ticks this base's pack");
     const auto plan = cyxwiz::BuildBackendPackInstallerPlan(
         cyxwiz::ResolveBackendPackInstallerSelection(cyxwiz::BackendPackInstallChoice::Custom,
@@ -475,12 +496,12 @@ void TestAddOnInstalledForAnotherBase() {
 // --select <id>: an add-on follows its card, a compute pack its own rule.
 void TestResolvePackToSelect() {
     const auto fresh = cyxwiz::BuildBackendPackCatalogRecords(Catalog(), ActiveBase());
-    Check(cyxwiz::ResolvePackToSelect(fresh, kMuJoCoPlugin) == kMuJoCoPack &&
-              cyxwiz::ResolvePackToSelect(fresh, kMuJoCoPack) == kMuJoCoPack,
+    Check(Resolve(fresh, kMuJoCoPlugin) == kMuJoCoPack &&
+              Resolve(fresh, kMuJoCoPack) == kMuJoCoPack,
           "An add-on not installed is ticked by plugin id or pack id");
     const auto installed =
         cyxwiz::BuildBackendPackCatalogRecords(Catalog(), ActiveBase(), ActiveMuJoCo());
-    Check(cyxwiz::ResolvePackToSelect(installed, kMuJoCoPlugin).empty(),
+    Check(Resolve(installed, kMuJoCoPlugin).empty(),
           "An installed add-on is not ticked again");
 
     // Two packs of the add-on: the card's pack (the one this base takes) is
@@ -490,12 +511,12 @@ void TestResolvePackToSelect() {
                        MuJoCoRecord("cyxwiz-plugin-mujoco-1.0.0-0-win64-x86_64", "1",
                                     "cyxwiz-base-0.1.0-1-win64-x86_64"));
     const auto two_records = cyxwiz::BuildBackendPackCatalogRecords(two, ActiveBase());
-    Check(MuJoCoCard(cyxwiz::BuildAddOnCards(two_records, {})).pack_id == kMuJoCoPack &&
-              cyxwiz::ResolvePackToSelect(two_records, kMuJoCoPlugin) == kMuJoCoPack,
+    Check(MuJoCoCard(InstallerCards(two_records, {})).pack_id == kMuJoCoPack &&
+              Resolve(two_records, kMuJoCoPlugin) == kMuJoCoPack,
           "The add-on is ticked through its card's pack");
-    Check(cyxwiz::ResolvePackToSelect(two_records, kBase).empty() &&
-              cyxwiz::ResolvePackToSelect(two_records, "missing").empty() &&
-              cyxwiz::ResolvePackToSelect(two_records, "").empty(),
+    Check(Resolve(two_records, kBase).empty() &&
+              Resolve(two_records, "missing").empty() &&
+              Resolve(two_records, "").empty(),
           "The CPU base and unknown ids are never ticked");
 }
 
@@ -571,7 +592,7 @@ std::string CardWords(const cyxwiz::AddOnCardView& card) {
 void TestBaseUpdateReinstallsAddOn() {
     for (const bool old_pack_listed : {true, false}) {
         const auto records = BaseUpdateRecords(old_pack_listed, true);
-        const auto card = MuJoCoCard(cyxwiz::BuildAddOnCards(records, {}));
+        const auto card = MuJoCoCard(InstallerCards(records, {}));
         Check(card.status == cyxwiz::AddOnCardStatus::WithEngineUpdate &&
                   card.status_text == "Comes with the Engine update" &&
                   card.tone == cyxwiz::InstallerPackPresentationTone::Accent &&
@@ -589,14 +610,14 @@ void TestBaseUpdateReinstallsAddOn() {
                   words.find("companion") == std::string::npos &&
                   words.find("Update blocked") == std::string::npos,
               "No compute-pack wording on an add-on card: " + words);
-        Check(cyxwiz::ResolvePackToSelect(records, kMuJoCoPlugin).empty(),
+        Check(Resolve(records, kMuJoCoPlugin).empty(),
               "Nothing to tick: it comes with the update");
     }
 
     // Without a base update the blocked pack keeps add-on words too.
     auto records = BaseUpdateRecords(false, true);
     records.front().update_available = false;
-    const auto blocked = MuJoCoCard(cyxwiz::BuildAddOnCards(records, {}));
+    const auto blocked = MuJoCoCard(InstallerCards(records, {}));
     Check(blocked.status == cyxwiz::AddOnCardStatus::UpdateBlocked &&
               blocked.explanation ==
                   "The catalog's version is built for a different CyxWiz Engine release, so the "
@@ -609,7 +630,7 @@ void TestBaseUpdateReinstallsAddOn() {
 // warns that the Engine stops loading it, and offers Uninstall add-on.
 void TestBaseUpdateLosesAddOn() {
     const auto records = BaseUpdateRecords(true, false);
-    const auto card = MuJoCoCard(cyxwiz::BuildAddOnCards(records, {}));
+    const auto card = MuJoCoCard(InstallerCards(records, {}));
     Check(card.status == cyxwiz::AddOnCardStatus::Installed && card.can_uninstall &&
               card.installed_pack_id == kMuJoCoPack &&
               card.action_hint ==
@@ -622,13 +643,124 @@ void TestBaseUpdateLosesAddOn() {
     cyxwiz::runtime::VerifiedBackendPackCatalogSnapshot base_only;
     base_only.records = {BaseRecord()};
     base_only.installed_manifests.push_back(*MuJoCoRecord().manifest);
-    const auto unlisted = MuJoCoCard(cyxwiz::BuildAddOnCards(
+    const auto unlisted = MuJoCoCard(InstallerCards(
         cyxwiz::BuildBackendPackCatalogRecords(base_only, ActiveBase(), ActiveMuJoCo()), {}));
     Check(unlisted.facts == "Version 1  |  Requires: CPU Engine (this release)" &&
               unlisted.licence ==
                   "Includes MuJoCo by Google DeepMind (Apache-2.0 licence) and Gymnasium task "
                   "models (MIT licence).",
           "An unlisted installed add-on keeps its version: " + unlisted.facts);
+}
+
+// The add-on records of a base update with the add-on not installed.
+std::vector<cyxwiz::BackendPackManagerRecord> NotInstalled(
+    std::vector<cyxwiz::BackendPackManagerRecord> records) {
+    for (auto& record : records) {
+        if (record.pack_kind != cyxwiz::BackendPackRecordKind::Plugin) continue;
+        record.installed = false;
+        record.active = false;
+        record.installed_pack_id.clear();
+        record.update_decision.reset();
+    }
+    return records;
+}
+
+// An add-on not installed during a base update: the plan refuses the old
+// base's pack, so the card is locked and says it can be added after the update.
+void TestBaseUpdateLocksAddOnNotInstalled() {
+    for (const bool new_pack_listed : {true, false}) {
+        const auto records = NotInstalled(BaseUpdateRecords(true, new_pack_listed));
+        cyxwiz::BackendPackInstallerSelection old_pack;
+        old_pack.valid = true;
+        old_pack.pack_ids = {kMuJoCoPack};
+        Check(!cyxwiz::BuildBackendPackInstallerPlan(old_pack, records,
+                                                     cyxwiz::CyxWizInstallerMode::Maintenance)
+                   .valid,
+              "The plan refuses the old base's pack during a base update");
+        const auto card = MuJoCoCard(InstallerCards(records, {}));
+        Check(card.status == cyxwiz::AddOnCardStatus::AfterEngineUpdate &&
+                  card.status_text == "After the Engine update" && !card.checked &&
+                  !card.can_select && !card.can_install && !card.can_uninstall &&
+                  card.installed_pack_id.empty(),
+              "The card is locked during a base update: " + card.status_text);
+        Check(card.explanation ==
+                  (new_pack_listed
+                       ? "This add-on can be added after the CPU Engine update. Install the "
+                         "update first, then open the installer again to add it."
+                       : "This add-on can be added after the CPU Engine update, once a version "
+                         "for the new Engine is published."),
+              "The card says it can be added after the update: " + card.explanation);
+        Check(new_pack_listed
+                  ? card.pack_id == kNewBasePack &&
+                        card.facts == "Version 3  |  3.2 MiB  |  Requires: the CPU Engine update"
+                  : card.facts.empty(),
+              "The facts name the pack for the new Engine, or nothing: " + card.facts);
+        Check(Resolve(records, kMuJoCoPlugin).empty() && Resolve(records, kMuJoCoPack).empty(),
+              "--select ticks nothing during a base update");
+    }
+}
+
+// The Engine's Installed packs: a CPU Engine update is only available there,
+// so the cards say the Installer applies it; the Installer keeps its words.
+void TestEngineManagerWording() {
+    const auto kept = BaseUpdateRecords(true, true);
+    const auto engine = MuJoCoCard(EngineCards(kept));
+    Check(engine.status == cyxwiz::AddOnCardStatus::WithEngineUpdate &&
+              engine.status_text == "CPU Engine update available" &&
+              engine.explanation ==
+                  "A CPU Engine update is available. The CyxWiz Installer reinstalls this "
+                  "add-on with it." &&
+              engine.can_uninstall && !engine.can_install,
+          "The Engine says a CPU Engine update is available: " + engine.explanation);
+    const auto engine_words = CardWords(engine);
+    Check(engine_words.find("Comes with the Engine update") == std::string::npos &&
+              engine_words.find("with this update") == std::string::npos,
+          "No installer-time wording in the Engine: " + engine_words);
+    const auto installer = MuJoCoCard(InstallerCards(kept, {}));
+    Check(installer.status_text == "Comes with the Engine update" &&
+              installer.explanation == "Reinstalled for the new CPU Engine with this update.",
+          "The Installer keeps its wording: " + installer.explanation);
+
+    const auto lost = MuJoCoCard(EngineCards(BaseUpdateRecords(true, false)));
+    Check(lost.status == cyxwiz::AddOnCardStatus::Installed && lost.can_uninstall &&
+              lost.action_hint ==
+                  "A CPU Engine update is available. Once it is installed, the Engine stops "
+                  "loading this add-on until a version for the new Engine is published. You "
+                  "can uninstall it.",
+          "The Engine warns what the available update does: " + lost.action_hint);
+
+    const auto later = MuJoCoCard(EngineCards(NotInstalled(BaseUpdateRecords(true, true))));
+    Check(later.status == cyxwiz::AddOnCardStatus::AfterEngineUpdate && !later.can_install &&
+              later.explanation ==
+                  "A CPU Engine update is available. This add-on can be added after it: update "
+                  "the CPU Engine in the CyxWiz Installer first.",
+          "The Engine says a new add-on comes after the update: " + later.explanation);
+}
+
+// Recovery and a fresh install never update the base: no base-update state.
+void TestNoBaseUpdateStatesWithoutBaseUpdate() {
+    cyxwiz::BackendPackInstallerSelection none;
+    none.valid = true;
+    for (const auto mode :
+         {cyxwiz::CyxWizInstallerMode::RecoveryRequired, cyxwiz::CyxWizInstallerMode::FreshInstall}) {
+        const auto kept = BaseUpdateRecords(true, true);
+        Check(!cyxwiz::BuildBackendPackInstallerPlan(none, kept, mode).update_base &&
+                  cyxwiz::FindBaseUpdate(kept, mode) == nullptr,
+              "This mode's plan does not update the base");
+        const auto card = MuJoCoCard(
+            cyxwiz::BuildAddOnCards(kept, {}, cyxwiz::AddOnCardContext::Installer, mode));
+        Check(card.status == cyxwiz::AddOnCardStatus::Installed && card.action_hint.empty() &&
+                  CardWords(card).find("Engine update") == std::string::npos,
+              "No base-update state without a base update: " + card.status_text);
+        const auto lost = MuJoCoCard(cyxwiz::BuildAddOnCards(
+            BaseUpdateRecords(true, false), {}, cyxwiz::AddOnCardContext::Installer, mode));
+        Check(lost.action_hint.empty(), "No loss warning without a base update");
+        const auto fresh = MuJoCoCard(cyxwiz::BuildAddOnCards(
+            NotInstalled(BaseUpdateRecords(true, true)), {}, cyxwiz::AddOnCardContext::Installer,
+            mode));
+        Check(fresh.status != cyxwiz::AddOnCardStatus::AfterEngineUpdate,
+              "No after-the-update lock without a base update");
+    }
 }
 
 // The summary lists the add-ons a plan installs, with what happens to each.
@@ -649,7 +781,7 @@ void TestPlannedAddOnLines() {
                                                     cyxwiz::CyxWizInstallerMode::Maintenance),
               lost)
               .empty(),
-          "An add-on with no pack for the new base is not listed (the warning names it)");
+          "An add-on with no pack for the new base is not listed (the warning counts it)");
 
     const auto fresh = cyxwiz::BuildBackendPackCatalogRecords(Catalog(), ActiveBase());
     const auto fresh_plan = cyxwiz::BuildBackendPackInstallerPlan(
@@ -685,6 +817,22 @@ void TestPlannedAddOnLines() {
     Check(cyxwiz::PlannedAddOnLines(updated_plan, updated) ==
               std::vector<std::string>{"Simulation (MuJoCo), updated"},
           "An add-on update says so");
+
+    // A refused plan still lists the ticked add-ons by name; a valid plan
+    // lists its own lines.
+    const auto refused_records = NotInstalled(BaseUpdateRecords(true, false));
+    cyxwiz::BackendPackInstallerSelection ticked;
+    ticked.valid = true;
+    ticked.pack_ids = {kBase, kMuJoCoPack};
+    const auto refused = cyxwiz::BuildBackendPackInstallerPlan(
+        ticked, refused_records, cyxwiz::CyxWizInstallerMode::Maintenance);
+    Check(!refused.valid &&
+              cyxwiz::SummaryAddOnLines(refused, ticked.pack_ids, refused_records) ==
+                  std::vector<std::string>{"Simulation (MuJoCo)"},
+          "A refused plan's summary lists the ticked add-on by name");
+    Check(cyxwiz::SummaryAddOnLines(update_plan, {}, kept) ==
+              cyxwiz::PlannedAddOnLines(update_plan, kept),
+          "A valid plan's summary lists the plan's add-on lines");
 }
 
 }  // namespace
@@ -703,6 +851,9 @@ int main() {
     TestResolvePackToSelect();
     TestBaseUpdateReinstallsAddOn();
     TestBaseUpdateLosesAddOn();
+    TestBaseUpdateLocksAddOnNotInstalled();
+    TestEngineManagerWording();
+    TestNoBaseUpdateStatesWithoutBaseUpdate();
     TestPlannedAddOnLines();
     std::cout << "test_addon_pack_presentation: all checks passed\n";
     return 0;

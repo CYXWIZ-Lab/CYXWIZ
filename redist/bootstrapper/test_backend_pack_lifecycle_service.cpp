@@ -1311,6 +1311,27 @@ int main() {
                 evidence.plugin_id == "com.cyxwiz.simulation.mujoco",
             "plugin delivery must retain signed installed-version evidence");
 
+        // After a CPU base update the add-on is installed for another base:
+        // its retained manifest is still read, so its card keeps its version.
+        auto updated_base = fixture.Active();
+        updated_base.base_pack_id = "base-v2";
+        VerifiedBackendPackCatalogSnapshot installed_snapshot;
+        service.ReadInstalledMetadata(fixture.runtime, updated_base,
+                                      installed_snapshot);
+        failures += !Expect(
+            LoadActivePluginsState(fixture.runtime / kActivePluginsFileName, plugins,
+                                   error) &&
+                plugins.base_pack_id != updated_base.base_pack_id &&
+                std::any_of(installed_snapshot.installed_manifests.begin(),
+                            installed_snapshot.installed_manifests.end(),
+                            [](const VerifiedBackendPackManifest& manifest) {
+                                return manifest.pack_id == "mujoco-v1" &&
+                                       manifest.kind ==
+                                           BackendPackManifestKind::PluginPack &&
+                                       !manifest.package_version.empty();
+                            }),
+            "installed metadata must include a plugin pack installed for another base");
+
         // A plugin manifest is never delivered as a backend pack.
         const auto as_backend = service.Deliver(request);
         failures += !Expect(as_backend.status == BackendPackLifecycleStatus::MetadataFailure,

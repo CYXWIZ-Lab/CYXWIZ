@@ -371,11 +371,12 @@ void RenderAddOnCard(InstallerViewState &state,
 void RenderAddOns(InstallerViewState &state,
                   const InstallerCatalogState &catalog,
                   bool operation_running) {
-  const auto cards =
-      BuildAddOnCards(catalog.records, state.choice ==
-                                               BackendPackInstallChoice::Custom
-                                           ? state.custom_selection
-                                           : std::set<std::string>{});
+  const auto cards = BuildAddOnCards(
+      catalog.records,
+      state.choice == BackendPackInstallChoice::Custom
+          ? state.custom_selection
+          : std::set<std::string>{},
+      AddOnCardContext::Installer, catalog.mode);
   if (cards.empty())
     return;
   ImGui::Dummy(ImVec2(0.0f, 4.0f));
@@ -479,10 +480,12 @@ void RenderComponents(InstallerViewState &state,
         state.pack_removal_confirmation_requested = true;
       }
     } else if (record.update_available) {
-      // The CPU Engine is always in the plan: its update needs no selection
+      // The CPU Engine update the plan applies needs no selection.
+      const bool included =
+          FindBaseUpdate(catalog.records, catalog.mode) == &record;
       ImGui::TextColored(
-          kWarning, "%s",
-          record.backend == "cpu"
+          cyxwiz::ui::CurrentTokens().warning, "%s",
+          included
               ? "This update is included; Review & update installs it."
               : "Select this component to review and install its signed update.");
     }
@@ -941,12 +944,13 @@ void RenderSummary(InstallerViewState &state,
                      [&](const BackendPackManagerRecord &candidate) {
                        return candidate.pack_id == pack_id;
                      });
-    // Add-ons are listed from the plan below, with what happens to each.
+    // Add-ons are listed below: the plan's, with what happens to each.
     if (record != catalog.records.end() && !IsAddOn(*record)) {
       component(RecordName(*record));
     }
   }
-  for (const auto &line : PlannedAddOnLines(plan, catalog.records)) {
+  for (const auto &line :
+       SummaryAddOnLines(plan, selection.pack_ids, catalog.records)) {
     component(line);
   }
   if (const auto optional = OptionalPacksForThisComputer(catalog.records, selection.pack_ids);

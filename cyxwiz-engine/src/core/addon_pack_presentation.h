@@ -25,6 +25,7 @@ enum class AddOnCardStatus {
     NeedsEngineUpdate,  // built for another CyxWiz Engine release
     NeedsReinstall,     // installed for another CPU base: no longer loaded
     WithEngineUpdate,   // installed; the CPU base update reinstalls it
+    AfterEngineUpdate,  // not installed; it can be added after the CPU base update
     Unavailable,        // not offered by the signed catalog, or unverifiable
     NotPublished        // a known add-on with no pack for this platform
 };
@@ -64,12 +65,19 @@ const std::vector<std::string>& KnownAddOnPluginIds();
 // plugin id itself.
 std::string AddOnTitle(const std::string& plugin_id);
 
+// Where the cards are shown. The CyxWiz Installer applies a CPU Engine update
+// with its plan; the Engine's Installed packs only shows that one is
+// available (the Installer applies it), so the cards say so in its words.
+enum class AddOnCardContext { Installer, EngineManager };
+
 // Cards for the known add-ons (in order), then for any other plugin pack the
 // catalog or the installation holds. selected_pack_ids are the packs ticked
-// for installation.
+// for installation. mode is the installation's (the Engine, which runs from
+// an installation, passes Maintenance): only Maintenance updates the CPU base.
 std::vector<AddOnCardView> BuildAddOnCards(
     const std::vector<BackendPackManagerRecord>& records,
-    const std::set<std::string>& selected_pack_ids);
+    const std::set<std::string>& selected_pack_ids, AddOnCardContext context,
+    CyxWizInstallerMode mode);
 
 // The installer summary's lines for the add-ons a plan installs: each one's
 // name, and what happens to it when it is installed already ("Simulation
@@ -78,13 +86,22 @@ std::vector<std::string> PlannedAddOnLines(
     const BackendPackInstallerPlan& plan,
     const std::vector<BackendPackManagerRecord>& records);
 
+// The summary's add-on lines: the plan's (PlannedAddOnLines) when it is
+// valid; when the plan is refused, the ticked add-ons by name, so the summary
+// still shows what was asked for. Selection order.
+std::vector<std::string> SummaryAddOnLines(
+    const BackendPackInstallerPlan& plan,
+    const std::vector<std::string>& selected_pack_ids,
+    const std::vector<BackendPackManagerRecord>& records);
+
 // The pack the installer ticks for `--select <id>`: an add-on named by its
 // plugin id or pack id follows its card (the pack the card offers, when its
 // checkbox can change); any other id names a compute pack that can be
-// installed or updated. Empty when nothing can be ticked.
+// installed or updated. Empty when nothing can be ticked. mode is the
+// installation's, as for BuildAddOnCards.
 std::string ResolvePackToSelect(
     const std::vector<BackendPackManagerRecord>& records,
-    const std::string& requested);
+    const std::string& requested, CyxWizInstallerMode mode);
 
 // The words of the uninstall confirmation for one pack: an add-on's own
 // wording, or the compute component's.

@@ -24,7 +24,10 @@ void ToolbarPanel::RenderBackendAddOns(
     const std::vector<BackendPackManagerRecord>& records,
     const std::filesystem::path& installer,
     const std::filesystem::path& runtime_root, bool installer_available) {
-    const auto cards = BuildAddOnCards(records, {});
+    // The Engine runs from an installation; a CPU Engine update shown here
+    // is applied by the Installer, so the cards use the Engine's words.
+    const auto cards = BuildAddOnCards(records, {}, AddOnCardContext::EngineManager,
+                                       CyxWizInstallerMode::Maintenance);
     if (cards.empty()) return;
     const ui::Tokens& t = ui::CurrentTokens();
     const auto& style = ImGui::GetStyle();

@@ -201,17 +201,58 @@ void BuildReinstallCard(AddOnCardView& card,
     card.can_install = true;
 }
 
-// An installed add-on the plan's CPU base update reinstalls (the catalog has
-// its pack for the new base): it goes with the update, nothing to tick.
-void BuildBaseUpdateCard(AddOnCardView& card) {
-    Status(card, AddOnCardStatus::WithEngineUpdate,
-           "Comes with the Engine update",
-           InstallerPackPresentationTone::Accent);
-    card.explanation = "Reinstalled for the new CPU Engine with this update.";
+// An installed add-on the CPU base update reinstalls (the catalog has its
+// pack for the new base). In the Installer it goes with the plan's update,
+// nothing to tick; the Engine only says the update is available.
+void BuildBaseUpdateCard(AddOnCardView& card, AddOnCardContext context) {
+    if (context == AddOnCardContext::Installer) {
+        Status(card, AddOnCardStatus::WithEngineUpdate,
+               "Comes with the Engine update",
+               InstallerPackPresentationTone::Accent);
+        card.explanation =
+            "Reinstalled for the new CPU Engine with this update.";
+    } else {
+        Status(card, AddOnCardStatus::WithEngineUpdate,
+               "CPU Engine update available",
+               InstallerPackPresentationTone::Accent);
+        card.explanation =
+            "A CPU Engine update is available. The CyxWiz Installer "
+            "reinstalls this add-on with it.";
+    }
     card.checked = true;
     card.can_select = false;
     card.can_install = false;
     card.can_uninstall = true;
+}
+
+// An add-on not installed while a CPU base update is pending: the plan
+// installs add-ons for the new base only after the update, so the card is
+// locked. published: the catalog has its pack for the new base.
+void BuildAfterBaseUpdateCard(AddOnCardView& card, AddOnCardContext context,
+                              bool published) {
+    Status(card, AddOnCardStatus::AfterEngineUpdate, "After the Engine update",
+           InstallerPackPresentationTone::Neutral);
+    if (!published) card.facts.clear();
+    if (context == AddOnCardContext::Installer) {
+        card.explanation =
+            published ? "This add-on can be added after the CPU Engine "
+                        "update. Install the update first, then open the "
+                        "installer again to add it."
+                      : "This add-on can be added after the CPU Engine "
+                        "update, once a version for the new Engine is "
+                        "published.";
+    } else {
+        card.explanation =
+            published ? "A CPU Engine update is available. This add-on can "
+                        "be added after it: update the CPU Engine in the "
+                        "CyxWiz Installer first."
+                      : "A CPU Engine update is available. This add-on can "
+                        "be added after it, once a version for the new "
+                        "Engine is published.";
+    }
+    card.checked = false;
+    card.can_select = false;
+    card.can_install = false;
 }
 
 void BuildInstalledCard(AddOnCardView& card) {
@@ -225,13 +266,15 @@ void BuildInstalledCard(AddOnCardView& card) {
     card.can_uninstall = true;
 }
 
-// base_update: the CPU base update the plan applies, or nullptr.
+// base_update: the CPU base update the plan applies (the Installer) or that
+// is available (the Engine), or nullptr.
 AddOnCardView BuildCard(const std::string& plugin_id,
                         const BackendPackManagerRecord* record,
                         const BackendPackManagerRecord* stale,
                         const BackendPackManagerRecord* base_update,
                         const std::vector<BackendPackManagerRecord>& records,
-                        const std::set<std::string>& selected_pack_ids) {
+                        const std::set<std::string>& selected_pack_ids,
+                        AddOnCardContext context) {
     AddOnCardView card;
     card.key = plugin_id;
     const auto* identity = FindIdentity(plugin_id);
@@ -252,12 +295,12 @@ AddOnCardView BuildCard(const std::string& plugin_id,
         return card;
     }
 
-    // The installed pack, and the pack a CPU base update in the plan
-    // installs in its place: the card then shows that one.
+    // The installed pack, and the add-on's pack for the new base of a CPU
+    // base update: the card then shows that one.
     const BackendPackManagerRecord* installed =
         stale ? stale : (record->installed ? record : nullptr);
     const BackendPackManagerRecord* next =
-        base_update && installed
+        base_update
             ? FindAddOnPackForBase(records, plugin_id, base_update->pack_id)
             : nullptr;
     if (next) record = next;
@@ -285,8 +328,13 @@ AddOnCardView BuildCard(const std::string& plugin_id,
     }
     AddDetail(card.details, "Signed metadata", record->delivery_metadata_error);
 
-    if (next) {
-        BuildBaseUpdateCard(card);
+    if (next && installed) {
+        BuildBaseUpdateCard(card, context);
+        return card;
+    }
+    // The plan refuses an add-on for the old base during a base update.
+    if (base_update && !installed) {
+        BuildAfterBaseUpdateCard(card, context, next != nullptr);
         return card;
     }
     if (stale) {
@@ -297,8 +345,13 @@ AddOnCardView BuildCard(const std::string& plugin_id,
     if (base_update && installed) {
         BuildInstalledCard(card);
         card.action_hint =
-            "The CPU Engine update stops loading this add-on until a version "
-            "for the new Engine is published. You can uninstall it.";
+            context == AddOnCardContext::Installer
+                ? "The CPU Engine update stops loading this add-on until a "
+                  "version for the new Engine is published. You can "
+                  "uninstall it."
+                : "A CPU Engine update is available. Once it is installed, "
+                  "the Engine stops loading this add-on until a version for "
+                  "the new Engine is published. You can uninstall it.";
         return card;
     }
 
@@ -402,7 +455,8 @@ std::string AddOnTitle(const std::string& plugin_id) {
 
 std::vector<AddOnCardView> BuildAddOnCards(
     const std::vector<BackendPackManagerRecord>& records,
-    const std::set<std::string>& selected_pack_ids) {
+    const std::set<std::string>& selected_pack_ids, AddOnCardContext context,
+    CyxWizInstallerMode mode) {
     std::vector<std::string> plugin_ids = KnownAddOnPluginIds();
     for (const auto& record : records) {
         if (IsAddOn(record) && !record.plugin_id.empty() &&
@@ -411,7 +465,7 @@ std::vector<AddOnCardView> BuildAddOnCards(
             plugin_ids.push_back(record.plugin_id);
         }
     }
-    const auto* base_update = FindBaseUpdate(records);
+    const auto* base_update = FindBaseUpdate(records, mode);
     std::vector<AddOnCardView> cards;
     cards.reserve(plugin_ids.size());
     for (const auto& plugin_id : plugin_ids) {
@@ -428,7 +482,8 @@ std::vector<AddOnCardView> BuildAddOnCards(
             }
         }
         cards.push_back(BuildCard(plugin_id, PickRecord(candidates), stale,
-                                  base_update, records, selected_pack_ids));
+                                  base_update, records, selected_pack_ids,
+                                  context));
     }
     return cards;
 }
@@ -464,11 +519,30 @@ std::vector<std::string> PlannedAddOnLines(
     return lines;
 }
 
+std::vector<std::string> SummaryAddOnLines(
+    const BackendPackInstallerPlan& plan,
+    const std::vector<std::string>& selected_pack_ids,
+    const std::vector<BackendPackManagerRecord>& records) {
+    if (plan.valid) return PlannedAddOnLines(plan, records);
+    std::vector<std::string> lines;
+    for (const auto& pack_id : selected_pack_ids) {
+        const auto record = std::find_if(
+            records.begin(), records.end(), [&](const auto& candidate) {
+                return IsAddOn(candidate) && candidate.pack_id == pack_id;
+            });
+        if (record != records.end()) {
+            lines.push_back(AddOnTitle(record->plugin_id));
+        }
+    }
+    return lines;
+}
+
 std::string ResolvePackToSelect(
     const std::vector<BackendPackManagerRecord>& records,
-    const std::string& requested) {
+    const std::string& requested, CyxWizInstallerMode mode) {
     if (requested.empty()) return {};
-    for (const auto& card : BuildAddOnCards(records, {})) {
+    for (const auto& card : BuildAddOnCards(
+             records, {}, AddOnCardContext::Installer, mode)) {
         if (card.key == requested ||
             (!card.pack_id.empty() && card.pack_id == requested)) {
             return card.can_select ? card.pack_id : std::string{};

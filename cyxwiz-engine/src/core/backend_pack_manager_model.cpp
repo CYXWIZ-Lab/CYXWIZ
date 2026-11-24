@@ -65,6 +65,12 @@ std::string LostAddOnWarning(std::size_t lost) {
          " under Add-ons.";
 }
 
+// The plan updates the CPU base only in Maintenance: a fresh install
+// installs it and recovery changes nothing.
+bool ModeUpdatesBase(CyxWizInstallerMode mode) {
+  return mode == CyxWizInstallerMode::Maintenance;
+}
+
 // A CPU base update the installer can deliver from verified metadata.
 bool IsDeliverableBase(const BackendPackManagerRecord &record) {
   return !record.pack_id.empty() &&
@@ -280,7 +286,10 @@ bool IsBackendPackRecommended(const BackendPackManagerRecord &record) {
 }
 
 const BackendPackManagerRecord *
-FindBaseUpdate(const std::vector<BackendPackManagerRecord> &records) {
+FindBaseUpdate(const std::vector<BackendPackManagerRecord> &records,
+               CyxWizInstallerMode mode) {
+  if (!ModeUpdatesBase(mode))
+    return nullptr;
   const BackendPackManagerRecord *base = nullptr;
   for (const auto &record : records) {
     if (record.backend != "cpu" || !record.update_available)
@@ -346,7 +355,7 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     plan.install_base = true;
     plan.base_pack_id = base->pack_id;
     plan.download_size_bytes = base->download_size_bytes;
-  } else {
+  } else if (ModeUpdatesBase(mode)) {
     for (const auto &record : catalog_records) {
       if (record.backend != "cpu" || !record.update_available)
         continue;

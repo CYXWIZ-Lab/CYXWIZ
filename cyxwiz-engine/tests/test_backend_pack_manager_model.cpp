@@ -1172,8 +1172,14 @@ void TestMaintenanceBaseUpdateKeepsAddOns() {
 
   // The lookups the add-on cards share with the plan.
   const std::vector lookups{base, old_add_on, new_add_on};
-  Check(cyxwiz::FindBaseUpdate(lookups) == &lookups[0],
+  Check(cyxwiz::FindBaseUpdate(lookups, cyxwiz::CyxWizInstallerMode::Maintenance) ==
+            &lookups[0],
         "The deliverable CPU base update is found");
+  Check(cyxwiz::FindBaseUpdate(lookups, cyxwiz::CyxWizInstallerMode::RecoveryRequired) ==
+                nullptr &&
+            cyxwiz::FindBaseUpdate(lookups, cyxwiz::CyxWizInstallerMode::FreshInstall) ==
+                nullptr,
+        "Recovery and a fresh install apply no base update, as the plan");
   Check(cyxwiz::FindAddOnPackForBase(lookups, "com.example.sim", "base-v2") == &lookups[2] &&
             cyxwiz::FindAddOnPackForBase(lookups, "com.example.sim", "base-v1") == &lookups[1] &&
             cyxwiz::FindAddOnPackForBase(lookups, "com.example.sim", "base-v3") == nullptr &&
@@ -1186,9 +1192,10 @@ void TestMaintenanceBaseUpdateKeepsAddOns() {
   undeliverable.delivery_metadata_available = false;
   auto current = base;
   current.update_available = false;
-  Check(cyxwiz::FindBaseUpdate(std::vector{base, second_update}) == nullptr &&
-            cyxwiz::FindBaseUpdate(std::vector{undeliverable}) == nullptr &&
-            cyxwiz::FindBaseUpdate(std::vector{current}) == nullptr,
+  constexpr auto kMaintenance = cyxwiz::CyxWizInstallerMode::Maintenance;
+  Check(cyxwiz::FindBaseUpdate(std::vector{base, second_update}, kMaintenance) == nullptr &&
+            cyxwiz::FindBaseUpdate(std::vector{undeliverable}, kMaintenance) == nullptr &&
+            cyxwiz::FindBaseUpdate(std::vector{current}, kMaintenance) == nullptr,
         "Two updates, an undeliverable one or none: no base update");
 
   auto diagnostic = new_add_on;

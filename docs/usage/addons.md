@@ -32,6 +32,8 @@ opens the installer with the add-on ticked.
 | Update available | A newer signed package exists; tick the add-on to install it |
 | Update blocked | The catalog offers an older or conflicting package, or one built for another CyxWiz Engine release; the installed one stays |
 | Comes with the Engine update | The CPU Engine update in this installation reinstalls it for the new release; nothing to tick |
+| CPU Engine update available | In the Engine: the Installer reinstalls it with the available CPU Engine update |
+| After the Engine update | Not installed while a CPU Engine update is pending: install the update first, then add it |
 | Needs Engine update | It is built for another CyxWiz Engine release: update the CPU Engine first, then add it |
 | Needs reinstall | It was installed for another CyxWiz Engine release, so the Engine no longer loads it. Tick it to install the version for this release, or uninstall it |
 | Unavailable | Its signed details could not be verified, or the release does not offer it |
@@ -52,6 +54,11 @@ card reads **Comes with the Engine update**. When the new release has no
 version of an add-on yet, a warning at the top of the summary and on its card
 says the Engine will stop loading it; after the update its card shows
 **Needs reinstall** and keeps **Uninstall add-on**.
+
+An add-on that is not installed cannot be added in the same run as a CPU
+Engine update: its card reads **After the Engine update** and cannot be
+ticked. Install the update, then open the installer again to add it. In
+recovery the installer changes nothing, so no card shows these states.
 
 ## Uninstalling one
 

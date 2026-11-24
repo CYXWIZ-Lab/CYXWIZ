@@ -146,10 +146,13 @@ bool IsBackendPackSelectableForInstaller(
 bool IsBackendPackRecommended(const BackendPackManagerRecord &record);
 
 // The CPU base update an installation's plan applies: the catalog's one CPU
-// base with an update, when it can be delivered. nullptr when there is none,
-// more than one, or it cannot be delivered (the plan then refuses it).
+// base with an update, when it can be delivered and the mode updates the base
+// (Maintenance; a fresh install installs it, recovery changes nothing).
+// nullptr when there is none, more than one, or it cannot be delivered (the
+// plan then refuses it).
 const BackendPackManagerRecord *
-FindBaseUpdate(const std::vector<BackendPackManagerRecord> &records);
+FindBaseUpdate(const std::vector<BackendPackManagerRecord> &records,
+               CyxWizInstallerMode mode);
 
 // The catalog's pack of an add-on built for a CPU base, as a base update
 // installs it (supported, with verified metadata). nullptr when there is none.

@@ -349,8 +349,8 @@ int RunInstaller(const std::vector<std::string> &arguments,
   if (!parsed.selected_pack.empty()) {
     view_state.requested_page = 1;
     view_state.focus_pack_id = parsed.selected_pack;
-    const auto pack_id =
-        cyxwiz::ResolvePackToSelect(catalog.records, parsed.selected_pack);
+    const auto pack_id = cyxwiz::ResolvePackToSelect(
+        catalog.records, parsed.selected_pack, catalog.mode);
     if (!pack_id.empty()) {
       view_state.custom_selection.insert(pack_id);
       view_state.choice = cyxwiz::BackendPackInstallChoice::Custom;

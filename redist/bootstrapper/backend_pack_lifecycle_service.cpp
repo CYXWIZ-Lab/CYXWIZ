@@ -149,10 +149,12 @@ void BackendPackLifecycleService::ReadInstalledMetadata(
     };
     read(active.base_pack_id, BackendPackManifestKind::Base);
     for (const auto& pack : active.packs) read(pack.pack_id, BackendPackManifestKind::BackendPack);
+    // Every installed plugin pack, whatever base it was installed for: an
+    // add-on installed for another base still shows its version and can be
+    // uninstalled. Readers match manifests by pack id.
     ActivePluginsState plugins;
     std::string error;
-    if (LoadActivePluginsState(root / kActivePluginsFileName, plugins, error) &&
-        plugins.base_pack_id == active.base_pack_id) {
+    if (LoadActivePluginsState(root / kActivePluginsFileName, plugins, error)) {
         for (const auto& plugin : plugins.plugins)
             read(plugin.pack_id, BackendPackManifestKind::PluginPack);
     }
