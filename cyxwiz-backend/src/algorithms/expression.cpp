@@ -6,9 +6,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <system_error>
@@ -315,7 +317,18 @@ private:
         double value = 0.0;
         const char* first = text_.data() + start;
         const char* last = text_.data() + pos_;
+#if defined(_LIBCPP_VERSION)
+        // libc++ (macOS) has no floating-point from_chars: strtod on a
+        // terminated copy of the scanned token, accepting it whole only.
+        const std::string token(first, last);
+        char* token_end = nullptr;
+        errno = 0;
+        value = std::strtod(token.c_str(), &token_end);
+        const std::errc ec = errno == ERANGE ? std::errc::result_out_of_range : std::errc();
+        const char* end = first + (token_end - token.c_str());
+#else
         const auto [end, ec] = std::from_chars(first, last, value);
+#endif
         if (ec == std::errc::result_out_of_range) {
             pos_ = start;
             Fail("Number out of range");
