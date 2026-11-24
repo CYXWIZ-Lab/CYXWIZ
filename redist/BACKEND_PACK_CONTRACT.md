@@ -503,8 +503,13 @@ exact plugin folder; it does not scan `plugins/` for other versions.
 
 Packaging names every third-party notice (`--third-party-license NAME=PATH`,
 PATH inside the plugin folder); a pack whose plugin ships third-party runtime
-libraries without one fails. The MuJoCo simulation pack, from a clean Release
-build of the plugin:
+libraries without one fails. A library beside the plugin is left to the base
+only when the base build output (`--build-dir`) has it and it is a vcpkg runtime
+library of that build (`<triplet>/bin` of `--vcpkg-installed-dir`, by default
+`build/vcpkg_installed`): fmt, spdlog, glfw3, brotli and OpenSSL for MuJoCo. A
+library the plugin brings itself (`mujoco.dll`) always ships in the pack, even
+when a plugin test target copied it into the build output. The MuJoCo
+simulation pack, from a clean Release build of the plugin:
 
 ```
 python redist/scripts/package_release.py plugin --plugin-dir plugins/simulation/mujoco \

@@ -419,13 +419,17 @@ def nvidia_provider_module(paths: PackagePaths) -> Path:
     )
 
 
-def copy_vcpkg_notices(paths: PackagePaths, stage: Path, system: str) -> None:
-    installed_dirs = paths.vcpkg_installed_dirs or (
+def vcpkg_installed_roots(paths: PackagePaths) -> tuple[Path, ...]:
+    """The vcpkg installed roots of this build: --vcpkg-installed-dir, else the defaults."""
+    return paths.vcpkg_installed_dirs or (
         paths.root / "build" / "vcpkg_installed",
         paths.root / "vcpkg_installed",
     )
+
+
+def copy_vcpkg_notices(paths: PackagePaths, stage: Path, system: str) -> None:
     roots = []
-    for installed in installed_dirs:
+    for installed in vcpkg_installed_roots(paths):
         if paths.vcpkg_installed_dirs:
             require_directory(installed, "explicit vcpkg installed root")
         roots.extend(sorted(installed.glob("*/share")))
@@ -1437,6 +1441,36 @@ def build_split_artifact(
     return stage, archive
 
 
+def base_shared_libraries(paths: PackagePaths, lib_suffix: str, names: Sequence[str]) -> set[str]:
+    """The plugin libraries (lower-cased names) the companion CPU base ships too.
+
+    The base packs every library of the build output (copy_build_payload), and
+    vcpkg copies its runtime libraries there. A plugin library is left to the
+    base only when both hold: the build output has it, and it is a vcpkg
+    runtime library of this build (an installed root's <triplet>/bin, the roots
+    the base's vcpkg notices come from). The build output alone is not enough:
+    plugin test targets copy the plugin's own libraries (mujoco.dll) there too,
+    and those never come from vcpkg.
+    """
+    in_build = {item.name.lower() for item in paths.build.glob(f"*{lib_suffix}") if item.is_file()}
+    candidates = sorted({name.lower() for name in names if name.lower() in in_build})
+    if not candidates:
+        return set()
+    vcpkg_libraries: set[str] = set()
+    for installed in vcpkg_installed_roots(paths):
+        if paths.vcpkg_installed_dirs:
+            require_directory(installed, "explicit vcpkg installed root")
+        vcpkg_libraries.update(
+            library.name.lower() for library in installed.glob(f"*/bin/*{lib_suffix}") if library.is_file()
+        )
+    if not vcpkg_libraries:
+        raise PackageError(
+            "Cannot tell which plugin libraries the CPU base shares (" + ", ".join(candidates) + "): "
+            "no vcpkg runtime libraries found; pass --vcpkg-installed-dir with this build's vcpkg installed root"
+        )
+    return {name for name in candidates if name in vcpkg_libraries}
+
+
 def _license_source(name: str) -> str:
     source = re.sub(r"[^a-z0-9._-]+", "-", name.lower()).strip("-")
     if not source:
@@ -1458,8 +1492,8 @@ def build_plugin_pack(
 
     The pack folder is the plugin folder the Engine loads: plugin.json, the
     plugin library and the shared libraries beside it, assets/, LICENSE and the
-    named third-party notices. Libraries the CPU base already ships (same file
-    name in the build output) are left out: the plugin uses the base's copies.
+    named third-party notices. The vcpkg runtime libraries the CPU base ships
+    are left out (base_shared_libraries): the plugin uses the base's copies.
     """
     if system != "windows":
         raise PackageError(f"Plugin packs are not yet qualified on {system}")
@@ -1494,15 +1528,17 @@ def build_plugin_pack(
     stage = paths.output_root / "staging" / pack_id
     safe_clean(stage, paths.output_root)
     copy_file(manifest_path, stage / "plugin.json")
-    base_libraries = {
-        item.name.lower() for item in paths.build.glob(f"*{lib_suffix}") if item.is_file()
-    }
     library_folder = library.parent
+    beside = [
+        item.name for item in library_folder.iterdir()
+        if item.is_file() and item.suffix.lower() == lib_suffix and item != library
+    ]
+    shared_with_base = base_shared_libraries(paths, lib_suffix, beside)
     dropped: list[str] = []
     for item in sorted(library_folder.iterdir()):
         if not item.is_file() or item.suffix.lower() != lib_suffix:
             continue
-        if item.name.lower() in base_libraries and item != library:
+        if item.name.lower() in shared_with_base and item != library:
             dropped.append(item.name)
             continue
         copy_file(item, stage / library_folder.relative_to(plugin_dir) / item.name)

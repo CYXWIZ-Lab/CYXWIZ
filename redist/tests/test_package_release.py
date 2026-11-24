@@ -712,11 +712,18 @@ class PackageReleaseTests(unittest.TestCase):
             (plugin / "bin" / name).write_bytes(name.encode("ascii"))
         (plugin / "bin" / "MUJOCO_LICENSE.txt").write_text("apache", encoding="ascii")
         (plugin / "assets" / "cartpole.xml").write_text("<mujoco/>", encoding="ascii")
+        # fmt.dll is a vcpkg runtime library the base build output carries
+        vcpkg_bin = self.root / "build" / "vcpkg_installed" / "x64-windows" / "bin"
+        vcpkg_bin.mkdir(parents=True, exist_ok=True)
+        (vcpkg_bin / "fmt.dll").write_bytes(b"fmt.dll")
         return plugin
 
     @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
     def test_plugin_pack_ships_the_plugin_without_base_libraries(self) -> None:
         plugin = self.create_plugin()
+        # The plugin's test targets copy mujoco.dll into the build output too:
+        # it is still the plugin's own library, not one the base shares.
+        (self.root / "build" / "bin" / "Release" / "mujoco.dll").write_bytes(b"mujoco.dll")
         args = self.artifact_args(
             "plugin", "--plugin-dir", str(plugin),
             "--base-pack-id", "cyxwiz-base-1.2.3-1-windows-x86_64",
@@ -729,7 +736,7 @@ class PackageReleaseTests(unittest.TestCase):
 
         self.assertTrue((stage / "bin" / "mujoco_plugin.dll").is_file())
         self.assertTrue((stage / "bin" / "mujoco.dll").is_file())
-        # fmt.dll is in the base's build output: the plugin uses that copy.
+        # fmt.dll is a vcpkg library in the base's build output: the plugin uses that copy.
         self.assertFalse((stage / "bin" / "fmt.dll").exists())
         self.assertFalse((stage / "bin" / "MUJOCO_LICENSE.txt").exists())
         self.assertTrue((stage / "THIRD_PARTY_LICENSES" / "MuJoCo" / "MUJOCO_LICENSE.txt").is_file())
@@ -747,6 +754,27 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn({"component": "mujoco", "path": "THIRD_PARTY_LICENSES/MuJoCo/MUJOCO_LICENSE.txt"},
                       signed["licenses"])
         package_release.validate_pack_manifest(manifest)
+
+    @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
+    def test_plugin_pack_needs_the_vcpkg_root_to_leave_libraries_to_the_base(self) -> None:
+        plugin = self.create_plugin()
+        shutil.rmtree(self.root / "build" / "vcpkg_installed" / "x64-windows" / "bin")
+        values = (
+            "plugin", "--plugin-dir", str(plugin),
+            "--base-pack-id", "cyxwiz-base-1.2.3-1-windows-x86_64",
+            "--third-party-license", "MuJoCo=bin/MUJOCO_LICENSE.txt",
+        )
+        # Without the vcpkg runtime list nothing tells fmt.dll (shared) from a plugin library
+        with self.assertRaisesRegex(package_release.PackageError, "--vcpkg-installed-dir"):
+            package_release.build_package(self.args(*values), self.script)
+        # An explicit root decides it
+        vcpkg = self.root / "other-vcpkg"
+        (vcpkg / "x64-windows" / "bin").mkdir(parents=True)
+        (vcpkg / "x64-windows" / "bin" / "fmt.dll").write_bytes(b"fmt.dll")
+        stage, _ = package_release.build_package(
+            self.args(*values, "--vcpkg-installed-dir", str(vcpkg)), self.script)
+        self.assertFalse((stage / "bin" / "fmt.dll").exists())
+        self.assertTrue((stage / "bin" / "mujoco.dll").is_file())
 
     @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
     def test_plugin_pack_requires_its_plugin_folder_and_notice(self) -> None:
