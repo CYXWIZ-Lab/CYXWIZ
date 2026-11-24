@@ -12,15 +12,15 @@
 
 install:
   code: [installer/**, redist/**, cmake/CyxWizInstallerTargets.cmake, scripts/release/**]
-  synced_at:
+  synced_at: 202a19691
 
 main-window:
   code: [cyxwiz-engine/src/gui/main_window*, cyxwiz-engine/src/gui/panels/toolbar*, cyxwiz-engine/src/gui/panels/menu*, cyxwiz-engine/src/gui/console*]
-  synced_at:
+  synced_at: 202a19691
 
 graph-editor:
   code: [cyxwiz-engine/src/gui/node_editor*, cyxwiz-engine/src/gui/node_*, cyxwiz-engine/src/core/node_metadata*, cyxwiz-engine/src/gui/panels/node_*]
-  synced_at:
+  synced_at: 202a19691
 
 data-studio:
   code: [cyxwiz-engine/src/gui/data_*, cyxwiz-engine/src/gui/panels/data_studio*, cyxwiz-engine/src/core/data_*, cyxwiz-engine/src/data/**]
