@@ -502,85 +502,37 @@ public:
     InstallerOperationResult InstallOrUpdate(
         const std::string& pack_id,
         const InstallerOperationDetailObserver& observer) override {
-        InstallerOperationResult result;
-        if (!IsIdentifier(pack_id)) {
-            result.message = "The selected pack identity is invalid";
-            return result;
-        }
-        const auto helper = HelperPath(executable_directory_);
-        if (!std::filesystem::is_regular_file(helper)) {
-            result.message =
-                "The signed backend-pack helper is missing from this installation";
-            return result;
-        }
-        std::string error;
-        const int exit_code = RunHelper(
-            helper, runtime_root_, CurrentCatalogRoot(), elevate_,
-            package_source_, true,
+        return RunPackInstall(
+            pack_id, observer,
 #ifdef _WIN32
             L"--pack-id",
 #else
             "--pack-id",
 #endif
-            pack_id, observer,
-            [this](const std::string& token) { BeginHelper(token); },
-            [this](const std::string& token) { FinishHelper(token); }, error);
-        if (exit_code == 0) {
-            result.succeeded = true;
-            result.activated = true;
-            result.message =
-                pack_id + " was installed and made available; verify it in CyxWiz Engine Devices before use";
-        } else if (exit_code == 2) {
-            result.succeeded = true;
-            result.message = pack_id +
-                " was installed but local qualification did not authorize activation";
-        } else {
-            result.message = error.empty()
-                ? "Pack installation failed with helper exit code " +
-                      std::to_string(exit_code)
-                : std::move(error);
-        }
-        return result;
+            true,
+            {"The selected pack identity is invalid",
+             "The signed backend-pack helper is missing from this installation",
+             " was installed and made available; verify it in CyxWiz Engine Devices before use",
+             " was installed but local qualification did not authorize activation",
+             "Pack installation failed with helper exit code "});
     }
 
     InstallerOperationResult InstallPlugin(
         const std::string& pack_id,
         const InstallerOperationDetailObserver& observer) override {
-        InstallerOperationResult result;
-        if (!IsIdentifier(pack_id)) {
-            result.message = "The selected add-on identity is invalid";
-            return result;
-        }
-        const auto helper = HelperPath(executable_directory_);
-        if (!std::filesystem::is_regular_file(helper)) {
-            result.message =
-                "The signed pack helper is missing from this installation";
-            return result;
-        }
-        std::string error;
-        const int exit_code = RunHelper(
-            helper, runtime_root_, CurrentCatalogRoot(), elevate_,
-            package_source_, false,
+        return RunPackInstall(
+            pack_id, observer,
 #ifdef _WIN32
             L"--plugin-pack-id",
 #else
             "--plugin-pack-id",
 #endif
-            pack_id, observer,
-            [this](const std::string& token) { BeginHelper(token); },
-            [this](const std::string& token) { FinishHelper(token); }, error);
-        if (exit_code == 0) {
-            result.succeeded = true;
-            result.activated = true;
-            result.message = pack_id +
-                " was installed; CyxWiz Engine loads it at its next start";
-        } else {
-            result.message = error.empty()
-                ? "Add-on installation failed with helper exit code " +
-                      std::to_string(exit_code)
-                : std::move(error);
-        }
-        return result;
+            false,
+            {"The selected add-on identity is invalid",
+             "The signed pack helper is missing from this installation",
+             " was installed; CyxWiz Engine loads it at its next start",
+             nullptr,
+             "Add-on installation failed with helper exit code "});
     }
 
     InstallerOperationResult InstallBase(
@@ -804,6 +756,59 @@ public:
     }
 
 private:
+#ifdef _WIN32
+    using HelperOperation = const wchar_t*;
+#else
+    using HelperOperation = const char*;
+#endif
+
+    // The words of one pack-install step; the outcomes follow the pack id.
+    struct PackInstallWording {
+        const char* invalid_identity;
+        const char* missing_helper;
+        const char* installed;
+        const char* not_qualified;  // helper exit code 2; nullptr: no qualification
+        const char* failed;         // followed by the helper exit code
+    };
+
+    // Installs a compute pack or an add-on through the signed pack helper.
+    InstallerOperationResult RunPackInstall(
+        const std::string& pack_id,
+        const InstallerOperationDetailObserver& observer,
+        HelperOperation operation, bool defer_route_verification,
+        const PackInstallWording& wording) {
+        InstallerOperationResult result;
+        if (!IsIdentifier(pack_id)) {
+            result.message = wording.invalid_identity;
+            return result;
+        }
+        const auto helper = HelperPath(executable_directory_);
+        if (!std::filesystem::is_regular_file(helper)) {
+            result.message = wording.missing_helper;
+            return result;
+        }
+        std::string error;
+        const int exit_code = RunHelper(
+            helper, runtime_root_, CurrentCatalogRoot(), elevate_,
+            package_source_, defer_route_verification, operation,
+            pack_id, observer,
+            [this](const std::string& token) { BeginHelper(token); },
+            [this](const std::string& token) { FinishHelper(token); }, error);
+        if (exit_code == 0) {
+            result.succeeded = true;
+            result.activated = true;
+            result.message = pack_id + wording.installed;
+        } else if (exit_code == 2 && wording.not_qualified != nullptr) {
+            result.succeeded = true;
+            result.message = pack_id + wording.not_qualified;
+        } else {
+            result.message = error.empty()
+                ? wording.failed + std::to_string(exit_code)
+                : std::move(error);
+        }
+        return result;
+    }
+
     void BeginHelper(const std::string& token) {
         const std::scoped_lock lock(helper_mutex_);
         active_helper_token_ = token;
