@@ -147,6 +147,36 @@ if(CYXWIZ_BUILD_TESTS)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
 
+    # The add-on card model shared by the Installer and the Engine's Backend
+    # Manager, with the plugin-pack record path it reads.
+    add_executable(test_addon_pack_presentation
+        "${_cyxwiz_installer_engine_dir}/tests/test_addon_pack_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/addon_pack_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_catalog_adapter.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_decision_reconciliation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
+    )
+    target_include_directories(test_addon_pack_presentation PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+        "${_cyxwiz_installer_backend_dir}/include"
+        "${CMAKE_BINARY_DIR}/cyxwiz-backend/include"
+        "${_cyxwiz_installer_generated_include}"
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
+    )
+    target_link_libraries(test_addon_pack_presentation PRIVATE
+        cyxwiz-backend-pack-service
+        nlohmann_json::nlohmann_json
+        ${CMAKE_DL_LIBS}
+    )
+    set_target_properties(test_addon_pack_presentation PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME addon_pack_presentation_contract
+        COMMAND test_addon_pack_presentation
+    )
+
     add_executable(test_installer_verification_summary
         "${_cyxwiz_installer_engine_dir}/tests/test_installer_verification_summary.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_decision_reconciliation.cpp"
@@ -829,6 +859,7 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_catalog_adapter.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_decision_reconciliation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/core/addon_pack_presentation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/installer_pack_presentation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/installer_verification_summary.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/compute_device_presentation.cpp"
