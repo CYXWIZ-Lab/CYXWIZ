@@ -432,7 +432,7 @@ void CheckTd3Reference() {
         Check(at && *at > 900.0 && *at <= 1000.0, "TD3: the pendulum's seeds' mean near 130,000 steps is above 900");
     }
     const auto cheetah_file = cyxwiz::rl::FindTd3Reference(recorded, "HalfCheetah-v5", 1, cheetah);
-    Check(cheetah_file && cheetah_file->seeds.size() == 3, "TD3: HalfCheetah's recorded reference, 3 seeds");
+    Check(cheetah_file && cheetah_file->seeds.size() == 6, "TD3: HalfCheetah's recorded reference, 6 seeds");
     if (cheetah_file) {
         const auto at = cheetah_file->At(1000000.0);
         Check(at && *at > 5000.0, "TD3: HalfCheetah's seeds' mean at 1,000,000 steps is above 5,000");
@@ -584,7 +584,8 @@ void CheckExamples() {
                           t.learning_starts == 10000 && std::isnan(t.target_return),
                       name + ": RL Zoo's HalfCheetah settings, all 1,000,000 steps");
             const auto ref = cyxwiz::rl::FindTd3Reference(td3_reference, rl.environment.id, rl.copies, t);
-            Check(ref && ref->seeds.size() == 3, name + " has the recorded SB3 reference on the dashboard");
+            const size_t seeds = rl.environment.id == "HalfCheetah-v5" ? 6 : 3;  // HalfCheetah's six SB3 seeds
+            Check(ref && ref->seeds.size() == seeds, name + " has the recorded SB3 reference on the dashboard");
             continue;
         }
         if (rl.algorithm != cyxwiz::RLAlgorithm::SAC) continue;

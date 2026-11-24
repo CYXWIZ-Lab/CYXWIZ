@@ -1,7 +1,7 @@
 {
   "id": "td3_half_cheetah",
   "name": "TD3 on HalfCheetah-v5",
-  "description": "Twin Delayed DDPG on the MuJoCo Simulation plugin's HalfCheetah-v5 (load the plugin first), with RL Zoo's settings: 1 copy, actor and Q networks of layers of 400 and 300 with ReLU, Gaussian action noise of 0.1, a replay buffer of 1,000,000 steps, learning from step 10,000, 1,000,000 steps (no target stop). About 2 hours 20 minutes on an NVIDIA GPU with the CUDA GPU pack (a GTX 1050 Ti); the final mean return is around 8,900-9,800 (Stable-Baselines3 with the same settings: 10,275-10,355). Open it, then Train (F5).",
+  "description": "Twin Delayed DDPG on the MuJoCo Simulation plugin's HalfCheetah-v5 (load the plugin first), with RL Zoo's settings: 1 copy, actor and Q networks of layers of 400 and 300 with ReLU, Gaussian action noise of 0.1, a replay buffer of 1,000,000 steps, learning from step 10,000, 1,000,000 steps (no target stop). About 2 hours 20 minutes on an NVIDIA GPU with the CUDA GPU pack (a GTX 1050 Ti); the final mean return is around 8,900-9,800 (Stable-Baselines3 with the same settings: 7,700-10,400 over six seeds). Open it, then Train (F5).",
   "category": "Reinforcement Learning",
   "tags": [
     "td3",

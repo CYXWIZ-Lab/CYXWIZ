@@ -426,11 +426,11 @@ TD3, 2026-11-23, seeds 1-3 on CUDA (`cyxwiz-rl-stability-gate --td3`, layers of 
 | Environment | Engine | SB3 2.7.1 on the same environment |
 |---|---|---|
 | InvertedPendulum-v5, mean return 950 (defaults with Gaussian noise 0.1, 1 copy) | 121,000 / 105,000 / 101,000 steps (13-18 minutes each) | 114,373 / 123,105 / 109,016 |
-| HalfCheetah-v5, final mean return after 1,000,000 steps (RL Zoo's settings) | 9,789 / 9,772 / 8,906 (about 2 hours 20 minutes each) | 10,275 / 10,355 / 10,325 |
+| HalfCheetah-v5, final mean return after 1,000,000 steps (RL Zoo's settings) | 9,789 / 9,772 / 8,906 (about 2 hours 20 minutes each) | 6 seeds: 10,275 / 10,355 / 10,325 / 9,999 / 7,734 / 8,973 |
 
-On HalfCheetah TD3 ends about 8 % below SB3's three seeds, which lie
-unusually close together; the gap is under investigation (the ticket's
-TD3 gate).
+On HalfCheetah the Engine's mean (9,489) is 98.7 % of SB3's six seeds'
+(9,610). SB3's first three seeds happen to lie close together; seeds 4-6
+show its usual spread.
 
 DQN, 2026-11-24, CartPole-v1 at RL Zoo's settings (50,000 steps, Q layers of
 256 and 256), 8 seeds each (`cyxwiz-rl-stability-gate --dqn`): the mean

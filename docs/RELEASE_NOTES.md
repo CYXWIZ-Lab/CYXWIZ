@@ -641,7 +641,8 @@ private Data Studio tickets (`tofix*/track*`).
   kernels now take layers of up to 512 units, so TD3's 400-300 networks
   run fused as well. Checked against SB3 on three seeds: InvertedPendulum
   reaches 950 at 101,000-121,000 steps (SB3 109,000-123,100) and
-  HalfCheetah ends 1,000,000 steps at 8,900-9,800 (SB3 10,275-10,355).
+  HalfCheetah ends 1,000,000 steps at 8,900-9,800 (SB3 over six seeds
+  7,700-10,400; the Engine's mean 98.7 % of SB3's).
   Examples: `examples/cyxgraph/rl/td3_inverted_pendulum.cyxgraph` and
   `td3_half_cheetah.cyxgraph`. See `docs/usage/rl_training.md`.
 - **DQN (Deep Q-Network) trains policies from the canvas.** A fourth RL

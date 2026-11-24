@@ -121,7 +121,8 @@ of 0.1):
   steps).
 - `td3_half_cheetah.cyxgraph`: RL Zoo's settings (10,000 random steps
   first), all 1,000,000 steps. Measured: about 2 hours 20 minutes on that
-  GPU, ending at a mean return of 8,900-9,800 (Stable-Baselines3: 10,275-10,355).
+  GPU, ending at a mean return of 8,900-9,800 (Stable-Baselines3 over six
+  seeds: 7,700-10,400).
 
 The dashboard shows TD3's cards: critic and actor loss, the **Exploration**
 noise and the **Replay buffer**; the progress line counts the policy
