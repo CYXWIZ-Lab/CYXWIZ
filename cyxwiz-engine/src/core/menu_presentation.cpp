@@ -990,7 +990,6 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
             // Who you are is drawn above these (the chip's initials, name, email, plan).
             model.account_chip = AccountChipFor(in.user_name, in.user_username, in.user_email, in.user_role);
             i.push_back(Action(f, "account.settings", "Account Settings...", "Opens your account settings."));
-            i.push_back(Action(f, "account.wallet", "Wallet", "Opens the Wallet panel."));
             i.push_back(Action(f, "account.servers", "Servers...",
                                "Opens Preferences > Servers: the central server and your nodes."));
             i.push_back(Sep());

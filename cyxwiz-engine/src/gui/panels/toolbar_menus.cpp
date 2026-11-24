@@ -98,7 +98,7 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
         {"help.open_logs", ICON_FA_FILE_LINES}, {"view.fullscreen", ICON_FA_EXPAND},
         {"file.show_project_folder", ICON_FA_FOLDER_OPEN}, {"file.copy_project_path", ICON_FA_COPY},
         {"account.servers", ICON_FA_SERVER},
-        {"account.settings", ICON_FA_USER}, {"account.wallet", ICON_FA_WALLET},
+        {"account.settings", ICON_FA_USER},
         {"account.sign_out", ICON_FA_RIGHT_FROM_BRACKET}, {"account.sign_in", ICON_FA_RIGHT_TO_BRACKET}};
     auto it = icons.find(id);
     return it == icons.end() ? "" : it->second;
@@ -852,7 +852,6 @@ void ToolbarPanel::BuildActionHandlers() {
     // Account
     h["account.settings"] = [this](const std::string&) { show_account_settings_dialog_ = true; };
     h["account.sign_in"] = [this](const std::string&) { show_account_settings_dialog_ = true; };
-    h["account.wallet"] = [](const std::string&) { ShowSidebarPanel("Wallet", false); };
     h["account.servers"] = [this](const std::string&) { OpenPreferences("Servers"); };
     h["account.sign_out"] = [this](const std::string&) {
         auth::AuthClient::Instance().Logout();

@@ -379,7 +379,7 @@ unchanged".
 
 **Full size** (the expand button beside Saved runs) gives the debugger the
 whole width. It hides the side panels (Asset Browser, Nodes, Patterns,
-Properties, Info, Wallet) while the debugger is shown. Press it again,
+Properties, Info) while the debugger is shown. Press it again,
 switch to another tab or close the debugger, and the panels it hid come
 back.
 

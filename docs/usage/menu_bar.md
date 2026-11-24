@@ -35,8 +35,8 @@ to Marketplace, Data > Augment).
   - signed in, your initials in a circle, your name (the first name when the
     whole name is long) and your plan (*Pro*, *Admin*). Hover for your email.
     The menu starts with your name, email and plan, then **Account
-    Settings...**, **Wallet**, **Servers...** (Preferences > Servers: the
-    central server and your nodes) and **Sign out**.
+    Settings...**, **Servers...** (Preferences > Servers: the central server
+    and your nodes) and **Sign out**.
 
 ## New in the menus
 

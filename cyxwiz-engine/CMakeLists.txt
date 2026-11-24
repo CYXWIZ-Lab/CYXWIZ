@@ -820,7 +820,6 @@ set(ENGINE_SOURCES
     src/gui/panels/p2p_training_panel.cpp
     src/gui/panels/p2p_training_panel_recovery.cpp
     src/gui/panels/job_status_panel.cpp
-    src/gui/panels/wallet_panel.cpp
     src/gui/panels/plugin_manager_panel.cpp
     src/gui/theme.cpp
     src/gui/theme_nodes.cpp
@@ -1090,7 +1089,6 @@ set(ENGINE_HEADERS
     src/gui/panels/cloud_dataset_manager.h
     src/gui/panels/p2p_training_panel.h
     src/gui/panels/job_status_panel.h
-    src/gui/panels/wallet_panel.h
     src/gui/theme.h
     src/gui/dock_style.h
     # Data Studio (Phase 1 Week 1)

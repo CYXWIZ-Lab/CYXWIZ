@@ -180,7 +180,7 @@ int main() {
         "help.tutorial", "help.browse_tutorials", "help.documentation", "help.shortcuts", "help.api_reference",
         "help.report_issue", "help.check_updates", "help.about", "account.sign_out",
         // not in any menu today
-        "view.command_palette", "script.stop", "account.wallet"};
+        "view.command_palette", "script.stop"};
     for (const auto& id : inventory) Check(Find(model, id) != nullptr, "inventory action present: " + id);
 
     // Rule: the Planned set is exactly this (kept visible, never enabled).

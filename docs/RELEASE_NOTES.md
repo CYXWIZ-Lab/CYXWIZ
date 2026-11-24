@@ -860,6 +860,12 @@ private Data Studio tickets (`tofix*/track*`).
   graphics (UHD 630). When a machine has several OpenCL GPUs, the run's
   selected device decides which one serves it.
 
+### Removed
+
+- **The Wallet panel.** It is gone from View > Panels, the account menu and
+  the default layout. It showed made-up balances; paying for compute is not
+  done with crypto.
+
 ### Fixed
 
 - **Save selection as pattern names the pattern it would replace.** Two names
