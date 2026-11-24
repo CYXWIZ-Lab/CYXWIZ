@@ -810,6 +810,44 @@ class PackageReleaseTests(unittest.TestCase):
                                    "--stage-only"),
                 self.script)
 
+    @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
+    def test_plugin_pack_support_promotion_changes_only_its_status(self) -> None:
+        plugin = self.create_plugin()
+        args = self.artifact_args(
+            "plugin", "--plugin-dir", str(plugin),
+            "--base-pack-id", "cyxwiz-base-1.2.3-1-windows-x86_64",
+            "--third-party-license", "MuJoCo=bin/MUJOCO_LICENSE.txt",
+            "--generated-utc", "2026-11-06T12:00:00Z",
+            "--signing-key-id", "diagnostic-2026", "--signature", "A" * 86,
+        )
+        _, archive = package_release.build_package(args, self.script)
+        assert archive is not None
+        source = archive.with_suffix(".zip.manifest.json")
+        source_document = json.loads(source.read_text(encoding="utf-8"))
+        output = self.root / "supported" / source.name
+
+        manifest, signature_input = prepare_pack_support_promotion.prepare(source, output)
+
+        promoted = json.loads(manifest.read_text(encoding="utf-8"))
+        # Schema 2 keeps the status at the top level; nothing else changes
+        expected = json.loads(json.dumps(source_document["signed"]))
+        expected["support_status"] = "supported"
+        self.assertEqual(expected, promoted["signed"])
+        self.assertEqual(2, promoted["schema_version"])
+        self.assertNotIn("compatibility", promoted["signed"])
+        self.assertEqual([], promoted["signatures"])
+        self.assertEqual(
+            package_release.canonical_json_bytes(promoted["signed"]),
+            signature_input.read_bytes(),
+        )
+        self.assertEqual("diagnostic", source_document["signed"]["support_status"])
+
+        # Once signed, a supported plugin manifest is not a promotion candidate
+        promoted["signatures"] = [{"key_id": "release-2026", "algorithm": "ed25519", "value": "A" * 86}]
+        manifest.write_text(json.dumps(promoted, indent=2) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(prepare_pack_support_promotion.PromotionError, "Only a diagnostic"):
+            prepare_pack_support_promotion.prepare_document(manifest)
+
     def cuda_pack_args(self):
         notices = self.root / "nvidia-notices"
         notices.mkdir()
