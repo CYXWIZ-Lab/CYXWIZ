@@ -5,6 +5,7 @@
 #include "hashing_output_stream.h"
 #include <cyxwiz/device.h>
 #include <cyxwiz/model_evaluation.h>
+#include <cyxwiz/portable_regex.h>
 #include <cyxwiz/utilities.h>
 #include "project_data_path.h"
 #include "sql_transform.h"
@@ -1823,7 +1824,7 @@ bool BuildRegexOptions(const std::string& flags,
             continue;
         }
         if (flag == 'm' || flag == 'M') {
-            options |= std::regex::multiline;  // ^ and $ at every line (C++17)
+            options |= cyxwiz::portable::RegexMultiline();  // ^ and $ at every line
             continue;
         }
         error = "RegexTester: unsupported regex flag '" + std::string(1, flag) + "'";
