@@ -108,6 +108,44 @@ The dashboard shows SAC's own cards: critic and actor loss, the entropy
 weight and the **Replay buffer** filling up; **Play policy** and the rest of
 this guide work the same.
 
+### The same tasks with TD3
+
+TD3 learns from a replay buffer as SAC does, with a deterministic policy that
+explores with added noise. Two examples use it (both one copy, actor and Q
+networks of layers of 400 and 300 with ReLU, the TD3 node's Gaussian noise
+of 0.1):
+
+- `td3_inverted_pendulum.cyxgraph`: the TD3 node's defaults, stops when the
+  last 100 episodes average 950. Measured on a GTX 1050 Ti: 950 at
+  101,000-121,000 steps, 13-18 minutes (Stable-Baselines3: 109,000-123,100
+  steps).
+- `td3_half_cheetah.cyxgraph`: RL Zoo's settings (10,000 random steps
+  first), all 1,000,000 steps. Measured: about 2 hours 20 minutes on that
+  GPU, ending at a mean return of 8,900-9,800 (Stable-Baselines3: 10,275-10,355).
+
+The dashboard shows TD3's cards: critic and actor loss, the **Exploration**
+noise and the **Replay buffer**; the progress line counts the policy
+updates, one every second step.
+
+### CartPole with DQN
+
+DQN learns a choice of actions from a replay buffer, with one Q network and
+no Policy Head: the policy picks the choice with the highest Q value. One
+example uses it:
+
+- `dqn_cartpole.cyxgraph`: the built-in CartPole-v1 with RL Zoo's settings
+  (1 copy, Q layers of 256 and 256 with ReLU, 50,000 steps, the first 1,000
+  random). Measured on a GTX 1050 Ti: about 1-2 minutes a run, the mean
+  return of the last 100 episodes ending around 130-250 depending on the
+  seed (Stable-Baselines3 with the same settings: about 40-300; averaged
+  over 8 seeds the two match). The runs do not reach 475 in 50,000 steps:
+  training still explores 4 % of the time.
+
+The dashboard shows DQN's cards: the **Loss** (Huber), **Exploration** (the
+share of random choices now, falling from 100 % to 4 % over the first 8,000
+steps), **Mean Q** of the chosen actions and the **Replay buffer**. **Play
+policy** plays the highest-Q choice in the Policy Playback panel.
+
 ## 4. Training for rough ground, pushes and obstacles (MuJoCo)
 
 A policy trained on Gymnasium's flat floor has never met a bump, a step or a

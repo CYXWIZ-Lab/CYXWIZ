@@ -367,6 +367,43 @@ private Data Studio tickets (`tofix*/track*`).
   `examples/cyxgraph/rl/sac_inverted_pendulum.cyxgraph` and
   `sac_half_cheetah.cyxgraph`. **Preferences > Simulation > Replay buffer
   size** sets a new SAC node's buffer. See `docs/usage/rl_training.md`.
+- **TD3 (Twin Delayed DDPG) trains policies from the canvas.** A third RL
+  learner, for continuous actions: the **TD3 (MLP 400-300)** pattern has
+  the same shape as SAC's with the new **TD3** node, which trains with
+  Stable-Baselines3's TD3 (two Q networks, a delayed policy update, target
+  smoothing) and explores with Gaussian noise of 0.1 or none; **Tuned for
+  HalfCheetah-v5** loads RL Zoo's settings. The dashboard shows critic and
+  actor loss, the exploration noise and the replay buffer, with SB3's
+  recorded curve under the reward; the policy plays, saves and loads as
+  SAC's does, and Code Gen writes an SB3 TD3 script. The GPU's fused
+  kernels now take layers of up to 512 units, so TD3's 400-300 networks
+  run fused as well. Checked against SB3 on three seeds: InvertedPendulum
+  reaches 950 at 101,000-121,000 steps (SB3 109,000-123,100) and
+  HalfCheetah ends 1,000,000 steps at 8,900-9,800 (SB3 10,275-10,355).
+  Examples: `examples/cyxgraph/rl/td3_inverted_pendulum.cyxgraph` and
+  `td3_half_cheetah.cyxgraph`. See `docs/usage/rl_training.md`.
+- **DQN (Deep Q-Network) trains policies from the canvas.** A fourth RL
+  learner, for a choice of actions: the **DQN (MLP 64-64)** pattern is an
+  Environment, Q layers ending in a **Q Head** (one value per choice under
+  DQN) and the new **DQN** node, which trains with Stable-Baselines3's DQN
+  (a target network, Huber loss, the gradients' norm clipped,
+  epsilon-greedy exploration falling over the first part of the run);
+  **Tuned for CartPole-v1** loads RL Zoo's settings. The dashboard shows the
+  loss, the exploration rate, the chosen actions' mean Q and the replay
+  buffer, with SB3's recorded curve under the reward when the settings and
+  layers match; the policy plays the highest-Q choice, saves and loads, and
+  Code Gen writes an SB3 DQN script. Checked against SB3: four gradient
+  steps and two target updates match to 6e-8, and over 8 seeds on CartPole
+  the Engine's mean return over the second half of the run is SB3's (CUDA
+  154.4, CPU 165.5, SB3 154.6). Example:
+  `examples/cyxgraph/rl/dqn_cartpole.cyxgraph`. See `docs/usage/rl_training.md`.
+- **The SB3 reference curve needs the same layers too.** The dashboard drew
+  a recorded Stable-Baselines3 curve under any run with the same settings;
+  it now also needs the networks' layer widths to be the recorded ones (RL
+  Zoo's 256-256 for CartPole's DQN, for example).
+- **Fixed: a two-choice setting turned into a dropdown once changed.** The
+  reset button beside a changed value took the room the toggle needed; the
+  toggle now stays a toggle, flowing onto two lines in a narrow panel.
 - **Squeeze-Excitation node.** Scales each channel of a feature map by a
   learned gate (mean over the map, Dense - ReLU - Dense - Sigmoid), as
   torchvision's SqueezeExcitation. Settings: the hidden width (channels /
