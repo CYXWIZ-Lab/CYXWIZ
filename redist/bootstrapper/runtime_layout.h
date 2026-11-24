@@ -76,7 +76,8 @@ bool ResolveRuntimeState(
     ActiveRuntime& output,
     std::string& error);
 
-// A missing file is an empty state (no plugin pack was ever activated).
+// A missing file is an empty state (no plugin pack was ever activated). On
+// failure `output` is empty too: a damaged file never reads as partly installed.
 bool LoadActivePluginsState(
     const std::filesystem::path& path,
     ActivePluginsState& output,

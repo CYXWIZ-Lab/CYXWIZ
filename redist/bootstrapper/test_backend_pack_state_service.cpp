@@ -353,8 +353,17 @@ int main() {
         std::ofstream(plugins_path, std::ios::binary | std::ios::trunc)
             << R"({"schema_version":1,"base_pack_id":"base-v1","plugins":[)"
             << R"({"plugin_id":"a","pack_id":"a1"},{"plugin_id":"a","pack_id":"a2"}]})";
-        failures += !Expect(!rt::LoadActivePluginsState(plugins_path, plugins, error),
-                            "duplicate active plugins must fail closed");
+        failures += !Expect(!rt::LoadActivePluginsState(plugins_path, plugins, error) &&
+                                plugins.plugins.empty() && plugins.base_pack_id.empty(),
+                            "duplicate active plugins must fail closed and read as none");
+        // A valid first entry is not kept when a later one is invalid.
+        std::ofstream(plugins_path, std::ios::binary | std::ios::trunc)
+            << R"({"schema_version":1,"base_pack_id":"base-v1","plugins":[)"
+            << R"({"plugin_id":"a","pack_id":"a1"},{"plugin_id":"../b","pack_id":"b1"}]})";
+        plugins = {"base-v1", {{"stale", "stale-v1"}}};
+        failures += !Expect(!rt::LoadActivePluginsState(plugins_path, plugins, error) &&
+                                plugins.plugins.empty() && plugins.base_pack_id.empty(),
+                            "a partly valid active-plugins.json must read as none installed");
         std::ofstream(plugins_path, std::ios::binary | std::ios::trunc)
             << R"({"schema_version":1,"base_pack_id":"base-v1","plugins":[],"generation":2})";
         failures += !Expect(!rt::LoadActivePluginsState(plugins_path, plugins, error),

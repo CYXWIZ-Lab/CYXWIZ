@@ -304,7 +304,10 @@ bool ParsePluginsState(
         error = "active-plugins.json schema_version must be 1";
         return false;
     }
-    if (!ReadIdentifier(state, "base_pack_id", output.base_pack_id, error)) return false;
+    // Read into a copy: a file that fails part-way leaves `output` empty,
+    // never partly filled.
+    ActivePluginsState parsed;
+    if (!ReadIdentifier(state, "base_pack_id", parsed.base_pack_id, error)) return false;
     if (!state["plugins"].is_array()) {
         error = "plugins must be an array";
         return false;
@@ -326,12 +329,13 @@ bool ParsePluginsState(
             error = "duplicate active plugin: " + plugin.plugin_id;
             return false;
         }
-        output.plugins.push_back(std::move(plugin));
+        parsed.plugins.push_back(std::move(plugin));
     }
-    std::sort(output.plugins.begin(), output.plugins.end(),
+    std::sort(parsed.plugins.begin(), parsed.plugins.end(),
               [](const ActivePluginPackState& left, const ActivePluginPackState& right) {
                   return left.plugin_id < right.plugin_id;
               });
+    output = std::move(parsed);
     return true;
 }
 
