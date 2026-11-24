@@ -41,18 +41,18 @@ int main() {
     Check(v.rows[2].address == "https://cloud.cyxwiz.ai/api", "sign-in over https");
 
     // No front door: three ports
-    v = DescribeServerAddress("192.168.1.216", ServiceSet::EngineServices);
+    v = DescribeServerAddress("192.168.10.20", ServiceSet::EngineServices);
     Check(v.usable && v.kind_line.find("No front door") != std::string::npos, "three services kind");
-    Check(v.rows[0].address == "192.168.1.216:50051" && v.rows[1].address == "192.168.1.216:50060",
+    Check(v.rows[0].address == "192.168.10.20:50051" && v.rows[1].address == "192.168.10.20:50060",
           "central and gateway ports");
-    Check(v.rows[2].address == "http://192.168.1.216:3002/api", "API port");
+    Check(v.rows[2].address == "http://192.168.10.20:3002/api", "API port");
 
     // Problems
     v = DescribeServerAddress("  ", ServiceSet::EngineServices);
     Check(!v.usable && v.blank && v.problem.empty() && v.rows.empty(), "empty: the separate addresses apply");
     v = DescribeSeparateAddresses("localhost:50051", "", "http://127.0.0.1:3002/api");
     Check(v.blank && v.rows.size() == 2 && v.rows[0].address == "localhost:50051", "separate addresses, no gateway");
-    v = DescribeServerAddress("192.168.1.216:8000", ServiceSet::EngineServices);
+    v = DescribeServerAddress("192.168.10.20:8000", ServiceSet::EngineServices);
     Check(!v.usable && v.problem.find("can't be used") != std::string::npos, "bare host:port refused");
 
     // The door's /health reply as it is on this PC, and with the gateway down

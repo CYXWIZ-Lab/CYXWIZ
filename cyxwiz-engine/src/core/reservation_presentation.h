@@ -114,7 +114,7 @@ std::vector<ExtendOption> BuildExtendOptions(double price_usd_per_hour);
 // until it runs out (owner rule 2026-10-07); they come back from the
 // reconnect prompt.
 struct LeaveSummary {
-    std::string title;               // "Leave dell-pc? The clock keeps running"
+    std::string title;               // "Leave gpu-box? The clock keeps running"
     std::string ends;                // "Your reservation ends at 15:39 (51 min left) whether ..."
     std::string body;                // what happens to training; how to come back
     std::string button;              // "Leave, keep the clock running"
@@ -137,7 +137,7 @@ struct ReservationEndFacts {
 };
 
 struct ReservationReceipt {
-    std::string title;               // "The reservation on dell-pc ended at 15:05"
+    std::string title;               // "The reservation on gpu-box ended at 15:05"
     std::string why;                 // "time ran out", "the central server no longer knows it"
     bool failed = false;             // Lost: the note is a warning
     std::string time_used;

@@ -19,7 +19,7 @@ void Check(bool condition, const std::string& message) {
     }
 }
 
-const char* kDir = "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog/";
+const char* kDir = "D:/data/Cats_Dogs/cat_dog/";
 
 Row Image(const std::string& file, int label, int w, int h, int64_t bytes) {
     return {kDir + file, file, label, w, h, 3, bytes, true};
