@@ -471,17 +471,20 @@ void RenderComponents(InstallerViewState &state,
     }
     if (record.installed && record.backend != "cpu" &&
         !record.update_available) {
-      ImGui::BeginDisabled(operation_running);
-      if (ImGui::Button(ICON_FA_TRASH " Uninstall component",
-                        ImVec2(190.0f, 30.0f))) {
+      if (cyxwiz::ui::DangerButton(ICON_FA_TRASH " Uninstall component",
+                                   !operation_running,
+                                   "Wait for the current change to finish",
+                                   cyxwiz::ui::ButtonSize::Regular)) {
         state.pending_pack_removal_id = record.installed_pack_id;
         state.pack_removal_confirmation_requested = true;
       }
-      ImGui::EndDisabled();
     } else if (record.update_available) {
+      // The CPU Engine is always in the plan: its update needs no selection
       ImGui::TextColored(
-          kWarning,
-          "Select this component to review and install its signed update.");
+          kWarning, "%s",
+          record.backend == "cpu"
+              ? "This update is included; Review & update installs it."
+              : "Select this component to review and install its signed update.");
     }
     ImGui::Unindent(29.0f);
     ImGui::EndChild();
