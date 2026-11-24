@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -235,6 +236,11 @@ void TestDispatch() {
 // The layer itself: a failing provider under Compatibility gives the same
 // output as the ArrayFire path; under Strict its Forward throws.
 void TestLayer() {
+    // The stub provider serves the CPU only: on another device the layer never asks it.
+    if (cyxwiz::CaptureCurrentNeuralDeviceTarget().platform != cyxwiz::DeviceType::CPU) {
+        std::cout << "SKIP: the layer checks need the CPU device, the platform the stub provider serves\n";
+        return;
+    }
     cyxwiz::LSTMLayer reference(static_cast<int>(kInput), static_cast<int>(kHidden));
     cyxwiz::LSTMLayer layer(static_cast<int>(kInput), static_cast<int>(kHidden));
     layer.SetParameters(reference.GetParameters());
@@ -316,6 +322,11 @@ void TestTrace() {
 
 int main() {
     if (!cyxwiz::test::BeginOracleTest("test_provider_route")) return 1;
+    // With no device asked for, run where the stub provider serves (the
+    // default device here may be a GPU).
+    std::optional<cyxwiz::test::RequestedTestDevice> requested;
+    if (!cyxwiz::test::ReadRequestedTestDevice(requested)) return 1;
+    if (!requested && !cyxwiz::test::ActivateTestDevice({cyxwiz::DeviceType::CPU, 0, "cpu"})) return 1;
     TestRequestsMatchTheLayer();
     TestPlacement();
     TestDispatch();
