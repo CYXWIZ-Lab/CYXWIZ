@@ -7,7 +7,7 @@ audience: user
 status: stable
 since: 1.0.7
 owner: docs
-last_reviewed: 2026-11-24
+last_reviewed: 2026-11-25
 related:
   - install/index.md
   - main-window/index.md
@@ -61,9 +61,41 @@ press **Train**. Then read the graph editor guide to build your own.
 | | |
 | --- | --- |
 | [Keyboard shortcuts](reference/shortcuts.md) | Every shortcut, by where it works |
+| [Error messages](reference/error-messages.md) | Every CW code: what it means and what to do |
+| [Glossary](glossary.md) | The terms these docs use |
 | [User guide (older pages)](usage/README.md) | Data Studio, training, evaluation, scripting, plugins and more, while they move into this structure |
 | [Extending CyxWiz](extending/README.md) | Your own nodes in Python or C++ |
 | [Release notes](RELEASE_NOTES.md) | What changed |
+
+## How it works
+
+| | |
+| --- | --- |
+| [How CyxWiz works](concepts/index.md) | The ecosystem, how graphs run, the data pipeline, compute back ends, accuracy, model files |
+| [The ecosystem](concepts/ecosystem.md) | The Engine, the server node, CyxCloud and the central server, and how they connect |
+
+## Get help
+
+| | |
+| --- | --- |
+| [Troubleshooting](troubleshooting/index.md) | By symptom: the message you see, the cause, the fix |
+| [Known issues](known-issues.md) | Problems we know about, the devices they affect, what to do |
+| [FAQ](faq.md) | Short answers to common questions |
+| [Support and versioning](about/support-and-versioning.md) | Where to ask, what to include, which releases get fixes |
+
+## Security, licence and privacy
+
+| | |
+| --- | --- |
+| [Security](security/index.md) | What opened files, plugins, Python and remote jobs can do; reporting a vulnerability |
+| [Licensing FAQ](legal/licensing-faq.md) | The AGPL, the commercial licence and the plugin SDK |
+| [Privacy](about/privacy.md) | What the Engine sends, and when |
+
+## Contribute
+
+| | |
+| --- | --- |
+| [Engine internals](internals/index.md) | Architecture, code layout, build, tests, adding a node or a panel |
 
 ## About these docs
 
