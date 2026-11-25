@@ -36,7 +36,12 @@ public:
     static std::unique_ptr<FusedMlp> For(SequentialModel& model, std::string& why);
 
     // Y [rows, outputs] for X [rows, inputs]. `keep` keeps what Backward
-    // needs. Throws std::runtime_error when the provider fails.
+    // needs. Each call goes through DispatchNeuralProviderOp (the run's
+    // dispatch observer sees it, layer "fused MLP"). Throws
+    // std::runtime_error when the call did not run (the provider failed or
+    // declined it): the caller then runs the model's layers. Under the Fail
+    // provider policy (a Strict run) a failure throws NeuralProviderRouteError
+    // instead, which the caller lets through.
     Tensor Forward(const Tensor& x, bool keep);
     // The parameters' gradients for dY [rows, outputs] after a kept
     // Forward, each summed over the rows. Throws as Forward does.
@@ -58,7 +63,10 @@ public:
     static std::pair<Tensor, Tensor> InputGradientPair(FusedMlp& first, const Tensor& dy_first, FusedMlp& second,
                                                        const Tensor& dy_second);
 
-    // The provider that runs it ("cyxwiz.nvidia-cublas-cell")
+    // The provider For found to run it ("cyxwiz.nvidia-cublas-cell"). Each
+    // call asks the dispatch again; with two providers on one platform a
+    // forward and its backward could run on different ones (the kept forward
+    // follows the request contract, so either can read it).
     std::string ProviderId() const;
 
 private:

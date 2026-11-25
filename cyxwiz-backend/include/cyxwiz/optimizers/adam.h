@@ -47,6 +47,9 @@ public:
     // False with the reason, and nothing changed, when it does not apply: no
     // provider runs it on this device, an AdamW or other subclass, different
     // hyperparameters, parameters at different steps, more than 32 tensors.
+    // The step goes through DispatchNeuralProviderOp (layer "Adam"): a
+    // provider failure is false with the reason, or under the Fail provider
+    // policy (a Strict run) NeuralProviderRouteError.
     static bool StepTogether(const std::vector<Group>& groups, float max_grad_norm, std::string& why);
 
 protected:

@@ -224,6 +224,15 @@ there too: on the CPU, in the computer's memory):
   the CPU and says so (the dashboard's "Runs on" line turns to the caution
   colour and names the device that failed; the note under it gives the reason).
 
+The policy also decides what happens when a GPU provider's kernel fails
+during the run (the fused networks, the joint Adam step, PPO's sampling, loss
+and advantage kernels): under Strict the run stops and names the provider,
+the operation and the part that failed; under Compatibility that part goes on
+with ArrayFire operations on the same device and the run's trace records the
+failure (for the networks, **Run details** also says how they now compute).
+Every provider call is counted in the run's trace (Studio Debugger, Runtime:
+provider groups), as in [Strict and the providers](gpu_providers.md#strict-and-the-providers).
+
 Where the run actually trains is shown on every surface:
 
 - the dashboard's line under the progress bar, for example

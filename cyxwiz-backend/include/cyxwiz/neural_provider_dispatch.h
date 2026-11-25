@@ -152,6 +152,11 @@ private:
     NeuralDispatchEvent event_;
 };
 
+// Whether `e` is a NeuralProviderRouteError. Decided inside the backend, so
+// code in another module (a trainer's fallback handler) gets the right answer
+// where type identity does not cross a shared-library boundary.
+CYXWIZ_API bool IsNeuralProviderRouteError(const std::exception& e);
+
 // Runs `execute` on the first provider that serves request.target and
 // supports the request. Returns true when it ran.
 //  - No provider serves the device: false; nothing is reported.

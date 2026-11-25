@@ -1,5 +1,6 @@
 #include "cyxwiz/optimizers/adam.h"
 #include "cyxwiz/neural_provider.h"
+#include "cyxwiz/neural_provider_dispatch.h"
 #include "cyxwiz/tensor.h"
 #include "../arrayfire_backend_utils.h"
 #include "optimizer_utils.h"
@@ -366,11 +367,6 @@ bool AdamOptimizer::StepTogether(const std::vector<Group>& groups, float max_gra
     r.adam_bias_correction1 = 1.0f - static_cast<float>(std::pow(r.adam_beta1, step + 1));
     r.adam_bias_correction2 = 1.0f - static_cast<float>(std::pow(r.adam_beta2, step + 1));
     r.adam_max_norm = max_grad_norm > 0.0f ? max_grad_norm : 0.0f;
-    const auto provider = NeuralProviderRegistry::Instance().FindSupporting(r);
-    if (!provider) {
-        why = std::string("no neural provider steps Adam on ") + NeuralDevicePlatformName(r.target.platform);
-        return false;
-    }
     // Moments start at zero, as Step starts them
     std::vector<Tensor> zeros_m(items.size()), zeros_v(items.size());
     std::vector<const Tensor*> inputs;
@@ -392,10 +388,20 @@ bool AdamOptimizer::StepTogether(const std::vector<Group>& groups, float max_gra
         inputs.insert(inputs.end(), {it.parameter, it.gradient, mt, vt});
         for (int k = 0; k < 3; ++k) shapes.push_back(it.parameter->Shape());
     }
+    // Through the provider dispatch (TOFIX233 B): the run's observer sees the
+    // step, and under the Fail policy (a Strict run) a failure throws
+    // NeuralProviderRouteError instead of stepping each optimizer
     std::vector<Tensor> outputs;
-    const NeuralOpStatus status = ExecuteNeuralOpOnDevice(*provider, r, inputs, shapes, outputs);
-    if (!status.ok) {
-        why = std::string(provider->ProviderId()) + " adam_step failed: " + status.detail;
+    NeuralOpStatus status;
+    std::string provider_id;
+    if (!DispatchNeuralProviderOp(r, "Adam", [&](INeuralNetworkProvider& provider) {
+            provider_id = provider.ProviderId();
+            status = ExecuteNeuralOpOnDevice(provider, r, inputs, shapes, outputs);
+            return status;
+        })) {
+        why = provider_id.empty()
+                  ? std::string("no neural provider steps Adam on ") + NeuralDevicePlatformName(r.target.platform)
+                  : provider_id + " adam_step failed: " + status.detail;
         return false;
     }
     for (size_t i = 0; i < items.size(); ++i) {

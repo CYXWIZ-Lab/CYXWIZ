@@ -53,6 +53,7 @@ Td3Learner::Td3Learner(Td3Networks networks, size_t observation_size, size_t act
 Td3Learner::~Td3Learner() = default;
 
 void Td3Learner::DropFused(const std::exception& e) {
+    RethrowProviderRouteError(e);
     spdlog::warn("TD3: the fused networks failed ({}); ArrayFire operations from now on", e.what());
     actor_fused_.reset();
     actor_target_fused_.reset();

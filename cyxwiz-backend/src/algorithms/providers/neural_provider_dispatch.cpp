@@ -165,6 +165,10 @@ NeuralProviderFailurePolicy CurrentNeuralProviderFailurePolicy() {
     return g_failure_policy;
 }
 
+bool IsNeuralProviderRouteError(const std::exception& e) {
+    return dynamic_cast<const NeuralProviderRouteError*>(&e) != nullptr;
+}
+
 bool DispatchNeuralProviderOp(const NeuralOpRequest& request, const char* layer,
                               const NeuralProviderExecute& execute) {
     auto& registry = NeuralProviderRegistry::Instance();

@@ -21,6 +21,8 @@
 #include "algorithms/arrayfire_backend_utils.h"
 #include "computation_truth/test_device_selection.h"
 
+#include <cyxwiz/neural_provider.h>
+#include <cyxwiz/neural_provider_dispatch.h>
 #include <cyxwiz/rl/dqn.h>
 #include <cyxwiz/sequential.h>
 
@@ -170,6 +172,80 @@ void CheckSb3Steps(const char* argv0) {
     std::printf("SB3 four steps: losses %.8f %.8f, Q off by %.2g, target by %.2g (%s)\n",
                 f.at("logged_loss")[0].get<double>(), f.at("logged_loss")[1].get<double>(), q, target,
                 learner.NetworkPath().c_str());
+}
+
+// ------------------------------------------- A provider failure, by policy
+// (TOFIX233 B) A CPU stub provider serves the fused MLP ops; its calls
+// fail (the CPU route has no device queue). Under FallBack the learner drops
+// its fused networks and steps on the layers; under Fail (a Strict run) the
+// route error is not swallowed by that fallback: Step stops with it.
+class FailingMlpProvider final : public INeuralNetworkProvider {
+public:
+    const char* ProviderId() const override { return "cyxwiz.test-dqn-stub"; }
+    DeviceType Platform() const override { return DeviceType::CPU; }
+    std::string Version() const override { return "cyxwiz.test-dqn-stub 0.0.1"; }
+    NeuralCapability QueryCapability(const NeuralOpRequest& request) const override {
+        NeuralCapability capability;
+        // Not Adam: its own route error would stop a Strict step whatever the
+        // fused networks' fallback did, and hide a swallowed one
+        capability.supported = request.op == NeuralOp::MlpForward || request.op == NeuralOp::MlpBackward;
+        return capability;
+    }
+    NeuralResourceEstimate EstimateResources(const NeuralOpRequest&) const override { return {}; }
+    NeuralOpStatus Execute(const NeuralOpRequest&, NeuralOpBuffers&) override { return {}; }
+};
+
+rl::ReplayBuffer::Batch SmallBatch() {
+    const std::vector<float> obs = {0.1f, -0.2f, 0.3f, 0.0f, 0.5f, -0.1f, 0.2f, 0.4f, -0.3f, 0.1f, 0.1f, 0.2f};
+    const std::vector<float> next = {0.2f, -0.1f, 0.1f, 0.3f, 0.4f, 0.0f, -0.2f, 0.1f, 0.2f, 0.0f, 0.3f, -0.1f};
+    const std::vector<float> actions = {0.0f, 2.0f, 1.0f, 1.0f};
+    const std::vector<float> rewards = {1.0f, 0.0f, 1.0f, 0.5f};
+    const std::vector<float> dones = {0.0f, 0.0f, 1.0f, 0.0f};
+    rl::ReplayBuffer::Batch batch;
+    batch.observations = Tensor({4, 3}, obs.data());
+    batch.next_observations = Tensor({4, 3}, next.data());
+    batch.actions = Tensor({4, 1}, actions.data());
+    batch.rewards = Tensor({4, 1}, rewards.data());
+    batch.dones = Tensor({4, 1}, dones.data());
+    return batch;
+}
+
+void CheckProviderPolicy() {
+    if (CaptureCurrentNeuralDeviceTarget().platform != DeviceType::CPU) {
+        std::printf("provider policy: the stub serves the CPU route only; not run on this device\n");
+        return;
+    }
+    auto& registry = NeuralProviderRegistry::Instance();
+    registry.UnregisterForTesting("cyxwiz.test-dqn-stub");
+    registry.Register(std::make_shared<FailingMlpProvider>());
+    rl::DqnConfig config;
+    {
+        rl::DqnLearner learner(Networks(3, 3, 8, 1), 3, config, 1);
+        Check(learner.NetworkPath().rfind("fused", 0) == 0, "the stub serves the networks: " + learner.NetworkPath());
+        bool threw = false;
+        try {
+            learner.Step(SmallBatch());
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        Check(!threw, "FallBack: a failed fused step runs on the layers");
+        Check(learner.NetworkPath().find("the fused kernels failed") != std::string::npos,
+              "FallBack: the learner says the fused kernels failed: " + learner.NetworkPath());
+    }
+    {
+        rl::DqnLearner learner(Networks(3, 3, 8, 1), 3, config, 1);
+        const ScopedNeuralProviderFailurePolicy strict(NeuralProviderFailurePolicy::Fail);
+        std::string what;
+        bool route = false;
+        try {
+            learner.Step(SmallBatch());
+        } catch (const std::exception& e) {
+            route = IsNeuralProviderRouteError(e);
+            what = e.what();
+        }
+        Check(route, "Fail: the step stops with the provider route error, not the layers' fallback: " + what);
+    }
+    registry.UnregisterForTesting("cyxwiz.test-dqn-stub");
 }
 
 // ------------------------------------------------------- A small task
@@ -421,6 +497,7 @@ int main(int argc, char** argv) {
         CheckSb3Steps(argv[0]);
         CheckPick();
         CheckRefusals();
+        CheckProviderPolicy();
         if (argc > 1 && std::strcmp(argv[1], "--cartpole") == 0) CheckCartPole();
     } catch (const std::exception& e) {
         Check(false, std::string("threw: ") + e.what());

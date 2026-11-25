@@ -54,6 +54,7 @@ SacLearner::SacLearner(SacNetworks networks, size_t observation_size, size_t act
 SacLearner::~SacLearner() = default;
 
 void SacLearner::DropFused(const std::exception& e) {
+    RethrowProviderRouteError(e);
     spdlog::warn("SAC: the fused networks failed ({}); ArrayFire operations from now on", e.what());
     actor_fused_.reset();
     q1_fused_.reset();

@@ -1,8 +1,7 @@
 #include "cyxwiz/rl/ppo.h"
 
 #include "cyxwiz/neural_provider.h"
-
-#include <spdlog/spdlog.h>
+#include "cyxwiz/neural_provider_dispatch.h"
 
 #include <atomic>
 #include <cmath>
@@ -126,28 +125,30 @@ std::atomic<bool>& PpoOff(NeuralOp op) {
     return ppo_off[static_cast<int>(op) - static_cast<int>(NeuralOp::PpoSample)];
 }
 
-// The device's neural provider for a PPO op, or null: the ArrayFire path
-// then. An op whose provider call failed once stays on ArrayFire (said once).
-std::shared_ptr<INeuralNetworkProvider> PpoProvider(NeuralOpRequest& r) {
+// A PPO op on the device's neural provider, through the provider dispatch
+// (TOFIX233 B): the run's observer sees it, and under the Fail policy (a
+// Strict run) a failure throws NeuralProviderRouteError. False: the caller
+// runs the ArrayFire path. Under FallBack an op whose provider call failed
+// once stays on ArrayFire (the dispatch logs the failure); under Fail the
+// latch is neither read nor set, so a Strict run always asks the provider and
+// stops at its failure, whatever an earlier run met.
+bool RunPpoOp(NeuralOpRequest& r, const std::vector<const Tensor*>& inputs,
+              const std::vector<std::vector<size_t>>& shapes, std::vector<Tensor>& outputs) {
+    const bool strict = CurrentNeuralProviderFailurePolicy() == NeuralProviderFailurePolicy::Fail;
+    if (!strict && PpoOff(r.op)) return false;
     r.target = CaptureCurrentNeuralDeviceTarget();
     r.device_resident = true;
     r.dtype = DataType::Float32;
-    if (r.target.platform == DeviceType::CPU || PpoOff(r.op)) return nullptr;
-    return NeuralProviderRegistry::Instance().FindSupporting(r);
-}
-
-bool RunPpoOp(INeuralNetworkProvider& provider, const NeuralOpRequest& r, const std::vector<const Tensor*>& inputs,
-              const std::vector<std::vector<size_t>>& shapes, std::vector<Tensor>& outputs) {
-    const NeuralOpStatus status = ExecuteNeuralOpOnDevice(provider, r, inputs, shapes, outputs);
-    if (status.ok) {
-        ++ppo_ran;
-        return true;
-    }
-    ++ppo_failed;
-    if (!PpoOff(r.op).exchange(true))
-        spdlog::warn("PPO: {} {} failed ({}); ArrayFire runs it from now on", provider.ProviderId(),
-                     NeuralOpName(r.op), status.detail);
-    return false;
+    const bool ran = DispatchNeuralProviderOp(r, "PPO", [&](INeuralNetworkProvider& provider) {
+        const NeuralOpStatus status = ExecuteNeuralOpOnDevice(provider, r, inputs, shapes, outputs);
+        if (!status.ok) {  // before the dispatch reports it (and may throw)
+            ++ppo_failed;
+            if (!strict) PpoOff(r.op) = true;
+        }
+        return status;
+    });
+    if (ran) ++ppo_ran;
+    return ran;
 }
 
 // The loss on the provider; false: the ArrayFire path
@@ -165,8 +166,6 @@ bool LossOnDevice(const Tensor& head, const Tensor* log_std, const Tensor& value
     r.ppo_ent_coef = s.ent_coef;
     r.ppo_vf_coef = s.vf_coef;
     r.ppo_normalize_advantage = s.normalize_advantage;
-    const auto provider = PpoProvider(r);
-    if (!provider) return false;
     // old_values only matter with a value clip; the kernel reads [rows] either way
     const Tensor zeros = batch.old_values.NumElements() == rows ? Tensor() : Tensor::Zeros({rows}, DataType::Float32);
     const Tensor& old_values = batch.old_values.NumElements() == rows ? batch.old_values : zeros;
@@ -178,7 +177,7 @@ bool LossOnDevice(const Tensor& head, const Tensor* log_std, const Tensor& value
         shapes.push_back({width});
     }
     std::vector<Tensor> o;
-    if (!RunPpoOp(*provider, r, inputs, shapes, o)) return false;
+    if (!RunPpoOp(r, inputs, shapes, o)) return false;
     out.grad_policy_output = std::move(o[0]);
     out.grad_value_output = std::move(o[1]);
     out.log_prob = std::move(o[2]);
@@ -341,11 +340,11 @@ Tensor PpoSampleStep(const Tensor& head, const Tensor& value, const Tensor& log_
     r.ppo_discrete = discrete;
     r.ppo_width = width;
     r.ppo_seed = seed;
-    if (const auto provider = PpoProvider(r)) {
+    {
         std::vector<const Tensor*> inputs{&head, &value};
         if (!discrete) inputs.push_back(&log_std);
         std::vector<Tensor> o;
-        if (RunPpoOp(*provider, r, inputs, {{rows * (2 + act)}}, o)) return std::move(o[0]);
+        if (RunPpoOp(r, inputs, {{rows * (2 + act)}}, o)) return std::move(o[0]);
     }
     const Tensor action = discrete ? SampleCategorical(head, seed) : SampleGaussian(head, log_std, seed);
     const Tensor logp = discrete ? CategoricalLogProb(head, action) : GaussianLogProb(head, log_std, action);
@@ -366,9 +365,9 @@ void ComputeGae(const Tensor& rewards, const Tensor& values, const Tensor& dones
     request.ppo_steps = static_cast<size_t>(steps);
     request.ppo_gamma = gamma;
     request.ppo_gae_lambda = gae_lambda;
-    if (const auto provider = PpoProvider(request)) {
+    {
         std::vector<Tensor> o;
-        if (RunPpoOp(*provider, request, {&rewards, &values, &dones, &last_values}, {shape, shape}, o)) {
+        if (RunPpoOp(request, {&rewards, &values, &dones, &last_values}, {shape, shape}, o)) {
             advantages = std::move(o[0]);
             returns = std::move(o[1]);
             return;
