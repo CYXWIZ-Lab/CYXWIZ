@@ -76,7 +76,10 @@ bool NodeEditor::LoadPatternAsGraph(const std::string& filepath) {
     ClearGraph();
     // A template is a new graph, not the file it came from.
     DetachFromFile();
-    InsertPattern(nodes, links);
+    if (const std::string refused = InsertPattern(nodes, links); !refused.empty()) {
+        spdlog::error("Cannot open pattern {} as a graph: {}", filepath, refused);
+        return false;
+    }
     ForgetUndoHistory();
     spdlog::info("Loaded pattern '{}' as graph ({} nodes, {} links)", pattern.name, nodes_.size(), links_.size());
     return true;
