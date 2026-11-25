@@ -450,6 +450,13 @@ float ButtonHeight(ButtonSize size) {
     return ImGui::GetTextLineHeight() + Padding(size).y * 2.0f;
 }
 
+void NextInRow(const char* label, ButtonSize size, bool link) {
+    const float width = link ? ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f
+                             : ButtonWidth(label, size);
+    ImGui::SameLine();
+    if (ImGui::GetContentRegionAvail().x < width) ImGui::NewLine();
+}
+
 bool RunTab(const char* id, const char* label, const char* sub, const ImVec4& dot, bool active) {
     const Tokens& t = CurrentTokens();
     const ImVec2 pad(10.0f, 5.0f);

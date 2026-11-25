@@ -87,5 +87,8 @@ bool RunTab(const char* id, const char* label, const char* sub, const ImVec4& do
 float ButtonWidth(const char* label, ButtonSize size);
 // Height a button will take, for reserving room below a growing widget.
 float ButtonHeight(ButtonSize size);
+// Before the next button of a row: the same line when `label` fits, else the
+// next line, so a narrow window never clips it. `link`: a LinkButton.
+void NextInRow(const char* label, ButtonSize size = ButtonSize::Regular, bool link = false);
 
 }  // namespace cyxwiz::ui

@@ -429,20 +429,20 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
             if (ui::SecondaryButton("Disable", true, nullptr, ui::ButtonSize::Regular)) {
                 mgr.DisablePlugin(plugin_id);
             }
-            ImGui::SameLine();
+            ui::NextInRow("Unload");
             break;
         case plugin::PluginState::Loaded:
             if (ui::SecondaryButton("Initialize", true, nullptr, ui::ButtonSize::Regular)) {
                 mgr.InitializePlugin(plugin_id);
             }
-            ImGui::SameLine();
+            ui::NextInRow("Unload");
             break;
         case plugin::PluginState::Failed:
             if (ui::SecondaryButton("Retry", true, nullptr, ui::ButtonSize::Regular)) {
                 mgr.SetPluginState(plugin_id, plugin::PluginState::Loaded);
                 mgr.InitializePlugin(plugin_id);
             }
-            ImGui::SameLine();
+            ui::NextInRow("Unload");
             break;
         case plugin::PluginState::Disabled:
             if (ui::SecondaryButton("Enable", true, nullptr, ui::ButtonSize::Regular)) {
@@ -450,7 +450,7 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
                     mgr.InitializePlugin(plugin_id);
                 }
             }
-            ImGui::SameLine();
+            ui::NextInRow("Unload");
             break;
         default:
             break;
@@ -462,7 +462,7 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
     }
     const bool open = details_open_.count(plugin_id) > 0;
     if (!trust.details.empty()) {
-        ImGui::SameLine();
+        ui::NextInRow(open ? "Hide" : "Details", ui::ButtonSize::Regular, true);
         if (ui::LinkButton(open ? "Hide" : "Details")) {
             if (open) details_open_.erase(plugin_id); else details_open_.insert(plugin_id);
         }
@@ -505,13 +505,13 @@ void PluginManagerPanel::RenderRefusedCard(const plugin::PackRefusal& refusal) {
     }
     if (can_repair && ImGui::IsItemHovered())
         ImGui::SetTooltip("Opens the CyxWiz Installer with this add-on selected for repair.");
-    ImGui::SameLine();
+    ui::NextInRow("Open Installed packs");
     if (ui::SecondaryButton("Open Installed packs", static_cast<bool>(open_installed_packs_), nullptr,
                             ui::ButtonSize::Regular)) {
         open_installed_packs_();
     }
     const bool open = details_open_.count(refusal.plugin_id) > 0;
-    ImGui::SameLine();
+    ui::NextInRow(open ? "Hide" : "Details", ui::ButtonSize::Regular, true);
     if (ui::LinkButton(open ? "Hide" : "Details")) {
         if (open) details_open_.erase(refusal.plugin_id); else details_open_.insert(refusal.plugin_id);
     }

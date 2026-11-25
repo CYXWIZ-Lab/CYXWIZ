@@ -97,7 +97,7 @@ void ToolbarPanel::RenderBackendAddOns(
             action_drawn = true;
         }
         if (card.can_repair) {
-            if (action_drawn) ImGui::SameLine();
+            if (action_drawn) ui::NextInRow("Repair add-on...");
             if (ui::SecondaryButton("Repair add-on...", installer_available, kNoInstaller,
                                     ui::ButtonSize::Regular)) {
                 core::WindowManager::LaunchExecutable(
@@ -110,7 +110,7 @@ void ToolbarPanel::RenderBackendAddOns(
             action_drawn = true;
         }
         if (card.can_uninstall) {
-            if (action_drawn) ImGui::SameLine();
+            if (action_drawn) ui::NextInRow("Uninstall add-on...");
             if (ui::DangerButton("Uninstall add-on...", installer_available, kNoInstaller,
                                  ui::ButtonSize::Regular)) {
                 core::WindowManager::LaunchExecutable(
@@ -125,8 +125,8 @@ void ToolbarPanel::RenderBackendAddOns(
             }
             action_drawn = true;
         }
-        if (action_drawn) ImGui::SameLine();
         const bool details_open = backend_pack_details_id_ == card.key;
+        if (action_drawn) ui::NextInRow(details_open ? "Hide" : "Details", ui::ButtonSize::Regular, true);
         if (ui::LinkButton(details_open ? "Hide" : "Details")) {
             backend_pack_details_id_ = details_open ? std::string{} : card.key;
         }
