@@ -166,6 +166,9 @@ The SDK ships no spdlog, ImGui, JSON or ArrayFire. Log through the context
 - **Windows:** the Engine loads your DLL's own dependencies from the folder
   of your DLL (`bin/`), the Engine's folder and the Windows system folders.
   `PATH` is not searched. Copy every DLL your plugin needs into `bin/`.
+  In a signed add-on, those DLLs are files of its signed package: the
+  Engine loads each by its full path before your DLL, and nothing else in
+  `bin/` can load.
 - **Linux, macOS:** the system loader uses your library's run path. Copy the
   libraries into `bin/` and set the run path to it:
   `set_target_properties(my_nodes PROPERTIES BUILD_RPATH "$ORIGIN")` on
