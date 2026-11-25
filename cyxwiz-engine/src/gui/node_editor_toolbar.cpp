@@ -832,22 +832,21 @@ void NodeEditor::RenderCanvasFooter() {
     const st::Footer footer = st::FooterFor(ModeOf(execution_mode_), kFrameworks[static_cast<int>(selected_framework_)],
                                             GetGraphReplacementBlockReason());
 
-    // A window of its own along the canvas bottom, like the minimap: the
-    // canvas is a child window drawn over its parent.
-    ::gui::NextWindowFollowsCurrent();
-    ImGui::SetNextWindowPos(ImVec2(canvas_origin_.x, canvas_origin_.y + canvas_size_.y - kCanvasFooterHeight),
-                            ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(canvas_size_.x, kCanvasFooterHeight), ImGuiCond_Always);
+    // An overlay of the canvas, like the minimap: a child of the canvas window,
+    // drawn with it. A window of its own was drawn over any window floating
+    // above the Studio (a Plugin Manager's buttons, a dialog).
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 0.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, t.bg_bar);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_bar);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
                                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
                                    ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoInputs |
                                    ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
-    if (ImGui::Begin("##CanvasFooter", nullptr, flags)) {
+    if (::gui::BeginCanvasOverlay("##CanvasFooter", canvas_origin_.x,
+                                  canvas_origin_.y + canvas_size_.y - kCanvasFooterHeight, canvas_size_.x,
+                                  kCanvasFooterHeight, flags, true)) {
         ImGui::SetCursorPosY((kCanvasFooterHeight - ImGui::GetTextLineHeight()) * 0.5f);
         ImGui::TextColored(t.text_dim, "%s", st::CountsText(nodes_.size(), links_.size()).c_str());
         if (num_selected > 0) {
@@ -877,7 +876,7 @@ void NodeEditor::RenderCanvasFooter() {
             ImGui::PopStyleColor();
         }
     }
-    ImGui::End();
+    ::gui::EndCanvasOverlay();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(3);
 }
