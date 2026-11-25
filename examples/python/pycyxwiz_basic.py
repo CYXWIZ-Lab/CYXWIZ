@@ -2,25 +2,28 @@
 """
 pycyxwiz Basic Usage Example
 
-This example demonstrates the core functionality of the pycyxwiz Python bindings.
+This example demonstrates the core functionality of the pycyxwiz Python bindings:
+the backend, the devices, tensors, arithmetic, NumPy and the data types.
+
+Run it with the Python pycyxwiz is built for (3.12), naming the folder that
+holds pycyxwiz (and, if different, the folder of its DLLs); it needs numpy:
+
+    python examples/python/pycyxwiz_basic.py build/windows-release/lib/Release build/windows-release/bin/Release
+
+In the Engine's Script Editor pycyxwiz is already importable: run it with F5.
 """
 import sys
 import os
 import numpy as np
 
-# Setup PATH for DLLs (Windows only)
-if sys.platform == 'win32':
-    dll_dirs = [
-        r"D:\Dev\CyxWiz_Claude\build\windows-release\bin\Release",
-        r"D:\Dev\CyxWiz_Claude\build\windows-release\lib\Release",
-    ]
-    for dll_dir in dll_dirs:
-        if dll_dir not in os.environ.get('PATH', ''):
-            os.environ['PATH'] = dll_dir + os.pathsep + os.environ.get('PATH', '')
-
-    # Add module to path
-    build_dir = r"D:\Dev\CyxWiz_Claude\build\windows-release\lib\Release"
-    sys.path.insert(0, build_dir)
+folder = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.getcwd())
+dll_folder = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else folder
+for d in (folder, dll_folder, r"C:\Program Files\ArrayFire\v3\lib"):
+    if os.path.isdir(d) and hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(d)
+# ArrayFire loads its backend libraries through PATH.
+os.environ["PATH"] = os.pathsep.join((folder, dll_folder)) + os.pathsep + os.environ.get("PATH", "")
+sys.path.insert(0, folder)
 
 import pycyxwiz as cx
 

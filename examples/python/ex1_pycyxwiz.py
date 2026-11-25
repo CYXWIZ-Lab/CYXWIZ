@@ -6,20 +6,24 @@ import os
 from pathlib import Path
 from typing import List, Tuple
 
+# Run it with the Python pycyxwiz is built for (3.12), naming the folder that
+# holds pycyxwiz (and, if different, the folder of its DLLs); it needs numpy
+# and matplotlib:
+#
+#     python examples/python/ex1_pycyxwiz.py build/windows-release/lib/Release build/windows-release/bin/Release
+#
+# In the Engine's Script Editor pycyxwiz is already importable: run it with F5.
+
 def configure_pycyxwiz_paths():
-    repo_root = Path(__file__).resolve().parents[2]
-    if sys.platform != "win32":
-        return
-    candidates = [
-        repo_root / "build" / "windows-release" / "bin" / "Release",
-        repo_root / "build" / "windows-release" / "lib" / "Release",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            os.environ["PATH"] = str(candidate) + os.pathsep + os.environ.get("PATH", "")
-    lib_path = repo_root / "build" / "windows-release" / "lib" / "Release"
-    if lib_path.exists() and str(lib_path) not in sys.path:
-        sys.path.insert(0, str(lib_path))
+    folder = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.getcwd())
+    dll_folder = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else folder
+    for d in (folder, dll_folder, r"C:\Program Files\ArrayFire\v3\lib"):
+        if os.path.isdir(d) and hasattr(os, "add_dll_directory"):
+            os.add_dll_directory(d)
+    # ArrayFire loads its backend libraries through PATH.
+    os.environ["PATH"] = os.pathsep.join((folder, dll_folder)) + os.pathsep + os.environ.get("PATH", "")
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
 
 configure_pycyxwiz_paths()
 
