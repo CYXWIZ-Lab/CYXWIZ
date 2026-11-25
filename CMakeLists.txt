@@ -583,3 +583,6 @@ message(STATUS "  GGUF/llama.cpp: ${CYXWIZ_HAS_GGUF}")
 message(STATUS "  PyTorch/LibTorch: ${CYXWIZ_HAS_PYTORCH}")
 message(STATUS "==========================================")
 message(STATUS "")
+
+# The smoke test executables of this folder use a scratch user folder too.
+cyxwiz_scratch_user_folders_for_tests()

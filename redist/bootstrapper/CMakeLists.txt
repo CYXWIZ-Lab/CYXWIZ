@@ -611,3 +611,8 @@ if(CYXWIZ_BUILD_TESTS)
         COMMAND test_installer_setup_embedded_trust
     )
 endif()
+
+# Test executables of this folder use a scratch user folder (cmake/CyxWizTestScratchUserFolders.cmake).
+if(COMMAND cyxwiz_scratch_user_folders_for_tests)
+    cyxwiz_scratch_user_folders_for_tests()
+endif()
