@@ -433,6 +433,190 @@ void CheckPoolsAndUnwrittenLayers() {
           "a model layer the export has no code for is refused, by name, not left out of the model");
 }
 
+// A Split sends each output to its own reader (both read the whole tensor
+// before, TOFIX233 A19); TensorFlow and Keras write a straight chain only and
+// refuse a graph that branches, naming where (they wrote another network
+// before, A17).
+void CheckSplitAndChainOnlyExports() {
+    Graph g;
+    const int data = g.Add(gui::NodeType::DataInput, "Data", {{"shape", "[8]"}});
+    const int shared = g.Add(gui::NodeType::Dense, "Shared", {{"units", "16"}});
+    const int cut = g.Add(gui::NodeType::Split, "Cut", {{"split_size", "6"}, {"dim", "1"}});
+    const int a = g.Add(gui::NodeType::Dense, "Head A", {{"units", "8"}});
+    const int b = g.Add(gui::NodeType::Dense, "Head B", {{"units", "8"}});
+    const int join = g.Add(gui::NodeType::Concatenate, "Join", {{"dim", "1"}});
+    const int classes = g.Add(gui::NodeType::Dense, "Classes", {{"units", "4"}});
+    g.Connect(data, shared);
+    g.Connect(shared, cut);
+    g.Connect(cut, a, 0, 0);
+    g.Connect(cut, b, 1, 0);
+    g.Connect(a, join, 0, 0);
+    g.Connect(b, join, 0, 1);
+    g.Connect(join, classes);
+    const std::string code = PyTorchOf(g);
+    const std::string v = "v" + std::to_string(cut);
+    Check(Contains(code, "        " + v + "_0, " + v + "_1 = torch.split(x, [6, x.size(1) - 6], dim=1)\n"),
+          "Split: torch.split with the node's split_size and dim");
+    Check(Contains(code, "        x = " + v + "_0\n        x = self.layer1(x)\n"), "head A reads Output 1");
+    Check(Contains(code, "        x = " + v + "_1\n        x = self.layer2(x)\n"), "head B reads Output 2");
+    Check(!Contains(code, "        " + v + " = x"), "the Split is not kept whole");
+    Check(Contains(code, "x = torch.cat([v" + std::to_string(a) + ", v" + std::to_string(b) + "], dim=1)") ||
+              Contains(code, "x = torch.cat([v" + std::to_string(a) + ", x], dim=1)"),
+          "the heads are concatenated");
+
+    // A Split read straight by a merge: its parts
+    Graph halves;
+    const int in = halves.Add(gui::NodeType::DataInput, "Data", {{"shape", "[10]"}});
+    const int halve = halves.Add(gui::NodeType::Split, "Halve", {{"split_size", "5"}, {"dim", "-1"}});
+    const int sum = halves.Add(gui::NodeType::Add, "Sum");
+    const int out = halves.Add(gui::NodeType::Dense, "Out", {{"units", "2"}});
+    halves.Connect(in, halve);
+    halves.Connect(halve, sum, 0, 0);
+    halves.Connect(halve, sum, 1, 1);
+    halves.Connect(sum, out);
+    const std::string halves_code = PyTorchOf(halves);
+    const std::string h = "v" + std::to_string(halve);
+    Check(Contains(halves_code, "torch.split(x, [5, x.size(-1) - 5], dim=-1)") &&
+              Contains(halves_code, "x = " + h + "_0 + " + h + "_1\n"),
+          "a merge reads the Split's two parts");
+
+    // A Split of a Split: the inner one reads its part
+    Graph twice;
+    const int t_in = twice.Add(gui::NodeType::DataInput, "Data", {{"shape", "[9]"}});
+    const int outer = twice.Add(gui::NodeType::Split, "Outer", {{"split_size", "3"}, {"dim", "1"}});
+    const int inner = twice.Add(gui::NodeType::Split, "Inner", {{"split_size", "2"}, {"dim", "1"}});
+    const int t_head = twice.Add(gui::NodeType::Dense, "Head", {{"units", "2"}});
+    twice.Connect(t_in, outer);
+    twice.Connect(outer, inner, 1, 0);
+    twice.Connect(inner, t_head, 0, 0);
+    const std::string twice_code = PyTorchOf(twice);
+    const std::string o = "v" + std::to_string(outer), i = "v" + std::to_string(inner);
+    Check(Contains(twice_code, "        x = " + o + "_1\n        " + i + "_0, " + i + "_1 = torch.split(x, [2,"),
+          "a Split of a Split's Output 2 splits that part");
+
+    // A Split read by the loss: the forward returns that part, not its input
+    Graph tail;
+    const int l_in = tail.Add(gui::NodeType::DataInput, "Data", {{"shape", "[6]"}});
+    const int l_dense = tail.Add(gui::NodeType::Dense, "Wide", {{"units", "10"}});
+    const int l_cut = tail.Add(gui::NodeType::Split, "Logits", {{"split_size", "4"}, {"dim", "1"}});
+    const int l_loss = tail.Add(gui::NodeType::CrossEntropyLoss, "Loss");
+    tail.Connect(l_in, l_dense);
+    tail.Connect(l_dense, l_cut);
+    tail.Connect(l_cut, l_loss, 0, 0);
+    Check(Contains(PyTorchOf(tail), "        x = v" + std::to_string(l_cut) + "_0\n        return x\n"),
+          "a Split the loss reads: the forward returns its Output 1");
+
+    // What the compiler refuses is refused here too, by name
+    const auto split_refused = [](std::map<std::string, std::string> params, const std::string& shape,
+                                  const std::string& why) {
+        Graph r;
+        const int in = r.Add(gui::NodeType::DataInput, "Data", {{"shape", shape}});
+        const int cut = r.Add(gui::NodeType::Split, "Cut", std::move(params));
+        const int head = r.Add(gui::NodeType::Dense, "Head", {{"units", "2"}});
+        r.Connect(in, cut);
+        r.Connect(cut, head, 0, 0);
+        return Contains(PyTorchOf(r), "Cut: " + why);
+    };
+    Check(split_refused({{"split_size", "2"}, {"dim", "0"}}, "[6]", "Split dim 0 is the batch"),
+          "a Split of the batch is refused, as the compiler refuses it");
+    Check(split_refused({{"split_size", "0"}, {"dim", "1"}}, "[6]", "Split split_size must be at least 1"),
+          "a Split of no entries is refused");
+    // Image data: torch holds channels first, so a Split's parts would differ
+    Graph cnn;
+    const int pixels = cnn.Add(gui::NodeType::DataInput, "Pixels", {{"shape", "[8, 8, 3]"}});
+    const int conv = cnn.Add(gui::NodeType::Conv2D, "Conv", {{"filters", "4"}, {"padding", "same"}});
+    const int flat = cnn.Add(gui::NodeType::Flatten, "Flatten");
+    const int f_cut = cnn.Add(gui::NodeType::Split, "Cut", {{"split_size", "10"}, {"dim", "1"}});
+    const int f_head = cnn.Add(gui::NodeType::Dense, "Head", {{"units", "2"}});
+    cnn.Connect(pixels, conv);
+    cnn.Connect(conv, flat);
+    cnn.Connect(flat, f_cut);
+    cnn.Connect(f_cut, f_head, 0, 0);
+    Check(Contains(PyTorchOf(cnn), "Cut: code export cannot write a Split of image data yet"),
+          "a Split of a flattened feature map is refused");
+    // A graph the branch walk does not take: a Split there is refused
+    Graph inputs;
+    const int i_one = inputs.Add(gui::NodeType::DataInput, "One", {{"shape", "[4]"}});
+    const int i_other = inputs.Add(gui::NodeType::DataInput, "Other", {{"shape", "[4]"}});
+    const int i_sum = inputs.Add(gui::NodeType::Add, "Sum");
+    const int i_cut = inputs.Add(gui::NodeType::Split, "Cut", {{"split_size", "2"}, {"dim", "1"}});
+    const int i_head = inputs.Add(gui::NodeType::Dense, "Head", {{"units", "2"}});
+    inputs.Connect(i_one, i_sum, 0, 0);
+    inputs.Connect(i_other, i_sum, 0, 1);
+    inputs.Connect(i_sum, i_cut);
+    inputs.Connect(i_cut, i_head, 0, 0);
+    Check(Contains(PyTorchOf(inputs), "Cut: code export writes a Split only in a graph with one input"),
+          "a Split in a graph with two inputs is refused");
+
+    // TensorFlow and Keras: chains only
+    const auto refused = [](const Graph& graph, cyxwiz::CodeFramework framework, const std::string& node) {
+        const std::string text = cyxwiz::ExportGraphCode(graph.nodes, graph.links, framework).code;
+        return Contains(text, node + ": code export writes ") && Contains(text, " only as a straight chain of layers");
+    };
+    for (const auto framework : {cyxwiz::CodeFramework::TensorFlow, cyxwiz::CodeFramework::Keras}) {
+        const std::string name = framework == cyxwiz::CodeFramework::TensorFlow ? "TensorFlow" : "Keras";
+        Check(refused(g, framework, "Cut"), name + ": a Split is refused by name");
+        // A residual: the first place it branches is the layer both paths read
+        Graph residual;
+        const int x = residual.Add(gui::NodeType::DataInput, "Data", {{"shape", "[4]"}});
+        const int stem = residual.Add(gui::NodeType::Dense, "Stem", {{"units", "4"}});
+        const int deep = residual.Add(gui::NodeType::Dense, "Deep", {{"units", "4"}});
+        const int skip = residual.Add(gui::NodeType::Add, "Skip");
+        const int top = residual.Add(gui::NodeType::Dense, "Top", {{"units", "2"}});
+        residual.Connect(x, stem);
+        residual.Connect(stem, deep);
+        residual.Connect(deep, skip, 0, 0);
+        residual.Connect(stem, skip, 0, 1);
+        residual.Connect(skip, top);
+        Check(refused(residual, framework, "Stem"), name + ": a residual is refused where it branches");
+        // Two inputs merged: the merge is the first place it branches
+        Graph two;
+        const int one = two.Add(gui::NodeType::DataInput, "One", {{"shape", "[4]"}});
+        const int other = two.Add(gui::NodeType::DataInput, "Other", {{"shape", "[4]"}});
+        const int both = two.Add(gui::NodeType::Add, "Both");
+        const int last = two.Add(gui::NodeType::Dense, "Last", {{"units", "2"}});
+        two.Connect(one, both, 0, 0);
+        two.Connect(other, both, 0, 1);
+        two.Connect(both, last);
+        Check(refused(two, framework, "Both"), name + ": a merge is refused by name");
+        // Two inputs into a two-input op that is not a merge
+        Graph dot;
+        const int d_a = dot.Add(gui::NodeType::DataInput, "A", {{"shape", "[4]"}});
+        const int d_b = dot.Add(gui::NodeType::DataInput, "B", {{"shape", "[4]"}});
+        const int d_dot = dot.Add(gui::NodeType::TensorDot, "Dot");
+        const int d_out = dot.Add(gui::NodeType::Dense, "Out", {{"units", "2"}});
+        dot.Connect(d_a, d_dot, 0, 0);
+        dot.Connect(d_b, d_dot, 0, 1);
+        dot.Connect(d_dot, d_out);
+        Check(refused(dot, framework, "Dot") &&
+                  Contains(cyxwiz::ExportGraphCode(dot.nodes, dot.links, framework).code, "it reads two tensors"),
+              name + ": a two-input op is refused by name");
+        // A Plot on the data reads it, but the model is still a chain
+        Graph watched = Mlp();
+        const int plot = watched.Add(gui::NodeType::Plot, "Look");
+        watched.Connect(watched.nodes.front().id, plot);
+        Check(!Contains(cyxwiz::ExportGraphCode(watched.nodes, watched.links, framework).code, "only as a straight chain"),
+              name + ": a Plot reading the data does not make the chain a branch");
+        // A layer off the chain that leads nowhere would still be written into it
+        Graph dead_end = Mlp();
+        const int side = dead_end.Add(gui::NodeType::Dense, "Side", {{"units", "5"}});
+        dead_end.Connect(dead_end.nodes[1].id, side);
+        Check(refused(dead_end, framework, "Hidden"), name + ": a layer branching off the chain is refused");
+        Graph fan;
+        const int f_in = fan.Add(gui::NodeType::DataInput, "Data", {{"shape", "[4]"}});
+        const int trunk = fan.Add(gui::NodeType::Dense, "Trunk", {{"units", "4"}});
+        const int left = fan.Add(gui::NodeType::Dense, "Left", {{"units", "2"}});
+        const int right = fan.Add(gui::NodeType::Dense, "Right", {{"units", "2"}});
+        fan.Connect(f_in, trunk);
+        fan.Connect(trunk, left);
+        fan.Connect(trunk, right);
+        Check(refused(fan, framework, "Trunk"), name + ": a layer two layers read is refused by name");
+        const Graph chain = Mlp();
+        Check(!Contains(cyxwiz::ExportGraphCode(chain.nodes, chain.links, framework).code, "only as a straight chain"),
+              name + ": a straight chain is still written");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -445,6 +629,7 @@ int main() {
         CheckBranchesAndImages();
         CheckWidthsAndNoModel();
         CheckPoolsAndUnwrittenLayers();
+        CheckSplitAndChainOnlyExports();
     } catch (const std::exception& e) {
         std::cout << "  FAIL exception: " << e.what() << "\n";
         ++g_failures;

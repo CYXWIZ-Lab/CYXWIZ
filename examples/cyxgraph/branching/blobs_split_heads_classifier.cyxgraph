@@ -1,0 +1,86 @@
+{
+  "id": "blobs_split_heads_classifier",
+  "name": "Split-heads classifier",
+  "description": "A graph that splits one tensor into two parts: a shared Dense layer's 16 outputs go to a Split, its first 6 entries to a Tanh head and the other 10 to a ReLU head, and the two heads are concatenated before the classifier. Data: examples/datasets/metric_blobs.csv (480 rows, 8 features, 4 classes). Open it, then Compile (F7) and Train (F5).",
+  "category": "Classification",
+  "sample_shape": "[8]",
+  "tags": ["branching", "split", "concatenate", "multi-branch", "classification", "tabular"],
+  "parameters": [
+    {
+      "name": "shared_units",
+      "type": "int",
+      "default_value": "16",
+      "description": "Width of the shared layer the Split cuts"
+    },
+    {
+      "name": "split_size",
+      "type": "int",
+      "default_value": "6",
+      "description": "Entries of the shared layer the first head reads; the second head reads the rest"
+    },
+    {
+      "name": "head_units",
+      "type": "int",
+      "default_value": "8",
+      "description": "Width of each head"
+    },
+    {
+      "name": "learning_rate",
+      "type": "float",
+      "default_value": "0.005",
+      "description": "Adam learning rate"
+    },
+    {
+      "name": "epochs",
+      "type": "int",
+      "default_value": "30",
+      "description": "Number of training epochs"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {"id": "in", "type": "DataInput", "name": "Metric blobs", "pos": [0, 240],
+       "params": {"file_path": "examples/datasets/metric_blobs.csv", "file_category": "tabular", "file_type": "csv",
+                  "has_header": "true", "label_column": "class"}},
+      {"id": "data_split", "type": "DataSplit", "name": "Split 70 / 15 / 15", "pos": [240, 240],
+       "params": {"train_ratio": "0.7", "val_ratio": "0.15", "test_ratio": "0.15", "seed": "42", "stratified": "true"}},
+      {"id": "loader", "type": "DataLoader", "name": "Loader", "pos": [480, 240],
+       "params": {"batch_size": "32", "epochs": "$epochs", "shuffle": "true", "drop_last": "false", "num_workers": "0"}},
+
+      {"id": "shared", "type": "Dense", "name": "Shared: Dense", "pos": [720, 240], "params": {"units": "$shared_units"}},
+      {"id": "shared_relu", "type": "ReLU", "name": "Shared: ReLU", "pos": [940, 240], "params": {}},
+      {"id": "cut", "type": "Split", "name": "Split", "pos": [1160, 240],
+       "params": {"split_size": "$split_size", "dim": "1"}},
+
+      {"id": "a", "type": "Dense", "name": "Head A: Dense", "pos": [1400, 120], "params": {"units": "$head_units"}},
+      {"id": "a_tanh", "type": "Tanh", "name": "Head A: Tanh", "pos": [1620, 120], "params": {}},
+      {"id": "b", "type": "Dense", "name": "Head B: Dense", "pos": [1400, 360], "params": {"units": "$head_units"}},
+      {"id": "b_relu", "type": "ReLU", "name": "Head B: ReLU", "pos": [1620, 360], "params": {}},
+
+      {"id": "merge", "type": "Concatenate", "name": "Concatenate", "pos": [1840, 240], "params": {"dim": "1"}},
+      {"id": "head", "type": "Dense", "name": "Classes (4)", "pos": [2060, 240], "params": {"units": "4"}},
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "Cross Entropy", "pos": [2280, 240], "params": {}},
+      {"id": "adam", "type": "Adam", "name": "Adam", "pos": [2500, 240],
+       "params": {"learning_rate": "$learning_rate"}},
+      {"id": "out", "type": "Output", "name": "Output", "pos": [2720, 240], "params": {"num_classes": "4"}}
+    ],
+    "links": [
+      {"from": "in", "to": "data_split"},
+      {"from": "data_split", "to": "loader"},
+      {"from": "loader", "to": "shared"},
+      {"from": "shared", "to": "shared_relu"},
+      {"from": "shared_relu", "to": "cut"},
+      {"from": "cut", "to": "a", "from_pin": 0, "to_pin": 0},
+      {"from": "cut", "to": "b", "from_pin": 1, "to_pin": 0},
+      {"from": "a", "to": "a_tanh"},
+      {"from": "b", "to": "b_relu"},
+      {"from": "a_tanh", "to": "merge", "from_pin": 0, "to_pin": 0},
+      {"from": "b_relu", "to": "merge", "from_pin": 0, "to_pin": 1},
+      {"from": "merge", "to": "head"},
+      {"from": "head", "to": "loss"},
+      {"from": "loader", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "adam"},
+      {"from": "adam", "to": "out"}
+    ]
+  }
+}
