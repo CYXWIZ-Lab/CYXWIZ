@@ -81,7 +81,7 @@ static std::string ShownFolder(const std::filesystem::path& folder) {
     std::error_code ec;
     auto absolute = std::filesystem::absolute(folder, ec).lexically_normal();
     std::vector<std::filesystem::path> bases;
-    if (const auto runtime = ActiveRuntimeRootFromEnvironment(); !runtime.empty())
+    if (const auto runtime = core::InstalledRuntimeRoot(); !runtime.empty())
         bases.push_back(runtime.parent_path());
     bases.push_back(std::filesystem::path(core::WindowManager::GetExecutablePath()).parent_path());
     for (const auto& base : bases) {
@@ -492,7 +492,7 @@ void PluginManagerPanel::RenderRefusedCard(const plugin::PackRefusal& refusal) {
     // Repair opens the CyxWiz Installer with this add-on ticked for repair,
     // the same action as its card in Installed packs.
     ImGui::Spacing();
-    const auto runtime_root = ActiveRuntimeRootFromEnvironment();
+    const auto runtime_root = core::InstalledRuntimeRoot();
     const auto installer = InstallerPath();
     std::error_code ec;
     const bool can_repair = !runtime_root.empty() && std::filesystem::is_regular_file(installer, ec);

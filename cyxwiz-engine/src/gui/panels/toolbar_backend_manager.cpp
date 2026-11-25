@@ -164,7 +164,7 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
     std::string identity_error;
     const auto identity =
         ReadActiveRuntimeQualificationIdentity(identity_error);
-    const auto runtime_root = ActiveRuntimeRootFromEnvironment();
+    const auto runtime_root = core::InstalledRuntimeRoot();
     const auto installer_manager = BackendPackManagerPath();
     const bool installer_manager_available =
         !runtime_root.empty() && runtime_root.is_absolute() &&
