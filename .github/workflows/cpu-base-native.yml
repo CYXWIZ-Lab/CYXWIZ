@@ -372,7 +372,14 @@ jobs:
             Write-Host '::endgroup::'
             if ($code -ne 0) { throw "$Name failed with exit code $code" }
           }
+          # cyxwiz-plugin-check ships, so it uses the user's folders (it copies the
+          # plugin's libraries into the plugin cache): a profile of its own here,
+          # so the check of the user's folders below covers the tests only.
+          $userFolders = @($env:LOCALAPPDATA, $env:APPDATA)
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'plugin-check-profile/Local'
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'plugin-check-profile/Roaming'
           Invoke-Check cyxwiz-plugin-check $plugin
+          $env:LOCALAPPDATA, $env:APPDATA = $userFolders
           Invoke-Check test_mujoco_graph_clock
           Invoke-Check test_mujoco_environments
           Invoke-Check test_mujoco_viewport
