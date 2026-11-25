@@ -13,7 +13,7 @@ related:
   - ../get-started/first-python-node.md
   - ../../usage/extension_nodes.md
 redirect_from:
-  - python-nodes.md
+  - extending/python-nodes.md
 ---
 
 `pycyxwiz.nodes` adds what the Engine needs to show a module as a node: an

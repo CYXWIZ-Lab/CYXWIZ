@@ -12,7 +12,7 @@ related:
   - install.md
   - settings.md
 redirect_from:
-  - macos-sensors.md
+  - cyxwiz-server-node/MACOS_SMC_SETUP.md
 ---
 
 On macOS a server node detects the GPUs and reads their memory and use,

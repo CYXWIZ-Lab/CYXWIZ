@@ -108,6 +108,12 @@ def check_page(path: Path, rel: Path, docs: Path, errors: list[str]) -> None:
                 for name in ("until", "replaced_by"):
                     if not fields.get(name):
                         errors.append(f"{where}: a {fields.get('status')} page needs '{name}'")
+            for old in fields.get("redirect_from") or []:
+                target = (path.parent / old).resolve()
+                if target == path.resolve():
+                    errors.append(f"{where}: redirect_from '{old}' points to this page itself")
+                elif target.exists() and "stub" not in target.read_text(encoding="utf-8", errors="replace")[:400].lower():
+                    errors.append(f"{where}: redirect_from '{old}' is an existing page, not an old path")
             for name in ("related", "replaced_by"):
                 targets = fields.get(name) or []
                 for target in [targets] if isinstance(targets, str) else targets:

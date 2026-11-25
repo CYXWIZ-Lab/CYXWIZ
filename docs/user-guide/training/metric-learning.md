@@ -12,7 +12,7 @@ related:
   - measure-and-export-embeddings.md
   - losses-and-optimizers.md
 redirect_from:
-  - metric-learning.md
+  - ../../usage/metric_learning.md
 ---
 
 Metric learning trains a model to place rows of the same class close

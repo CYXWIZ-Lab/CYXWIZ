@@ -14,7 +14,7 @@ related:
   - checkpoints-and-early-stopping.md
   - ../evaluation/language-model-generation.md
 redirect_from:
-  - fine-tune-language-models.md
+  - ../../usage/fine_tuning_language_models.md
 ---
 
 You fine-tune a language model you trained earlier on prompt and answer

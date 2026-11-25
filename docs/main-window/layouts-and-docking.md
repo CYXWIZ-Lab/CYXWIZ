@@ -12,7 +12,7 @@ related:
   - index.md
   - menus.md
 redirect_from:
-  - layouts-and-docking.md
+  - ../usage/windows.md
 ---
 
 Every panel lives in the dock area of the [main window](index.md). You can

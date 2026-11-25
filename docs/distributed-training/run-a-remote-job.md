@@ -15,7 +15,7 @@ related:
   - ../server-and-cloud/server-address.md
   - ../user-guide/training/train-and-watch.md
 redirect_from:
-  - run-a-remote-job.md
+  - usage/server-connection.md
 ---
 
 Use this to train a graph on another machine: a server node on your own

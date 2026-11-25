@@ -13,7 +13,7 @@ related:
   - ../parity-oracle.md
   - ../../concepts/compute-back-ends.md
 redirect_from:
-  - compute-back-ends.md
+  - ../../architecture/backend-compute-frameworks.md
 ---
 
 CyxWiz executes tensors through **ArrayFire** plus a small set of **native

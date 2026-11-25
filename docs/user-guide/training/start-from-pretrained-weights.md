@@ -13,7 +13,7 @@ related:
   - fine-tune-language-models.md
   - checkpoints-and-early-stopping.md
 redirect_from:
-  - start-from-pretrained-weights.md
+  - ../../usage/pretrained_weights.md
 ---
 
 A graph can start training from a weight file someone else published, such

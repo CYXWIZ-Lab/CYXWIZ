@@ -15,8 +15,8 @@ related:
   - python-environment.md
   - ../evaluation/plots-from-python.md
 redirect_from:
-  - notebooks.md
   - ../../usage/notebooks.md
+  - usage/notebooks.md
 ---
 
 Use this when you explore with code cell by cell. The Script Editor opens

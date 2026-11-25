@@ -13,7 +13,7 @@ related:
   - time-series.md
   - explore.md
 redirect_from:
-  - signal-processing.md
+  - ../../usage/signal_processing.md
 ---
 
 Data Studio's **Explore > Signal** tab reads one number column as a signal

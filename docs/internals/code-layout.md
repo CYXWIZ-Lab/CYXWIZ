@@ -13,7 +13,7 @@ related:
   - build-from-source.md
   - testing.md
 redirect_from:
-  - code-layout.md
+  - ../project-structure.md
 ---
 
 The repository holds the Engine, the shared compute library, the protocol,

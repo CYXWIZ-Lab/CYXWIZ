@@ -12,7 +12,7 @@ related:
   - test-a-trained-model.md
   - ../../main-window/model-window.md
 redirect_from:
-  - feature-importance.md
+  - ../../usage/feature_importance.md
 ---
 
 **Tools > Evaluation > Feature Importance** measures how much each input

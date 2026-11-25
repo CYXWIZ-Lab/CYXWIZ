@@ -13,7 +13,7 @@ related:
   - validate.md
   - ../evaluation/test-a-trained-model.md
 redirect_from:
-  - split-images-and-audio.md
+  - ../../usage/image_split.md
 ---
 
 A **Data Split** node splits an image or audio dataset into train,

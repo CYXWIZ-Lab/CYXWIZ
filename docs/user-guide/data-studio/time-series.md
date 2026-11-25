@@ -13,7 +13,7 @@ related:
   - signal-processing.md
   - explore.md
 redirect_from:
-  - time-series.md
+  - ../../usage/time_series.md
 ---
 
 Data Studio's **Explore > Series** tab reads one number column over time:

@@ -12,7 +12,7 @@ related:
   - gpu-providers.md
   - ../user-guide/training/checkpoints-and-early-stopping.md
 redirect_from:
-  - seeds-and-reproducibility.md
+  - ../usage/seeds_and_reproducibility.md
 ---
 
 A seed makes a run repeat. With the same data, graph and seeds, the Engine

@@ -13,7 +13,7 @@ related:
   - ../training/fine-tune-language-models.md
   - test-results.md
 redirect_from:
-  - language-model-generation.md
+  - ../../usage/lm_generation.md
 ---
 
 Use a trained language model directly in the Engine: chat with a

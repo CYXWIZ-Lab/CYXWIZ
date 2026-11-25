@@ -15,7 +15,7 @@ related:
   - model-result-plots.md
   - ../../reference/nodes/categories/visualization.md
 redirect_from:
-  - plotting.md
+  - ../../usage/plotting.md
 ---
 
 Every plot in the Engine is drawn by one **Plot window**: the same window

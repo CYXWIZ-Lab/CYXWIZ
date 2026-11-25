@@ -12,7 +12,7 @@ related:
   - explore.md
   - clustering.md
 redirect_from:
-  - dimensionality-reduction.md
+  - ../../usage/dimensionality_reduction.md
 ---
 
 Data Studio's **Explore > Projection** tab shows what the rows look like in

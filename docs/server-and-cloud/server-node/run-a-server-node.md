@@ -15,7 +15,7 @@ related:
   - ../ports.md
   - ../security.md
 redirect_from:
-  - run-a-server-node.md
+  - cyxwiz-server-node/docs/usage/running.md
 ---
 
 Use this when the daemon and the GUI are built and `--doctor` passes (see

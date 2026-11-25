@@ -13,7 +13,7 @@ related:
   - properties.md
   - ../user-guide/graph-editor/groups-frames-and-names.md
 redirect_from:
-  - nodes-panel.md
+  - ../usage/node_palette.md
 ---
 
 The **Nodes** panel lists every node you can put on the CyxWiz Studio

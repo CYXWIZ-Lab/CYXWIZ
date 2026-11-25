@@ -13,7 +13,7 @@ related:
   - ../../../user-guide/evaluation/plotting.md
   - ../../../user-guide/data-studio/profile.md
 redirect_from:
-  - visualization.md
+  - ../../../usage/dashboard.md
 ---
 
 The **Visualization** group has two nodes. Both take any table on their

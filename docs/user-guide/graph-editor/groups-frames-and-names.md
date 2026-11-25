@@ -12,7 +12,7 @@ related:
   - canvas.md
   - ../../main-window/nodes-panel.md
 redirect_from:
-  - groups-frames-and-names.md
+  - ../../usage/canvas_groups_frames.md
 ---
 
 Use this when a graph has grown past one screen and you want to see its

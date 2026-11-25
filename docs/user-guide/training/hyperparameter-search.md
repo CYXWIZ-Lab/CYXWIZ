@@ -13,7 +13,7 @@ related:
   - losses-and-optimizers.md
   - ../graph-editor/compile-and-run.md
 redirect_from:
-  - hyperparameter-search.md
+  - ../../usage/hyperparameter_search.md
 ---
 
 **Train > Hyperparameter Search** trains the graph on the canvas several

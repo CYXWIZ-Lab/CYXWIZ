@@ -13,7 +13,7 @@ related:
   - ../user-guide/evaluation/feature-importance.md
   - training-dashboard.md
 redirect_from:
-  - model-window.md
+  - ../usage/model_tools.md
 ---
 
 **Tools > Model** opens one window about the graph's model, with five tabs.

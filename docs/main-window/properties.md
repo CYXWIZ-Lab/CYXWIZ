@@ -13,7 +13,7 @@ related:
   - node-dialogs.md
   - editing-values.md
 redirect_from:
-  - properties.md
+  - ../usage/properties.md
 ---
 
 The **Properties** panel (right column in the default layout; sidebar

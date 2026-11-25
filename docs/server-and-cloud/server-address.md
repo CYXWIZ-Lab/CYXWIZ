@@ -15,8 +15,8 @@ related:
   - server-node/settings.md
   - ../main-window/preferences.md
 redirect_from:
-  - server-address.md
   - ../usage/server-connection.md
+  - usage/server-address.md
 ---
 
 The Engine and the server node reach the whole CyxWiz server side (the

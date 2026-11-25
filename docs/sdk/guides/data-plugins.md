@@ -13,7 +13,7 @@ related:
   - ../plugin-api-reference.md
   - ../../user-guide/data-studio/plugin-analyses.md
 redirect_from:
-  - data-plugins.md
+  - extending/data-plugin-guide.md
 ---
 
 A C++ plugin can give CyxWiz two things for datasets:

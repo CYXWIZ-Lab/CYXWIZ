@@ -13,7 +13,7 @@ related:
   - ../evaluation/language-model-generation.md
   - ../../main-window/training-dashboard.md
 redirect_from:
-  - generation-previews.md
+  - ../../usage/generation_previews.md
 ---
 
 While a language model trains, the Engine can ask it a few prompts at set

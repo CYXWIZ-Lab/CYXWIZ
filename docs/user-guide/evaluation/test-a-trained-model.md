@@ -14,7 +14,7 @@ related:
   - cross-validation-and-learning-curves.md
   - ../training/checkpoints-and-early-stopping.md
 redirect_from:
-  - test-a-trained-model.md
+  - ../../usage/testing.md
 ---
 
 After training, test the model on rows it never trained on: the test part

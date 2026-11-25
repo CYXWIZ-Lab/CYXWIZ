@@ -13,7 +13,7 @@ related:
   - ../plugin-api-reference.md
   - ../../reference/graph-spec/node-contract.md
 redirect_from:
-  - trainable-nodes.md
+  - extending/plugin-developer-guide.md
 ---
 
 How to write a C++ plugin whose nodes train inside CyxWiz. Build and load the
