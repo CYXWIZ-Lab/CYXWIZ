@@ -325,6 +325,64 @@ void CheckBranchesAndImages() {
     Check(all_called, "the forward calls every module __init__ made (the convolutions and the pool too)");
 }
 
+// The pools as the Engine sizes them, and a model layer the export cannot
+// write: refused, naming it (LeNet-5's average pools were left out and the
+// export trained another network).
+void CheckPoolsAndUnwrittenLayers() {
+    Graph g;
+    const int data = g.Add(gui::NodeType::DataInput, "Data", {{"shape", "[64]"}});
+    const int image = g.Add(gui::NodeType::Reshape, "Image", {{"shape", "8,8,1"}});
+    const int conv = g.Add(gui::NodeType::Conv2D, "Conv", {{"filters", "4"}, {"kernel_size", "3"}, {"padding", "same"}});
+    const int average = g.Add(gui::NodeType::AvgPool2D, "Average", {{"pool_size", "3"}});
+    const int maximum = g.Add(gui::NodeType::MaxPool2D, "Max", {{"pool_size", "3"}, {"padding", "same"}});
+    const int global = g.Add(gui::NodeType::GlobalAvgPool, "Global");
+    const int head = g.Add(gui::NodeType::Dense, "Head", {{"units", "3"}});
+    for (auto& node : g.nodes)
+        if (node.id == average) node.parameters.erase("stride");  // not set: the window
+    g.Connect(data, image);
+    g.Connect(image, conv);
+    g.Connect(conv, average);
+    g.Connect(average, maximum);
+    g.Connect(maximum, global);
+    g.Connect(global, head);
+    const std::string code = PyTorchOf(g);
+    Check(Contains(code, "nn.AvgPool2d(kernel_size=3, stride=3, padding=0)"),
+          "AvgPool2D: written, its stride the window when the node has none");
+    Check(Contains(code, "nn.MaxPool2d(kernel_size=3, stride=2, padding=1)"),
+          "MaxPool2D: the node's stride, \"same\" padding resolved as the Engine does");
+    Check(Contains(code, "nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten())"),
+          "GlobalAvgPool on a feature map: one value per channel, as rows");
+    bool all_called = true;
+    for (int i = 0; i < 5; ++i)
+        all_called = all_called && Contains(code, "x = self.layer" + std::to_string(i) + "(x)");
+    Check(all_called, "the forward calls the convolution, both pools, the global pool and the head");
+
+    Graph sequence;
+    const int tokens = sequence.Add(gui::NodeType::DataInput, "Tokens");
+    const int embed = sequence.Add(gui::NodeType::Embedding, "Embed", {{"num_embeddings", "20"}, {"embedding_dim", "6"}});
+    const int over_time = sequence.Add(gui::NodeType::GlobalMaxPool, "Over time");
+    const int classes = sequence.Add(gui::NodeType::Dense, "Classes", {{"units", "2"}});
+    sequence.Connect(tokens, embed);
+    sequence.Connect(embed, over_time);
+    sequence.Connect(over_time, classes);
+    Check(Contains(PyTorchOf(sequence), "x = x.amax(dim=1)"), "GlobalMaxPool on a sequence: the max over time");
+
+    Graph upsampled;
+    const int rows = upsampled.Add(gui::NodeType::DataInput, "Rows", {{"shape", "[16]"}});
+    const int map = upsampled.Add(gui::NodeType::Reshape, "Map", {{"shape", "4,4,1"}});
+    const int up = upsampled.Add(gui::NodeType::Upsample, "Twice as large");
+    const int flat = upsampled.Add(gui::NodeType::Flatten, "Flatten");
+    const int out = upsampled.Add(gui::NodeType::Dense, "Out", {{"units", "2"}});
+    upsampled.Connect(rows, map);
+    upsampled.Connect(map, up);
+    upsampled.Connect(up, flat);
+    upsampled.Connect(flat, out);
+    const std::string refused = PyTorchOf(upsampled);
+    Check(Contains(refused, "raise ValueError('Twice as large: code export does not write ") &&
+              !Contains(refused, "class GeneratedModel"),
+          "a model layer the export has no code for is refused, by name, not left out of the model");
+}
+
 }  // namespace
 
 int main() {
@@ -336,6 +394,7 @@ int main() {
         CheckRecurrentAndLoss();
         CheckBranchesAndImages();
         CheckWidthsAndNoModel();
+        CheckPoolsAndUnwrittenLayers();
     } catch (const std::exception& e) {
         std::cout << "  FAIL exception: " << e.what() << "\n";
         ++g_failures;

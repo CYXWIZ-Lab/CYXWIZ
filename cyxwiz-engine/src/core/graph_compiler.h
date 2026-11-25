@@ -826,6 +826,10 @@ public:
     // (Normalize, image transforms, audio features...), or nullopt.
     static std::optional<PreprocessingDomain> GetPreprocessingNodeDomain(gui::NodeType type);
 
+    // Check if node is a model layer (trainable); also read by code export,
+    // which refuses a model layer it does not write.
+    bool IsModelLayer(gui::NodeType type) const;
+
 private:
     // An RL graph: Environment -> layers -> Policy Head / Value Head -> PPO (rl_graph_compile.cpp)
     TrainingConfiguration CompileReinforcementLearning(const std::vector<gui::MLNode>& nodes,
@@ -860,8 +864,6 @@ private:
     const gui::MLNode* FindOptimizerNode(const std::vector<gui::MLNode>& nodes) const;
     const gui::MLNode* FindOutputNode(const std::vector<gui::MLNode>& nodes) const;
 
-    // Check if node is a model layer (trainable)
-    bool IsModelLayer(gui::NodeType type) const;
     bool IsTrainableExtensionLayer(const gui::MLNode& node) const;
 
     // Check if node is an activation function

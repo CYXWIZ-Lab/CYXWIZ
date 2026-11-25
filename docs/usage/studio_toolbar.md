@@ -77,7 +77,12 @@ click each (hover for what each does).
   - A graph the framework cannot express is written as a script that stops
     at its first line with the reason: a graph with no model layers (a data
     or analysis pipeline such as PCA, K-Means or a portfolio solver; run it
-    in the Studio), or an RL graph that does not compile.
+    in the Studio), an RL graph that does not compile, or, in PyTorch, a
+    graph with a layer the export cannot write yet (an Upsample, for
+    example), named in the reason. A pool is written as the Engine sizes it:
+    a Max or Avg Pool's stride is its window when not set, and a Global Avg
+    or Max Pool is one value per channel on a feature map, or the mean or
+    maximum over time on a sequence.
   - PyTorch and PyCyxWiz code take a layer's input width from the graph: a
     recurrent layer, or a LayerNorm set to `AUTO`, reads the width of what
     feeds it (an Embedding, Dense, recurrent, attention or transformer layer,

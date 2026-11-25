@@ -6,6 +6,7 @@
 #include "extension_node_metadata.h"
 #include "graph_compiler.h"
 #include "loss_node_types.h"
+#include "node_metadata_registry.h"
 #include "pipeline_runtime_capabilities.h"
 #include "recurrent_configuration_policy.h"
 #include "rl_graph_compile.h"
@@ -43,6 +44,14 @@ std::string LocalClockText(const char* format) {
 }
 
 namespace {
+
+// A node type as the Node Browser names it ("Avg Pool 2D"), for refusals.
+std::string NodeTypeLabel(NodeType type) {
+    auto& registry = NodeMetadataRegistry::Instance();
+    if (!registry.IsInitialized()) registry.Initialize();
+    const auto* metadata = registry.GetMetadata(type);
+    return metadata ? metadata->name : "these";
+}
 
 std::string TrimCopy(const std::string& value) {
     auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char ch) {
@@ -495,6 +504,14 @@ GraphCodeExporter::FindUnsupportedSequentialLayerError(
                    ": code export does not support Conv3D (volume rows) yet; train it in Studio";
         }
         if (auto refusal = cyxwiz::ExtensionCodeExportRefusal(*node)) return refusal;
+        // A pool the Engine refuses to size is refused here too, with its reason.
+        if (node->type == NodeType::MaxPool2D || node->type == NodeType::AvgPool2D) {
+            try {
+                spatial::ResolveGeometry(node->type, node->parameters, 0);
+            } catch (const std::invalid_argument& error) {
+                return EffectiveNodeName(*node) + ": " + error.what();
+            }
+        }
         switch (node->type) {
             case NodeType::CenterCrop:
             case NodeType::RandomCrop:
@@ -874,6 +891,7 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
     // Forward pass
     code += "    def forward(self, x):\n";
     layer_idx = 0;
+    std::string unwritten_layer;  // the first model layer the forward has no code for
     for (int node_id : sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
@@ -1086,15 +1104,35 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
             case NodeType::PPO:
                 break;
 
+            case NodeType::GlobalAvgPool:
+            case NodeType::GlobalMaxPool:
+                if (!NodeTypeToPythonLayer(*node).empty()) {
+                    code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                } else {  // a [batch, length, features] sequence: over time
+                    code += std::string("        x = x.") +
+                            (node->type == NodeType::GlobalAvgPool ? "mean(dim=1)" : "amax(dim=1)") + "\n";
+                }
+                break;
+
             // Every other node with a module in __init__ (Conv2D, the pools,
             // ...) is called on x. Without this the forward left them out and
             // the layers after them called the wrong self.layerN (ORA-26).
+            // A model layer with no module here is not written at all: the
+            // export is refused below, naming it, instead of writing a model
+            // without it.
             default:
                 if (node->type != NodeType::PluginCustom && !NodeTypeToPythonLayer(*node).empty())
                     code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                else if (node->type != NodeType::PluginCustom && GraphCompiler{}.IsModelLayer(node->type) &&
+                         unwritten_layer.empty())
+                    unwritten_layer = EffectiveNodeName(*node) + ": code export does not write " +
+                                      NodeTypeLabel(node->type) + " layers yet; train it in Studio";
                 break;
         }
     }
+    // A model without one of its layers would run and train a different
+    // network (LeNet-5 lost both average pools): say which, and stop.
+    if (!unwritten_layer.empty()) return BlockedCodegenConfiguration("PyTorch", unwritten_layer);
     code += "        return x\n\n";
 
     // Training code
@@ -2166,10 +2204,36 @@ std::string GraphCodeExporter::NodeTypeToPythonLayer(const MLNode& node) {
             break;
         }
 
+        // A pool sized as the Engine sizes it (the stride is the window when
+        // not set, "same" / "valid" padding resolved); an invalid one is
+        // refused before this (FindUnsupportedSequentialLayerError).
         case NodeType::MaxPool2D:
-            code = "nn.MaxPool2d(kernel_size=" + GetParamOrAliases(node, {"pool_size", "kernel_size"}, "2") +
-                   ", stride=" + GetParamOrDefault(node, "stride", "2") + ", padding=" +
-                   GetParamOrDefault(node, "padding", "0") + ")";
+        case NodeType::AvgPool2D: {
+            spatial::Geometry g;
+            try {
+                g = spatial::ResolveGeometry(node.type, node.parameters, 0);
+            } catch (const std::invalid_argument&) {
+                break;
+            }
+            code = std::string(node.type == NodeType::MaxPool2D ? "nn.MaxPool2d" : "nn.AvgPool2d") +
+                   "(kernel_size=" + std::to_string(g.kernel) + ", stride=" + std::to_string(g.stride) +
+                   ", padding=" + std::to_string(g.padding) + ")";
+            break;
+        }
+
+        case NodeType::AdaptiveAvgPool:
+            code = "nn.AdaptiveAvgPool2d(output_size=" + GetParamOrDefault(node, "output_size", "1") + ")";
+            break;
+
+        // On a feature map: one value per channel, as [batch, channels] rows
+        // (the Engine's GlobalAvgPool2D). On a sequence the forward takes the
+        // mean / max over time instead, with no module.
+        case NodeType::GlobalAvgPool:
+        case NodeType::GlobalMaxPool:
+            if (ReadsFeatureMap(node))
+                code = std::string("nn.Sequential(") +
+                       (node.type == NodeType::GlobalAvgPool ? "nn.AdaptiveAvgPool2d(1)" : "nn.AdaptiveMaxPool2d(1)") +
+                       ", nn.Flatten())";
             break;
 
         case NodeType::BatchNorm:
