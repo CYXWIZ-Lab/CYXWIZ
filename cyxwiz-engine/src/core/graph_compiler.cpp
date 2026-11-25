@@ -5644,6 +5644,26 @@ TrainingConfiguration GraphCompiler::Compile(
                              node->id, node->name, errors::Compiler::TensorShapeMismatch);
                 }
             }
+            // A transformer layer takes its width from its parameter (default
+            // 512); the model builder refuses a sequence of another width, so
+            // say it here, before Train.
+            if (TransformerConfiguration transformer; layer.input_shape.size() >= 2 &&
+                layer.input_shape.back() > 0 &&
+                !ResolveTransformerConfiguration(node->type, layer.parameters, transformer) &&
+                (node->type == gui::NodeType::MultiHeadAttention ||
+                 node->type == gui::NodeType::TransformerEncoder ||
+                 node->type == gui::NodeType::TransformerDecoder ||
+                 node->type == gui::NodeType::PositionalEncoding) &&
+                transformer.model_width != layer.input_shape.back()) {
+                const char* width_name =
+                    node->type == gui::NodeType::MultiHeadAttention ? "embed_dim" : "d_model";
+                AddIssue(config, IssueLevel::Error,
+                         node->name + " needs a sequence " + std::to_string(transformer.model_width) +
+                             " wide (" + width_name + "), got [" + ShapeListText(layer.input_shape) +
+                             "]: set " + width_name + " to " + std::to_string(layer.input_shape.back()) +
+                             ", or make the layer before it that wide",
+                         node->id, node->name, errors::Compiler::TensorShapeMismatch);
+            }
 
             if (const auto reason =
                     ResolvePipelineUnsupportedSequentialModelConfigurationReason(

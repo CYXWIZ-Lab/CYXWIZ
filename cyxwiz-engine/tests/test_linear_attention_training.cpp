@@ -262,6 +262,36 @@ int main(int, char** argv) {
     CheckRefused(with_attention("feature_map", "favor+"), "feature_map", "the retired favor+ feature map");
     CheckRefused(with_attention("eps", "0"), "eps", "a zero eps");
 
+    // Multi-Head Attention and Transformer Encoder in the same place: their
+    // width is checked when the graph compiles too (before, the graph compiled
+    // and the model builder threw at Train).
+    const size_t width = first.at("input").at("shape")[2].get<size_t>();
+    const auto with_layer = [&](gui::NodeType type, size_t layer_width) {
+        auto graph = BuildGraph(first);
+        for (auto& node : graph.nodes) {
+            if (node.type != gui::NodeType::LinearAttention) continue;
+            int next_node_id = 5, next_pin_id = 5000;  // clear of the graph's pin ids
+            node = gui::CreateGraphNode(type, "Attention", next_node_id, next_pin_id);
+            node.id = 5;
+            node.inputs[0].id = 501;
+            node.outputs[0].id = 511;
+            node.parameters[type == gui::NodeType::MultiHeadAttention ? "embed_dim" : "d_model"] =
+                std::to_string(layer_width);
+            node.parameters["num_heads"] = "1";
+        }
+        return graph;
+    };
+    for (const auto type : {gui::NodeType::MultiHeadAttention, gui::NodeType::TransformerEncoder}) {
+        const std::string what = type == gui::NodeType::MultiHeadAttention ? "Multi-Head Attention" : "Transformer Encoder";
+        CheckRefused(with_layer(type, width * 2), "needs a sequence " + std::to_string(width * 2) + " wide",
+                     what + " wider than its input");
+        const auto fits = with_layer(type, width);
+        const auto config = cyxwiz::GraphCompiler{}.Compile(fits.nodes, fits.links, true);
+        if (!config.is_valid) PrintIssues(config);
+        Check(config.is_valid && cyxwiz::BuildExecutableFromConfig(config).ok(),
+              what + " as wide as its input compiles and builds");
+    }
+
     std::cout << "Linear Attention matches PyTorch: " << fixture.at("cases").size() << " cases\n";
     return 0;
 }
