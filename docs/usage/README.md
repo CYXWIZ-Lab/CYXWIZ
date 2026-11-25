@@ -19,6 +19,7 @@ To write your own nodes in Python or C++, see
 | [Asset Browser](asset_browser.md) | The project's folders and files, previews, new files |
 | [Properties](properties.md) | The Properties panel for the selected node |
 | [Console and logs](console_logs.md) | Logs, the Python REPL and commands |
+| [Where the Engine keeps your files](user_files.md) | Settings, layout, logs and caches per platform; the Engine's own folder is never written |
 
 ## Building a graph
 

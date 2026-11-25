@@ -564,8 +564,9 @@ What the fingerprint cannot see:
 ### Logs
 
 `ctx.LogInfo` and the other log calls write to the Engine's **Console** and
-to `engine_log.txt` in the Engine's folder (`runtime/base/<base>/`), prefixed
-with `[Plugin:<your id>]`. The load reasons, refused nodes and permission
+to `engine_log.txt` in your logs folder (**Help > Open Logs Folder**; see
+[Where the Engine keeps your files](../usage/user_files.md)), prefixed with
+`[Plugin:<your id>]`. The load reasons, refused nodes and permission
 decisions are there too.
 
 ### Debugging (Windows)

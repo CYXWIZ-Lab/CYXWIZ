@@ -7,6 +7,23 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **The installed Engine no longer writes into its own folder.** Its log,
+  layout (`imgui.ini`), tutorial state, Python bytecode and MuJoCo's warnings
+  were written into the installed base folder, where an update or a rollback
+  lost them and an installation for all users could not write them at all
+  (the Engine then ran with no log file and forgot its layout). The log is
+  now in your logs folder (`%LOCALAPPDATA%\CyxWiz\Engine\logs` on Windows,
+  `~/Library/Logs/CyxWiz` on macOS, `~/.local/state/cyxwiz/engine/logs` on
+  Linux), the layout and tutorial state with your settings, Python bytecode
+  in your cache folder, and MuJoCo's warnings in the Engine log and the
+  Console (each kind once, with the number of repeats when the add-on
+  unloads; no more `MUJOCO_LOG.TXT`). Runs with no project open keep their
+  artifacts, checkpoints and prepared data in `no-project/` of your cache
+  folder. The config is only your own `engine_config.json`: none beside the
+  Engine is read, and no `engine_config.template.json` is written. A
+  development build keeps its log and layout in its build folder. Your layout
+  starts from the default once after this update. See
+  [Where the Engine keeps your files](usage/user_files.md).
 - **The Pattern Browser, redesigned.** Category chips that wrap (they ran off
   the panel's edge), with counts and a new Reinforcement learning category
   (PPO was filed under Custom); search across every category; a card per

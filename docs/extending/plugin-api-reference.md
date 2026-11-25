@@ -149,7 +149,7 @@ only until `OnUnload` returns.
 |---|---|
 | `const std::string& GetPluginId() const` | Your manifest id |
 | `const std::filesystem::path& GetPluginDir() const` | Your plugin folder (the one with `plugin.json`) |
-| `void LogInfo / LogWarn / LogError / LogDebug(const std::string&)` | Writes to the Engine's Console and `engine_log.txt`, prefixed with `[Plugin:<id>]` |
+| `void LogInfo / LogWarn / LogError / LogDebug(const std::string&)` | Writes to the Engine's Console and its log (`engine_log.txt` in the user's logs folder), prefixed with `[Plugin:<id>]` |
 | `bool RegisterNodeProvider(INodeProvider*)` | Registers signal nodes now. Needs `UIModify` |
 | `bool RegisterPanelProvider(IPanelProvider*)` | Registers panels now. Needs `UIModify` |
 | `bool RegisterDataProvider(IDataProvider*)` | Needs `DataRegistry` |
