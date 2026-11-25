@@ -464,9 +464,14 @@ jobs:
       # from the ArrayFire 3.10 install above; nothing is compiled. CI cannot
       # qualify them (no GPUs): they ship only after route verification on
       # real hardware, and only for Windows for now.
+      # The CUDA pack carries the NVIDIA provider module built above: keep it
+      # aside before the build folder goes.
       - name: Free build space before accelerator packs
         shell: pwsh
-        run: Remove-Item -Recurse -Force build, vcpkg-binary-cache -ErrorAction SilentlyContinue
+        run: |
+          New-Item -ItemType Directory -Force nvidia-provider-module | Out-Null
+          Copy-Item build/bin/Release/cyxwiz-nvidia-provider.dll nvidia-provider-module/ -ErrorAction Stop
+          Remove-Item -Recurse -Force build, vcpkg-binary-cache -ErrorAction SilentlyContinue
 
       - name: Download pinned accelerator notice inputs
         shell: pwsh
@@ -527,6 +532,7 @@ jobs:
               --arrayfire-dir 'C:\Program Files\ArrayFire\v3' `
               --intel-runtime-license-dir deps/intel `
               --nvidia-runtime-license-dir deps/nvidia `
+              --build-dir nvidia-provider-module `
               --generated-utc 2026-08-20T00:00:00Z
             if ($LASTEXITCODE -ne 0) { throw "Accelerator pack failed: $backend" }
           }
