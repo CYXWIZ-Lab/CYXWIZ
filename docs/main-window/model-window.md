@@ -148,7 +148,8 @@ Explore > Projection (see
 `apply` functions). Grad-CAM needs a convolution, which a Python
 `Sequential` cannot hold. `examples/python/model_tools.py` runs all of it
 on a small network; the reference is
-[pycyxwiz](../../python_doc/pycyxwiz.md) (`pycyxwiz.model`).
+[pycyxwiz.model](../python/reference/model.md); how to use it is in
+[Evaluate a model in pycyxwiz](../python/evaluation-and-metrics.md).
 
 ## Related
 

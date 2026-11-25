@@ -12,7 +12,7 @@ related:
   - ../guides/python-nodes.md
   - ../guides/python-modules.md
   - ../../usage/extension_nodes.md
-  - ../python-api/index.md
+  - ../../python/reference/index.md
 ---
 
 In this lesson you write a new activation, Softsign, in a few lines of
@@ -136,4 +136,4 @@ node's settings, pins or code.
 - [Your own nodes in the Engine](../../usage/extension_nodes.md): the
   form in **Nodes > Make a Python node...**, which writes this kind of file
   for you, and the Plugin Manager.
-- [pycyxwiz API reference](../python-api/index.md)
+- [pycyxwiz API reference](../../python/reference/index.md)

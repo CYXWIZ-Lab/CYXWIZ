@@ -12,7 +12,7 @@ related:
   - get-started/first-python-node.md
   - get-started/first-cpp-plugin.md
   - ../reference/graph-spec/node-contract.md
-  - python-api/index.md
+  - ../python/reference/index.md
 redirect_from:
   - extending/README.md
 ---
@@ -64,11 +64,16 @@ before it trains. Both follow one [node contract](../reference/graph-spec/node-c
 | [node-contract.md](../reference/graph-spec/node-contract.md) | Know what every extension node must guarantee, in C++ and in Python |
 | [troubleshooting.md](guides/troubleshooting.md) | Fix "not installed", refused settings, failed gradient checks, plugins that do not load |
 
+Python nodes are written with pycyxwiz. To learn the library itself
+(tensors, modules, losses, training from a script), start with
+[The pycyxwiz Python library](../python/index.md) and its
+[quickstart](../python/quickstart.md).
+
 Reference pages, generated from the code (do not edit them by hand):
 
 | Page | What it lists |
 |---|---|
-| [pycyxwiz API reference](python-api/index.md) | Every public name of pycyxwiz, with its signature and description |
+| [pycyxwiz API reference](../python/reference/index.md) | Every public name of pycyxwiz, with its signature and description, in the [Python library](../python/index.md) section |
 | [tensor-operations.md](tensor-operations.md) | The tensor operations a node can use, C++ and Python side by side |
 | [sdk-contents.md](sdk-contents.md) | Every header the plugin SDK installs and the types it declares |
 

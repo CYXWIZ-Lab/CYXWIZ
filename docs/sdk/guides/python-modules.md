@@ -10,7 +10,7 @@ owner: sdk
 last_reviewed: 2026-11-25
 related:
   - python-nodes.md
-  - ../python-api/index.md
+  - ../../python/reference/index.md
   - ../tensor-operations.md
 redirect_from:
   - ../../extending/python-modules.md
@@ -25,7 +25,7 @@ a node in the Engine's palette, bundles it and uses it in a graph.
 > Checked against plugin API 1.4.0 and pycyxwiz 0.2.0.
 > The Python samples on this page run, in order, as one script
 > (`scripts/docs/check_extension_docs.py` runs them). Every pycyxwiz name is
-> in [pycyxwiz API reference](../python-api/index.md); the tensor
+> in [pycyxwiz API reference](../../python/reference/index.md); the tensor
 > operations are in [tensor-operations.md](../tensor-operations.md).
 
 ## 1. Get pycyxwiz

@@ -194,7 +194,8 @@ Example: `examples/cyxgraph/portfolio/` (five assets, 120 months).
 `pycyxwiz.calculus` has `Expression`, `integrate`, `derivative`,
 `step_errors`, `curvature`, `curvature_over_range` and `gauss_legendre`.
 `pycyxwiz.optimize` has `linprog`, `qp`, `portfolio` and `follow`. They are
-described with examples in `python_doc/pycyxwiz.md` (section 6.4). A worked
+described with examples in
+[Maths and optimization with pycyxwiz](../python/maths-and-optimization.md). A worked
 example checked against scipy and torch is
 `examples/python/optimization_calculus.py`.
 

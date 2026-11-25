@@ -105,6 +105,34 @@ limits of a feature are described on the feature's page.
 - **What to do:** read Arabic values in a dashboard or plot; the data itself
   is unchanged.
 
+## Python (pycyxwiz)
+
+### An optimizer's step() from Python changes no weights
+
+- **Affects:** pycyxwiz 0.2.0, every device.
+- **What happens:** `optimizer.step(parameters, gradients)`, called with the
+  dicts of `get_parameters()` and `get_gradients()` (of a layer class such
+  as `Dense`, or of a `Sequential`), returns without error but updates
+  nothing: the dicts hold copies. `LRWarmup.step` behaves the same.
+- **What to do:** train a `Sequential` of modules and call
+  `model.update_parameters(optimizer)` after `backward`, as in
+  [Optimizers and training loops](python/training-loops.md). Change the
+  learning rate with `optimizer.set_learning_rate`.
+- **Status:** open.
+
+### The PyCyxWiz code export's training loop does not run
+
+- **Affects:** the **Code** button of the Studio bar with **PyCyxWiz**
+  chosen.
+- **What happens:** the exported `train` method and the `__main__` block
+  call names pycyxwiz does not have: calling a loss object, `loss.backward()`,
+  `optimizer.step()` without arguments, `loss.item()` and `device.name()`.
+  Running the exported file stops at the first of them (`'pycyxwiz.Device'
+  object has no attribute 'name'`).
+- **What to do:** keep the exported model definition and write the loop as
+  in [Optimizers and training loops](python/training-loops.md).
+- **Status:** open.
+
 ## Report a new issue
 
 Open an issue with:

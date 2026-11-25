@@ -38,6 +38,13 @@ scripting:
   code: [cyxwiz-engine/src/scripting/**, cyxwiz-engine/src/gui/panels/script_editor*, cyxwiz-backend/python/**]
   synced_at: 202a19691
 
+# The pycyxwiz library section (docs/python): the bindings and the C++ API
+# they wrap. Its reference pages are generated; the guides' samples run in
+# check_extension_docs.py.
+python:
+  code: [cyxwiz-backend/python/**, cyxwiz-backend/include/cyxwiz/**]
+  synced_at: e8ddc8408
+
 sdk:
   code: [cyxwiz-backend/include/cyxwiz/**, cyxwiz-engine/src/plugin/**, cyxwiz-engine/src/extension/**, plugins/template/**, plugins/examples/**, cmake/CyxWizPluginSDK.cmake, scripts/docs/generate_extension_reference.py, scripts/docs/check_extension_docs.py]
   synced_at: 202a19691

@@ -19,7 +19,8 @@ related:
 The Engine runs Python inside itself. Scripts in the Script Editor, the
 cells of a notebook, the Python console and Python nodes on the canvas all
 use the same interpreter, with the `pycyxwiz` module (the Engine's tensors,
-layers, linear algebra, signal and statistics functions) ready to import.
+layers, linear algebra, signal and statistics functions) ready to import;
+[The pycyxwiz Python library](../../python/index.md) teaches it.
 Python needs a project open and a Python installation the Engine can use;
 see [Python and project environments](python-environment.md).
 
@@ -84,7 +85,10 @@ Go further with Python:
   from a script with `pycyxwiz`.
 - [Python nodes](../../sdk/guides/python-nodes.md): describe a module as a
   node for the canvas.
-- [Python API reference](../../sdk/python-api/index.md): every `pycyxwiz`
-  function and class.
+- [The pycyxwiz Python library](../../python/index.md): the library your
+  scripts use, with a quickstart, guides (tensors, models, training, data,
+  evaluation, maths) and examples.
+- [pycyxwiz API reference](../../python/reference/index.md): every
+  `pycyxwiz` function and class.
 - [Plots from Python](../evaluation/plots-from-python.md): matplotlib
   figures in the Engine.

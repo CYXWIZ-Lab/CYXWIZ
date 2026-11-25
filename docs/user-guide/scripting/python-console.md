@@ -139,4 +139,4 @@ was stopped.
 
 - [The Variable Explorer](variable-explorer.md)
 - [Write and run scripts](script-editor.md)
-- [Python API reference](../../sdk/python-api/index.md)
+- [Python API reference](../../python/reference/index.md)

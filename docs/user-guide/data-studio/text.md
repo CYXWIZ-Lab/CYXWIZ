@@ -176,7 +176,7 @@ characters.
 
 `pycyxwiz.text` has the same rules: `words`, `terms`, `english_stop_words`,
 `stem` and `vader` (see the
-[Python API reference](../../sdk/python-api/index.md#pycyxwiztext)).
+[Python API reference](../../python/reference/text.md)).
 
 ```python
 import pycyxwiz.text as tx

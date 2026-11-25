@@ -7,7 +7,7 @@ the calibration of its test probabilities.
 
     python model_tools.py <folder holding pycyxwiz> [<folder of its DLLs>]
 
-Needs numpy. The numbers it prints are in python_doc/pycyxwiz.md (6.5).
+Needs numpy. docs/python/examples.md shows what it prints.
 """
 import os
 import sys

@@ -58,7 +58,7 @@ The templates import optional packages (pandas, matplotlib) inside
   `cyx.Tensor.randn`, which the current module does not have, and its model
   and optimizer lines are comments. For training from a script, start from
   [Write a module in Python](../../sdk/guides/python-modules.md) and the
-  [Python API reference](../../sdk/python-api/index.md) instead.
+  [Python API reference](../../python/reference/index.md) instead.
 - The committed, runnable scripts in the repository's `examples/python`
   folder (shipped in the release packages under `examples/python`) are
   better starting points for most tasks.

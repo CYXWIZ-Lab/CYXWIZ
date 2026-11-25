@@ -23,7 +23,8 @@ code), explanations of how things work, and the internals for contributors.
 | `reference/graph-spec/` | The `.cyxgraph` format, pin types, compile and execute rules, the node contract | reference |
 | `reference/preferences/` | One page per Preferences tab (generated) | reference |
 | `reference/` (files) | `shortcuts.md`, `menus.md`, `command-line.md` (generated), `file-formats/`, `error-messages.md` | reference |
-| `sdk/` | Plugins and Python nodes: `get-started/`, `guides/`, and the generated `cpp-api/`, `python-api/`, `c-api/` | mixed |
+| `sdk/` | Plugins and Python nodes: `get-started/`, `guides/`, and the generated `cpp-api/`, `c-api/` | mixed |
+| `python/` | The pycyxwiz Python library: a quickstart, guides, examples, and the generated API reference in `python/reference/` (one page per part of the module) | mixed |
 | `server-and-cloud/` | The server node and CyxCloud: install, operate, storage, sign-in, security | how-to, reference |
 | `distributed-training/` | Remote and distributed training: concepts, setting up machines, running jobs, limits | mixed |
 | `troubleshooting/` | By symptom: the exact error text, the cause, the fix | troubleshooting |
@@ -68,7 +69,7 @@ redirect_from: []
 | `title` | yes | Sentence case, under 70 characters; also the page heading |
 | `description` | yes | One sentence, under 160 characters, starting with a verb or a noun |
 | `type` | yes | `tutorial`, `how-to`, `reference`, `explanation`, `landing`, `troubleshooting`, `release-notes` |
-| `area` | yes | `general`, `install`, `graph-editor`, `data-studio`, `training`, `evaluation`, `deployment`, `simulation`, `scripting`, `plugins`, `remote`, `sdk`, `server-and-cloud`, `internals`, `security`, `legal`, `about` |
+| `area` | yes | `general`, `install`, `graph-editor`, `data-studio`, `training`, `evaluation`, `deployment`, `simulation`, `scripting`, `plugins`, `remote`, `sdk`, `python`, `server-and-cloud`, `internals`, `security`, `legal`, `about` |
 | `audience` | no | `user` (default), `plugin-developer`, `operator`, `contributor`, `organisation` (legal and procurement readers) |
 | `status` | yes | `experimental`, `beta`, `stable`, `deprecated`, `removed` |
 | `since` | yes | The first Engine version with this behaviour, for example `1.0.7` |

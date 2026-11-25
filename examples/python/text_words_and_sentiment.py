@@ -7,7 +7,7 @@ nodes, from Python. A few short product reviews written for this example
 English words left out, turned into word pairs as the TF-IDF node counts them
 (the negations kept), stemmed, and scored with VADER. The same calls give the
 same answers as Python's re, scikit-learn, NLTK and vaderSentiment
-(docs/user-guide/data-studio/text.md, python_doc/pycyxwiz.md section 9.1).
+(docs/user-guide/data-studio/text.md, docs/python/signals-statistics-and-text.md).
 
 Run it with the Python pycyxwiz is built for, naming the folder that holds
 pycyxwiz (and, if different, the folder of its DLLs):
