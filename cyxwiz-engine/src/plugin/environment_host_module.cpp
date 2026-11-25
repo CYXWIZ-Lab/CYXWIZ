@@ -74,7 +74,8 @@ void ConfigureInstalledAddOns(cyxwiz::plugin::PluginManager& manager) {
     static bool configured = false;
     if (configured) return;
     configured = true;
-    const auto root = cyxwiz::runtime::InstalledRuntimeRoot(ThisModulePath(), cyxwiz::ActiveRuntimeRootFromEnvironment());
+    const auto root =
+        cyxwiz::runtime::InstalledRuntimeRoot(ThisModulePath(), cyxwiz::ActiveRuntimeRootFromEnvironment());
     if (!root.empty()) cyxwiz::plugin::ConfigureInstalledPluginPacks(manager, root);
 }
 
