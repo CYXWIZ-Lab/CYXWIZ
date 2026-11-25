@@ -784,10 +784,8 @@ cx.shutdown()
 When running inside the CyxWiz Engine, the Python interpreter is embedded by the engine at runtime.
 The engine decides which interpreter to use based on `engine_config.json`.
 
-**Config file location (first match wins):**
-- `<project_root>/engine_config.json`
-- `<project_root>/config/engine_config.json`
-- `%APPDATA%/CyxWiz/engine_config.json`
+**Config file location:** the user's own `engine_config.json`, `%APPDATA%/CyxWiz/engine_config.json` on
+Windows and `~/.cyxwiz/engine_config.json` on macOS and Linux. Nothing beside the Engine is read.
 
 **Config keys:**
 ```json

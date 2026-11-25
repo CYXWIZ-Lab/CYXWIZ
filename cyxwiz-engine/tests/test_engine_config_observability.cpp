@@ -165,6 +165,24 @@ int main() {
     std::error_code error;
     std::filesystem::remove(path, error);
     Check(!error, "temporary test config should be removable");
+
+    // A first start with no config writes the user's config only: no template
+    // and nothing beside the executable (an installed Engine's folder is
+    // never written).
+    {
+        const auto profile = std::filesystem::temp_directory_path() / ("cyxwiz_user_config_" + unique);
+        cyxwiz::ScopedUserFoldersOverrideForTesting folders(profile);
+        const auto expected_file = cyxwiz::UserConfigDir() / "engine_config.json";
+        Check(!config.Load(), "a first start finds no config");
+        Check(config.GetConfigPath() == expected_file, "the config is the user's: " + config.GetConfigPath().string());
+        Check(std::filesystem::is_regular_file(expected_file), "a first start writes the user's config");
+        const auto exe_dir = cyxwiz::core::ExecutableDirectory();
+        Check(!exe_dir.empty() && !std::filesystem::exists(exe_dir / "engine_config.template.json"),
+              "no config template is written beside the executable");
+        Check(config.Save(), "Save writes the user's config");
+        Check(config.GetConfigPath() == expected_file, "Save keeps the user's config path");
+        std::filesystem::remove_all(profile, error);
+    }
     std::cout << "Engine observability config contracts passed\n";
     return 0;
 }
