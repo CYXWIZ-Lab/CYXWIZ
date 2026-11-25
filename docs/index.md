@@ -56,13 +56,21 @@ press **Train**. Then read the graph editor guide to build your own.
 | [Compile and run](user-guide/graph-editor/compile-and-run.md) | Compile, the compile report, run modes |
 | [The Studio Debugger](user-guide/training/studio-debugger.md) | Local Debug and the layer views |
 
+## Script, extend and run elsewhere
+
+| | |
+| --- | --- |
+| [Scripting](user-guide/scripting/index.md) | The Script Editor, Python console, Variable Explorer, notebooks, the Python environment |
+| [Extend CyxWiz](sdk/index.md) | Your own nodes in Python or C++, the plugin SDK and the pycyxwiz reference |
+| [Server node and CyxCloud](server-and-cloud/index.md) | Run a server node, CyxCloud storage, server addresses, ports and security |
+| [Remote training](distributed-training/index.md) | Remote jobs today, how data reaches the node, and their limits |
+
 ## Look things up
 
 | | |
 | --- | --- |
 | [Keyboard shortcuts](reference/shortcuts.md) | Every shortcut, by where it works |
 | [User guide (older pages)](usage/README.md) | Data Studio, training, evaluation, scripting, plugins and more, while they move into this structure |
-| [Extending CyxWiz](sdk/index.md) | Your own nodes in Python or C++ |
 | [Release notes](RELEASE_NOTES.md) | What changed |
 
 ## About these docs

@@ -36,12 +36,18 @@ evaluation:
 
 scripting:
   code: [cyxwiz-engine/src/scripting/**, cyxwiz-engine/src/gui/panels/script_editor*, cyxwiz-backend/python/**]
-  synced_at:
+  synced_at: 202a19691
 
 sdk:
-  code: [cyxwiz-backend/include/cyxwiz/**, cyxwiz-engine/src/plugin/**, cyxwiz-engine/src/extension/**]
-  synced_at:
+  code: [cyxwiz-backend/include/cyxwiz/**, cyxwiz-engine/src/plugin/**, cyxwiz-engine/src/extension/**, plugins/template/**, plugins/examples/**, cmake/CyxWizPluginSDK.cmake, scripts/docs/generate_extension_reference.py, scripts/docs/check_extension_docs.py]
+  synced_at: 202a19691
 
 server-and-cloud:
   code: [cyxwiz-server-node/**, cyxwiz-protocol/**, cyxwiz-engine/src/network/**]
-  synced_at:
+  synced_at: 202a19691
+
+# Remote jobs: the Engine side (network/, the remote training path) and the
+# node's job path. CyxCloud's code is in its own repository and is not tracked here.
+distributed-training:
+  code: [cyxwiz-engine/src/network/**, cyxwiz-server-node/src/job_execution_service*, cyxwiz-server-node/src/job_executor*, cyxwiz-server-node/src/node_job_*, cyxwiz-server-node/src/*dataset_fetcher*, cyxwiz-server-node/src/security/**, cyxwiz-protocol/proto/execution.proto, cyxwiz-protocol/proto/job.proto, cyxwiz-protocol/proto/reservation.proto, cyxwiz-protocol/proto/datastream.proto, cyxwiz-protocol/proto/cyxcloud_data.proto]
+  synced_at: 202a19691
