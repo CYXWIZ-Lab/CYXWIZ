@@ -656,6 +656,8 @@ private:
     // Bumped by each read of the records; an add-on file check of an older
     // read is dropped when it ends.
     std::uint64_t addon_file_check_generation_ = 0;
+    // Lives with this panel: a file check that ends after it is gone is dropped.
+    std::shared_ptr<int> addon_file_check_owner_ = std::make_shared<int>(0);
     bool backend_pack_catalog_loaded_ = false;
     bool backend_pack_catalog_available_ = false;
     std::string backend_pack_catalog_message_;

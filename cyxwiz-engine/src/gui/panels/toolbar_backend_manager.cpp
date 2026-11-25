@@ -227,7 +227,8 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
                     // A newer read of the catalog replaced the records meanwhile.
                     if (generation != addon_file_check_generation_) return;
                     MergeAddOnFileChecks(backend_pack_catalog_records_, *checked);
-                });
+                },
+                addon_file_check_owner_);
             backend_pack_catalog_available_ = true;
             backend_pack_catalog_message_ = BackendPackCatalogSummary(
                 snapshot.catalog.catalog_id, backend_pack_catalog_records_);
