@@ -3290,6 +3290,29 @@ add_executable(test_plugin_unload_registrations
 )
 target_include_directories(test_plugin_unload_registrations PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_plugin_unload_registrations PRIVATE cyxwiz-plugin-host cyxwiz-backend imgui::imgui spdlog::spdlog)
+# A plugin whose OnInitialize fails: OnUnload must still run (with its context).
+add_library(lifecycle_failing_plugin SHARED tests/plugin_lifecycle_test_plugin.cpp)
+target_link_libraries(lifecycle_failing_plugin PRIVATE cyxwiz-plugin-sdk)
+set_target_properties(lifecycle_failing_plugin PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "$<1:${CMAKE_BINARY_DIR}/test_plugins/lifecycle/bin>"
+    LIBRARY_OUTPUT_DIRECTORY "$<1:${CMAKE_BINARY_DIR}/test_plugins/lifecycle/bin>")
+file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/test_plugins/lifecycle/plugin.json" CONTENT "{
+    \"id\": \"com.cyxwiz.tests.lifecycle\",
+    \"name\": \"Lifecycle test\",
+    \"version\": \"1.0.0\",
+    \"api_version\": \"1.0.0\",
+    \"description\": \"OnInitialize fails\",
+    \"permissions\": [],
+    \"platforms\": {
+        \"windows\": { \"library\": \"bin/$<TARGET_FILE_NAME:lifecycle_failing_plugin>\" },
+        \"linux\": { \"library\": \"bin/$<TARGET_FILE_NAME:lifecycle_failing_plugin>\" },
+        \"macos\": { \"library\": \"bin/$<TARGET_FILE_NAME:lifecycle_failing_plugin>\" }
+    }
+}
+")
+target_compile_definitions(test_plugin_unload_registrations PRIVATE
+    LIFECYCLE_PLUGIN_DIR="${CMAKE_BINARY_DIR}/test_plugins/lifecycle")
+add_dependencies(test_plugin_unload_registrations lifecycle_failing_plugin)
 if(WIN32)
     target_compile_definitions(test_plugin_unload_registrations PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
@@ -9334,12 +9357,9 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
         CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}")
     add_test(NAME python_environment_switch COMMAND test_python_environment_switch)
 
-    # The Engine's Python keeps bytecode in the user's cache folder, never
-    # beside the .py files (an installed base is read-only).
-    add_executable(test_python_pycache_prefix
-        tests/test_python_pycache_prefix.cpp
-        src/scripting/python_environment.cpp
-    )
+    # An installed Engine's Python and the Pythons it starts keep bytecode in
+    # the user's cache folder, never beside the .py files (the base is read-only).
+    add_executable(test_python_pycache_prefix tests/test_python_pycache_prefix.cpp)
     target_link_libraries(test_python_pycache_prefix PRIVATE pybind11::embed)
     target_compile_definitions(test_python_pycache_prefix PRIVATE
         CYXWIZ_HAS_PYTHON

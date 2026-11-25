@@ -13,6 +13,7 @@
 #include "../src/plugin/registries/plugin_simulation_registry.h"
 #include "../src/plugin/registries/plugin_environment_registry.h"
 #include "../src/plugin/builtin/classic_control_environments.h"
+#include "../src/core/user_folders.h"
 
 #include <spdlog/sinks/ringbuffer_sink.h>
 #include <spdlog/spdlog.h>
@@ -491,6 +492,10 @@ void CheckBuiltinCartPole() {
 }  // namespace
 
 int main() {
+    // Plugin library copies, permissions and the startup list go to a test
+    // profile, never the user's folders.
+    cyxwiz::ScopedUserFoldersOverrideForTesting folders(
+        std::filesystem::temp_directory_path() / "cyxwiz-plugin-unload-profile");
     CheckCommandRegistry();
     CheckPreferencesRegistry();
     CheckPluginSettings();
@@ -543,6 +548,26 @@ int main() {
     spdlog::set_default_logger(previous_logger);
     Check(unloaded, "OnUnload runs after ShutdownAll at the Engine's exit");
     Check(manager.GetLoadedPlugin(kPluginId) == nullptr, "UnloadAll unloads the shut-down plugin");
+
+    // A plugin whose OnInitialize fails after a successful OnLoad still gets
+    // OnUnload, once, with the context OnLoad got (it may have kept it).
+    {
+        auto failing_ring = std::make_shared<spdlog::sinks::ringbuffer_sink_mt>(256);
+        spdlog::set_default_logger(std::make_shared<spdlog::logger>("lifecycle-check", failing_ring));
+        const std::string lifecycle_id = "com.cyxwiz.tests.lifecycle";
+        Check(manager.LoadPlugin(LIFECYCLE_PLUGIN_DIR), "the lifecycle test plugin loads");
+        Check(!manager.InitializePlugin(lifecycle_id), "its OnInitialize fails");
+        manager.UnloadPlugin(lifecycle_id);
+        int unloads = 0;
+        bool other_context = false;
+        for (const auto& line : failing_ring->last_formatted()) {
+            if (line.find("Lifecycle test: OnUnload with another context") != std::string::npos) other_context = true;
+            else if (line.find("Lifecycle test: OnUnload") != std::string::npos) ++unloads;
+        }
+        spdlog::set_default_logger(previous_logger);
+        Check(unloads == 1 && !other_context,
+              "a failed start gives OnUnload once with the OnLoad context (got " + std::to_string(unloads) + ")");
+    }
 
     std::cout << "test_plugin_unload_registrations: all checks passed\n";
     return 0;
