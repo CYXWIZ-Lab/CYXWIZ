@@ -14,7 +14,6 @@
 
 #include <cstdio>
 #include <filesystem>
-#include <optional>
 #include <string>
 #include <system_error>
 
@@ -88,29 +87,41 @@ public:
             std::fprintf(stderr, "No temp folder: this run uses the real user folders\n");
             return;
         }
-        scope_.emplace(root_);
+        // A crashed run with the same executable and process id left it: start empty.
+        if (IsScratchRoot(root_)) {
+            std::error_code ec;
+            fs::remove_all(root_, ec);
+        }
+        // Never released: a thread or a static destructor that runs after this
+        // object still writes into the scratch folder, never the real one.
+        override_ = new cyxwiz::ScopedUserFoldersOverrideForTesting(root_);
     }
 
     ~ScratchUserFolders() {
-        // Only the folder this process made, and only under <temp>/cyxwiz-tests.
-        if (!scope_ || root_.parent_path().filename() != "cyxwiz-tests") return;
-        scope_.reset();
+        // The override stays set; only the folder goes (a library still loaded
+        // from it stays, and a late write may make it again: it is scratch).
+        if (!override_ || !IsScratchRoot(root_)) return;
         std::error_code ec;
-        fs::remove_all(root_, ec);  // a library still loaded from it stays; the folder is scratch
+        fs::remove_all(root_, ec);
     }
 
     ScratchUserFolders(const ScratchUserFolders&) = delete;
     ScratchUserFolders& operator=(const ScratchUserFolders&) = delete;
 
 private:
+    // Only this process's folder, and only under <temp>/cyxwiz-tests.
+    static bool IsScratchRoot(const fs::path& root) {
+        return !root.empty() && root.parent_path().filename() == "cyxwiz-tests";
+    }
+
     fs::path root_;
-    std::optional<cyxwiz::ScopedUserFoldersOverrideForTesting> scope_;
+    cyxwiz::ScopedUserFoldersOverrideForTesting* override_ = nullptr;  // never deleted (see above)
 };
 
 }  // namespace
 
 // Before the executable's own static objects, so none of them sees the real
-// folders; destroyed after them.
+// folders; its folder is removed after them.
 #if defined(_MSC_VER)
 #pragma warning(push)
 #pragma warning(disable : 4073)  // initializers put in library initialization area: intended
