@@ -1,3 +1,4 @@
+#include "../src/core/user_folders.h"
 #include "../src/core/sequence_arrow_batcher.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
 #include <arrow/util/key_value_metadata.h>
@@ -470,8 +471,8 @@ int main() {
               project_root / "cache" / "materialized" / "key",
           "active-project cache entries should live under cache/materialized");
     const auto standalone_cache = gui::GraphMaterializationCacheConfig();
-    Check(standalone_cache.cache_root.filename() == ".cyxwiz",
-          "standalone graph cache should retain the runtime-local fallback");
+    Check(standalone_cache.cache_root == cyxwiz::NoProjectRunDir("prepared"),
+          "with no project open the graph cache is the user's no-project prepared folder");
 
     auto& registry = cyxwiz::DataRegistry::Instance();
     registry.UnregisterTabularDataset(kDatasetName);
