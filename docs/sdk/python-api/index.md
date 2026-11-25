@@ -4,7 +4,7 @@ description: Stub page. The pycyxwiz API reference moved to the Python library s
 type: reference
 area: sdk
 audience: plugin-developer
-status: deprecated
+status: removed
 since: 1.0.8
 until: 1.0.9
 replaced_by: ../../python/reference/index.md

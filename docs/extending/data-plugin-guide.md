@@ -1,3 +1,16 @@
+---
+title: This page moved
+description: Stub page. Its content is now Add dataset formats and analytics with a plugin.
+type: reference
+area: sdk
+status: removed
+since: 1.0.7
+until: 1.0.9
+replaced_by: ../sdk/guides/data-plugins.md
+owner: sdk
+last_reviewed: 2026-11-25
+---
+
 # This page moved
 
 This page is now [Add dataset formats and analytics with a plugin](../sdk/guides/data-plugins.md). This short page stays at the old address for
