@@ -367,6 +367,56 @@ void CheckPoolsAndUnwrittenLayers() {
     sequence.Connect(over_time, classes);
     Check(Contains(PyTorchOf(sequence), "x = x.amax(dim=1)"), "GlobalMaxPool on a sequence: the max over time");
 
+    // A feature map reached through an Identity and a Concatenate is still a
+    // feature map; a Data Input of [H, W, C] is one; a pool after a Dense is
+    // neither, and is refused rather than pooled over the wrong axes.
+    Graph merged;
+    const int pixels = merged.Add(gui::NodeType::DataInput, "Pixels", {{"shape", "[8, 8, 3]"}});
+    const int left = merged.Add(gui::NodeType::Conv2D, "Left", {{"filters", "4"}, {"padding", "same"}});
+    const int right = merged.Add(gui::NodeType::Conv2D, "Right", {{"filters", "4"}, {"padding", "same"}});
+    const int join = merged.Add(gui::NodeType::Concatenate, "Join");
+    const int pass = merged.Add(gui::NodeType::Identity, "Pass");
+    const int pooled = merged.Add(gui::NodeType::GlobalAvgPool, "Pooled");
+    const int scores = merged.Add(gui::NodeType::Dense, "Scores", {{"units", "2"}});
+    merged.Connect(pixels, left);
+    merged.Connect(pixels, right);
+    merged.Connect(left, join, 0, 0);
+    merged.Connect(right, join, 0, 1);
+    merged.Connect(join, pass);
+    merged.Connect(pass, pooled);
+    merged.Connect(pooled, scores);
+    const std::string merged_code = PyTorchOf(merged);
+    Check(Contains(merged_code, "nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten())") &&
+              !Contains(merged_code, "x.mean(dim=1)"),
+          "GlobalAvgPool after a Concatenate and an Identity of feature maps: a feature-map pool");
+
+    Graph image_rows;
+    const int image_data = image_rows.Add(gui::NodeType::DataInput, "Images", {{"shape", "[8, 8, 3]"}});
+    const int image_pool = image_rows.Add(gui::NodeType::GlobalMaxPool, "Pool");
+    const int image_head = image_rows.Add(gui::NodeType::Dense, "Head", {{"units", "2"}});
+    image_rows.Connect(image_data, image_pool);
+    image_rows.Connect(image_pool, image_head);
+    Check(Contains(PyTorchOf(image_rows), "nn.Sequential(nn.AdaptiveMaxPool2d(1), nn.Flatten())"),
+          "GlobalMaxPool straight after a Data Input of [H, W, C]: a feature-map pool");
+
+    Graph unknown;
+    const int features = unknown.Add(gui::NodeType::DataInput, "Features", {{"shape", "[10]"}});
+    const int hidden = unknown.Add(gui::NodeType::Dense, "Hidden", {{"units", "6"}});
+    const int odd_pool = unknown.Add(gui::NodeType::GlobalAvgPool, "Odd pool");
+    const int odd_head = unknown.Add(gui::NodeType::Dense, "Odd head", {{"units", "2"}});
+    unknown.Connect(features, hidden);
+    unknown.Connect(hidden, odd_pool);
+    unknown.Connect(odd_pool, odd_head);
+    Check(Contains(PyTorchOf(unknown), "raise ValueError('Odd pool: code export cannot tell whether it pools"),
+          "a global pool on neither a feature map nor a sequence is refused, by name");
+
+    Graph adaptive;
+    const int grid = adaptive.Add(gui::NodeType::DataInput, "Grid", {{"shape", "[8, 8, 1]"}});
+    const int shrink = adaptive.Add(gui::NodeType::AdaptiveAvgPool, "Shrink", {{"output_size", "0"}});
+    adaptive.Connect(grid, shrink);
+    Check(Contains(PyTorchOf(adaptive), "raise ValueError('Shrink: output_size must be positive"),
+          "an Adaptive Avg Pool the Engine cannot size is refused with its reason");
+
     Graph upsampled;
     const int rows = upsampled.Add(gui::NodeType::DataInput, "Rows", {{"shape", "[16]"}});
     const int map = upsampled.Add(gui::NodeType::Reshape, "Map", {{"shape", "4,4,1"}});
