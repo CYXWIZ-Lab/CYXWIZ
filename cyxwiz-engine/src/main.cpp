@@ -21,6 +21,7 @@
 #include "core/machine_compute_preference.h"
 #include "core/route_qualification_snapshot.h"
 #include "core/python_package_smoke.h"
+#include "core/user_folders.h"
 #include "gui/node_editor.h"
 #include <imgui.h>
 #include <imnodes.h>
@@ -253,43 +254,53 @@ int main(int argc, char** argv) {
     SetLaunchCwdEnv(launch_cwd);
 
     std::filesystem::path exe_dir = GetExecutableDir();
+    // The Engine only reads its own folder. An installed Engine keeps its log,
+    // layout and working folder in the user's folders; a development build in
+    // its build folder (core/user_folders.h). A stray relative write then
+    // lands in the working folder, never in the installed base.
+    const auto run_files = cyxwiz::core::CurrentRunFileLocations();
     bool cwd_set = false;
-    if (!exe_dir.empty()) {
+    if (!run_files.working_dir.empty()) {
         std::error_code ec;
-        std::filesystem::current_path(exe_dir, ec);
+        std::filesystem::create_directories(run_files.working_dir, ec);
+        std::filesystem::current_path(run_files.working_dir, ec);
         if (ec) {
-            std::cerr << "Failed to set working directory to executable directory: " << ec.message() << std::endl;
+            std::cerr << "Could not work in " << run_files.working_dir.string() << ": " << ec.message() << std::endl;
         } else {
             cwd_set = true;
         }
     }
 
-    // Setup logging with file output
+    // Logging: the console, the Console panel and engine_log.txt. Without a
+    // writable log folder the Engine still runs and says why it has no file.
+    const auto log_path = cyxwiz::UserFile(run_files.log_dir, "engine_log.txt");
+    std::string log_file_problem;
     try {
-        // Get executable directory for log file
-        std::filesystem::path exe_path = std::filesystem::current_path();
-        std::filesystem::path log_path = exe_path / "engine_log.txt";
-        // Keep the last five launches (TOFIX159 D7): engine_log.txt is this one,
-        // engine_log.1.txt the one before, ... engine_log.4.txt the oldest. A
-        // crashed launch's log survives the restart that follows it.
-        {
+        std::vector<spdlog::sink_ptr> sinks;
+        if (log_path.empty()) {
+            log_file_problem = "no log folder is known";
+        } else {
             std::error_code ec;
-            const auto numbered = [&exe_path](int n) {
-                return exe_path / ("engine_log." + std::to_string(n) + ".txt");
+            std::filesystem::create_directories(run_files.log_dir, ec);
+            // Keep the last five launches (TOFIX159 D7): engine_log.txt is this one,
+            // engine_log.1.txt the one before, ... engine_log.4.txt the oldest. A
+            // crashed launch's log survives the restart that follows it.
+            const auto numbered = [&run_files](int n) {
+                return run_files.log_dir / ("engine_log." + std::to_string(n) + ".txt");
             };
             std::filesystem::remove(numbered(4), ec);
             for (int n = 3; n >= 1; --n) std::filesystem::rename(numbered(n), numbered(n + 1), ec);
             std::filesystem::rename(log_path, numbered(1), ec);
+            try {
+                sinks.push_back(std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path.string(), true));
+            } catch (const spdlog::spdlog_ex& ex) {
+                log_file_problem = ex.what();
+            }
         }
+        sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+        sinks.push_back(std::make_shared<cyxwiz::RuntimeLogSinkMt>(cyxwiz::RuntimeLogStore::Instance()));
 
-        auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path.string(), true);
-        auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-        auto runtime_sink = std::make_shared<cyxwiz::RuntimeLogSinkMt>(
-            cyxwiz::RuntimeLogStore::Instance());
-
-        auto logger = std::make_shared<spdlog::logger>(
-            "cyxwiz",
-            spdlog::sinks_init_list{file_sink, console_sink, runtime_sink});
+        auto logger = std::make_shared<spdlog::logger>("cyxwiz", sinks.begin(), sinks.end());
         logger->set_level(spdlog::level::info);
         spdlog::set_default_logger(logger);
         spdlog::flush_on(spdlog::level::info);
@@ -320,11 +331,16 @@ int main(int argc, char** argv) {
     });
 
     if (cwd_set) {
-        spdlog::debug("Working directory set to executable directory: {}", exe_dir.string());
+        spdlog::debug("Working folder: {}", run_files.working_dir.string());
     }
     spdlog::debug("Launch working directory: {}", launch_cwd.string());
 
     spdlog::info("Starting CyxWiz Engine {} from {}", cyxwiz::GetVersionString(), exe_dir.string());
+    if (log_file_problem.empty()) {
+        spdlog::debug("Engine log: {}", log_path.string());
+    } else {
+        spdlog::warn("The Engine log is not written to a file ({}): {}", log_path.string(), log_file_problem);
+    }
 
     const auto qualification_cache =
         cyxwiz::GetRouteQualificationCachePath();
@@ -454,17 +470,10 @@ int main(int argc, char** argv) {
         // Initialize plugin system
         {
             auto& pm = cyxwiz::plugin::PluginManager::Instance();
-            std::filesystem::path plugin_base_dir = std::filesystem::current_path();
-            std::filesystem::path user_dir;
-#ifdef _WIN32
-            if (auto* appdata = std::getenv("APPDATA"))
-                user_dir = std::filesystem::path(appdata) / "cyxwiz" / "plugins";
-#else
-            if (auto* home = std::getenv("HOME"))
-                user_dir = std::filesystem::path(home) / ".cyxwiz" / "plugins";
-#endif
+            // The Engine's own plugins/ folder, then the user's.
+            const auto user_dir = cyxwiz::UserFile(cyxwiz::UserConfigDir(), "plugins");
             std::vector<std::filesystem::path> search_paths;
-            search_paths.push_back(plugin_base_dir / "plugins");
+            if (!exe_dir.empty()) search_paths.push_back(exe_dir / "plugins");
             if (!user_dir.empty()) search_paths.push_back(user_dir);
             pm.SetSearchPaths(search_paths);
             spdlog::debug("Plugin system: {} search paths configured", search_paths.size());

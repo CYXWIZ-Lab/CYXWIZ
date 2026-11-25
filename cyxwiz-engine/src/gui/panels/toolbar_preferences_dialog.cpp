@@ -264,7 +264,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                             engine_config.Save();
                             spdlog::set_level(record_debug ? spdlog::level::debug : spdlog::level::info);
                         }
-                        ImGui::TextDisabled("Shown in the Console under Debug and written to engine_log.txt. "
+                        ImGui::TextDisabled("Shown in the Console under Debug and written to the Engine log. "
                                             "Off: Info, warnings and errors only.");
                     }
 

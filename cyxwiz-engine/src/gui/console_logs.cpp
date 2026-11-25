@@ -568,7 +568,7 @@ void Console::RenderInspectorFilters(const cyxwiz::RuntimeLogInspectorResult *re
         SetLogsNotice("Could not open " + log_file_path_.string());
     }
     Tooltip(log_exists ? log_file_path_.string().c_str()
-                       : "engine_log.txt was not found next to the Engine.");
+                       : "engine_log.txt was not found in the logs folder.");
     if (ImGui::MenuItem("Show log file in folder", nullptr, false, log_exists)) {
       if (!OpenPathWithSystem(log_file_path_, true))
         SetLogsNotice("Could not open the log folder");
@@ -830,7 +830,7 @@ void Console::RenderLogsStatus(const cyxwiz::RuntimeLogInspectorResult *result) 
     }
     span(view.evicted, kMuted);
     Tooltip("Oldest events removed because the in-memory log holds a fixed number of "
-            "events. engine_log.txt keeps everything.");
+            "events. The Engine log keeps everything.");
     span(view.losses, view.has_losses ? kAmber : kMuted);
     Tooltip("Dropped: lost while the log was busy. Rejected: malformed events. "
             "Suppressed: repeats collapsed by rate limiting.");

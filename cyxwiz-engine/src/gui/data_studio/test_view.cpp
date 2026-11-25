@@ -225,7 +225,7 @@ void TestView::Render() {
         ImGui::TextColored(t.error, ICON_FA_CIRCLE_XMARK " The test failed");
         Wrapped(t.text, failure_);
         Wrapped(t.text_dim, has_results_ ? "The last successful run's results are below."
-                                         : "Task View shows the failed testing task; engine_log.txt has the details.");
+                                         : "Task View shows the failed testing task; the Engine log has the details.");
         ImGui::Dummy(ImVec2(0.0f, t.space_sm));
     }
     RenderSource();

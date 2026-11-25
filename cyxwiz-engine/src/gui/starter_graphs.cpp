@@ -1,6 +1,7 @@
 #include "starter_graphs.h"
 
 #include "icons.h"
+#include "../core/user_folders.h"
 
 #include <array>
 #include <cstdlib>
@@ -11,7 +12,7 @@ namespace gui {
 namespace {
 
 // examples/cyxgraph/<filename> next to the folder the Engine was launched
-// from, or up to four folders above the working folder (a build tree).
+// from, or beside the Engine or up to four folders above it (a build tree).
 std::string ResolveStarterGraphPath(const char* filename) {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -19,14 +20,14 @@ std::string ResolveStarterGraphPath(const char* filename) {
         const fs::path candidate = fs::path(launch_cwd) / "examples" / "cyxgraph" / filename;
         if (fs::exists(candidate, ec)) return fs::weakly_canonical(candidate, ec).string();
     }
-    const fs::path cwd = fs::current_path(ec);
-    const std::array<fs::path, 7> roots = {cwd,
-                                           cwd.parent_path(),
-                                           cwd.parent_path().parent_path(),
-                                           cwd.parent_path().parent_path().parent_path(),
-                                           cwd.parent_path().parent_path().parent_path().parent_path(),
-                                           cwd / "cyxwiz-engine",
-                                           cwd / ".." / "cyxwiz-engine"};
+    const fs::path exe = cyxwiz::core::ExecutableDirectory();
+    const std::array<fs::path, 7> roots = {exe,
+                                           exe.parent_path(),
+                                           exe.parent_path().parent_path(),
+                                           exe.parent_path().parent_path().parent_path(),
+                                           exe.parent_path().parent_path().parent_path().parent_path(),
+                                           exe / "cyxwiz-engine",
+                                           exe / ".." / "cyxwiz-engine"};
     for (const auto& root : roots) {
         const fs::path candidate = root / "examples" / "cyxgraph" / filename;
         if (fs::exists(candidate, ec)) return fs::weakly_canonical(candidate, ec).string();

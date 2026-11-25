@@ -3,6 +3,7 @@
 #include "../node_import_guardrails.h"
 #include "../node_type_import_registry.h"
 #include "../../core/node_metadata_registry.h"
+#include "../../core/user_folders.h"
 #include "../../core/pattern_browser_presentation.h"
 #include "../../core/recycle_bin.h"
 #include <imgui.h>
@@ -14,12 +15,6 @@
 #include <regex>
 #include <algorithm>
 #include <set>
-
-#ifdef __APPLE__
-#include <mach-o/dyld.h>  // For _NSGetExecutablePath
-#include <climits>         // For PATH_MAX
-#include <libgen.h>        // For dirname
-#endif
 
 namespace gui::patterns {
 
@@ -54,8 +49,8 @@ PatternLibrary& PatternLibrary::Instance() {
 }
 
 PatternLibrary::PatternLibrary() {
-    // Default directories
-    builtin_patterns_dir_ = "resources/patterns";
+    // Default directories: beside the executable, never the working folder
+    builtin_patterns_dir_ = (cyxwiz::core::ExecutableDirectory() / "resources" / "patterns").string();
 }
 
 void PatternLibrary::Initialize() {
@@ -71,27 +66,15 @@ void PatternLibrary::Initialize() {
 }
 
 void PatternLibrary::LoadBuiltinPatterns() {
-    // Try multiple possible locations for builtin patterns
-    std::vector<std::string> search_paths = {
-        builtin_patterns_dir_,
-        "cyxwiz-engine/resources/patterns",  // From project root
-        "../resources/patterns",
-        "../../resources/patterns",
-        "../../../cyxwiz-engine/resources/patterns"
-    };
-
-#ifdef __APPLE__
-    // On macOS, also check paths relative to the executable
-    char exec_path[PATH_MAX];
-    uint32_t size = sizeof(exec_path);
-    if (_NSGetExecutablePath(exec_path, &size) == 0) {
-        std::string exec_dir = fs::path(exec_path).parent_path().string();
-        search_paths.insert(search_paths.begin(), exec_dir + "/resources/patterns");
-        search_paths.insert(search_paths.begin(), exec_dir + "/../resources/patterns");
-        search_paths.insert(search_paths.begin(), exec_dir + "/../Resources/patterns");  // App bundle
-        spdlog::debug("macOS executable dir: {}", exec_dir);
+    // The shipped patterns beside the executable; a macOS app bundle keeps
+    // them in Contents/Resources, a build tree in the source folder.
+    const fs::path exe_dir = cyxwiz::core::ExecutableDirectory();
+    std::vector<std::string> search_paths = {builtin_patterns_dir_};
+    for (const auto& dir : {exe_dir / ".." / "Resources" / "patterns", exe_dir / ".." / "resources" / "patterns",
+                            exe_dir / ".." / ".." / "resources" / "patterns",
+                            exe_dir / ".." / ".." / ".." / "cyxwiz-engine" / "resources" / "patterns"}) {
+        search_paths.push_back(dir.lexically_normal().string());
     }
-#endif
 
     for (const auto& path : search_paths) {
         if (fs::exists(path) && fs::is_directory(path)) {

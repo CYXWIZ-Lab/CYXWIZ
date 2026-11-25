@@ -190,7 +190,7 @@ private:
   bool auto_scroll_;
   // Logs session (tofix121): own auto-scroll, short notices ("Copied row"),
   // the Error/Critical count shown on the Logs tab while it is in the
-  // background, and the engine_log.txt location for Open log file.
+  // background, and the Engine log's location for Open log file.
   bool logs_auto_scroll_ = true;
   std::string logs_notice_;
   double logs_notice_until_ = 0.0;

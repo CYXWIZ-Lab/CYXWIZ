@@ -1,6 +1,7 @@
 #include "rl_reference.h"
 
 #include "../rl_graph_compile.h"
+#include "../user_folders.h"
 
 #include <nlohmann/json.hpp>
 
@@ -226,10 +227,13 @@ bool DefaultEnvironmentSettings(const plugin::PluginEnvironmentInfo& environment
 }
 
 std::string ReadReferenceFile(const std::string& name) {
-    // where the pattern library looks for its resources
-    for (const char* dir : {"resources/rl_reference", "cyxwiz-engine/resources/rl_reference", "../resources/rl_reference",
-                            "../../resources/rl_reference", "../../../cyxwiz-engine/resources/rl_reference"}) {
-        std::ifstream in(std::filesystem::path(dir) / name, std::ios::binary);
+    // Beside the executable, as the pattern library looks for its resources
+    // (a macOS app bundle, a build tree); never the working folder.
+    const auto exe_dir = core::ExecutableDirectory();
+    for (const auto& dir : {exe_dir / "resources", exe_dir / ".." / "Resources", exe_dir / ".." / "resources",
+                            exe_dir / ".." / ".." / "resources",
+                            exe_dir / ".." / ".." / ".." / "cyxwiz-engine" / "resources"}) {
+        std::ifstream in(dir / "rl_reference" / name, std::ios::binary);
         if (!in) continue;
         std::ostringstream text;
         text << in.rdbuf();
