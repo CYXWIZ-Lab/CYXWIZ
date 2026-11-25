@@ -116,6 +116,17 @@ During the run:
   A Compatibility run (the default) runs the layer on ArrayFire instead and
   the trace records the failure.
 
+Reinforcement learning runs (PPO, SAC, TD3, DQN) count their provider kernels
+in the trace the same way, named `fused MLP` (the policy, value and Q
+networks), `Adam` (the joint optimizer step) and `PPO` (sampling, the loss,
+the advantages), and a Strict run stops at a provider failure in the same
+words. Two things differ: an RL run declares no placement before its first
+batch (it asks the provider as it goes), and under Compatibility a fused
+network or the joint Adam step whose provider failed or declined stays on
+ArrayFire for the rest of the run, and a failed PPO kernel for the rest of the
+Engine session. See
+[Where it trains](rl_training.md#where-it-trains).
+
 ## One training run per GPU
 
 A training run on a GPU (a model graph's Train, cross-validation, or PPO)

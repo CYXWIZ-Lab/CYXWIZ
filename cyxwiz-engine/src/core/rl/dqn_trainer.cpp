@@ -40,6 +40,7 @@ DqnLearner::DqnLearner(DqnNetworks networks, size_t choices, const DqnConfig& co
 DqnLearner::~DqnLearner() = default;
 
 void DqnLearner::DropFused(const std::exception& e) {
+    RethrowProviderRouteError(e);
     spdlog::warn("DQN: the fused networks failed ({}); ArrayFire operations from now on", e.what());
     q_fused_.reset();
     q_target_fused_.reset();

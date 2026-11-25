@@ -94,6 +94,16 @@ Open it, double-click **Metric blobs** and **Apply**, then **Train**.
 Measured 2026-10-15 (GTX 1050 Ti, CUDA): early stop after 11 of 30 epochs
 in 8 s, training accuracy 97.9%, validation accuracy 98.6%.
 
-Code export: the pycyxwiz export writes the split; the PyTorch, TensorFlow
-and Keras exports still write a straight chain, so a branched graph does not
-export to them yet.
+Code export: the PyTorch and pycyxwiz exports write branches, merges and
+Split (PyTorch writes a Split as `torch.split` and gives each output to the
+layer it is linked to). PyTorch does so for a graph with one Data Input and
+no word + POS fusion; it refuses a Split elsewhere, and a Split of image data
+(a feature map, flattened or not: torch keeps channels first, so the parts
+would differ). The TensorFlow and Keras exports write a straight chain of
+layers only: a branched graph is refused there, naming the node where it
+branches (a Plot or a statistics node beside the model does not count).
+
+`examples/cyxgraph/branching/blobs_split_heads_classifier.cyxgraph` splits a
+shared Dense layer's 16 outputs into 6 and 10 for two heads, then
+concatenates them before the classifier (356 parameters, the same in the
+Engine and in its PyTorch export).

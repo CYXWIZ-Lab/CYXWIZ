@@ -191,6 +191,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
             try {
                 return fused->Forward(x, keep);
             } catch (const std::exception& e) {
+                RethrowProviderRouteError(e);
                 spdlog::warn("PPO: the fused network failed ({}); ArrayFire operations from now on", e.what());
                 fused.reset();  // this network only: its forward and backward stay on one path
                 network_path_ = std::string("ArrayFire operations (the fused kernels failed: ") + e.what() + ")";
@@ -213,6 +214,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
             try {
                 return fused->Backward(grad);
             } catch (const std::exception& e) {
+                RethrowProviderRouteError(e);
                 spdlog::warn("PPO: the fused network failed ({}); ArrayFire operations from now on", e.what());
                 fused.reset();
                 network_path_ = std::string("ArrayFire operations (the fused kernels failed: ") + e.what() + ")";
@@ -228,6 +230,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
     // its own launches (and its own fallback) from then on.
     bool pair_ok = true;
     const auto unpair = [&pair_ok](const std::exception& e) {
+        RethrowProviderRouteError(e);
         spdlog::warn("PPO: the two networks in one launch failed ({}); one network per launch from now on", e.what());
         pair_ok = false;
     };

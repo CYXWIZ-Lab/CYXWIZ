@@ -3,6 +3,7 @@
   "name": "Multi-branch classifier (residual + wide)",
   "description": "A graph that branches and merges: every batch goes three ways at once. A deep branch (Dense, ReLU, Dense) is added to a one-layer projection of the same input (a residual connection, Add), and a wide Tanh branch is concatenated beside it before the classifier head. Data: examples/datasets/metric_blobs.csv (480 rows, 8 features, 4 classes). Open it, then Compile (F7) and Train (F5).",
   "category": "Classification",
+  "sample_shape": "[8]",
   "tags": ["branching", "residual", "concatenate", "add", "multi-branch", "classification", "tabular"],
   "parameters": [
     {

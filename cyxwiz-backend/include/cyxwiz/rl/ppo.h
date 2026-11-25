@@ -93,7 +93,8 @@ CYXWIZ_API Tensor PpoSampleStep(const Tensor& head, const Tensor& value, const T
 
 // Test-only: how many PPO ops (sampling, loss, GAE) ran on a neural provider,
 // and how many fell back to ArrayFire after the provider failed, since the
-// process started. After a failure that op stays on ArrayFire.
+// process started. After a failure that op stays on ArrayFire, except under
+// the Fail provider policy (a Strict run), which always asks the provider.
 struct CYXWIZ_API PpoProviderCounts {
     long long ran = 0;
     long long failed = 0;

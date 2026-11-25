@@ -6,6 +6,7 @@
 #include "../executable_model.h"
 
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <string>
 
@@ -38,5 +39,10 @@ inline double UniformFromBits(uint64_t bits) { return static_cast<double>(bits >
 // a few launches per forward and backward instead of several per layer.
 // Null, with the reason in why, when it cannot run there.
 std::unique_ptr<FusedMlp> FuseNetwork(IExecutableModel& model, std::string& why);
+
+// Call first in a handler that falls back from the fused kernels: a Strict
+// run's NeuralProviderRouteError is not a failure to fall back from, so it is
+// rethrown and stops the run (TOFIX233 B). Anything else returns.
+void RethrowProviderRouteError(const std::exception& e);
 
 }  // namespace cyxwiz::rl

@@ -8449,6 +8449,23 @@ if(WIN32)
 endif()
 add_test(NAME fused_ppo_parity COMMAND test_fused_ppo)
 
+# ===== Test: the RL provider calls report to the dispatch and follow its policy (TOFIX233 B) =====
+add_executable(test_rl_provider_dispatch
+    tests/test_rl_provider_dispatch.cpp
+)
+target_include_directories(test_rl_provider_dispatch PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_rl_provider_dispatch PRIVATE
+    cyxwiz-backend
+)
+set_target_properties(test_rl_provider_dispatch PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(WIN32)
+    target_compile_definitions(test_rl_provider_dispatch PRIVATE NOMINMAX)
+endif()
+
 # ===== Test: one training run per GPU on this machine (TOFIX206 3.2 E) =====
 add_executable(test_gpu_run_lease
     tests/test_gpu_run_lease.cpp
@@ -9790,6 +9807,13 @@ set_tests_properties(oracle_provider_route_cpu PROPERTIES
     LABELS "oracle;cpu"
     ENVIRONMENT "CYXWIZ_TEST_ARRAYFIRE_BACKEND=cpu")
 add_dependencies(cyxwiz-oracle-tests test_provider_route)
+# The RL provider calls (TOFIX233 B): a stub provider on the CPU platform, as above.
+target_link_libraries(test_rl_provider_dispatch PRIVATE cyxwiz-build-info)
+add_test(NAME oracle_rl_provider_dispatch_cpu COMMAND test_rl_provider_dispatch)
+set_tests_properties(oracle_rl_provider_dispatch_cpu PROPERTIES
+    LABELS "oracle;cpu"
+    ENVIRONMENT "CYXWIZ_TEST_ARRAYFIRE_BACKEND=cpu")
+add_dependencies(cyxwiz-oracle-tests test_rl_provider_dispatch)
 foreach(_oracle_test IN LISTS CYXWIZ_ORACLE_HOST_TESTS)
     if(NOT _oracle_test IN_LIST CYXWIZ_ORACLE_TESTS)
         message(FATAL_ERROR "CYXWIZ_ORACLE_HOST_TESTS names ${_oracle_test}, which is not in CYXWIZ_ORACLE_TESTS")

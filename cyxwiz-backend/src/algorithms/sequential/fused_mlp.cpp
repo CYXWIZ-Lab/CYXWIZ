@@ -1,6 +1,7 @@
 #include "cyxwiz/fused_mlp.h"
 
 #include "cyxwiz/neural_provider.h"
+#include "cyxwiz/neural_provider_dispatch.h"
 #include "cyxwiz/sequential.h"
 
 #include <algorithm>
@@ -13,7 +14,7 @@ namespace cyxwiz {
 
 struct FusedMlp::Impl {
     SequentialModel* model = nullptr;
-    std::shared_ptr<INeuralNetworkProvider> provider;
+    std::string provider_id;                 // the provider the probe found, for the compute path
     NeuralOpRequest request;                 // the chain; batch set per call
     std::vector<std::string> weight_names;   // "layer<i>.weight", per Dense layer
     std::vector<std::string> bias_names;
@@ -54,6 +55,31 @@ void AddSecondNetwork(NeuralOpRequest& r, const NeuralOpRequest& second) {
     std::copy(std::begin(second.mlp_activations), std::end(second.mlp_activations), std::begin(r.mlp2_activations));
     r.mlp2_negative_slope = second.mlp_negative_slope;
     r.mlp2_elu_alpha = second.mlp_elu_alpha;
+}
+
+// One fused call through the provider dispatch (TOFIX233 B), so the run's
+// observer sees it and its failure policy applies (a Strict run stops with
+// NeuralProviderRouteError). Throws runtime_error when it did not run: the
+// trainer then runs the network's layers.
+std::vector<Tensor> RunFused(const NeuralOpRequest& r, const std::vector<const Tensor*>& inputs,
+                             const std::vector<std::vector<size_t>>& shapes, const char* what) {
+    std::vector<Tensor> outputs;
+    NeuralOpStatus status;
+    bool asked = false;
+    const bool ran = DispatchNeuralProviderOp(r, "fused MLP", [&](INeuralNetworkProvider& provider) {
+        asked = true;
+        status = ExecuteNeuralOpOnDevice(provider, r, inputs, shapes, outputs);
+        return status;
+    });
+    if (ran) return outputs;
+    std::string why = status.detail;
+    if (!asked) {  // declined: the serving provider's own reason (a row limit, say)
+        const auto serving = NeuralProviderRegistry::Instance().ListServing(r.target);
+        why = serving.empty() ? std::string("no neural provider serves ") + NeuralDevicePlatformName(r.target.platform)
+                              : std::string(serving.front()->ProviderId()) + " declined it: " +
+                                    serving.front()->QueryCapability(r).detail;
+    }
+    throw std::runtime_error(std::string("FusedMlp ") + what + ": " + why);
 }
 
 }  // namespace
@@ -135,17 +161,19 @@ std::unique_ptr<FusedMlp> FusedMlp::For(SequentialModel& model, std::string& why
     }
     r.mlp_layers = layers;
     for (size_t l = 0; l < layers; ++l) impl->z_width += r.mlp_widths[l + 1];
-    impl->provider = NeuralProviderRegistry::Instance().FindSupporting(r);
-    if (!impl->provider) {
+    // A probe, not a run: the calls themselves go through the dispatch
+    const auto provider = NeuralProviderRegistry::Instance().FindSupporting(r);
+    if (!provider) {
         why = std::string("no neural provider runs this network on ") + NeuralDevicePlatformName(r.target.platform);
         return nullptr;
     }
     NeuralOpRequest backward = r;
     backward.op = NeuralOp::MlpBackward;
-    if (!impl->provider->QueryCapability(backward).supported) {
-        why = std::string(impl->provider->ProviderId()) + " has no mlp_backward for this network";
+    if (!provider->QueryCapability(backward).supported) {
+        why = std::string(provider->ProviderId()) + " has no mlp_backward for this network";
         return nullptr;
     }
+    impl->provider_id = provider->ProviderId();
     return std::unique_ptr<FusedMlp>(new FusedMlp(std::move(impl)));
 }
 
@@ -166,9 +194,7 @@ Tensor FusedMlp::Forward(const Tensor& x, bool keep) {
     }
     std::vector<std::vector<size_t>> shapes{{r.batch, r.mlp_widths[r.mlp_layers]}};
     if (keep) shapes.push_back({r.batch, m.z_width});
-    std::vector<Tensor> outputs;
-    const NeuralOpStatus status = ExecuteNeuralOpOnDevice(*m.provider, r, inputs, shapes, outputs);
-    if (!status.ok) throw std::runtime_error("FusedMlp forward: " + status.detail);
+    std::vector<Tensor> outputs = RunFused(r, inputs, shapes, "forward");
     m.kept = keep;
     m.kept_with = nullptr;
     if (keep) {
@@ -185,7 +211,7 @@ std::pair<Tensor, Tensor> FusedMlp::ForwardPair(FusedMlp& first, FusedMlp& secon
     if (shape.size() != 2 || shape[1] != a.request.mlp_widths[0] || shape[1] != b.request.mlp_widths[0])
         throw std::runtime_error("FusedMlp: the input must be [rows, " + std::to_string(a.request.mlp_widths[0]) +
                                  "] for both networks");
-    if (a.provider != b.provider) throw std::runtime_error("FusedMlp: the two networks run on different providers");
+    if (a.provider_id != b.provider_id) throw std::runtime_error("FusedMlp: the two networks run on different providers");
     NeuralOpRequest r = a.request;
     r.op = NeuralOp::MlpForward;
     r.batch = shape[0];
@@ -208,9 +234,7 @@ std::pair<Tensor, Tensor> FusedMlp::ForwardPair(FusedMlp& first, FusedMlp& secon
         shapes.push_back({r.batch, a.z_width});
         shapes.push_back({r.batch, b.z_width});
     }
-    std::vector<Tensor> outputs;
-    const NeuralOpStatus status = ExecuteNeuralOpOnDevice(*a.provider, r, inputs, shapes, outputs);
-    if (!status.ok) throw std::runtime_error("FusedMlp forward (two networks): " + status.detail);
+    std::vector<Tensor> outputs = RunFused(r, inputs, shapes, "forward (two networks)");
     a.kept = b.kept = keep;
     a.kept_with = keep ? &b : nullptr;
     b.kept_with = keep ? &a : nullptr;
@@ -247,10 +271,7 @@ std::vector<Tensor> FusedMlp::RunBackward(const Tensor& dy, bool parameters) {
     } else {
         shapes.push_back({r.batch, r.mlp_widths[0]});
     }
-    std::vector<Tensor> outputs;
-    const NeuralOpStatus status = ExecuteNeuralOpOnDevice(*m.provider, r, inputs, shapes, outputs);
-    if (!status.ok) throw std::runtime_error("FusedMlp backward: " + status.detail);
-    return outputs;
+    return RunFused(r, inputs, shapes, "backward");
 }
 
 std::map<std::string, Tensor> FusedMlp::Backward(const Tensor& dy) {
@@ -301,10 +322,7 @@ std::vector<Tensor> FusedMlp::RunBackwardPair(FusedMlp& first, const Tensor& dy_
     } else {
         shapes.assign(2, {r.batch, r.mlp_widths[0]});
     }
-    std::vector<Tensor> outputs;
-    const NeuralOpStatus status = ExecuteNeuralOpOnDevice(*a.provider, r, inputs, shapes, outputs);
-    if (!status.ok) throw std::runtime_error("FusedMlp backward (two networks): " + status.detail);
-    return outputs;
+    return RunFused(r, inputs, shapes, "backward (two networks)");
 }
 
 std::pair<FusedMlp::Gradients, FusedMlp::Gradients> FusedMlp::BackwardPair(FusedMlp& first, const Tensor& dy_first,
@@ -331,6 +349,6 @@ std::pair<Tensor, Tensor> FusedMlp::InputGradientPair(FusedMlp& first, const Ten
     return {std::move(outputs[0]), std::move(outputs[1])};
 }
 
-std::string FusedMlp::ProviderId() const { return impl_->provider->ProviderId(); }
+std::string FusedMlp::ProviderId() const { return impl_->provider_id; }
 
 }  // namespace cyxwiz

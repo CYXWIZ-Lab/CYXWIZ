@@ -98,6 +98,16 @@
    "generator": "reference/generate_dimensionality_reduction_fixtures.py",
    "generator_sha256": "a986e553adb075161adfd4a900f28d54dabbc0b065abe9cb85214b8487317260"
   },
+  "dqn_pytorch.json": {
+   "fixture_sha256": "bb77b7e4fbbb0a157c4af6f916a26de794087e6ad84061aa96a6cd88ae257cbd",
+   "generator": "reference/generate_dqn_fixtures.py",
+   "generator_sha256": "b297c2bb34fb6a4520973b9ee2e1d364e272285ce69b7114e4ace0d20f808f85"
+  },
+  "dqn_step_sb3.json": {
+   "fixture_sha256": "328e449e27a9b82439f5c24d7e3d49cec64ffc346fa5af0a16f56501f54f7f79",
+   "generator": "reference/generate_dqn_step_fixture.py",
+   "generator_sha256": "388636a25b617237aa2bd219c428d72c5b873c9c4b910738df0a00f274ed7703"
+  },
   "fasttext_reference.json": {
    "fixture_sha256": "fd0ffde600139afd2f6b5b1582d55dc928b08a529d533e174e36b325db4b3233",
    "generator": "reference/generate_fasttext_fixtures.py",
@@ -265,6 +275,16 @@
    "generator": "reference/generate_roc_pr_fixtures.py",
    "generator_sha256": "e875c543bf7009628a339341641f015f5fa39fc0c8f310d2d064acfeccf15aed"
   },
+  "sac_pytorch.json": {
+   "fixture_sha256": "70165aa21d853caf4ae251d7baee21dab51c57a27ef847dfc1bc83ad1772e05a",
+   "generator": "reference/generate_sac_fixtures.py",
+   "generator_sha256": "d81675f4e51ab2de926331395ada74764080f305fff785bedfe4b4f72d5a922f"
+  },
+  "sac_step_sb3.json": {
+   "fixture_sha256": "64506f2706012c6b9e1770eee21554a8c9bc526be5aa1eb1acd9617f14362b91",
+   "generator": "reference/generate_sac_step_fixture.py",
+   "generator_sha256": "f5aea1f4190b2900f55129fdd207ccaf55942b41bd9c1a761d68d2e856c122bb"
+  },
   "saliency_pytorch.json": {
    "fixture_sha256": "3c74b40ab46d2bf6d85e6d09126f2cf046b8b22b3fee6d2e9dfa602c112f71a3",
    "generator": "reference/generate_saliency_fixtures.py",
@@ -294,6 +314,16 @@
    "fixture_sha256": "870f66d4b1082730e81b9c99d39470acd16ff00f4dcb122ddd4b174d7a99c682",
    "generator": "reference/generate_statistical_tests_fixtures.py",
    "generator_sha256": "bcb67b5ff02c67c379e4b543af4b14aa1aa087840731e6771fda9d20620684ec"
+  },
+  "td3_pytorch.json": {
+   "fixture_sha256": "b147747c7337bc7a31b2de9fff6b22e2f08418a1d58ff7859df40adf1c1d0ad2",
+   "generator": "reference/generate_td3_fixtures.py",
+   "generator_sha256": "76cf475a17182428c25c73fc54ce9ba4a22cd99b1fca533eab22eca7313e7981"
+  },
+  "td3_step_sb3.json": {
+   "fixture_sha256": "8e2e73ab64820ddce21e722df533002c876fa391bd15fb8c4eaeaee2a2568a61",
+   "generator": "reference/generate_td3_step_fixture.py",
+   "generator_sha256": "012cc8e83c473b7a7f88cb7a137e80dfebc1ea38df6c7b494af0728da40bfe21"
   },
   "text_truth.json": {
    "fixture_sha256": "f334b108c27473ef604b7d1c9ad99f7cf59bca3ffe84b834d7b68058b7a6ba6a",

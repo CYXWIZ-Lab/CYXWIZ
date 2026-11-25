@@ -79,7 +79,14 @@ click each (hover for what each does).
     or analysis pipeline such as PCA, K-Means or a portfolio solver; run it
     in the Studio), an RL graph that does not compile, or, in PyTorch, a
     graph with a layer the export cannot write yet (an Upsample, for
-    example), named in the reason. A pool is written as the Engine sizes it:
+    example), named in the reason; in TensorFlow and Keras, a graph that
+    branches (a Split, a merge such as Add or Concatenate, or a layer two
+    layers read), naming the node where it branches: they write a straight
+    chain of layers only, so export it to PyTorch. PyTorch writes branches,
+    merges and Split in a graph with one Data Input (each Split output to the
+    layer it is linked to, as `torch.split`; a Split of image data is refused,
+    see [Branched graphs](branched_graphs.md)). A pool is written as the
+    Engine sizes it:
     a Max or Avg Pool's stride is its window when not set, and a Global Avg
     or Max Pool is one value per channel on a feature map, or the mean or
     maximum over time on a sequence.

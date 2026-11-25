@@ -231,6 +231,59 @@ PyTorchCriterion PyTorchCriterionFor(const MLNode* node, bool per_token) {
 }
 
 
+// Add / Multiply / Average / Concatenate: a node that combines its inputs
+bool IsMergeNode(NodeType type) {
+    return type == NodeType::Add || type == NodeType::Multiply || type == NodeType::Average ||
+           type == NodeType::Concatenate;
+}
+
+// A layer, activation, pool, normalization, attention, recurrent, shape,
+// merge, upsampling or dropout node: a chain export writes it wherever it
+// sits, so one off the prediction's path still changes the chain
+bool IsLayerCategoryNode(NodeType type) {
+    auto& registry = NodeMetadataRegistry::Instance();
+    if (!registry.IsInitialized()) registry.Initialize();
+    const auto* metadata = registry.GetMetadata(type);
+    if (!metadata) return false;
+    switch (metadata->category) {
+        case NodeCategory::Layers:
+        case NodeCategory::Activation:
+        case NodeCategory::Pooling:
+        case NodeCategory::Normalization:
+        case NodeCategory::Attention:
+        case NodeCategory::Recurrent:
+        case NodeCategory::ShapeOps:
+        case NodeCategory::MergeOps:
+        case NodeCategory::Upsampling:
+        case NodeCategory::Regularization:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// A layer that hands on the layout it reads (a feature map stays one)
+bool KeepsLayout(NodeType type) {
+    return spatial::IsShapePreservingLayer(type) || type == NodeType::BatchNorm || type == NodeType::LayerNorm ||
+           type == NodeType::Dropout || type == NodeType::Identity || type == NodeType::Add ||
+           type == NodeType::Concatenate || type == NodeType::Multiply || type == NodeType::Average;
+}
+
+// A node the model's forward runs: not the loss, the Output, an optimizer, a
+// scheduler or a penalty
+bool IsForwardModelNode(const MLNode& n) {
+    if (IsBuiltInLossNodeType(n.type) || n.type == NodeType::Output || n.type == NodeType::SequenceTagOutput) return false;
+    switch (n.type) {
+        case NodeType::SGD: case NodeType::Adam: case NodeType::AdamW: case NodeType::RMSprop:
+        case NodeType::Adagrad: case NodeType::NAdam: case NodeType::StepLR: case NodeType::CosineAnnealing:
+        case NodeType::ReduceOnPlateau: case NodeType::ExponentialLR: case NodeType::WarmupScheduler:
+        case NodeType::L1Regularization: case NodeType::L2Regularization: case NodeType::ElasticNet:
+            return false;
+        default:
+            return true;
+    }
+}
+
 // One export: the graph it reads and the options; the members are the Node
 // Editor's former generators, unchanged.
 class GraphCodeExporter {
@@ -259,6 +312,33 @@ private:
     std::string GeneratePyCyxWizCode(const std::vector<int>& sorted_ids);
     std::optional<std::string> FindDenseActivationConfigurationError(const std::vector<int>& sorted_ids) const;
     std::optional<std::string> FindUnsupportedSequentialLayerError(const std::vector<int>& sorted_ids) const;
+
+    // The model part of the graph as the forward reads it (TOFIX233 A19):
+    // layers, tensor ops, merges and Split. Each input's source is a node and
+    // its output pin, since a Split's two outputs are different tensors.
+    struct ModelSource {
+        int node = 0;  // 0: nothing linked
+        size_t pin = 0;
+    };
+    struct ModelGraph {
+        std::vector<int> order;                          // model nodes in forward order
+        std::map<int, size_t> position;                  // node -> index in order
+        std::map<int, std::vector<ModelSource>> inputs;  // node -> one source per input pin
+        std::map<int, std::vector<int>> readers;         // node -> the model nodes reading it
+        size_t entry_nodes = 0;                          // model nodes no model node feeds
+    };
+    ModelGraph ReadModelGraph(const std::vector<int>& sorted_ids) const;
+    // The first model node, in forward order, where the model stops being one
+    // straight chain: a merge, a Split, or a node two model nodes read. Null
+    // for a chain. TensorFlow and Keras write chains only (A17).
+    const MLNode* FirstBranchNode(const ModelGraph& graph) const;
+    // What the loss reads as the prediction (else what the Output reads)
+    ModelSource PredictionSource(const ModelGraph& graph) const;
+    // True when `split` cuts image data: a feature map, or one flattened on
+    // the way (the Engine holds both height, width, channel; torch channels
+    // first, so the parts would differ)
+    bool SplitsImageData(const MLNode& split) const;
+    std::optional<std::string> FindBranchError(const std::vector<int>& sorted_ids, const char* framework) const;
 
     bool IsRLGraph(const std::vector<int>& sorted_ids) const;
     std::string GenerateRLCode(const std::vector<int>& sorted_ids) const;
@@ -694,6 +774,120 @@ GraphCodeExporter::FindUnsupportedSequentialLayerError(
     return std::nullopt;
 }
 
+GraphCodeExporter::ModelGraph GraphCodeExporter::ReadModelGraph(const std::vector<int>& sorted_ids) const {
+    ModelGraph graph;
+    for (const int id : sorted_ids)
+        if (const MLNode* n = FindNodeById(id); n && IsForwardModelNode(*n)) graph.order.push_back(id);
+    for (size_t i = 0; i < graph.order.size(); ++i) graph.position[graph.order[i]] = i;
+    for (const int id : graph.order) {
+        const MLNode* n = FindNodeById(id);
+        auto& sources = graph.inputs[id];
+        sources.resize(n->inputs.size());
+        bool fed = false;
+        for (size_t i = 0; i < n->inputs.size(); ++i) {
+            for (const auto& link : links_) {
+                if (link.to_node != id || link.to_pin != n->inputs[i].id) continue;
+                sources[i].node = link.from_node;
+                if (const MLNode* from = FindNodeById(link.from_node))
+                    for (size_t pin = 0; pin < from->outputs.size(); ++pin)
+                        if (from->outputs[pin].id == link.from_pin) sources[i].pin = pin;
+                break;
+            }
+            if (sources[i].node && graph.position.count(sources[i].node)) {
+                graph.readers[sources[i].node].push_back(id);
+                fed = true;
+            }
+        }
+        if (!fed) ++graph.entry_nodes;
+    }
+    return graph;
+}
+
+const MLNode* GraphCodeExporter::FirstBranchNode(const ModelGraph& graph) const {
+    // The nodes the prediction is computed from (all of them without a loss
+    // or Output): a Plot or a statistics node beside them is not the model
+    std::set<int> path;
+    if (const ModelSource prediction = PredictionSource(graph); prediction.node) {
+        std::vector<int> stack{prediction.node};
+        while (!stack.empty()) {
+            const int id = stack.back();
+            stack.pop_back();
+            if (!path.insert(id).second) continue;
+            for (const ModelSource& source : graph.inputs.at(id))
+                if (source.node && graph.position.count(source.node)) stack.push_back(source.node);
+        }
+    } else {
+        path.insert(graph.order.begin(), graph.order.end());
+    }
+    const auto counts = [&](int id) { return path.count(id) || IsLayerCategoryNode(FindNodeById(id)->type); };
+    for (const int id : graph.order) {
+        const MLNode* n = FindNodeById(id);
+        if (!counts(id)) continue;
+        if (IsMergeNode(n->type) || n->type == NodeType::Split) return n;
+        // Two model inputs (a Tensor Dot, a second Data Input) or two readers
+        size_t sources = 0;
+        for (const ModelSource& source : graph.inputs.at(id))
+            if (source.node && graph.position.count(source.node)) ++sources;
+        if (sources > 1) return n;
+        size_t readers = 0;
+        if (const auto r = graph.readers.find(id); r != graph.readers.end())
+            for (const int reader : r->second)
+                if (counts(reader)) ++readers;
+        if (readers > 1) return n;
+    }
+    return nullptr;
+}
+
+GraphCodeExporter::ModelSource GraphCodeExporter::PredictionSource(const ModelGraph& graph) const {
+    const MLNode* reader = FindExportLossNode();
+    if (!reader)
+        for (const auto& node : nodes_)
+            if (node.type == NodeType::Output) reader = &node;
+    if (!reader || reader->inputs.empty()) return {};
+    for (const auto& link : links_) {
+        if (link.to_node != reader->id || link.to_pin != reader->inputs.front().id) continue;
+        ModelSource source;
+        source.node = link.from_node;
+        if (const MLNode* from = FindNodeById(link.from_node))
+            for (size_t pin = 0; pin < from->outputs.size(); ++pin)
+                if (from->outputs[pin].id == link.from_pin) source.pin = pin;
+        return graph.position.count(source.node) ? source : ModelSource{};
+    }
+    return {};
+}
+
+bool GraphCodeExporter::SplitsImageData(const MLNode& split) const {
+    if (ReadsFeatureMap(split)) return true;
+    const MLNode* at = &split;
+    for (size_t guard = 0; guard < nodes_.size() && !at->inputs.empty(); ++guard) {
+        const MLNode* source = nullptr;
+        for (const auto& link : links_)
+            if (link.to_node == at->id && link.to_pin == at->inputs.front().id) source = FindNodeById(link.from_node);
+        if (!source) return false;
+        if (source->type == NodeType::Flatten) return ReadsFeatureMap(*source);
+        if (!KeepsLayout(source->type)) return false;
+        at = source;
+    }
+    return false;
+}
+
+std::optional<std::string> GraphCodeExporter::FindBranchError(const std::vector<int>& sorted_ids,
+                                                              const char* framework) const {
+    const ModelGraph graph = ReadModelGraph(sorted_ids);
+    const MLNode* branch = FirstBranchNode(graph);
+    if (!branch) return std::nullopt;
+    size_t sources = 0;
+    for (const ModelSource& source : graph.inputs.at(branch->id))
+        if (source.node && graph.position.count(source.node)) ++sources;
+    const std::string what = branch->type == NodeType::Split ? "it splits a tensor in two"
+                             : IsMergeNode(branch->type)     ? "it merges branches"
+                             : sources > 1                   ? "it reads two tensors"
+                                                             : "two layers read its output";
+    return EffectiveNodeName(*branch) + ": code export writes " + framework +
+           " only as a straight chain of layers, and the graph branches here (" + what +
+           "); use the PyTorch export, or train it in Studio";
+}
+
 std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorted_ids) {
     // Check if this is an RL graph
     if (IsRLGraph(sorted_ids)) {
@@ -974,56 +1168,31 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
     // / Concatenate combine their inputs. A plain chain writes none of this,
     // so its code is as before. Graphs with the word + POS fusion or several
     // inputs keep the chain form.
-    const auto is_merge = [](NodeType type) {
-        return type == NodeType::Add || type == NodeType::Multiply || type == NodeType::Average ||
-               type == NodeType::Concatenate;
-    };
-    const auto is_model_node = [&](const MLNode& n) {
-        if (IsBuiltInLossNodeType(n.type) || n.type == NodeType::Output || n.type == NodeType::SequenceTagOutput) return false;
-        switch (n.type) {
-            case NodeType::SGD: case NodeType::Adam: case NodeType::AdamW: case NodeType::RMSprop:
-            case NodeType::Adagrad: case NodeType::NAdam: case NodeType::StepLR: case NodeType::CosineAnnealing:
-            case NodeType::ReduceOnPlateau: case NodeType::ExponentialLR: case NodeType::WarmupScheduler:
-            case NodeType::L1Regularization: case NodeType::L2Regularization: case NodeType::ElasticNet:
-                return false;
-            default:
-                return true;
-        }
-    };
-    std::vector<int> model_order;  // model nodes in forward order
-    for (const int id : sorted_ids)
-        if (const MLNode* n = FindNodeById(id); n && is_model_node(*n)) model_order.push_back(id);
-    std::map<int, size_t> model_position;
-    for (size_t i = 0; i < model_order.size(); ++i) model_position[model_order[i]] = i;
-    // The node feeding input `index` of `n` (0 when none).
-    const auto source_of = [&](const MLNode& n, size_t index) {
-        if (index >= n.inputs.size()) return 0;
-        for (const auto& link : links_)
-            if (link.to_node == n.id && link.to_pin == n.inputs[index].id) return link.from_node;
-        return 0;
-    };
-    std::map<int, std::vector<int>> model_consumers;  // node -> the model nodes reading it
-    size_t source_nodes = 0;
-    for (const int id : model_order) {
-        const MLNode* n = FindNodeById(id);
-        bool has_source = false;
-        for (size_t i = 0; i < n->inputs.size(); ++i) {
-            const int from = source_of(*n, i);
-            if (from && model_position.count(from)) {
-                model_consumers[from].push_back(id);
-                has_source = true;
+    // A Split (A19) writes its two outputs as v<id>_0 and v<id>_1, and each
+    // reader reads the output its link comes from.
+    ModelGraph graph = ReadModelGraph(sorted_ids);
+    const bool follow_branches = fusion_embedding_layer.empty() && graph.entry_nodes <= 1;
+    if (!follow_branches) {
+        for (const int id : graph.order)
+            if (const MLNode* n = FindNodeById(id); n->type == NodeType::Split) {
+                modules_.clear();
+                return BlockedCodegenConfiguration(
+                    "PyTorch", EffectiveNodeName(*n) + ": code export writes a Split only in a graph with one input "
+                               "and no word + POS fusion; train it in Studio");
             }
-        }
-        if (!has_source) ++source_nodes;
     }
-    const bool follow_branches = fusion_embedding_layer.empty() && source_nodes <= 1;
+    const auto is_split = [this](int id) {
+        const MLNode* n = FindNodeById(id);
+        return n && n->type == NodeType::Split;
+    };
     std::set<int> saved;  // nodes whose output is kept as v<id>
     if (follow_branches) {
-        for (const auto& [from, readers] : model_consumers) {
+        for (const auto& [from, readers] : graph.readers) {
+            if (is_split(from)) continue;  // read through v<id>_<pin>
             bool keep = readers.size() > 1;
             for (const int reader : readers) {
-                if (is_merge(FindNodeById(reader)->type)) keep = true;
-                if (model_position[reader] != model_position[from] + 1) keep = true;
+                if (IsMergeNode(FindNodeById(reader)->type)) keep = true;
+                if (graph.position[reader] != graph.position[from] + 1) keep = true;
             }
             if (keep) saved.insert(from);
         }
@@ -1031,6 +1200,15 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
     const auto var = [](int id) { return "v" + std::to_string(id); };
     int current = 0;       // the node whose output `x` holds
     int pending_save = 0;  // a node to keep as v<id> before the next line
+    // What a reader of `source` reads: a Split's output, a kept output, or x
+    const auto read = [&](const ModelSource& source) -> std::string {
+        if (is_split(source.node)) return var(source.node) + "_" + std::to_string(source.pin);
+        return saved.count(source.node) ? var(source.node) : std::string("x");
+    };
+    const auto first_source = [&](const MLNode& n) {
+        const auto& sources = graph.inputs[n.id];
+        return sources.empty() ? ModelSource{} : sources.front();
+    };
 
     // Forward pass
     code += "    def forward(self, x):\n";
@@ -1040,17 +1218,15 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
-        if (follow_branches && model_position.count(node->id)) {
+        if (follow_branches && graph.position.count(node->id)) {
             if (pending_save) {
                 code += "        " + var(pending_save) + " = x\n";
                 pending_save = 0;
             }
-            if (is_merge(node->type)) {
+            if (IsMergeNode(node->type)) {
                 std::vector<std::string> parts;
-                for (size_t i = 0; i < node->inputs.size(); ++i) {
-                    const int from = source_of(*node, i);
-                    if (from) parts.push_back(saved.count(from) ? var(from) : std::string("x"));
-                }
+                for (const ModelSource& source : graph.inputs[node->id])
+                    if (source.node) parts.push_back(read(source));
                 std::string expr;
                 if (node->type == NodeType::Concatenate) {
                     expr = "torch.cat([";
@@ -1066,8 +1242,39 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
                 if (saved.count(node->id)) pending_save = node->id;
                 continue;
             }
-            const int from = source_of(*node, 0);
-            if (from && from != current && saved.count(from)) code += "        x = " + var(from) + "\n";
+            const ModelSource from = first_source(*node);
+            if (from.node && (is_split(from.node) || (from.node != current && saved.count(from.node))))
+                code += "        x = " + read(from) + "\n";
+            if (node->type == NodeType::Split) {
+                // Output 1 = the first split_size entries along dim, Output 2 =
+                // the rest; dim counts the batch as 0, as torch does. The
+                // parameters are read as the compiler reads them.
+                int dim = 1, size = 1;
+                std::string refused;
+                try {
+                    dim = spatial::ParseIntParam(node->parameters, "dim", 1);
+                    size = spatial::ParseIntParam(node->parameters, "split_size", 1);
+                    if (dim == 0)
+                        refused = "Split dim 0 is the batch; split a sample dimension (dim 1 = features)";
+                    else if (size < 1)
+                        refused = "Split split_size must be at least 1";
+                    else if (SplitsImageData(*node))
+                        refused = "code export cannot write a Split of image data yet (the Engine holds it as "
+                                  "height, width, channel, torch channels first, so the parts would differ); "
+                                  "train it in Studio";
+                } catch (const std::exception& error) {
+                    refused = error.what();
+                }
+                if (!refused.empty()) {
+                    modules_.clear();
+                    return BlockedCodegenConfiguration("PyTorch", EffectiveNodeName(*node) + ": " + refused);
+                }
+                code += "        " + var(node->id) + "_0, " + var(node->id) + "_1 = torch.split(x, [" +
+                        std::to_string(size) + ", x.size(" + std::to_string(dim) + ") - " + std::to_string(size) +
+                        "], dim=" + std::to_string(dim) + ")\n";
+                current = 0;  // x is the Split's input, not one of its outputs
+                continue;
+            }
             current = node->id;
             if (saved.count(node->id)) pending_save = node->id;
         }
@@ -1122,7 +1329,7 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
                 bool image = std::count(shape.begin(), shape.end(), ',') == 2;
                 if (image) {
                     image = false;
-                    for (const int reader : model_consumers[node->id]) {
+                    for (const int reader : graph.readers[node->id]) {
                         const MLNode* next = FindNodeById(reader);
                         if (next && (spatial::IsSpatialLayer(next->type) || spatial::IsGlobalPoolLayer(next->type)))
                             image = true;
@@ -1288,6 +1495,12 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
     if (!unwritten_layer.empty()) {
         modules_.clear();  // no module of this graph is written
         return BlockedCodegenConfiguration("PyTorch", unwritten_layer);
+    }
+    if (follow_branches) {
+        const ModelSource prediction = PredictionSource(graph);
+        if (prediction.node &&
+            (is_split(prediction.node) || (prediction.node != current && saved.count(prediction.node))))
+            code += "        x = " + read(prediction) + "\n";
     }
     code += "        return x\n\n";
 
@@ -1539,6 +1752,9 @@ std::string GraphCodeExporter::GenerateTensorFlowCode(const std::vector<int>& so
     if (const auto error = FindDenseActivationConfigurationError(sorted_ids)) {
         return BlockedCodegenConfiguration("TensorFlow", *error);
     }
+    if (const auto error = FindBranchError(sorted_ids, "TensorFlow")) {
+        return BlockedCodegenConfiguration("TensorFlow", *error);
+    }
 
     for (int node_id : sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
@@ -1681,6 +1897,9 @@ std::string GraphCodeExporter::GenerateKerasCode(const std::vector<int>& sorted_
         return BlockedCodegenConfiguration("Keras", *error);
     }
     if (const auto error = FindDenseActivationConfigurationError(sorted_ids)) {
+        return BlockedCodegenConfiguration("Keras", *error);
+    }
+    if (const auto error = FindBranchError(sorted_ids, "Keras")) {
         return BlockedCodegenConfiguration("Keras", *error);
     }
 
@@ -1976,8 +2195,9 @@ std::string GraphCodeExporter::GeneratePyCyxWizCode(const std::vector<int>& sort
             }
 
             case NodeType::Split: {
-                // Output 1 = the first split_size entries, Output 2 = the rest.
-                std::string split_size = GetParamOrDefault(*node, "split_size", "2");
+                // Output 1 = the first split_size entries, Output 2 = the rest;
+                // without the setting, 1, as the compiler reads it.
+                std::string split_size = GetParamOrDefault(*node, "split_size", "1");
                 std::string dim = GetParamOrDefault(*node, "dim", "1");
                 const std::string source = input_expr(*node, 0);
                 code += "        " + out + " = " + source + ".split([" + split_size + ", " + source +
@@ -2246,12 +2466,7 @@ GraphCodeExporter::InputLayout GraphCodeExporter::LayoutRead(const MLNode& node)
             default:
                 break;
         }
-        const bool keeps_layout = spatial::IsShapePreservingLayer(source->type) ||
-                                  source->type == NodeType::BatchNorm || source->type == NodeType::LayerNorm ||
-                                  source->type == NodeType::Dropout || source->type == NodeType::Identity ||
-                                  source->type == NodeType::Add || source->type == NodeType::Concatenate ||
-                                  source->type == NodeType::Multiply || source->type == NodeType::Average;
-        if (!keeps_layout) return InputLayout::Unknown;
+        if (!KeepsLayout(source->type)) return InputLayout::Unknown;
         at = source;
     }
     return InputLayout::Unknown;

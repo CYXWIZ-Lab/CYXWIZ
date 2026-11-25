@@ -7,6 +7,7 @@
 #include "algorithms/arrayfire_backend_utils.h"
 
 #include <cyxwiz/device.h>
+#include <cyxwiz/neural_provider_dispatch.h>
 
 #include <spdlog/spdlog.h>
 
@@ -406,8 +407,10 @@ void RLTrainingRun::Run() {
         // training takes it; held on this worker for the whole run, so the
         // Engine knows a training uses it (Preferences > Devices waits)
         ExecutionDeviceContext device;
+        ExecutionPolicy policy = ExecutionPolicy::Compatibility;
         try {
-            device = PrepareRunExecutionDevice(ResolveRunExecutionPolicy(false, learner), learner);
+            policy = ResolveRunExecutionPolicy(false, learner);
+            device = PrepareRunExecutionDevice(policy, learner);
         } catch (const std::exception& e) {
             return fail(std::string("The training device did not start: ") + e.what());
         }
@@ -438,6 +441,12 @@ void RLTrainingRun::Run() {
                                .count());
         TrainingTraceCollector::Instance().StartRun(run_id);
         traced = true;
+        // Every provider call (fused networks, joint Adam, PPO's kernels) goes
+        // into the trace; under Strict a provider failure stops the run instead
+        // of changing its route, as in graph training (TOFIX233 B)
+        const ScopedNeuralDispatchObserver provider_observer(&RecordNeuralDispatchForActiveTrace);
+        const ScopedNeuralProviderFailurePolicy provider_policy(
+            policy == ExecutionPolicy::Strict ? NeuralProviderFailurePolicy::Fail : NeuralProviderFailurePolicy::FallBack);
         RecordRunExecutionDeviceBind(device, run_id, learner);
         {
             std::lock_guard<std::mutex> lock(mutex_);
