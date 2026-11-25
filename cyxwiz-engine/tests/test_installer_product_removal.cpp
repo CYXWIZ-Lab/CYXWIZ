@@ -210,15 +210,36 @@ void TestRejectsMissingFinalizer() {
         "Removal must stay disabled without the verified finalizer");
 }
 
+// The installer keeps its manager sessions beside its transaction record, in
+// the user's folders (installer_transaction_journal.cpp: LOCALAPPDATA on
+// Windows, HOME on macOS, XDG_STATE_HOME or HOME on Linux). The test points
+// them into a folder of its own, so it never writes into the user's.
+std::filesystem::path RedirectInstallerUserFolders() {
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("cyxwiz-installer-removal-profile-" +
+                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(root);
+#ifdef _WIN32
+  _wputenv_s(L"LOCALAPPDATA", root.wstring().c_str());
+#else
+  setenv("HOME", root.c_str(), 1);
+  setenv("XDG_STATE_HOME", (root / "state").c_str(), 1);
+#endif
+  return root;
+}
+
 } // namespace
 
 int main() {
+  const auto profile = RedirectInstallerUserFolders();
   TestRequiresExternalSession();
   TestExternalRemovalRejectsInUseProduct();
   TestExternalSessionStaging();
   TestArchiveRuntimeIsInSessionClosure();
   TestRevalidatesBeforeRemoval();
   TestRejectsMissingFinalizer();
+  std::error_code ignored;
+  std::filesystem::remove_all(profile, ignored);
   std::cout << "Installer product removal contracts passed\n";
   return 0;
 }

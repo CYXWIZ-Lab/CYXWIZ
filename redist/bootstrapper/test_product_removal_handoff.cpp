@@ -207,6 +207,13 @@ int main(int argc, char** argv) {
     Check(std::filesystem::is_regular_file(finalizer),
           "The built removal finalizer is required");
     TemporaryDirectory temporary;
+#ifdef _WIN32
+    // The finalizer is staged in the installer's session folder under
+    // LOCALAPPDATA (FinalizerStagingRoot): point it into this test's folder,
+    // never the user's. The POSIX handoff stages in the system temporary folder.
+    std::filesystem::create_directories(temporary.path() / "local-appdata");
+    _wputenv_s(L"LOCALAPPDATA", (temporary.path() / "local-appdata").wstring().c_str());
+#endif
     TestNoRequestDoesNotLaunch(temporary.path());
     TestLaunchWaitsForExplicitParentClose(
         temporary.path() / "accepted", finalizer);
