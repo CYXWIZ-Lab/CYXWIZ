@@ -8,12 +8,17 @@
 #include "../ui_tokens.h"
 #include "../ui_buttons.h"
 #include "../python_bundle_ui.h"
+#include "../../core/window_manager.h"
 #include "../../extension/python/python_node_provider.h"
+#include "backend_pack_platform.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
 #include <filesystem>
 
 namespace cyxwiz {
@@ -64,6 +69,133 @@ static std::string TrimCopy(std::string value) {
     return value;
 }
 
+// The installed runtime the bootstrapper started this Engine from; empty in
+// a development build.
+static std::filesystem::path ActiveRuntimeRoot() {
+    const char* value = std::getenv("CYXWIZ_ACTIVE_RUNTIME_ROOT");
+    return value && *value ? std::filesystem::path(value) : std::filesystem::path{};
+}
+
+static std::filesystem::path InstallerPath() {
+    std::filesystem::path path = core::WindowManager::GetExecutablePath();
+    path.replace_filename(std::string(runtime::CurrentInstallerManagerExecutableName()));
+    return path;
+}
+
+// A folder as the card shows it: from the install (runtime\plugins\...) or the
+// Engine's folder (plugins\examples\...) when inside one, else in full.
+static std::string ShownFolder(const std::filesystem::path& folder) {
+    std::error_code ec;
+    auto absolute = std::filesystem::absolute(folder, ec).lexically_normal();
+    std::vector<std::filesystem::path> bases;
+    if (const auto runtime = ActiveRuntimeRoot(); !runtime.empty()) bases.push_back(runtime.parent_path());
+    bases.push_back(std::filesystem::path(core::WindowManager::GetExecutablePath()).parent_path());
+    for (const auto& base : bases) {
+        auto relative = absolute.lexically_relative(std::filesystem::absolute(base, ec).lexically_normal());
+        if (!relative.empty() && *relative.begin() != "..") return relative.make_preferred().string();
+    }
+    return absolute.make_preferred().string();
+}
+
+static std::string ClockTime(std::chrono::system_clock::time_point when) {
+    if (when == std::chrono::system_clock::time_point{}) return {};
+    const std::time_t time = std::chrono::system_clock::to_time_t(when);
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &time);
+#else
+    localtime_r(&time, &local);
+#endif
+    char text[16];
+    std::strftime(text, sizeof(text), "%H:%M", &local);
+    return text;
+}
+
+static PluginTrustFacts TrustFacts(const plugin::LoadedPlugin& p) {
+    PluginTrustFacts facts;
+    facts.folder = ShownFolder(p.plugin_dir);
+    if (p.origin != plugin::LoadedPlugin::Origin::SignedPack) return facts;
+    facts.kind = PluginTrustKind::SignedAddOn;
+    facts.package_version = p.package_version;
+    facts.pack_id = p.pack_id;
+    for (const auto& pack : plugin::PluginManager::Instance().GetPackPlugins())
+        if (pack.plugin_id == p.manifest.id) facts.companion_base_id = pack.companion_base_id;
+    facts.files_checked = p.pack_files_checked;
+    facts.bytes_checked = p.pack_bytes_checked;
+    facts.check_ms = p.pack_check_ms;
+    facts.checked_at = ClockTime(p.pack_checked_at);
+    return facts;
+}
+
+static PluginTrustFacts TrustFacts(const plugin::PackRefusal& refusal) {
+    PluginTrustFacts facts;
+    facts.kind = PluginTrustKind::RefusedAddOn;
+    facts.package_version = refusal.package_version;
+    facts.pack_id = refusal.pack_id;
+    facts.folder = ShownFolder(refusal.directory);
+    facts.reason = refusal.reason;
+    facts.detail = refusal.detail;
+    facts.files_listed = refusal.files_listed;
+    facts.issues = refusal.issues;
+    facts.checked_at = ClockTime(refusal.checked_at);
+    return facts;
+}
+
+static ImVec4 TrustColour(PluginTrustTone tone) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    switch (tone) {
+        case PluginTrustTone::Verified: return t.success;
+        case PluginTrustTone::Failed: return t.error;
+        case PluginTrustTone::Muted: break;
+    }
+    return t.text_dim;
+}
+
+static const char* TrustIcon(PluginTrustTone tone) {
+    switch (tone) {
+        case PluginTrustTone::Verified: return ICON_FA_SHIELD_HALVED;
+        case PluginTrustTone::Failed: return ICON_FA_TRIANGLE_EXCLAMATION;
+        case PluginTrustTone::Muted: break;
+    }
+    return ICON_FA_CODE;
+}
+
+// The trust line under a card's name: icon and words in the tone, the note muted.
+static void RenderTrustLine(const PluginTrustView& view) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const ImVec4 colour = TrustColour(view.tone);
+    ImGui::TextColored(colour, "%s", TrustIcon(view.tone));
+    ImGui::SameLine();
+    ImGui::TextColored(colour, "%s", view.line.c_str());
+    if (!view.note.empty()) {
+        ImGui::SameLine();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "\xc2\xb7 %s", view.note.c_str());
+        ImGui::PopTextWrapPos();
+    }
+}
+
+// A card's first line: state dot, name, id muted, and on the right `right`.
+static void RenderCardHeader(const ImVec4& dot, const char* state_tip, const std::string& name,
+                             const std::string& id, const std::string& right, const ImVec4& right_colour) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const float right_edge = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+    ImGui::TextColored(dot, ICON_FA_CIRCLE);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("State: %s", state_tip);
+    ImGui::SameLine();
+    ImGui::TextColored(t.text_bright, "%s", name.c_str());
+    const float right_width = ImGui::CalcTextSize(right.c_str()).x;
+    const float id_width = ImGui::CalcTextSize(id.c_str()).x;
+    ImGui::SameLine();
+    // The id only where it fits before the right-hand text.
+    if (ImGui::GetCursorPosX() + id_width + ImGui::GetStyle().ItemSpacing.x * 2 + right_width < right_edge) {
+        ImGui::TextColored(t.text_dim, "%s", id.c_str());
+        ImGui::SameLine();
+    }
+    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), right_edge - right_width));
+    ImGui::TextColored(right_colour, "%s", right.c_str());
+}
+
 static void ShowInstallSpinner(const std::string& status) {
     const ui::Tokens& t = ui::CurrentTokens();
     float time = static_cast<float>(ImGui::GetTime());
@@ -93,12 +225,12 @@ void PluginManagerPanel::Render() {
     // Fetch plugins once per frame (MEDIUM-9)
     auto& mgr = plugin::PluginManager::Instance();
     auto plugins = mgr.GetAllPlugins();
+    const auto refusals = mgr.GetPackRefusals();
 
     RenderToolbar();
-    ImGui::Separator();
-    RenderPluginList(plugins);
-    ImGui::Separator();
-    RenderStatusBar(plugins);
+    ImGui::Spacing();
+    RenderPluginList(plugins, refusals);
+    RenderStatusBar(plugins, refusals);
 
     // Apply deferred unloads after iteration is complete (CRITICAL-1/HIGH-4)
     for (const auto& id : deferred_unloads_) {
@@ -121,14 +253,19 @@ void PluginManagerPanel::Render() {
 void PluginManagerPanel::RenderToolbar() {
     float avail = ImGui::GetContentRegionAvail().x;
 
-    // Search box
-    ImGui::SetNextItemWidth(avail - 200.0f);
+    // Search box, then the two actions at their own width (never clipped)
+    const char* refresh_label = ICON_FA_ARROWS_ROTATE " Refresh";
+    const char* install_label = ICON_FA_FOLDER_PLUS " Install...";
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float buttons = ui::ButtonWidth(refresh_label, ui::ButtonSize::Regular) +
+                          ui::ButtonWidth(install_label, ui::ButtonSize::Regular) + spacing * 2;
+    ImGui::SetNextItemWidth(std::max(120.0f, avail - buttons));
     ImGui::InputTextWithHint("##PluginSearch", ICON_FA_MAGNIFYING_GLASS " Search plugins...",
                              search_buf_, sizeof(search_buf_));
 
     ImGui::SameLine();
 
-    if (ImGui::Button(ICON_FA_ARROWS_ROTATE " Refresh")) {
+    if (ui::SecondaryButton(refresh_label, true, nullptr, ui::ButtonSize::Regular)) {
         auto& mgr = plugin::PluginManager::Instance();
         mgr.LoadAllFromSearchPaths();
         mgr.InitializeAll();
@@ -140,7 +277,7 @@ void PluginManagerPanel::RenderToolbar() {
 
     ImGui::SameLine();
 
-    if (ImGui::Button(ICON_FA_FOLDER_PLUS " Install...")) {
+    if (ui::SecondaryButton(install_label, true, nullptr, ui::ButtonSize::Regular)) {
         show_install_popup_ = true;
         install_path_buf_[0] = '\0';
     }
@@ -150,14 +287,28 @@ void PluginManagerPanel::RenderToolbar() {
 // Plugin List
 // ============================================================================
 
-void PluginManagerPanel::RenderPluginList(const std::vector<const plugin::LoadedPlugin*>& plugins) {
+void PluginManagerPanel::RenderPluginList(const std::vector<const plugin::LoadedPlugin*>& plugins,
+                                          const std::vector<plugin::PackRefusal>& refusals) {
     std::string filter(search_buf_);
 
-    float height = ImGui::GetContentRegionAvail().y - 30.0f; // reserve for status bar
+    // Reserve the status bar's lines (two when an add-on was verified)
+    const float status_height = ImGui::GetTextLineHeightWithSpacing() * 2.0f + ImGui::GetStyle().ItemSpacing.y;
+    float height = ImGui::GetContentRegionAvail().y - status_height;
     if (ImGui::BeginChild("PluginList", ImVec2(0, height), ImGuiChildFlags_None)) {
+        // Installed add-ons the Engine refused come first: they need the user.
+        for (const auto& refusal : refusals) {
+            if (!filter.empty() && !ContainsCI(refusal.title, filter) && !ContainsCI(refusal.plugin_id, filter))
+                continue;
+            ImGui::PushID(("refused:" + refusal.plugin_id).c_str());
+            RenderRefusedCard(refusal);
+            ImGui::PopID();
+            ImGui::Spacing();
+        }
         if (plugins.empty()) {
-            ImGui::TextDisabled("No plugins loaded.");
-            ImGui::TextDisabled("Use the search paths or Install button to add plugins.");
+            if (refusals.empty()) {
+                ImGui::TextDisabled("No plugins loaded.");
+                ImGui::TextDisabled("Use the search paths or Install button to add plugins.");
+            }
         } else {
             size_t match_count = 0;
             for (size_t i = 0; i < plugins.size(); ++i) {
@@ -174,7 +325,7 @@ void PluginManagerPanel::RenderPluginList(const std::vector<const plugin::Loaded
                 }
 
                 match_count++;
-                ImGui::PushID(static_cast<int>(i));
+                ImGui::PushID(p->manifest.id.c_str());
                 RenderPluginCard(p);
                 ImGui::Spacing();
                 ImGui::PopID();
@@ -200,41 +351,25 @@ void PluginManagerPanel::RenderPluginList(const std::vector<const plugin::Loaded
 
 void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
     const ui::Tokens& t = ui::CurrentTokens();
-    float card_width = ImGui::GetContentRegionAvail().x;
+    // A card: tinted, no outline; its height follows the content.
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
+    ImGui::BeginChild("card", ImVec2(0.0f, 0.0f),
+                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar);
 
-    // State dot + Name + Version
-    ImVec4 color = StateColor(p->state);
-    ImGui::TextColored(color, ICON_FA_CIRCLE);
+    RenderCardHeader(StateColor(p->state), StateLabel(p->state), p->manifest.name, p->manifest.id,
+                     "v" + p->manifest.version.ToString(), t.text_dim);
+    const float indent = ImGui::CalcTextSize(ICON_FA_CIRCLE).x + ImGui::GetStyle().ItemSpacing.x;
+    ImGui::Indent(indent);
+    const auto trust = PluginTrustLine(TrustFacts(*p));
+    RenderTrustLine(trust);
 
-    // State tooltip (LOW-12)
-    if (ImGui::IsItemHovered()) {
-        ImGui::BeginTooltip();
-        ImGui::Text("State: %s", StateLabel(p->state));
-        ImGui::EndTooltip();
-    }
-
-    ImGui::SameLine();
-    ImGui::Text("%s", p->manifest.name.c_str());
-
-    std::string version_str = "v" + p->manifest.version.ToString();
-    float version_width = ImGui::CalcTextSize(version_str.c_str()).x;
-    ImGui::SameLine(card_width - version_width - 10.0f);
-    ImGui::TextDisabled("%s", version_str.c_str());
-
-    // Author
-    if (!p->manifest.author.empty()) {
-        ImGui::TextDisabled("  Author: %s", p->manifest.author.c_str());
-    }
-
-    // Description
-    if (!p->manifest.description.empty()) {
-        ImGui::TextWrapped("  %s", p->manifest.description.c_str());
-    }
-
-    // Error message for failed plugins
-    if (p->state == plugin::PluginState::Failed && !p->error_message.empty()) {
-        ImGui::TextColored(t.error, "  ERROR: %s", p->error_message.c_str());
-    }
+    ImGui::PushTextWrapPos(0.0f);
+    if (!p->manifest.description.empty()) ImGui::TextUnformatted(p->manifest.description.c_str());
+    if (!p->manifest.author.empty()) ImGui::TextColored(t.text_dim, "Author: %s", p->manifest.author.c_str());
+    if (p->state == plugin::PluginState::Failed && !p->error_message.empty())
+        ImGui::TextColored(t.error, "%s", p->error_message.c_str());
+    ImGui::PopTextWrapPos();
 
     // What it adds and whether it loads at startup (TOFIX125 steps 2.9-2.10).
     {
@@ -242,24 +377,23 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
         const std::string adds = cyxwiz::PluginAddsLine(contribution);
         if (!adds.empty()) {
             ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextColored(t.accent_text, "  %s", adds.c_str());
+            ImGui::TextColored(t.accent_text, "%s", adds.c_str());
             ImGui::PopTextWrapPos();
         }
         if (!startup_list_read_) ReloadStartupList();
         bool at_startup = cyxwiz::PluginLoadsAtStartup(startup_list_, p->manifest.id);
-        ImGui::Indent(t.space_md);
         if (ImGui::Checkbox("Load when the Engine starts", &at_startup)) {
             plugin::SetLoadAtStartup(p->manifest.id, p->plugin_dir.generic_string(), at_startup);
             ReloadStartupList();
         }
+        ImGui::Indent(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x);
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(t.text_dim, "%s", cyxwiz::PluginStartupNote(at_startup, contribution).c_str());
         ImGui::PopTextWrapPos();
-        ImGui::Unindent(t.space_md);
+        ImGui::Unindent(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x);
     }
 
     // Permission badges wrap within the card; the actions get their own line below them
-    ImGui::Indent(t.space_md);
     static constexpr plugin::PluginPermission all_perms[] = {
         plugin::PluginPermission::FileSystem,
         plugin::PluginPermission::Network,
@@ -290,44 +424,132 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
     auto& mgr = plugin::PluginManager::Instance();
     std::string plugin_id = p->manifest.id;  // Copy ID before any mutation
 
+    // Row actions: the one the state allows, Unload, then Details.
+    ImGui::Spacing();
     switch (p->state) {
         case plugin::PluginState::Initialized:
         case plugin::PluginState::Active:
-            if (ImGui::SmallButton("Disable")) {
+            if (ui::SecondaryButton("Disable", true, nullptr, ui::ButtonSize::Regular)) {
                 mgr.DisablePlugin(plugin_id);
             }
+            ImGui::SameLine();
             break;
         case plugin::PluginState::Loaded:
-            if (ImGui::SmallButton("Initialize")) {
+            if (ui::SecondaryButton("Initialize", true, nullptr, ui::ButtonSize::Regular)) {
                 mgr.InitializePlugin(plugin_id);
             }
+            ImGui::SameLine();
             break;
         case plugin::PluginState::Failed:
-            if (ImGui::SmallButton("Retry")) {
+            if (ui::SecondaryButton("Retry", true, nullptr, ui::ButtonSize::Regular)) {
                 mgr.SetPluginState(plugin_id, plugin::PluginState::Loaded);
                 mgr.InitializePlugin(plugin_id);
             }
+            ImGui::SameLine();
             break;
         case plugin::PluginState::Disabled:
-            if (ImGui::SmallButton("Enable")) {
+            if (ui::SecondaryButton("Enable", true, nullptr, ui::ButtonSize::Regular)) {
                 if (mgr.EnablePlugin(plugin_id)) {
                     mgr.InitializePlugin(plugin_id);
                 }
             }
+            ImGui::SameLine();
             break;
         default:
             break;
     }
 
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Unload")) {
+    if (ui::SecondaryButton("Unload", true, nullptr, ui::ButtonSize::Regular)) {
         // Defer unload to after iteration (CRITICAL-1/HIGH-4)
         deferred_unloads_.push_back(plugin_id);
     }
-    ImGui::Unindent(t.space_md);
+    const bool open = details_open_.count(plugin_id) > 0;
+    if (!trust.details.empty()) {
+        ImGui::SameLine();
+        if (ui::LinkButton(open ? "Hide" : "Details")) {
+            if (open) details_open_.erase(plugin_id); else details_open_.insert(plugin_id);
+        }
+        if (open) RenderTrustDetails(trust);
+    }
+    ImGui::Unindent(indent);
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
 
-    // Separator between cards
-    ImGui::Separator();
+void PluginManagerPanel::RenderRefusedCard(const plugin::PackRefusal& refusal) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
+    ImGui::BeginChild("card", ImVec2(0.0f, 0.0f),
+                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar);
+    RenderCardHeader(t.error, "Not loaded", refusal.title, refusal.plugin_id, "Not loaded", t.error);
+    const float indent = ImGui::CalcTextSize(ICON_FA_CIRCLE).x + ImGui::GetStyle().ItemSpacing.x;
+    ImGui::Indent(indent);
+    const auto trust = PluginTrustLine(TrustFacts(refusal));
+    RenderTrustLine(trust);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(trust.body.c_str());
+    ImGui::TextColored(t.caution, "%s", trust.hint.c_str());
+    ImGui::PopTextWrapPos();
+
+    // Repair opens the CyxWiz Installer with this add-on ticked for repair,
+    // the same action as its card in Installed packs.
+    ImGui::Spacing();
+    const auto runtime_root = ActiveRuntimeRoot();
+    const auto installer = InstallerPath();
+    std::error_code ec;
+    const bool can_repair = !runtime_root.empty() && std::filesystem::is_regular_file(installer, ec);
+    if (ui::PrimaryButton("Repair add-on...", can_repair,
+                          "The CyxWiz Installer is part of an installed Engine; it is not in this build",
+                          ui::ButtonSize::Regular)) {
+        core::WindowManager::LaunchExecutable(
+            installer.string(), {"--runtime-root", runtime_root.string(), "--select", refusal.pack_id});
+        spdlog::info("Opened the CyxWiz Installer to repair add-on {}", refusal.title);
+    }
+    if (can_repair && ImGui::IsItemHovered())
+        ImGui::SetTooltip("Opens the CyxWiz Installer with this add-on selected for repair.");
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Open Installed packs", static_cast<bool>(open_installed_packs_), nullptr,
+                            ui::ButtonSize::Regular)) {
+        open_installed_packs_();
+    }
+    const bool open = details_open_.count(refusal.plugin_id) > 0;
+    ImGui::SameLine();
+    if (ui::LinkButton(open ? "Hide" : "Details")) {
+        if (open) details_open_.erase(refusal.plugin_id); else details_open_.insert(refusal.plugin_id);
+    }
+    if (open) RenderTrustDetails(trust);
+    ImGui::Unindent(indent);
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+// Details: a full-width key/value table, two pairs per line, on a raised tone.
+void PluginManagerPanel::RenderTrustDetails(const PluginTrustView& view) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_bar);
+    ImGui::BeginChild("details", ImVec2(0.0f, 0.0f),
+                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar);
+    if (ImGui::BeginTable("details", 4, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("key1", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("value1", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn("key2", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("value2", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        for (std::size_t index = 0; index < view.details.size(); ++index) {
+            if (index % 2 == 0) ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(t.text_dim, "%s", view.details[index].first.c_str());
+            ImGui::TableNextColumn();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(view.details[index].second.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
 }
 
 void PluginManagerPanel::ReloadStartupList() {
@@ -355,30 +577,41 @@ void PluginManagerPanel::RenderPermissionBadge(plugin::PluginPermission perm, bo
 // Status Bar
 // ============================================================================
 
-void PluginManagerPanel::RenderStatusBar(const std::vector<const plugin::LoadedPlugin*>& plugins) {
-    int active = 0, disabled = 0, failed = 0;
+void PluginManagerPanel::RenderStatusBar(const std::vector<const plugin::LoadedPlugin*>& plugins,
+                                         const std::vector<plugin::PackRefusal>& refusals) {
+    PluginListCounts counts;
+    counts.refused = refusals.size();
     for (const auto* p : plugins) {
         if (!p) continue;
+        ++counts.plugins;
+        if (p->origin == plugin::LoadedPlugin::Origin::SignedPack) ++counts.verified;
         switch (p->state) {
             case plugin::PluginState::Initialized:
             case plugin::PluginState::Active:
-                active++;
+                ++counts.active;
                 break;
             case plugin::PluginState::Disabled:
-                disabled++;
+                ++counts.disabled;
                 break;
             case plugin::PluginState::Failed:
-                failed++;
+                ++counts.failed;
                 break;
             default:
                 break;
         }
     }
+    counts.plugins += counts.refused;
 
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("%zu %s: %d active, %d failed, %d disabled", plugins.size(),
-                        plugins.size() == 1 ? "plugin" : "plugins", active, failed, disabled);
-    ImGui::PopTextWrapPos();
+    // One line when it fits, else one line each.
+    const auto lines = PluginListSummary(counts);
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        if (index > 0) {
+            const float width = ImGui::CalcTextSize(lines[index].c_str()).x;
+            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 4);
+            if (ImGui::GetContentRegionAvail().x < width) ImGui::NewLine();
+        }
+        ImGui::TextDisabled("%s", lines[index].c_str());
+    }
 }
 
 // ============================================================================
@@ -426,8 +659,8 @@ void PluginManagerPanel::RenderInstallPopup() {
             ImGuiInputTextFlags_EnterReturnsTrue);
 
         ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_FOLDER_OPEN " Browse",
-                          ImVec2(browse_width, 0))) {
+        if (ui::SecondaryButton(ICON_FA_FOLDER_OPEN " Browse", true, nullptr, ui::ButtonSize::Regular,
+                                browse_width)) {
             const std::string current_path = TrimCopy(install_path_buf_);
             const char* default_path = current_path.empty() ? nullptr : current_path.c_str();
             if (auto selected = cyxwiz::FileDialogs::SelectFolder(
@@ -580,7 +813,8 @@ void PluginManagerPanel::RenderInstallPopup() {
 
         ImGui::BeginDisabled(is_installing_plugin_);
 
-        if (ImGui::Button(is_installing_plugin_ ? ICON_FA_SPINNER " Installing..." : "Install", ImVec2(button_width, 0))) {
+        if (ui::PrimaryButton(is_installing_plugin_ ? ICON_FA_SPINNER " Installing..." : "Install", true, nullptr,
+                              ui::ButtonSize::Regular, button_width)) {
             start_install();
         }
 
@@ -588,7 +822,8 @@ void PluginManagerPanel::RenderInstallPopup() {
 
         ImGui::SameLine();
 
-        if (ImGui::Button(is_installing_plugin_ ? "Cancel" : "Close", ImVec2(button_width, 0))) {
+        if (ui::SecondaryButton(is_installing_plugin_ ? "Cancel" : "Close", true, nullptr, ui::ButtonSize::Regular,
+                                button_width)) {
             if (is_installing_plugin_) {
                 install_status_ = "Cancelling...";
                 if (install_task_id_ != 0) {
@@ -616,7 +851,7 @@ void PluginManagerPanel::RenderInstallPopup() {
         ImGui::Spacing();
         float ok_width = 80.0f;
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ok_width) * 0.5f);
-        if (ImGui::Button("OK", ImVec2(ok_width, 0))) {
+        if (ui::PrimaryButton("OK", true, nullptr, ui::ButtonSize::Regular, ok_width)) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();

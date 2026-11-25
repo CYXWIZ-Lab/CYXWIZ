@@ -7,8 +7,12 @@
 // each loads again when the Engine starts. It is stored as JSON next to the
 // plugin permissions (plugin_startup_store.h). Pure data in, data out.
 
+#include "../plugin/plugin_pack.h"
+
 #include <cstddef>
+#include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
@@ -61,5 +65,63 @@ std::string PluginStartupNote(bool on, const PluginContribution& contribution);
 std::string PluginAddsLine(const PluginContribution& contribution);
 // The Apps menu entry's note: "2 nodes", "2 windows, 5 nodes", "1 format, 1 analytic".
 std::string PluginMenuDetail(const PluginContribution& contribution);
+
+// ---- Where a plugin comes from, and whether it was checked (the Plugin
+// Manager's trust line, approved mockup of 2026-11-25) ----
+
+enum class PluginTrustKind {
+    Developer,     // a folder from a search path or Install...: loaded as built
+    SignedAddOn,   // an installed add-on, checked against its signed inventory
+    RefusedAddOn   // an installed add-on the check refused: not loaded
+};
+
+enum class PluginTrustTone { Verified, Failed, Muted };
+
+struct PluginTrustFacts {
+    PluginTrustKind kind = PluginTrustKind::Developer;
+    std::string package_version;
+    std::string pack_id;
+    std::string companion_base_id;
+    std::string folder;              // as shown: relative to the Engine or the runtime where it can be
+    std::size_t files_checked = 0;   // a signed add-on: what its check read
+    std::uint64_t bytes_checked = 0;
+    double check_ms = 0.0;
+    std::string checked_at;          // "14:02"
+    // A refused add-on
+    std::string reason;              // "bin\mujoco.dll does not match its signed package"
+    std::string detail;              // the check's own words (a metadata refusal)
+    std::size_t files_listed = 0;    // files in its signed inventory; 0 when its metadata was refused
+    std::vector<plugin::PackFileIssue> issues;
+};
+
+struct PluginTrustView {
+    std::string line;    // "Signed add-on, verified at start"
+    std::string note;    // "package version 2", "loaded from plugins\examples\activation_nodes"
+    PluginTrustTone tone = PluginTrustTone::Muted;
+    std::string body;    // a refused add-on: what happened
+    std::string hint;    // a refused add-on: what to do
+    std::vector<std::pair<std::string, std::string>> details;  // empty values skipped
+};
+
+PluginTrustView PluginTrustLine(const PluginTrustFacts& facts);
+
+// "8.7 MB", "512 KB"
+std::string FormatPackBytes(std::uint64_t bytes);
+
+// One file's problem in words: "same size, different contents".
+std::string PackFileProblemText(plugin::PackFileProblem problem);
+
+// The Plugin Manager's status line: "2 plugins: 1 active, 1 not loaded
+// (check failed), 0 disabled", then "1 signed add-on verified at start" when
+// any is.
+struct PluginListCounts {
+    std::size_t plugins = 0;     // loaded plugins and refused add-ons
+    std::size_t active = 0;
+    std::size_t failed = 0;
+    std::size_t disabled = 0;
+    std::size_t refused = 0;     // add-ons the check refused
+    std::size_t verified = 0;    // add-ons loaded after their check
+};
+std::vector<std::string> PluginListSummary(const PluginListCounts& counts);
 
 }  // namespace cyxwiz

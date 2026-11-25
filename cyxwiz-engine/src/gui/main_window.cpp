@@ -740,6 +740,10 @@ MainWindow::MainWindow()
 
     // Plugin Manager panel
     plugin_manager_panel_ = std::make_unique<cyxwiz::PluginManagerPanel>();
+    // A refused add-on's card opens Preferences > Devices > Installed packs.
+    plugin_manager_panel_->SetOpenInstalledPacksCallback([this]() {
+        if (toolbar_) toolbar_->OpenPreferences("Devices");
+    });
     // A missing extension node, or an empty Plugins section, opens it (TOFIX125).
     if (node_editor_) {
         node_editor_->SetOpenPluginManagerCallback([this]() {
