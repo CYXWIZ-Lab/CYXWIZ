@@ -1432,7 +1432,13 @@ bool BuildSequential(
                     // by Layer Norm had left the width at one token's
                     // (Decoder -> Layer Norm -> Flatten -> Dense was built
                     // for 64 inputs and fed 16 x 64).
-                    if (layer_cfg.output_shape.size() == 1 && layer_cfg.output_shape[0] > 0)
+                    // Only from a shape the compiler knew: with no input shape
+                    // (an extension node that declares none) its product is 1,
+                    // and the running width is the better one.
+                    const bool known = !layer_cfg.input_shape.empty() &&
+                                       std::all_of(layer_cfg.input_shape.begin(), layer_cfg.input_shape.end(),
+                                                   [](size_t d) { return d > 0; });
+                    if (known && layer_cfg.output_shape.size() == 1 && layer_cfg.output_shape[0] > 0)
                         current_input_size = layer_cfg.output_shape[0];
                     CYXWIZ_BUILDER_INFO("  [{}] Flatten -> [N,{}]", i, current_input_size);
                 }
