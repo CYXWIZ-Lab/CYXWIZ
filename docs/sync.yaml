@@ -34,6 +34,14 @@ evaluation:
   code: [cyxwiz-engine/src/gui/data_studio/results_view*, cyxwiz-engine/src/gui/data_studio/test_*, cyxwiz-engine/src/gui/data_studio/folds_view*, cyxwiz-engine/src/core/test_*, cyxwiz-engine/src/core/data_studio_results*, cyxwiz-engine/src/core/cross_validation_*, cyxwiz-engine/src/core/model_explain*, cyxwiz-engine/src/core/model_evaluation*, cyxwiz-engine/src/core/feature_importance*, cyxwiz-engine/src/core/language_model_generation*, cyxwiz-engine/src/core/plot/**, cyxwiz-engine/src/gui/panels/feature_importance*, cyxwiz-engine/src/gui/panels/language_model_generation*, cyxwiz-engine/src/gui/dashboard/**]
   synced_at: 202a19691
 
+deployment:
+  code: [cyxwiz-engine/src/core/model_export*, cyxwiz-engine/src/core/model_importer*, cyxwiz-engine/src/gui/panels/export_dialog*, cyxwiz-engine/src/gui/panels/import_dialog*, cyxwiz-engine/src/core/code_export*]
+  synced_at: 202a19691
+
+simulation:
+  code: [cyxwiz-engine/src/core/simulation_*, cyxwiz-engine/src/core/graph_simulation_session*, cyxwiz-engine/src/gui/panels/simulation_monitor_panel*, cyxwiz-engine/src/gui/simulation_scope_plot*, cyxwiz-engine/src/plugin/interfaces/i_simulation_provider.h]
+  synced_at: 202a19691
+
 scripting:
   code: [cyxwiz-engine/src/scripting/**, cyxwiz-engine/src/gui/panels/script_editor*, cyxwiz-backend/python/**]
   synced_at: 202a19691

@@ -96,4 +96,4 @@ then calibrate.
 
 - [Read test results](test-results.md)
 - [Test a trained model](test-a-trained-model.md)
-- [Export a model](../../usage/export_import.md)
+- [Export a model](../deployment/export-a-model.md)

@@ -32,10 +32,10 @@ To write your own nodes in Python or C++, see
 | [Compile and run](../user-guide/graph-editor/compile-and-run.md) | Compile, the compile report, run modes, what Train does first |
 | [Node dialogs](../main-window/node-dialogs.md) | Configuring a node in its dialog |
 | [Pattern Browser](../main-window/pattern-browser.md) | Ready-made full graphs and blocks, what data each expects, the ones not usable yet |
-| [Branched graphs](branched_graphs.md) | Split and merge inside a model |
+| [Branched graphs](../user-guide/graph-editor/branched-graphs.md) | Split and merge inside a model |
 | [Groups, frames and names](../user-guide/graph-editor/groups-frames-and-names.md) | Grouping and naming nodes, frames, copy and paste, renaming |
 | [Your own nodes](extension_nodes.md) | Python node bundles and C++ plugins in the Engine: install, approve, use |
-| [Graph simulation](graph_simulation.md) | Run Sim, the Simulation menu and the Simulation Monitor |
+| [Graph simulation](../user-guide/simulation/graph-simulation.md) | Run Sim, the Simulation menu and the Simulation Monitor |
 | [Environments for reinforcement learning](rl_environments.md) | Plugin environments (MuJoCo tasks), their settings, and `pycyxwiz.rl` for Gymnasium and Stable-Baselines3 |
 | [Training a policy (PPO)](rl_training.md) | The RL graph (Environment, layers, Policy / Value Head, PPO), its settings, Train and the RL Training Dashboard |
 | [The MuJoCo Viewport](mujoco_viewport.md) | The 3D view: run a model, cameras (follow a body, the model's cameras), View options, live numbers, screenshots and recordings, the Stress panel, Inspect (bodies, joints, controls, keyframes, physics), the timeline and plots |
@@ -113,7 +113,7 @@ To write your own nodes in Python or C++, see
 | [Generation previews](../user-guide/training/generation-previews.md) | Prompting a language model while it trains |
 | [Language model generation](../user-guide/evaluation/language-model-generation.md) | Using a trained language model in the Engine |
 | [Fine-tuning language models](../user-guide/training/fine-tune-language-models.md) | Fine-tuning on prompt/answer examples |
-| [Exporting a model](export_import.md) | Export Model and the formats it writes |
+| [Export a trained model](../user-guide/deployment/export-a-model.md) | Export Model, the formats it writes, opening a model file |
 | [Training on other machines](../distributed-training/index.md) | Remote training: what it is, its limits (experimental) |
 | [Run a remote job](../distributed-training/run-a-remote-job.md) | Deploy > Connect to Server: reserving a server node and training on it |
 | [Train from a CyxCloud dataset](../distributed-training/cloud-datasets.md) | A Data Input on a file in CyxCloud, streamed by the node |

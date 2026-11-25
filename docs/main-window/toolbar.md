@@ -96,7 +96,7 @@ what it does:
   While it runs, the bar shows its progress and **Cancel**.
 - A graph with simulation nodes shows **Run Sim** instead, and during a run
   **Pause** (or **Resume**), **Step**, **Stop Sim** and the simulation time.
-  See [Graph simulation](../usage/graph_simulation.md).
+  See [Graph simulation](../user-guide/simulation/graph-simulation.md).
 
 ## Compile, Local Debug and Train
 

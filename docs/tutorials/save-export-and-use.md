@@ -11,7 +11,7 @@ last_reviewed: 2026-11-25
 related:
   - index.md
   - train-and-evaluate.md
-  - ../usage/export_import.md
+  - ../user-guide/deployment/export-a-model.md
   - ../main-window/toolbar.md
   - ../user-guide/training/checkpoints-and-early-stopping.md
 ---
@@ -117,7 +117,7 @@ result. Go on with the lessons by kind of data, or with Python:
 
 ## Next steps
 
-- Every export format and option: [Exporting a model](../usage/export_import.md)
+- Every export format and option: [Exporting a model](../user-guide/deployment/export-a-model.md)
 - Best checkpoints, early stopping and resuming:
   [Checkpoints, early stopping and resume](../user-guide/training/checkpoints-and-early-stopping.md)
 - The Code menu and the modes: [The Studio bar](../main-window/toolbar.md#the-mode-the-framework-and-code)

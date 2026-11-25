@@ -100,4 +100,4 @@ Tasks shows the failed task, and `engine_log.txt` has the details.
 - [Read test results](test-results.md)
 - [Choose a threshold and calibrate](threshold-and-calibration.md)
 - [Feature importance](feature-importance.md)
-- [Export a model](../../usage/export_import.md)
+- [Export a model](../deployment/export-a-model.md)

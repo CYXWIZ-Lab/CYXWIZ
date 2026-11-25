@@ -11,7 +11,7 @@ last_reviewed: 2026-11-25
 related:
   - ../user-guide/training/checkpoints-and-early-stopping.md
   - ../user-guide/training/start-from-pretrained-weights.md
-  - ../usage/export_import.md
+  - ../user-guide/deployment/export-a-model.md
   - numerical-accuracy.md
 ---
 
@@ -56,12 +56,13 @@ The assets depend on the model:
 - a reinforcement-learning policy's **environment and observation
   normalisation**.
 
-The graph is always included, because the graph is what rebuilds the model
-around the weights; a graph with branches (Split, Add, Concatenate) is
-rebuilt as that graph, with the same outputs. Opening a package loads its
+The graph is included by default, because the graph is what rebuilds the
+model around the weights. Only a plain stack of layers can leave it out; a
+graph with branches (Split, Add, Concatenate) or an extension node always
+includes it, and is rebuilt as that graph, with the same outputs. Opening a package loads its
 graph onto the canvas, not its weights: train the graph, or load one of its
 checkpoints for testing. How to export and open a package is in
-[Exporting a model](../usage/export_import.md).
+[Exporting a model](../user-guide/deployment/export-a-model.md).
 
 The optimizer's state is not saved in a package. A package holds up to
 2 GB of content in up to 100,000 files; larger models do not fit.
@@ -107,7 +108,14 @@ the CyxWiz package and weights only. Where ONNX is built in:
 - it is written from a plain stack of layers: a graph with branches is not
   offered ONNX;
 - a model with an extension node (a plugin's or a Python node) is refused,
-  because ONNX cannot describe the extension's computation.
+  because ONNX cannot describe the extension's computation;
+- only Dense layers are written (as ONNX `Gemm`), with a `Relu` between
+  them whatever activation the graph uses, and an optional `Softmax` at the
+  end. Other layers (convolutions, normalisation, recurrent and attention
+  layers) are not written, so such a file does not match the graph.
+
+Opening an ONNX or GGUF file with **File > Open Model File** is not
+implemented: the dialog says the file could not be read.
 
 GGUF is not written.
 
@@ -160,10 +168,11 @@ and can refuse a graph that the compile report calls ready.
 - No optimizer state in a package or in the best checkpoint: a new run from
   them starts its optimizer fresh.
 - A package holds at most 2 GB.
-- No ONNX or GGUF export in the released packages.
+- No ONNX or GGUF export in the released packages, and no ONNX or GGUF
+  import.
 
 ## Related
 
-- [Exporting a model](../usage/export_import.md)
+- [Exporting a model](../user-guide/deployment/export-a-model.md)
 - [Checkpoints, early stopping and resume](../user-guide/training/checkpoints-and-early-stopping.md)
 - [Start from pretrained weights](../user-guide/training/start-from-pretrained-weights.md)

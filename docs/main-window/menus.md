@@ -196,7 +196,7 @@ When the open graph has simulation nodes, the menu starts with **Graph
 run: <graph name>** and **Run Sim** (or **Resume**), **Pause**, **Step
 Once**, **Stop**, **Clear Traces**. Each loaded simulation plugin adds its
 own commands under its name. **Simulation Monitor** shows or hides that
-panel. See [Graph simulation](../usage/graph_simulation.md).
+panel. See [Graph simulation](../user-guide/simulation/graph-simulation.md).
 
 ## Apps
 
