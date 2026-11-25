@@ -7,7 +7,8 @@ graph this harness:
   3. imports GeneratedModel and runs forward + backward on synthetic input
      shaped from the graph's Data Input,
   4. compares its parameter count with the model CyxWiz itself builds for the
-     graph (cyxwiz-graph-compile-check --parameters).
+     graph from the same sample shape (cyxwiz-graph-compile-check --parameters
+     --input-shape): offline no data sets the Data Input's shape.
 
 Usage:
   python check_pytorch_export.py --bin <build>/bin/Release [--work DIR] graph.cyxgraph [...]
@@ -64,14 +65,18 @@ def load_graph(path: Path) -> dict:
 # reason is this PC and not the graph: nothing to compare the export with.
 OFFLINE_REASONS = (
     ("could not open", "a file the model needs is not on this PC"),
+    ("a block: it has no Data Input", "a block has no Data Input: the Engine builds its model only inside a graph"),
 )
 
 
-def cyxwiz_parameter_count(compile_check: Path, graph: Path):
-    """(count, None) for the model CyxWiz builds; (None, why) when it cannot
-    build it: `why` names an OFFLINE_REASONS case, or starts with "FAIL" for
-    any other reason (the Engine refuses or cannot build the graph)."""
-    out = subprocess.run([str(compile_check), "--parameters", str(graph)], capture_output=True, text=True)
+def cyxwiz_parameter_count(compile_check: Path, graph: Path, sample_shape):
+    """(count, None) for the model CyxWiz builds from one sample of
+    `sample_shape` (the Engine's layout: an image is [H, W, C]); (None, why)
+    when it cannot build it: `why` names an OFFLINE_REASONS case, or starts
+    with "FAIL" for any other reason (the Engine refuses or cannot build the
+    graph)."""
+    out = subprocess.run([str(compile_check), "--parameters", "--input-shape", json.dumps(list(sample_shape)),
+                          str(graph)], capture_output=True, text=True)
     match = re.search(r"parameters=(\d+)", out.stdout)
     if match:
         return int(match.group(1)), None
@@ -98,9 +103,22 @@ def word_pos_embeddings(graph_json: dict):
     return None
 
 
+class NoOfflineInput(Exception):
+    """Nothing can be fed to the model here (its input width comes from
+    preprocessing). Its own class: an IndexError or KeyError from the model
+    is a LookupError too, and was reported as skipped instead of failed."""
+
+
 def synthetic_input(graph_json: dict, batch: int = 2):
-    """Token ids for graphs that start with an Embedding (shorter than every
-    length limit in the graph), floats shaped like the Data Input otherwise."""
+    """(x, vocab, sample_shape): token ids for graphs that start with an
+    Embedding (shorter than every length limit in the graph), floats shaped
+    like the Data Input otherwise. sample_shape is one sample as the Engine
+    holds it; an image sample [H, W, C] goes to PyTorch as [C, H, W]."""
+
+    def floats(shape):
+        x = torch.randn(batch, *shape)
+        return (x.permute(0, 3, 1, 2).contiguous() if len(shape) == 3 else x), None, shape
+
     nodes = graph_json["nodes"]
     limits = [16]
     for node in nodes:
@@ -114,14 +132,14 @@ def synthetic_input(graph_json: dict, batch: int = 2):
         length = min(limits)
         ids = torch.stack([torch.randint(1, word, (batch, length)),
                            torch.randint(1, pos, (batch, length))], dim=-1)
-        return ids.float(), None
+        return ids.float(), None, [length, 2]
     for node in nodes:
         params = node.get("parameters", {})
         if "embedding_dim" in params and ("num_embeddings" in params or "vocab_size" in params):
             vocab = int(params.get("num_embeddings") or params["vocab_size"])
-            return torch.randint(4, vocab, (batch, min(limits))), vocab
-    if graph_json.get("sample_shape"):  # a block: the shape its first layer reads
-        return torch.randn(batch, *[int(d) for d in json.loads(graph_json["sample_shape"])]), None
+            return torch.randint(4, vocab, (batch, min(limits))), vocab, [min(limits)]
+    if graph_json.get("sample_shape"):  # a pattern: the shape its first layer reads
+        return floats([int(d) for d in json.loads(graph_json["sample_shape"])])
     for node in nodes:
         params = node.get("parameters", {})
         if params.get("source_type") == "file" or "file_type" in params:
@@ -130,8 +148,8 @@ def synthetic_input(graph_json: dict, batch: int = 2):
             except (TypeError, ValueError):
                 shape = None
             if shape:
-                return torch.randn(batch, *[int(d) for d in shape]), None
-    raise LookupError("the input width is set by preprocessing and unknown offline")
+                return floats([int(d) for d in shape])
+    raise NoOfflineInput("the input width is set by preprocessing and unknown offline")
 
 
 def check(graph: Path, bin_dir: Path, work: Path):
@@ -144,7 +162,13 @@ def check(graph: Path, bin_dir: Path, work: Path):
     export = subprocess.run([str(bin_dir / "cyxwiz-engine.exe"), "--export-code", "pytorch", str(graph), str(code)],
                             capture_output=True, text=True)
     if export.returncode != 0 or not code.exists():
-        return {**result, "ok": False, "stage": "export", "detail": (export.stderr or export.stdout)[-400:]}
+        text = export.stderr + export.stdout
+        # The Engine refuses to open a graph holding a node it has not built
+        # (a template node), saying which: blocked, as the export's refusals.
+        refusal = re.search(r"Cannot open .*? as a graph: (.*a template that cannot be inserted)", text)
+        if refusal:
+            return {**result, "ok": None, "stage": "blocked", "detail": refusal.group(1)[:200]}
+        return {**result, "ok": False, "stage": "export", "detail": text[-400:]}
 
     # The generator refuses graphs CyxWiz cannot train (it emits a leading
     # `raise ValueError(...)` naming why): reported as blocked, not failed.
@@ -173,23 +197,28 @@ def check(graph: Path, bin_dir: Path, work: Path):
         spec.loader.exec_module(module)
         torch.manual_seed(0)
         model = module.GeneratedModel()
-        x, vocab = synthetic_input(load_graph(graph))
+        x, vocab, sample_shape = synthetic_input(load_graph(graph))
         y = model(x)  # materializes lazy layers
-        if vocab is not None and y.dim() == 3:
+        if vocab is not None and y.dim() == 3 and y.shape[-1] == vocab:  # next-token logits (a tagger's are tags)
             loss = torch.nn.functional.cross_entropy(y.reshape(-1, y.shape[-1]), x.reshape(-1))
         else:
             loss = y.float().pow(2).mean()
         loss.backward()
         params = list(model.parameters())
         missing = sum(1 for p in params if p.requires_grad and p.grad is None)
-        result.update(output=list(y.shape), loss=float(loss.detach()), pytorch_parameters=sum(p.numel() for p in params),
-                      parameters_without_grad=missing)
-    except LookupError as reason:  # nothing to feed it offline: not a verdict on the export
+        # The Engine lists a BatchNorm's running mean and variance with its
+        # parameters (they are saved and loaded with them); torch keeps them
+        # as buffers. Count them on both sides.
+        running = sum(b.numel() for name, b in model.named_buffers()
+                      if name.endswith(("running_mean", "running_var")))
+        result.update(output=list(y.shape), loss=float(loss.detach()),
+                      pytorch_parameters=sum(p.numel() for p in params) + running, parameters_without_grad=missing)
+    except NoOfflineInput as reason:  # nothing to feed it offline: not a verdict on the export
         return {**result, "ok": None, "stage": "skipped", "detail": str(reason)}
     except Exception as error:  # the export ran but the model does not train
         return {**result, "ok": False, "stage": "forward/backward", "detail": f"{type(error).__name__}: {error}"}
 
-    expected, unavailable = cyxwiz_parameter_count(bin_dir / "cyxwiz-graph-compile-check.exe", graph)
+    expected, unavailable = cyxwiz_parameter_count(bin_dir / "cyxwiz-graph-compile-check.exe", graph, sample_shape)
     result["cyxwiz_parameters"] = expected
     if unavailable and unavailable.startswith("FAIL "):
         return {**result, "ok": False, "stage": "parameters",
