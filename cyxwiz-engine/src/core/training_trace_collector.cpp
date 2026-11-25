@@ -997,11 +997,18 @@ void TrainingTraceCollector::RecordProviderDispatch(
         if (run_id_.empty() || status_ != "running") {
             return;
         }
-        // Counted, not logged as events: a provider layer dispatches every batch.
+        // Counted, not logged as events: a provider layer dispatches every batch
+        // (an RL run, thousands a second), so one key and no copy for a known group.
         provider_dispatch_count_ += dispatch.event_count;
-        first_problem = dispatch.reason != "ran" &&
-                        provider_groups_.find(HostSyncGroupKey(dispatch)) == provider_groups_.end();
-        AddHostSyncGroup(provider_groups_, dispatch);
+        const std::string key = HostSyncGroupKey(dispatch);
+        const auto known = provider_groups_.find(key);
+        if (known != provider_groups_.end()) {
+            known->second.event_count += dispatch.event_count;
+            known->second.bytes += dispatch.bytes;
+        } else {
+            first_problem = dispatch.reason != "ran";
+            provider_groups_.emplace(key, dispatch);
+        }
     }
     if (first_problem) {
         RecordRuntimeWarning("NeuralProvider." + dispatch.category,

@@ -2,6 +2,11 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <memory>
+#include <utility>
+#include <vector>
+
 namespace cyxwiz {
 
 namespace {
@@ -17,11 +22,27 @@ void Notify(const NeuralDispatchEvent& event) {
     if (g_dispatch_observer) g_dispatch_observer(event);
 }
 
+// A provider's Version(), built once per provider object on this thread: an
+// observed run builds an event for every call (an RL run makes thousands a
+// second), and a Version() may format (the NVIDIA provider's uses a stream).
+// Keyed by ownership, so a provider registered later at the same address is
+// never given another's version.
+const std::string& ProviderVersion(const std::shared_ptr<INeuralNetworkProvider>& provider) {
+    thread_local std::vector<std::pair<std::weak_ptr<INeuralNetworkProvider>, std::string>> versions;
+    for (const auto& [known, version] : versions)
+        if (!known.owner_before(provider) && !provider.owner_before(known)) return version;
+    versions.erase(std::remove_if(versions.begin(), versions.end(),
+                                  [](const auto& entry) { return entry.first.expired(); }),
+                   versions.end());
+    versions.emplace_back(provider, provider->Version());
+    return versions.back().second;
+}
+
 NeuralDispatchEvent MakeEvent(const NeuralOpRequest& request, const char* layer,
-                              const INeuralNetworkProvider& provider, NeuralDispatchOutcome outcome) {
+                              const std::shared_ptr<INeuralNetworkProvider>& provider, NeuralDispatchOutcome outcome) {
     NeuralDispatchEvent event;
-    event.provider_id = provider.ProviderId();
-    event.provider_version = provider.Version();
+    event.provider_id = provider->ProviderId();
+    event.provider_version = ProviderVersion(provider);
     event.op = NeuralOpName(request.op);
     event.layer = layer ? layer : "";
     event.device = NeuralDevicePlatformName(request.target.platform);
@@ -153,7 +174,7 @@ bool DispatchNeuralProviderOp(const NeuralOpRequest& request, const char* layer,
         if (!serving.empty()) {
             const NeuralCapability capability = serving.front()->QueryCapability(request);
             NeuralDispatchEvent event =
-                MakeEvent(request, layer, *serving.front(), NeuralDispatchOutcome::Declined);
+                MakeEvent(request, layer, serving.front(), NeuralDispatchOutcome::Declined);
             event.reason = BackendFallbackReasonName(capability.reason);
             event.detail = capability.detail;
             Notify(event);
@@ -163,10 +184,10 @@ bool DispatchNeuralProviderOp(const NeuralOpRequest& request, const char* layer,
     const NeuralOpStatus status = execute(*provider);
     if (status.ok) {
         // The common case, every batch: no event built unless someone observes.
-        if (g_dispatch_observer) Notify(MakeEvent(request, layer, *provider, NeuralDispatchOutcome::Ran));
+        if (g_dispatch_observer) Notify(MakeEvent(request, layer, provider, NeuralDispatchOutcome::Ran));
         return true;
     }
-    NeuralDispatchEvent event = MakeEvent(request, layer, *provider, NeuralDispatchOutcome::Failed);
+    NeuralDispatchEvent event = MakeEvent(request, layer, provider, NeuralDispatchOutcome::Failed);
     event.reason = BackendFallbackReasonName(status.reason);
     event.detail = status.detail;
     Notify(event);
