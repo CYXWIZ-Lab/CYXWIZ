@@ -43,7 +43,7 @@ option(CYXWIZ_ENABLE_CUDA "Enable CUDA support for ArrayFire" ON)
 option(CYXWIZ_ENABLE_OPENCL "Enable OpenCL support for ArrayFire" ON)
 option(CYXWIZ_ENABLE_ONNX "Enable ONNX Runtime support" ON)
 option(CYXWIZ_ENABLE_GGUF "Enable GGUF/llama.cpp support for LLMs" ON)
-option(CYXWIZ_ENABLE_PYTORCH "Enable LibTorch for the PyTorch parity oracle tests and the server node's optional TorchScript model import; never an engine compute dependency (docs/architecture/backend-compute-frameworks.md)" ON)
+option(CYXWIZ_ENABLE_PYTORCH "Enable LibTorch for the PyTorch parity oracle tests and the server node's optional TorchScript model import; never an engine compute dependency (docs/internals/architecture/compute-back-ends.md)" ON)
 option(CYXWIZ_ENABLE_ASAN "Enable AddressSanitizer for memory error detection" OFF)
 option(CYXWIZ_BUILD_ASSISTANT_PLUGIN "Build the experimental CyxWiz assistant plugin" OFF)
 option(CYXWIZ_BUILD_MUJOCO_PLUGIN "Build the optional MuJoCo simulation plugin" OFF)
@@ -379,7 +379,7 @@ endif()
 
 # LibTorch: PyTorch parity ORACLE for tests, plus the server node's optional
 # TorchScript model import (cyxwiz-server-node/src/model_loader.cpp).
-# Ruling 2026-09-24 (tofix114, docs/architecture/backend-compute-frameworks.md):
+# Ruling 2026-09-24 (tofix114, docs/internals/architecture/compute-back-ends.md):
 # LibTorch is not a backend compute framework of the engine. No engine
 # compute target (cyxwiz-backend, cyxwiz-engine, pycyxwiz) may link
 # ${TORCH_LIBRARIES}; GPU execution of CyxWiz graphs belongs to ArrayFire
