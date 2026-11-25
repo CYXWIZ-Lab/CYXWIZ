@@ -1,5 +1,6 @@
 #include "mujoco_plugin.h"
 #include "mj_mjcf_parser.h"
+#include "mj_log.h"
 #include "rl/reward_shaper.h"
 #include "rl/observation_filter.h"
 #include "env/mj_env_batch.h"
@@ -57,6 +58,9 @@ std::vector<float> ToFloats(const mjtNum* values, mjtSize count) {
 // =============================================================================
 
 bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
+    // First: MuJoCo's warnings go to the Engine log, not MUJOCO_LOG.TXT in
+    // the working folder.
+    InstallMuJoCoLogHandlers(ctx);
     ctx.LogInfo("MuJoCo Simulation: OnLoad");
 
     ctx.LogInfo(std::string("MuJoCo Simulation: Using MuJoCo version ") + mj_versionString());
@@ -140,6 +144,7 @@ void MuJoCoPlugin::OnUnload(PluginContext& ctx) {
     ctx.LogInfo("MuJoCo Simulation: OnUnload");
     ctx_ = nullptr;
     state_ = PluginState::Unloaded;
+    RemoveMuJoCoLogHandlers();  // last: MuJoCo's own handlers back before the library goes
 }
 
 // =============================================================================
