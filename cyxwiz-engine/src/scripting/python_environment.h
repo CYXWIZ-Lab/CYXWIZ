@@ -60,16 +60,4 @@ std::vector<std::string> SwitchEnvironmentInPlace(const PythonEnvironment& from,
 // loaded. Needs the GIL.
 void ForgetPythonFolders(const std::vector<std::string>& folders);
 
-// Where the Engine's Python keeps compiled bytecode (sys.pycache_prefix): the
-// user's cache folder (core/user_folders.h), never __pycache__ beside the .py
-// files (an installed base is read-only and inventoried). Empty when no
-// folder is known: then no bytecode is written.
-std::filesystem::path PythonBytecodeFolder();
-
-// Starts the embedded interpreter as pybind11's default start does, with
-// sys.pycache_prefix = PythonBytecodeFolder(). Set in PyConfig, not the
-// environment, so child processes (pip, venv) keep Python's default. Throws
-// std::runtime_error when Python cannot start. Python builds only.
-void StartEmbeddedInterpreter();
-
 } // namespace scripting

@@ -226,6 +226,25 @@ inline std::filesystem::path UserFile(const std::filesystem::path& folder, const
     return user_folders_detail::Under(folder, name);
 }
 
+// Where Python keeps compiled bytecode (PYTHONPYCACHEPREFIX) for an installed
+// Engine: the user's cache folder, never __pycache__ beside the .py files.
+inline std::filesystem::path PythonBytecodeDir() {
+    return UserFile(UserCacheDir(), std::filesystem::path("python") / "pycache");
+}
+
+// Points this process's Python, and every Python it starts (children inherit
+// the environment), at `folder` for compiled bytecode. Empty `folder`: no
+// bytecode is written at all. False when the environment cannot be changed.
+inline bool SetPythonBytecodeEnvironment(const std::filesystem::path& folder) {
+#if defined(_WIN32)
+    if (folder.empty()) return _wputenv_s(L"PYTHONDONTWRITEBYTECODE", L"1") == 0;
+    return _wputenv_s(L"PYTHONPYCACHEPREFIX", folder.wstring().c_str()) == 0;
+#else
+    if (folder.empty()) return setenv("PYTHONDONTWRITEBYTECODE", "1", 1) == 0;
+    return setenv("PYTHONPYCACHEPREFIX", folder.string().c_str(), 1) == 0;
+#endif
+}
+
 // What a run with no project open writes ("artifacts", "checkpoints", "prepared").
 inline std::filesystem::path NoProjectRunDir(const std::filesystem::path& kind) {
     return UserFile(UserCacheDir(), std::filesystem::path("no-project") / kind);

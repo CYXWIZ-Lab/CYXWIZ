@@ -38,45 +38,7 @@
 #include <string_view>
 #include <vector>
 
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>
-#include <limits.h>
-#elif defined(__linux__)
-#include <unistd.h>
-#include <limits.h>
-#endif
-
 namespace {
-
-std::filesystem::path GetExecutableDir() {
-#ifdef _WIN32
-    std::vector<wchar_t> buffer(32768);
-    DWORD len = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-    if (len == 0 || len >= buffer.size()) {
-        return {};
-    }
-    return std::filesystem::path(std::wstring(buffer.data(), len)).parent_path();
-#elif defined(__APPLE__)
-    char exec_path[PATH_MAX];
-    uint32_t size = sizeof(exec_path);
-    if (_NSGetExecutablePath(exec_path, &size) != 0) {
-        return {};
-    }
-    return std::filesystem::path(exec_path).parent_path();
-#elif defined(__linux__)
-    char exec_path[PATH_MAX];
-    ssize_t len = readlink("/proc/self/exe", exec_path, sizeof(exec_path) - 1);
-    if (len <= 0) {
-        return {};
-    }
-    exec_path[len] = '\0';
-    return std::filesystem::path(exec_path).parent_path();
-#else
-    return {};
-#endif
-}
 
 void SetLaunchCwdEnv(const std::filesystem::path& cwd) {
 #ifdef _WIN32
@@ -159,7 +121,7 @@ int RunPackageSmoke() {
         return 78;
     }
     const auto af_path = std::filesystem::path(EnvironmentValue("AF_PATH"));
-    const auto expected_af_path = GetExecutableDir() / "arrayfire";
+    const auto expected_af_path = cyxwiz::core::ExecutableDirectory() / "arrayfire";
     if (!af_path.empty() &&
         af_path.lexically_normal() != expected_af_path.lexically_normal()) {
         std::cerr << "package_smoke schema=1 status=fail "
@@ -210,7 +172,7 @@ int RunPackageSmoke() {
 
         std::string python_error;
         const std::string python_version =
-            cyxwiz::core::RunBundledPythonSmoke(GetExecutableDir(), &python_error);
+            cyxwiz::core::RunBundledPythonSmoke(cyxwiz::core::ExecutableDirectory(), &python_error);
         if (python_version.empty()) {
             std::cerr << "package_smoke schema=1 status=fail reason="
                       << python_error << '\n';
@@ -236,7 +198,7 @@ int main(int argc, char** argv) {
     cyxwiz::runtime::RuntimeOperationLock engine_ownership;
     std::string ownership_error;
     if (!cyxwiz::runtime::AcquirePackagedEngineOwnership(
-            GetExecutableDir() / cyxwiz::runtime::CurrentEngineExecutableName(),
+            cyxwiz::core::ExecutableDirectory() / cyxwiz::runtime::CurrentEngineExecutableName(),
             EnvironmentRuntimeRoot(), engine_ownership, ownership_error)) {
         std::cerr << "CyxWiz Engine launch is blocked: " << ownership_error << '\n';
         return 78;
@@ -253,23 +215,26 @@ int main(int argc, char** argv) {
     std::filesystem::path launch_cwd = std::filesystem::current_path();
     SetLaunchCwdEnv(launch_cwd);
 
-    std::filesystem::path exe_dir = GetExecutableDir();
+    std::filesystem::path exe_dir = cyxwiz::core::ExecutableDirectory();
     // The Engine only reads its own folder. An installed Engine keeps its log,
     // layout and working folder in the user's folders; a development build in
     // its build folder (core/user_folders.h). A stray relative write then
     // lands in the working folder, never in the installed base.
     const auto run_files = cyxwiz::core::CurrentRunFileLocations();
-    bool cwd_set = false;
-    if (!run_files.working_dir.empty()) {
+    std::string working_dir_problem;  // logged once the logger exists
+    if (run_files.working_dir.empty()) {
+        working_dir_problem = "no user state folder is known";
+    } else {
         std::error_code ec;
         std::filesystem::create_directories(run_files.working_dir, ec);
         std::filesystem::current_path(run_files.working_dir, ec);
-        if (ec) {
-            std::cerr << "Could not work in " << run_files.working_dir.string() << ": " << ec.message() << std::endl;
-        } else {
-            cwd_set = true;
-        }
+        if (ec) working_dir_problem = ec.message();
     }
+    // An installed Engine's Python, and every Python it starts (the Python
+    // check, venv creation, a project's venv, pip), keeps compiled bytecode in
+    // the user's cache folder: the bundled Python in the base is read-only and
+    // inventoried. Set before anything starts Python; children inherit it.
+    if (run_files.installed) cyxwiz::SetPythonBytecodeEnvironment(cyxwiz::PythonBytecodeDir());
 
     // Logging: the console, the Console panel and engine_log.txt. Without a
     // writable log folder the Engine still runs and says why it has no file.
@@ -330,8 +295,12 @@ int main(int argc, char** argv) {
         std::abort();
     });
 
-    if (cwd_set) {
+    if (working_dir_problem.empty()) {
         spdlog::debug("Working folder: {}", run_files.working_dir.string());
+    } else {
+        spdlog::warn("The Engine could not work in its folder {} ({}); it works in {}",
+                     run_files.working_dir.string(), working_dir_problem,
+                     std::filesystem::current_path().string());
     }
     spdlog::debug("Launch working directory: {}", launch_cwd.string());
 
@@ -344,35 +313,8 @@ int main(int argc, char** argv) {
 
     const auto qualification_cache =
         cyxwiz::GetRouteQualificationCachePath();
-    const auto legacy_qualification =
-        std::filesystem::current_path() /
-        "arrayfire-route-qualification.json";
-    std::error_code qualification_path_error;
-    const bool qualification_cache_exists =
-        std::filesystem::exists(
-            qualification_cache, qualification_path_error) &&
-        !qualification_path_error;
     auto qualification =
-        qualification_cache_exists
-            ? cyxwiz::LoadAndInstallRouteQualificationSnapshot(
-                  qualification_cache)
-            : cyxwiz::LoadAndInstallRouteQualificationSnapshot(
-                  legacy_qualification);
-    if (qualification.loaded && !qualification_cache_exists) {
-        std::string migration_error;
-        const auto snapshot = cyxwiz::GetRouteQualificationSnapshot();
-        if (snapshot.has_value() &&
-            cyxwiz::SaveRouteQualificationSnapshotAtomic(
-                qualification_cache, *snapshot, migration_error)) {
-            spdlog::info(
-                "Migrated route qualification evidence to machine-local cache {}",
-                qualification_cache.string());
-        } else {
-            spdlog::warn(
-                "Could not migrate route qualification evidence to {}: {}",
-                qualification_cache.string(), migration_error);
-        }
-    }
+        cyxwiz::LoadAndInstallRouteQualificationSnapshot(qualification_cache);
     if (qualification.loaded) {
         spdlog::debug(
             "Loaded route qualification evidence for {} routes",

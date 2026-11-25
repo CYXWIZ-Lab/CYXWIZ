@@ -1,11 +1,8 @@
 #include "python_environment.h"
 
-#include "../core/user_folders.h"
-
 #include <algorithm>
 #include <cctype>
 #include <fstream>
-#include <stdexcept>
 
 #ifdef CYXWIZ_HAS_PYTHON
 #include <pybind11/embed.h>
@@ -14,32 +11,6 @@ namespace py = pybind11;
 #endif
 
 namespace scripting {
-
-std::filesystem::path PythonBytecodeFolder() {
-    return cyxwiz::UserFile(cyxwiz::UserCacheDir(), std::filesystem::path("python") / "pycache");
-}
-
-#ifdef CYXWIZ_HAS_PYTHON
-void StartEmbeddedInterpreter() {
-    PyConfig config;
-    PyConfig_InitPythonConfig(&config);
-    config.parse_argv = 0;  // pybind11's default start
-    config.install_signal_handlers = 1;
-    const auto pycache = PythonBytecodeFolder();
-    if (pycache.empty()) {
-        config.write_bytecode = 0;  // nowhere to keep it: write none
-    } else {
-        const PyStatus status = PyConfig_SetString(&config, &config.pycache_prefix, pycache.wstring().c_str());
-        if (PyStatus_Exception(status)) {
-            PyConfig_Clear(&config);
-            throw std::runtime_error(std::string("Could not set the Python bytecode folder: ") +
-                                     (status.err_msg ? status.err_msg : "unknown error"));
-        }
-    }
-    py::initialize_interpreter(&config);          // clears `config`
-    py::detail::get_num_interpreters_seen() = 1;  // as pybind11's default start records
-}
-#endif
 
 bool IsVenvBinDir(const std::filesystem::path& path) {
     auto name = path.filename().string();
