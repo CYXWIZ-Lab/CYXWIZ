@@ -133,6 +133,22 @@ limits of a feature are described on the feature's page.
   in [Optimizers and training loops](python/training-loops.md).
 - **Status:** open.
 
+## Code export
+
+### Some exports write a model other than the graph's, without a warning
+
+- **Affects:** the **Code** button of the Studio bar.
+- **What happens:** the TensorFlow and Keras exports write a branched graph
+  as one straight chain and leave its merge nodes out; they also leave out
+  layers they have no code for. The PyTorch export does not write a
+  **Split**, so both branches after it read the whole tensor. The file is
+  written with no message, and it describes another network.
+- **What to do:** for a branched graph, export PyTorch (without Split) or
+  PyCyxWiz, and compare the exported model's layers with the graph before
+  you train it. See
+  [What each framework writes](concepts/model-formats.md#what-each-framework-writes).
+- **Status:** open.
+
 ## Report a new issue
 
 Open an issue with:

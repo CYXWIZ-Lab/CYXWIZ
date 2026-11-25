@@ -46,6 +46,7 @@ GUIDES = [
     "sdk/index.md",
     "sdk/get-started/first-cpp-plugin.md",
     "sdk/get-started/first-python-node.md",
+    "sdk/guides/backend-from-cpp-and-c.md",
     "sdk/guides/data-plugins.md",
     "sdk/guides/python-modules.md",
     "sdk/guides/python-nodes.md",

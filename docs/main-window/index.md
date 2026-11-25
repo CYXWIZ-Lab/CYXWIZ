@@ -116,6 +116,12 @@ every menu command with its shortcut and menu path. Type to filter by name,
 path or key; **Up** and **Down** move, **Enter** runs the command, **Esc**
 closes the palette.
 
+Matching ignores case, and the letters you type only need to appear in
+order, so a command's initials find it. A name that starts with your text
+comes first, then a name that contains it, then the looser matches; a match
+on the menu path or the key counts half as much as the same match on the
+name.
+
 ## Closing the Engine
 
 **File > Exit** (Alt+F4) or the window's close box. When something is

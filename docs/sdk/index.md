@@ -50,6 +50,8 @@ before it trains. Both follow one [node contract](../reference/graph-spec/node-c
   [developer guide](guides/trainable-nodes.md).
 - **Dataset formats and analytics (C++)**: the quickstart's sections 1 and
   3, then [Data plugins](guides/data-plugins.md).
+- **The compute library alone (C++ or C)**:
+  [Use the backend library from C++ and C](guides/backend-from-cpp-and-c.md).
 
 ## Pages
 
@@ -60,6 +62,7 @@ before it trains. Both follow one [node contract](../reference/graph-spec/node-c
 | [python-nodes.md](guides/python-nodes.md) | Describe a Python module or loss as a node, bundle it, approve and use it in the Engine; ten built-in layers and four losses as Python example nodes |
 | [Your first C++ plugin](get-started/first-cpp-plugin.md) | Build the template plugin against the SDK, check it, load it and train with its node |
 | [Trainable nodes in C++](guides/trainable-nodes.md) | Write your own C++ plugin with trainable nodes |
+| [Backend from C++ and C](guides/backend-from-cpp-and-c.md) | Use `cyxwiz-backend` directly from your own C++ or C program: start it, pick a device, tensors, a training step, the C API |
 | [Data plugins](guides/data-plugins.md) | Add a dataset format to Data Input and an analytic to Explore > Plugins, following the SDK's example (ARFF and coefficient of variation) from build to code |
 | [node-contract.md](../reference/graph-spec/node-contract.md) | Know what every extension node must guarantee, in C++ and in Python |
 | [troubleshooting.md](guides/troubleshooting.md) | Fix "not installed", refused settings, failed gradient checks, plugins that do not load |

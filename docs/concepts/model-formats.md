@@ -115,9 +115,31 @@ GGUF is not written.
 
 **Code** writes the graph as Python for PyTorch, TensorFlow, Keras or
 PyCyxWiz (the Engine's own Python module), into the Script Editor or a `.py`
-file. A reinforcement-learning graph exports as Stable-Baselines3 PPO for
-PyTorch and PyCyxWiz. The code holds the model's definition, loss,
-optimizer and a commented example training loop, not the trained weights.
+file. A reinforcement-learning graph exports as Stable-Baselines3 PPO
+(PyTorch code, whichever framework is chosen). The code holds the model's
+definition, loss, optimizer and a commented example training loop, not the
+trained weights.
+
+### What each framework writes
+
+| Framework | The model | Branches and merges | Loss and optimizer |
+| --- | --- | --- | --- |
+| PyTorch | An `nn.Module` class and its `forward` | Yes: an output read by several layers is kept, and **Add**, **Multiply**, **Average** and **Concatenate** combine their inputs. **Split** is not written. A graph with several input nodes, or a word and a part-of-speech **Embedding** joined by a **Concatenate**, is written as a chain | The graph's loss node and optimizer node, with their settings |
+| PyCyxWiz | A class whose `forward` names every node's output | Yes, **Split** included | Adam and cross-entropy in the example loop |
+| TensorFlow | A `tf.keras.Model` subclass | No: one straight chain; merge nodes are not written | Adam and sparse categorical cross-entropy |
+| Keras | A `keras.Sequential` list | No: one straight chain; merge nodes are not written | Adam and sparse categorical cross-entropy |
+
+Every framework refuses a graph that holds **Cross Attention**,
+**Squeeze-Excitation**, **Linear Attention**, **Conv3D**, an image
+transform or augmentation node, the **Quality Analyzer**, or an extension
+node that is a layer or a loss: the file then holds a comment naming the
+node and the reason. TensorFlow and Keras also stop at a **Transformer
+Encoder**, **Transformer Decoder** or **Positional Encoding**, and at a
+**LayerNorm** with a set `normalized_shape`. PyCyxWiz stops at a
+**BatchNorm**, and at a **LayerNorm** set to `AUTO` whose width the graph
+does not give. Those files raise `NotImplementedError` with the reason.
+[Known issues](../known-issues.md) lists the exports that can write a model
+other than the graph's.
 
 The PyTorch export is tested: small models trained in the Engine and through
 their exported code must agree step by step (see

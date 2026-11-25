@@ -93,6 +93,33 @@ server address and its own copy of the secret file.
 The ports the daemon opens are listed on [Ports](../ports.md); the config
 file keys on [Server node settings](settings.md).
 
+## GUI and terminal client options
+
+`cyxwiz-server-gui` is the control client: it connects to the daemon and
+shows its jobs, models and settings. It also runs in a terminal, which suits
+a machine with no desktop, such as a headless Linux node.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--tui`, or `--mode=tui` | | The terminal interface |
+| `--gui`, or `--mode=gui` | the GUI | The graphical interface |
+| `--daemon=ADDR` | `network.ipc_address` from the config file, else `localhost:50054` | The daemon to connect to; match the daemon's `--ipc-address` |
+| `--help`, `-h` | | Print the options |
+
+```bash
+./cyxwiz-server-gui --tui
+```
+
+The terminal interface has six views: **Dashboard**, **Jobs**, **Models**,
+**Deploy**, **Settings** and **Logs**. Press `1` to `6` (or `Tab`) to
+switch views, `r` to refresh, `h` for help and `q` to quit. It has no
+sign-in or **Allocation** page: sign in and lend the machine from the GUI.
+
+The terminal interface is part of every build of `cyxwiz-server-gui` on
+Windows, Linux and macOS while the CMake option `CYXWIZ_BUILD_TUI` is on
+(the default). A client built with only one of the two interfaces starts
+that one, whichever is asked for.
+
 ## How a reserved job runs
 
 1. A user reserves the node in the Engine (**Deploy > Connect to

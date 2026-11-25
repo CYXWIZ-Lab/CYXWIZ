@@ -94,6 +94,9 @@ Open it, double-click **Metric blobs** and **Apply**, then **Train**.
 Measured 2026-10-15 (GTX 1050 Ti, CUDA): early stop after 11 of 30 epochs
 in 8 s, training accuracy 97.9%, validation accuracy 98.6%.
 
-Code export: the pycyxwiz export writes the split; the PyTorch, TensorFlow
-and Keras exports still write a straight chain, so a branched graph does not
-export to them yet.
+Code export: the PyCyxWiz export writes the branches, the merges and
+**Split**. The PyTorch export writes the branches and the merges but not
+**Split**: export a graph with a Split
+as PyCyxWiz. TensorFlow and Keras write a straight chain, so a branched
+graph does not export to them. See
+[What each framework writes](../concepts/model-formats.md#what-each-framework-writes).

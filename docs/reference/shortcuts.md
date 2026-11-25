@@ -38,6 +38,12 @@ so that a search for a key finds every place it works.
 - A global shortcut runs even when its menu item is greyed out. If nothing
   happens, open the menu and hover the item: the status bar says why it is
   not available.
+- On macOS, every **Ctrl** shortcut is a **Cmd** shortcut (**Cmd+S** saves,
+  **Cmd+P** opens the Command Palette), though menus and this page say
+  **Ctrl**. **Ctrl**+click is **Cmd**+click, and **Control**+click is a
+  right-click. **Cmd+H**, **Cmd+M** and **Cmd+Q** belong to the macOS app menu
+  (hide, minimise, quit), so the Script Editor's **Ctrl+H** (Replace) is
+  reached from its menu there.
 
 ## Everywhere
 
