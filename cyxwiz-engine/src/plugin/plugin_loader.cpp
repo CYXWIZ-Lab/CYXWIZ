@@ -50,11 +50,18 @@ std::vector<std::filesystem::path> LibraryFolderFiles(const std::filesystem::pat
     return files;
 }
 
-// The library's content (SHA-512, first 16 bytes) and, for the libraries
-// beside it, name, size and time: a rebuild of any of them is a new copy.
-std::string LibraryContentKey(const std::vector<std::filesystem::path>& files) {
-    const auto hash = security::PluginSignature::HashFile(files.front());
-    std::string key = security::PluginSignature::ToHex(hash.data(), std::min<size_t>(hash.size(), 16));
+// The library's content (SHA-512, first 16 bytes, hex): the start of its
+// copy's key, and what a reused copy is compared with. Empty when unreadable.
+std::string LibraryContentHex(const std::filesystem::path& library) {
+    const auto hash = security::PluginSignature::HashFile(library);
+    return hash.empty() ? std::string{}
+                        : security::PluginSignature::ToHex(hash.data(), std::min<size_t>(hash.size(), 16));
+}
+
+// The library's content and, for the libraries beside it, name, size and
+// time: a rebuild of any of them is a new copy.
+std::string LibraryContentKey(const std::string& library_hex, const std::vector<std::filesystem::path>& files) {
+    std::string key = library_hex;
     uint64_t others = 1469598103934665603ull;  // FNV-1a over the others
     const auto mix = [&others](const std::string& text) {
         for (unsigned char c : text) others = (others ^ c) * 1099511628211ull;
@@ -79,7 +86,8 @@ std::string LibraryContentKey(const std::vector<std::filesystem::path>& files) {
 std::filesystem::path ShadowCopyLibrary(const std::string& plugin_id, const std::filesystem::path& library,
                                         std::string& error) {
     const auto files = LibraryFolderFiles(library);
-    if (security::PluginSignature::HashFile(library).empty()) {
+    const std::string library_hex = LibraryContentHex(library);
+    if (library_hex.empty()) {
         error = "cannot read " + library.string();
         return {};
     }
@@ -88,17 +96,21 @@ std::filesystem::path ShadowCopyLibrary(const std::string& plugin_id, const std:
         error = "no user cache folder to copy the library into";
         return {};
     }
-    const auto folder = cache_root / SafeFolderName(plugin_id) / LibraryContentKey(files);
+    const auto folder = cache_root / SafeFolderName(plugin_id) / LibraryContentKey(library_hex, files);
     const auto copy = folder / library.filename();
     std::error_code ec;
     if (std::filesystem::is_directory(folder, ec)) {
         // This build was copied before (and may be loaded): fill in what is
-        // missing; a file in use is the same bytes.
+        // missing; a file in use is the same bytes. The library's copy must
+        // still hold the content its key names: one changed in place keeps
+        // its size, so it is hashed, not compared by size.
         for (const auto& file : files) {
             const auto target = folder / file.filename();
             std::error_code size_error;
-            if (std::filesystem::file_size(target, size_error) == std::filesystem::file_size(file, size_error) &&
-                !size_error)
+            const bool same_size =
+                std::filesystem::file_size(target, size_error) == std::filesystem::file_size(file, size_error) &&
+                !size_error;
+            if (same_size && (file != library || LibraryContentHex(target) == library_hex))
                 continue;
             std::filesystem::copy_file(file, target, std::filesystem::copy_options::overwrite_existing, ec);
             if (ec) {

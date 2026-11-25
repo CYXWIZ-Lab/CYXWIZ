@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
@@ -97,7 +98,30 @@ int main() {
         auto ok = PluginLoader::LoadFromDirectory(PluginFolder(work, "ok", OK_PLUGIN), error);
         Check(ok != nullptr && ok->instance != nullptr, "a plugin built like the Engine loads" +
                                                             (error.empty() ? std::string() : ": " + error));
-        if (ok) PluginLoader::Unload(*ok);
+        if (ok) {
+            // Its private copy, changed in place at the same size, is copied
+            // again at the next load: never loaded as it is.
+            const fs::path copy = ok->loaded_from;
+            PluginLoader::Unload(*ok);
+            ok.reset();
+            const auto size = fs::file_size(copy, ec);
+            {
+                std::fstream file(copy, std::ios::binary | std::ios::in | std::ios::out);
+                file.seekp(static_cast<std::streamoff>(size / 2));
+                file.put('\x5a');
+            }
+            Check(fs::file_size(copy, ec) == size, "the copy was changed at the same size");
+            auto again = PluginLoader::LoadFromDirectory(work / "ok", error);
+            const auto read_all = [](const fs::path& path) {
+                std::ifstream file(path, std::ios::binary);
+                return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+            };
+            Check(again != nullptr && again->loaded_from == copy &&
+                      read_all(copy) == read_all(work / "ok" / fs::path(OK_PLUGIN).filename()),
+                  "a developer plugin's copy changed at the same size is copied again" +
+                      (error.empty() ? std::string() : ": " + error));
+            if (again) PluginLoader::Unload(*again);
+        }
     }
     {
         std::string error;
