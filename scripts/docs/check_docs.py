@@ -21,7 +21,7 @@ from pathlib import Path
 NEW_TREE = {
     "install", "tutorials", "user-guide", "main-window", "concepts", "reference", "sdk",
     "server-and-cloud", "distributed-training", "troubleshooting", "whats-new",
-    "release-notes", "internals",
+    "release-notes", "internals", "security", "legal", "about",
 }
 NEW_TREE_FILES = {"index.md", "faq.md", "known-issues.md", "glossary.md", "deprecations.md"}
 SKIP_DIRS = {"templates", "next"}  # templates hold placeholders; release-note fragments have no front matter
@@ -30,8 +30,9 @@ REQUIRED = ["title", "description", "type", "area", "status", "since", "owner", 
 ALLOWED = {
     "type": {"tutorial", "how-to", "reference", "explanation", "landing", "troubleshooting", "release-notes"},
     "area": {"general", "install", "graph-editor", "data-studio", "training", "evaluation", "deployment",
-             "simulation", "scripting", "plugins", "remote", "sdk", "server-and-cloud", "internals"},
-    "audience": {"user", "plugin-developer", "operator", "contributor"},
+             "simulation", "scripting", "plugins", "remote", "sdk", "server-and-cloud", "internals",
+             "security", "legal", "about"},
+    "audience": {"user", "plugin-developer", "operator", "contributor", "organisation"},
     "status": {"experimental", "beta", "stable", "deprecated", "removed"},
 }
 LOCAL_ADDRESSES = {"127.0.0.1", "0.0.0.0"}  # documented on purpose (localhost, listen on all)

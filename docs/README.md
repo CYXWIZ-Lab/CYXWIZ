@@ -30,7 +30,10 @@ code), explanations of how things work, and the internals for contributors.
 | `whats-new/` | One page per release, written for users | release-notes |
 | `release-notes/` | Per version, assembled from the fragments in `release-notes/next/` | release-notes |
 | `faq.md`, `known-issues.md`, `glossary.md`, `deprecations.md` | As named | mixed |
-| `internals/` | For contributors: architecture (with diagrams), code layout, build, tests, how to add a node or a panel, the protocol, and how to write docs (`internals/docs/`) | explanation, how-to |
+| `internals/` | For contributors: architecture (with diagrams), code layout, build, tests, how to add a node or a panel, the protocol, decision records (`internals/decisions/`), and how to write docs (`internals/docs/`) | explanation, how-to |
+| `security/` | The security model: what opened files, plugins, Python nodes and remote jobs can do; server node hardening; reporting a vulnerability | explanation, how-to |
+| `legal/` | Licensing FAQ (AGPL, the commercial licence, the Apache SDK) and third-party notices | reference |
+| `about/` | Support and versioning, privacy (what the apps send) | reference |
 
 Generated pages say so in their front matter (`generated: true`) and are
 never edited by hand: change the code or the generator instead.
@@ -65,8 +68,8 @@ redirect_from: []
 | `title` | yes | Sentence case, under 70 characters; also the page heading |
 | `description` | yes | One sentence, under 160 characters, starting with a verb or a noun |
 | `type` | yes | `tutorial`, `how-to`, `reference`, `explanation`, `landing`, `troubleshooting`, `release-notes` |
-| `area` | yes | `general`, `install`, `graph-editor`, `data-studio`, `training`, `evaluation`, `deployment`, `simulation`, `scripting`, `plugins`, `remote`, `sdk`, `server-and-cloud`, `internals` |
-| `audience` | no | `user` (default), `plugin-developer`, `operator`, `contributor` |
+| `area` | yes | `general`, `install`, `graph-editor`, `data-studio`, `training`, `evaluation`, `deployment`, `simulation`, `scripting`, `plugins`, `remote`, `sdk`, `server-and-cloud`, `internals`, `security`, `legal`, `about` |
+| `audience` | no | `user` (default), `plugin-developer`, `operator`, `contributor`, `organisation` (legal and procurement readers) |
 | `status` | yes | `experimental`, `beta`, `stable`, `deprecated`, `removed` |
 | `since` | yes | The first Engine version with this behaviour, for example `1.0.7` |
 | `until`, `replaced_by` | when deprecated or removed | The version, and the page that replaces it |
