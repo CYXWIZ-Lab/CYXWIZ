@@ -3,7 +3,7 @@
   "name": "Residual Block",
   "kind": "block",
   "description": "Two Conv2D / BatchNorm steps added to the block's input (the skip), then ReLU. The input must have `filters` channels.",
-  "sample_shape": "[16, 16, 32]",
+  "sample_shape": "[16, 16, $filters]",
   "category": "BuildingBlocks",
   "tags": ["resnet", "residual", "skip", "block", "deep"],
   "parameters": [

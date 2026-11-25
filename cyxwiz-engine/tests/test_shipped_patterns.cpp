@@ -2,9 +2,11 @@
 // the Pattern Browser inserts it - PatternLibrary with the registry's node
 // factory - and then:
 // - a full graph compiles (its Data Input given the pattern's sample shape,
-//   since no data is loaded here), and the small ones train a few steps;
+//   since no data is loaded here) and its model builds, and the small ones
+//   train a few steps;
 // - a block compiles inside a small graph (data -> block -> Flatten -> Dense
-//   -> loss -> optimizer);
+//   -> loss -> optimizer) and its model builds (a block whose sample shape
+//   does not fit its layers compiled but failed at Train);
 // - a pattern that cannot be used yet refuses to insert and says why;
 // - a network written from torchvision (ResNet-18, the MobileNets) keeps every
 //   layer that holds weights named as torchvision names it, so the published
@@ -19,6 +21,7 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_node_factory.h"
+#include "../src/core/model_builder.h"
 #include "../src/core/rl_graph_compile.h"
 #include "../src/core/training_executor.h"
 #include "../src/gui/data_input_capabilities.h"
@@ -202,6 +205,12 @@ std::optional<cyxwiz::TrainingConfiguration> Compile(const std::string& name, co
     }
     Check(config.is_valid, name + ": the graph is valid");
     if (!clean || !config.is_valid) return std::nullopt;
+    // Train builds the model from the compiled layers: the widths must fit.
+    // (An RL graph trains its policy through the RL trainer, not this builder.)
+    if (config.rl) return config;
+    const auto built = cyxwiz::BuildExecutableFromConfig(config);
+    Check(built.ok(), name + ": the model builds: " + built.error_message);
+    if (!built.ok()) return std::nullopt;
     return config;
 }
 
