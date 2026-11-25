@@ -18,7 +18,7 @@
       {"id": "data_split", "type": "DataSplit", "name": "Train/Val/Test Split", "pos": [240, 240], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1", "seed": "42", "stratified": "true"}},
       {"id": "data_loader", "type": "DataLoader", "name": "Data Loader", "pos": [480, 240], "params": {"batch_size": "32", "epochs": "10", "shuffle": "true", "drop_last": "false"}},
       {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [720, 240], "params": {"num_embeddings": "$vocab_size", "vocab_size": "$vocab_size", "embedding_dim": "$d_model", "padding_idx": "0"}},
-      {"id": "pos", "type": "PositionalEncoding", "name": "Position Encoding", "pos": [960, 240], "params": {"d_model": "$d_model", "max_len": "$max_sequence_length", "max_length": "$max_sequence_length"}},
+      {"id": "pos", "type": "PositionalEncoding", "name": "Position Encoding", "pos": [960, 240], "params": {"d_model": "$d_model", "max_sequence_length": "$max_sequence_length"}},
       {"id": "encoder", "type": "TransformerEncoder", "name": "BERT Encoder", "pos": [1200, 240], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "nhead": "$num_heads", "ff_dim": "$ff_dim", "dim_feedforward": "$ff_dim", "dropout": "0.0"}},
       {"id": "cls", "type": "TensorIndexSelect", "name": "CLS Select", "pos": [1440, 240], "params": {"dim": "0", "axis": "0", "indices": "0"}},
       {"id": "squeeze", "type": "Squeeze", "name": "CLS Squeeze", "pos": [1680, 240], "params": {"dim": "0", "axis": "0"}},
