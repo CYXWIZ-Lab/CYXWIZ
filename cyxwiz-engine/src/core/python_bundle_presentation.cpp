@@ -267,7 +267,7 @@ CreateNodeView BuildCreateNodeView(const CreateNodeInputs& in) {
             break;
         case CreateNodeStage::NoNodes:
             view.lead = "No node in " + in.script_name +
-                        ": mark a class with @nodes.node, @nodes.activation or @nodes.loss (see docs/extending/python-nodes.md).";
+                        ": mark a class with @nodes.node, @nodes.activation or @nodes.loss (see docs/sdk/guides/python-nodes.md).";
             view.primary_label = "Close";
             view.primary_enabled = true;
             break;

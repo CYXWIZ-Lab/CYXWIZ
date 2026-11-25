@@ -49,8 +49,8 @@ then Unload the plugin and Install the folder again.
 ## Documentation
 
 The guides are in the CyxWiz repository on GitHub,
-<https://github.com/CYXWIZ-Lab/CYXWIZ>, folder `docs/extending`: start with
-`plugin-quickstart.md`, then `plugin-developer-guide.md`.
+<https://github.com/CYXWIZ-Lab/CYXWIZ>, folder `docs/sdk`: start with
+`get-started/first-cpp-plugin.md`, then `guides/trainable-nodes.md`.
 
 The template is licensed under the Apache License 2.0 (the SDK's `LICENSE`
 and `NOTICE`). Your plugin may use any licence you choose.

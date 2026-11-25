@@ -1,9 +1,10 @@
-"""Checks the hand-written extension docs against the code (TOFIX125).
+"""Checks the hand-written SDK docs against the code.
 
     python check_extension_docs.py <folder holding pycyxwiz> [<folder of its DLLs>]
 
-For every guide in docs/extending (the generated reference pages are checked
-by generate_extension_reference.py --check) and docs/usage/extension_nodes.md:
+For every hand-written page in GUIDES (docs/sdk, the node contract and
+docs/usage/extension_nodes.md; the generated reference pages are checked by
+generate_extension_reference.py --check):
 
 - Python samples run. The ```python blocks of a page run in order, in one
   namespace, in a fresh scratch folder, with the pycyxwiz under test. A block
@@ -17,8 +18,8 @@ by generate_extension_reference.py --check) and docs/usage/extension_nodes.md:
   "Checked against plugin API <x.y.z> and pycyxwiz <version>." with the
   versions of this tree. When either changes, every page fails until
   someone re-reads it against the code and updates the line.
-- Relative links resolve, in these pages, docs/usage/README.md and the root
-  README.md.
+- Relative links resolve, in these pages, the generated pages,
+  docs/usage/README.md and the root README.md.
 
 Exit code 0 when everything holds; otherwise each problem is printed with its
 page and line.
@@ -36,14 +37,27 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 import generate_extension_reference as reference  # noqa: E402
 
-GENERATED = {"python-api-reference.md", "tensor-operations.md", "sdk-contents.md"}
+# The generated pages, from generate_extension_reference.PAGES (paths under docs/).
+GENERATED = sorted(name for name, _ in reference.PAGES.values())
+
+# The hand-written pages whose samples, excerpts, version line and links are checked.
+GUIDES = [
+    "sdk/index.md",
+    "sdk/get-started/first-cpp-plugin.md",
+    "sdk/get-started/first-python-node.md",
+    "sdk/guides/data-plugins.md",
+    "sdk/guides/python-modules.md",
+    "sdk/guides/python-nodes.md",
+    "sdk/guides/trainable-nodes.md",
+    "sdk/guides/troubleshooting.md",
+    "sdk/plugin-api-reference.md",
+    "reference/graph-spec/node-contract.md",
+    "usage/extension_nodes.md",
+]
 
 
 def guides():
-    folder = os.path.join(REPO, "docs", "extending")
-    pages = [os.path.join(folder, n) for n in sorted(os.listdir(folder))
-             if n.endswith(".md") and n not in GENERATED]
-    return pages + [os.path.join(REPO, "docs", "usage", "extension_nodes.md")]
+    return [os.path.join(REPO, "docs", *name.split("/")) for name in GUIDES]
 
 
 def rel(path):
@@ -168,9 +182,10 @@ def main():
     for extra in (os.path.join(REPO, "README.md"), os.path.join(REPO, "docs", "usage", "README.md")):
         with open(extra, encoding="utf-8") as f:
             check_links(extra, f.read(), problems)
-    for name in sorted(GENERATED):
-        with open(os.path.join(REPO, "docs", "extending", name), encoding="utf-8") as f:
-            check_links(os.path.join(REPO, "docs", "extending", name), f.read(), problems)
+    for name in GENERATED:
+        path = os.path.join(REPO, "docs", *name.split("/"))
+        with open(path, encoding="utf-8") as f:
+            check_links(path, f.read(), problems)
 
     for problem in problems:
         print("FAIL " + problem)

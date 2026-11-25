@@ -4,7 +4,7 @@ How to use the Engine, one page per feature. Each page describes what the
 current build does; limits are stated on the page.
 
 To write your own nodes in Python or C++, see
-[Extending CyxWiz](../extending/README.md).
+[Extending CyxWiz](../sdk/index.md).
 
 ## Getting around
 
@@ -121,5 +121,5 @@ To write your own nodes in Python or C++, see
 | Page | What it covers |
 | --- | --- |
 | [Notebooks in the Script Editor](notebooks.md) | Jupyter notebooks as cells |
-| [Writing a module in Python](../extending/python-modules.md) | pycyxwiz modules, training from a script, gradient check |
-| [Python nodes](../extending/python-nodes.md) | Turning a Python module into a node for the canvas |
+| [Writing a module in Python](../sdk/guides/python-modules.md) | pycyxwiz modules, training from a script, gradient check |
+| [Python nodes](../sdk/guides/python-nodes.md) | Turning a Python module into a node for the canvas |

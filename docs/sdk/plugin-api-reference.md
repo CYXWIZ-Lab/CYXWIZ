@@ -1,9 +1,25 @@
-# Plugin API reference (C++)
+---
+title: Plugin API reference (C++)
+description: Every type a C++ plugin sees, every plugin.json field and CMake name, and what the Engine does with each.
+type: reference
+area: sdk
+audience: plugin-developer
+status: stable
+since: 1.0.7
+owner: sdk
+last_reviewed: 2026-11-25
+related:
+  - get-started/first-cpp-plugin.md
+  - guides/trainable-nodes.md
+  - sdk-contents.md
+redirect_from:
+  - extending/plugin-api-reference.md
+---
 
 Every type a C++ plugin sees, what the Engine does with it, and what works
-today. For a walk-through read the [quickstart](plugin-quickstart.md) and the
-[developer guide](plugin-developer-guide.md); for the rules a trainable
-module must keep, the [node contract](node-contract.md).
+today. For a walk-through read the [quickstart](get-started/first-cpp-plugin.md) and the
+[developer guide](guides/trainable-nodes.md); for the rules a trainable
+module must keep, the [node contract](../reference/graph-spec/node-contract.md).
 
 > Checked against plugin API 1.4.0 and pycyxwiz 0.2.0.
 > The CyxWiz SDK is version 0.2.
@@ -56,7 +72,7 @@ class's full name. It exports three C functions:
 
 | Function | Called |
 |---|---|
-| `const char* CyxwizPluginBuildFingerprint()` | Right after the library is loaded, before `CreatePlugin`. A missing or different fingerprint refuses the load and unloads the library ([developer guide](plugin-developer-guide.md#10-build-fingerprint)). Loading the library has already run its global constructors (and `DllMain` on Windows) |
+| `const char* CyxwizPluginBuildFingerprint()` | Right after the library is loaded, before `CreatePlugin`. A missing or different fingerprint refuses the load and unloads the library ([developer guide](guides/trainable-nodes.md#10-build-fingerprint)). Loading the library has already run its global constructors (and `DllMain` on Windows) |
 | `IPlugin* CreatePlugin()` | Once, to create your plugin (`new PluginClass()`) |
 | `void DestroyPlugin(IPlugin*)` | Once, after `OnUnload`, before the library is freed |
 
@@ -251,7 +267,7 @@ A node is refused, and the rest of the plugin loads, when it does not have
 exactly one input and one output pin, when `type_name` or the plugin id
 breaks its character rule, or when its type id is already registered. The
 reasons are listed in the
-[developer guide](plugin-developer-guide.md#nodes-the-engine-refuses); the
+[developer guide](guides/trainable-nodes.md#nodes-the-engine-refuses); the
 Plugin Manager's **Install...** and `cyxwiz-plugin-check` show them.
 
 ### `ExtensionShapeResult`
@@ -536,7 +552,7 @@ ships no Arrow library and needs none. Fill or read the structs by hand, or
 with any Arrow library of any version (Arrow C++ `arrow::ExportRecordBatchReader`
 / `ImportRecordBatchReader`, nanoarrow, arrow-rs).
 `plugins/examples/data_formats` (in the SDK `examples/plugins/data-formats`)
-does both by hand, with no Arrow library; [Data plugins](data-plugin-guide.md)
+does both by hand, with no Arrow library; [Data plugins](guides/data-plugins.md)
 walks through it.
 
 Both interfaces took this shape in plugin API 1.3. The Engine calls them
@@ -623,7 +639,7 @@ function(cyxwiz_plugin_folder target)
 `lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake` also records, as a comment,
 the compiler the Engine was built with (`# Built with: MSVC 19.44... on
 Windows`); build your plugin with that compiler
-([quickstart](plugin-quickstart.md#the-compiler)).
+([quickstart](get-started/first-cpp-plugin.md#the-compiler)).
 
 The SDK is in every installation (`runtime/base/<base>/sdk`, see the
 quickstart) and is licensed under the Apache License 2.0 (`sdk/LICENSE`,
@@ -648,7 +664,7 @@ The tool is `runtime/base/<base>/cyxwiz-plugin-check` (`.exe`). Start it
 with `cyxwiz-cli plugin-check <plugin folder> ...` from the installation
 folder, on every platform: `cyxwiz-cli` finds the active base, sets the
 library path, keeps your current folder for relative paths, and returns the
-tool's exit code ([quickstart](plugin-quickstart.md#3-check-it) has the
+tool's exit code ([quickstart](get-started/first-cpp-plugin.md#3-check-it) has the
 PowerShell, Command Prompt and shell forms, and the CyxWiz 1.0.7 commands,
 which has no `cyxwiz-cli`). In a source build run
 `bin/Release/cyxwiz-plugin-check` directly, with ArrayFire on `PATH`.
@@ -666,7 +682,7 @@ For each folder it:
    settings for each sample shape the gradient check uses (`[3]` and
    `[4, 5]`), prints *node ...: refuses a [4, 5] input ...* for one it
    refuses, then runs the gradient check on the accepted shapes
-   ([developer guide](plugin-developer-guide.md#8-the-gradient-check));
+   ([developer guide](guides/trainable-nodes.md#8-the-gradient-check));
    prints *ok node ...* or *FAIL node ...* (*refuses every input shape the
    check uses* when it accepts neither);
 6. lists the plugin's dataset formats and analytics (*ok dataset format
@@ -680,7 +696,7 @@ For each folder it:
    types, then runs each analytic on the columns it reads and prints its
    answer (*ok analytic &lt;name&gt; on &lt;file&gt; (&lt;columns&gt;): ...*), or a
    *FAIL open ...* / *FAIL analytic ...* line with the reason
-   ([data plugin guide](data-plugin-guide.md#7-test-and-debug));
+   ([data plugin guide](guides/data-plugins.md#7-test-and-debug));
 8. unloads the plugin.
 
 The last line is *cyxwiz-plugin-check: all plugins pass* or

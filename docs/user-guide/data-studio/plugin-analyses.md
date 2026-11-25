@@ -11,7 +11,7 @@ last_reviewed: 2026-11-25
 related:
   - explore.md
   - ../../usage/extension_nodes.md
-  - ../../extending/plugin-api-reference.md
+  - ../../sdk/plugin-api-reference.md
 ---
 
 **Explore > Plugins** in Data Studio runs the analytics that installed
@@ -60,10 +60,10 @@ so it does not have to fit in memory. The plugin sees only those columns.
 ## Write your own analytic
 
 A C++ plugin adds analytics through `IAnalyticsProvider`; see the
-[plugin API reference](../../extending/plugin-api-reference.md).
+[plugin API reference](../../sdk/plugin-api-reference.md).
 
 ## Related
 
 - [Explore a dataset](explore.md)
 - [Your own nodes and plugins](../../usage/extension_nodes.md)
-- [Plugin API reference](../../extending/plugin-api-reference.md)
+- [Plugin API reference](../../sdk/plugin-api-reference.md)

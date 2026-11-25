@@ -113,10 +113,10 @@ You can add layers, activations and losses that CyxWiz does not ship, and train 
 
 | Route | How | Start here |
 | --- | --- | --- |
-| **Python node** | Write a class with `pycyxwiz`, describe it with `@nodes.node` (a layer), `@nodes.activation` or `@nodes.loss`, bundle it into a `.cyxnode` folder in your project (or use **Create node from script** in the Script Editor), approve it once, then use it from the node palette | [Writing a module in Python](docs/extending/python-modules.md), then [Python nodes](docs/extending/python-nodes.md) |
-| **C++ plugin** | Build a shared library against the plugin SDK that every installation carries in its `sdk/` folder (`find_package(CyxWizSDK)`, a template, Apache-2.0), check it with `cyxwiz-plugin-check`, and load it from the Plugin Manager | [Plugin quickstart](docs/extending/plugin-quickstart.md), then the [developer guide](docs/extending/plugin-developer-guide.md) and [API reference](docs/extending/plugin-api-reference.md) |
+| **Python node** | Write a class with `pycyxwiz`, describe it with `@nodes.node` (a layer), `@nodes.activation` or `@nodes.loss`, bundle it into a `.cyxnode` folder in your project (or use **Create node from script** in the Script Editor), approve it once, then use it from the node palette | [Writing a module in Python](docs/sdk/guides/python-modules.md), then [Python nodes](docs/sdk/guides/python-nodes.md) |
+| **C++ plugin** | Build a shared library against the plugin SDK that every installation carries in its `sdk/` folder (`find_package(CyxWizSDK)`, a template, Apache-2.0), check it with `cyxwiz-plugin-check`, and load it from the Plugin Manager | [Plugin quickstart](docs/sdk/get-started/first-cpp-plugin.md), then the [developer guide](docs/sdk/guides/trainable-nodes.md) and [API reference](docs/sdk/plugin-api-reference.md) |
 
-The SDK in every installation carries ten built-in layers and four losses written as Python nodes (with an example graph), and a C++ plugin template with one trainable node (Bent Identity). The source tree adds a C++ example plugin with trainable Softsign and Snake nodes (`plugins/examples/activation_nodes`). Using extension nodes in the Engine (installing, approving, saving, exporting) is described in [Your own nodes](docs/usage/extension_nodes.md). All pages, the [node contract](docs/extending/node-contract.md) and [troubleshooting](docs/extending/troubleshooting.md) are listed in [Extending CyxWiz](docs/extending/README.md).
+The SDK in every installation carries ten built-in layers and four losses written as Python nodes (with an example graph), and a C++ plugin template with one trainable node (Bent Identity). The source tree adds a C++ example plugin with trainable Softsign and Snake nodes (`plugins/examples/activation_nodes`). Using extension nodes in the Engine (installing, approving, saving, exporting) is described in [Your own nodes](docs/usage/extension_nodes.md). All pages, the [node contract](docs/reference/graph-spec/node-contract.md) and [troubleshooting](docs/sdk/guides/troubleshooting.md) are listed in [Extending CyxWiz](docs/sdk/index.md).
 
 Limits today: one tensor in and one out (a loss takes predictions and targets), no autograd, local training only (a remote Server Node refuses graphs with extension nodes), no ONNX or Python-code export of extension nodes, and losses only from Python.
 
@@ -296,7 +296,7 @@ Keep changes scoped, preserve component boundaries (extend the shared backend in
 - [Project structure](docs/project-structure.md)
 - [Examples](examples/README.md)
 - [User guide](docs/usage/README.md)
-- [Extending CyxWiz: Python nodes and C++ plugins](docs/extending/README.md)
+- [Extending CyxWiz: Python nodes and C++ plugins](docs/sdk/index.md)
 - [Backend overview](cyxwiz-backend/README.md)
 - [Server Node overview](cyxwiz-server-node/README.md)
 - [Known issues](KNOWN_ISSUES.md)

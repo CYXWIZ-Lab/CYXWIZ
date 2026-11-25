@@ -1,4 +1,19 @@
-# The node contract
+---
+title: The node contract
+description: What every extension node, from a C++ plugin or a Python bundle, must guarantee, and what the Engine checks.
+type: reference
+area: sdk
+audience: plugin-developer
+status: stable
+since: 1.0.7
+owner: sdk
+last_reviewed: 2026-11-25
+related:
+  - ../../sdk/guides/trainable-nodes.md
+  - ../../sdk/guides/python-nodes.md
+redirect_from:
+  - extending/node-contract.md
+---
 
 What every extension node must guarantee, whichever route it comes from: a
 C++ plugin or a Python node. The Engine relies on these rules; where it can,
@@ -6,9 +21,9 @@ it checks them and stops with a message that names the node.
 
 > Checked against plugin API 1.4.0 and pycyxwiz 0.2.0.
 
-Each rule names the C++ member ([developer guide](plugin-developer-guide.md))
-and the Python one ([python-modules.md](python-modules.md),
-[python-nodes.md](python-nodes.md)).
+Each rule names the C++ member ([developer guide](../../sdk/guides/trainable-nodes.md))
+and the Python one ([python-modules.md](../../sdk/guides/python-modules.md),
+[python-nodes.md](../../sdk/guides/python-nodes.md)).
 
 ## Identity
 
@@ -40,7 +55,7 @@ and the Python one ([python-modules.md](python-modules.md),
 | Report whether there are parameters | `HasParameters()` | automatic once `add_parameter` was called | Modules without parameters are skipped by the optimizer |
 | State kept beside the weights, not trained (running statistics) is named | `GetStateNames()` lists those `GetParameters` keys | `add_state(name, value)`; read with `state(name)`, update with `set_state(name, value)` | No gradient is expected for them; saved with the weights. Any other key without a gradient fails the check |
 | Do not change the input tensor | | | Other modules may hold it |
-| Use tensor operations, not raw device arrays | `cyxwiz::Tensor` ([tensor-operations.md](tensor-operations.md)) | `pycyxwiz.Tensor` and the pycyxwiz functions | Same results on every device |
+| Use tensor operations, not raw device arrays | `cyxwiz::Tensor` ([tensor-operations.md](../../sdk/tensor-operations.md)) | `pycyxwiz.Tensor` and the pycyxwiz functions | Same results on every device |
 | Honour training mode when behaviour differs in training (as Dropout does) | `SetTraining(bool)` | `set_training(self, training)` / `is_training(self)` | Evaluation and inference switch it off |
 | Same seed, same result | | | Reproducible runs |
 
@@ -53,19 +68,19 @@ and the Python one ([python-modules.md](python-modules.md),
 | `predictions` are the last layer's raw outputs (a classification loss applies its own softmax); `targets` are one-hot rows for `target="categorical"`, values for `target="continuous"` | The decorator's `target` tells the Engine which labels to feed |
 | A loss has no input shape, no `build` and no learnable parameters; it may have settings (`nodes.Param`) | It is the training objective, not a layer |
 
-[python-nodes.md](python-nodes.md) explains what `predictions` and
+[python-nodes.md](../../sdk/guides/python-nodes.md) explains what `predictions` and
 `targets` hold for classification and regression.
 
 ## The gradient
 
 | Rule | Why |
 |---|---|
-| You write the backward step; the Engine has no autograd for extension nodes yet | Decision D1 of TOFIX125 |
+| You write the backward step; the Engine has no autograd for extension nodes yet | You know your operation's derivative; the Engine checks it numerically instead of tracing it |
 | It must pass the gradient check (relative error at most 0.02 by default) | A wrong gradient trains silently badly; the check catches it before training |
 
 The check compares your backward step with central differences of your
 forward step on random inputs. In C++ it is `cyxwiz::CheckModuleGradients`
-and `cyxwiz-plugin-check` ([developer guide](plugin-developer-guide.md));
+and `cyxwiz-plugin-check` ([developer guide](../../sdk/guides/trainable-nodes.md));
 in Python `pycyxwiz.gradcheck`, `pycyxwiz.gradcheck_loss` and
-`nodes.gradcheck` ([python-modules.md](python-modules.md)). Properties runs
+`nodes.gradcheck` ([python-modules.md](../../sdk/guides/python-modules.md)). Properties runs
 it for a node on the canvas.

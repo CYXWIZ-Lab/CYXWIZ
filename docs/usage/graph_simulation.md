@@ -54,7 +54,7 @@ MuJoCo Viewport, still shows its model.
 ## Plugins
 
 A plugin node runs in a graph simulation only when its plugin says so (see
-`ISimulationProvider` in the [plugin API reference](../extending/plugin-api-reference.md)).
+`ISimulationProvider` in the [plugin API reference](../sdk/plugin-api-reference.md)).
 A plugin may refuse a run, for example the MuJoCo plugin while its viewport
 runs the model: "The MuJoCo Viewport is running the model. Stop it there,
 then run the graph." The run does not start and the toolbar and the

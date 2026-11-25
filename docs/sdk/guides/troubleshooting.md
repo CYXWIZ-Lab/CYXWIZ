@@ -1,4 +1,20 @@
-# Troubleshooting extension nodes
+---
+title: Troubleshoot extension nodes
+description: Fix plugins that do not load, nodes shown as not installed, refused settings and failed gradient checks.
+type: troubleshooting
+area: sdk
+audience: plugin-developer
+status: stable
+since: 1.0.7
+owner: sdk
+last_reviewed: 2026-11-25
+related:
+  - ../get-started/first-cpp-plugin.md
+  - python-nodes.md
+  - ../../usage/extension_nodes.md
+redirect_from:
+  - extending/troubleshooting.md
+---
 
 > Checked against plugin API 1.4.0 and pycyxwiz 0.2.0.
 
@@ -33,14 +49,14 @@ A plugin id loads once. To load a new build of a plugin that is loaded:
 rebuild (the Engine runs a copy, so the build output is never locked), then
 **Unload** it and **Install...** the same folder again. A model made with
 the old build keeps the old code until it is gone
-([quickstart section 6](plugin-quickstart.md#6-change-rebuild-reload)).
+([quickstart section 6](../get-started/first-cpp-plugin.md#6-change-rebuild-reload)).
 
 ### *needs &lt;id&gt; &lt;version&gt;, which is not installed* (or *version ... is installed*, *which did not start*)
 
 Your `plugin.json` lists that plugin under `dependencies`, and it is missing,
 has a version outside the constraint, or failed to start (its own error
 follows in brackets). Install or update that plugin, or change the
-constraint ([plugin.json fields](plugin-api-reference.md)). *waits for
+constraint ([plugin.json fields](../plugin-api-reference.md)). *waits for
 &lt;id&gt;, which has not started yet* is not an error: yours starts as soon
 as that one does (for example after its permissions are approved).
 
@@ -64,8 +80,8 @@ list gives each reason:
 The plugin was built differently from this Engine; the message names each
 difference (compiler, standard library, build type, pointer size, SDK or
 ArrayFire version). Rebuild the plugin against the SDK of this Engine, with
-the compiler the SDK names. See the [quickstart](plugin-quickstart.md) and
-the [developer guide](plugin-developer-guide.md).
+the compiler the SDK names. See the [quickstart](../get-started/first-cpp-plugin.md) and
+the [developer guide](trainable-nodes.md).
 
 ### *The plugin has no build fingerprint*
 
@@ -199,9 +215,9 @@ module failed on the check's inputs (batches of samples shaped [3] and
 
 ### Training stops with *Extension node '...' (...): ...*
 
-The Engine's guard caught a broken rule of the [node contract](node-contract.md).
+The Engine's guard caught a broken rule of the [node contract](../../reference/graph-spec/node-contract.md).
 The end of the message says which one; the
-[developer guide](plugin-developer-guide.md) lists the checks.
+[developer guide](trainable-nodes.md) lists the checks.
 
 ### Training stops with *Extension loss '...' (...): ...*
 

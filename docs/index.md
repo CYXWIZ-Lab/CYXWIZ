@@ -62,7 +62,7 @@ press **Train**. Then read the graph editor guide to build your own.
 | --- | --- |
 | [Keyboard shortcuts](reference/shortcuts.md) | Every shortcut, by where it works |
 | [User guide (older pages)](usage/README.md) | Data Studio, training, evaluation, scripting, plugins and more, while they move into this structure |
-| [Extending CyxWiz](extending/README.md) | Your own nodes in Python or C++ |
+| [Extending CyxWiz](sdk/index.md) | Your own nodes in Python or C++ |
 | [Release notes](RELEASE_NOTES.md) | What changed |
 
 ## About these docs

@@ -4,7 +4,7 @@ A plugin can offer environments a policy learns in. The Engine is the
 learner: it asks for many copies of one environment, sends an action to each
 copy and reads back what each copy observed and earned. The plugin only
 simulates. Plugin authors: see `IEnvironmentProvider` in the
-[plugin API reference](../extending/plugin-api-reference.md).
+[plugin API reference](../sdk/plugin-api-reference.md).
 
 Training a policy from the graph: see [Training a policy](rl_training.md)
 (Environment, Policy Head, Value Head and PPO nodes). This page covers the

@@ -4,7 +4,7 @@ An **extension node** is a node CyxWiz does not ship: written in Python with
 pycyxwiz (a *Python node bundle*) or in C++ (a *plugin*). It is added from the
 node editor, connected like a built-in layer, saved in `.cyxgraph` files and
 trained. This page is how to use them in the Engine; how to write one is in
-[docs/extending](../extending/README.md).
+[the SDK docs](../sdk/index.md).
 
 > Checked against plugin API 1.4.0 and pycyxwiz 0.2.0.
 
@@ -99,7 +99,7 @@ within 2 seconds, without a restart.
 - **Errors.** An error in a node's code stops training: the training status
   says *Training failed:* with the node's name and the Python traceback, and
   the Console (Logs) has the full text. How to find the cause:
-  [python-nodes.md](../extending/python-nodes.md) section 10.
+  [python-nodes.md](../sdk/guides/python-nodes.md) section 10.
 
 ## Make a Python node
 
@@ -166,7 +166,7 @@ source, checks it and creates its bundle. You write only the arithmetic.
 
 To build your own plugin against the SDK in the CPU base (`sdk/`, Apache
 License 2.0), start with `sdk/template/README.md` and
-[plugin-quickstart.md](../extending/plugin-quickstart.md); check a built
+[Your first C++ plugin](../sdk/get-started/first-cpp-plugin.md); check a built
 plugin with `cyxwiz-plugin-check`.
 
 ## Using an extension node
@@ -204,4 +204,4 @@ plugin with `cyxwiz-plugin-check`.
 - Autograd: a node's backward step is written by hand.
 
 Problems ("not installed", refused settings, failed gradient checks):
-[troubleshooting.md](../extending/troubleshooting.md).
+[troubleshooting.md](../sdk/guides/troubleshooting.md).

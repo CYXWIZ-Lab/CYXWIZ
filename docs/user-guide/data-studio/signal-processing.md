@@ -158,7 +158,7 @@ original; it does not replace it.
 `bandstop` (taps mean taps), `filter`, `conv` / `conv2`, `wavedec`,
 `denoise`, `findpeaks` / `findpeaks_prominence`, and the generators `sine`,
 `square`, `noise` (see the
-[Python API reference](../../extending/python-api-reference.md#pycyxwizsignal)).
+[Python API reference](../../sdk/python-api/index.md#pycyxwizsignal)).
 
 ## Related
 

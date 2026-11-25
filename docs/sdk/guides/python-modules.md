@@ -1,4 +1,20 @@
-# Writing a module in Python
+---
+title: Write a module in Python
+description: Write a trainable pycyxwiz.Module in Python, check its gradient and train it from a script.
+type: how-to
+area: sdk
+audience: plugin-developer
+status: stable
+since: 1.0.7
+owner: sdk
+last_reviewed: 2026-11-25
+related:
+  - python-nodes.md
+  - ../python-api/index.md
+  - ../tensor-operations.md
+redirect_from:
+  - extending/python-modules.md
+---
 
 A Python class derived from `pycyxwiz.Module` is a real CyxWiz module: the
 C++ model calls its `forward` and `backward`, and the optimizer updates the
@@ -9,8 +25,8 @@ a node in the Engine's palette, bundles it and uses it in a graph.
 > Checked against plugin API 1.4.0 and pycyxwiz 0.2.0.
 > The Python samples on this page run, in order, as one script
 > (`scripts/docs/check_extension_docs.py` runs them). Every pycyxwiz name is
-> in [python-api-reference.md](python-api-reference.md); the tensor
-> operations are in [tensor-operations.md](tensor-operations.md).
+> in [pycyxwiz API reference](../python-api/index.md); the tensor
+> operations are in [tensor-operations.md](../tensor-operations.md).
 
 ## 1. Get pycyxwiz
 
@@ -30,7 +46,7 @@ its saved file (`__file__` is its path).
 
 `<base>` is the one folder in `runtime\base` of the installation, for example
 `%LOCALAPPDATA%\Programs\CyxWiz\runtime\base\cyxwiz-base-0.2.0-6-win64-x86_64`
-([plugin-quickstart.md](plugin-quickstart.md) lists the other install
+([Your first C++ plugin](../get-started/first-cpp-plugin.md) lists the other install
 locations).
 
 On Windows, Python does not search `PATH` for the DLLs a module needs. Name
@@ -41,7 +57,7 @@ the folders before the import:
 import os
 import sys
 
-BASE = r"C:\Users\you\AppData\Local\Programs\CyxWiz\runtime\base\cyxwiz-base-0.2.0-6-win64-x86_64"
+BASE = os.path.expandvars(r"%LOCALAPPDATA%\Programs\CyxWiz\runtime\base\cyxwiz-base-0.2.0-6-win64-x86_64")
 folders = [BASE, os.path.join(BASE, "arrayfire", "bin")]
 for folder in folders:
     os.add_dll_directory(folder)
@@ -107,7 +123,7 @@ dimension 0; in the Engine a node that returns another batch size stops
 training with "changed the batch size from 32 to ...".
 
 Tensors are `float32` unless you make them otherwise. What you can do with
-them is listed in [tensor-operations.md](tensor-operations.md): arithmetic
+them is listed in [tensor-operations.md](../tensor-operations.md): arithmetic
 (`+ - * / **` with tensors or numbers), elementwise functions (`abs`, `exp`,
 `log`, `sqrt`, `sin`, `cos`, `sign`, `pow`, `clip`), reductions (`sum`,
 `mean`, `max`, `min`, `var`, `std`, with `dim` and `keepdim`), shapes

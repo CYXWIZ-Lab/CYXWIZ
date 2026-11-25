@@ -46,7 +46,7 @@ before, Unload it in the Plugin Manager first: both have the same id.
 
 ## Documentation
 
-`docs/extending/data-plugin-guide.md` in the CyxWiz repository on GitHub,
+`docs/sdk/guides/data-plugins.md` in the CyxWiz repository on GitHub,
 <https://github.com/CYXWIZ-Lab/CYXWIZ>, walks through this plugin: building
 and checking it, what the Engine does with each call, and how to write your
 own format.

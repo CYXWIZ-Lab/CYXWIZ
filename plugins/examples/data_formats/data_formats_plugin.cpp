@@ -4,7 +4,7 @@
 //
 // Example plugin with a dataset format and a dataset analytic (plugin API
 // 1.3), using only the SDK's Arrow C stream header: no Arrow library.
-// docs/extending/data-plugin-guide.md walks through this file.
+// docs/sdk/guides/data-plugins.md walks through this file.
 //
 //   ARFF (Weka's attribute-relation file format, .arff): IDataProvider.
 //     Numeric attributes become float64 columns, nominal, string and date

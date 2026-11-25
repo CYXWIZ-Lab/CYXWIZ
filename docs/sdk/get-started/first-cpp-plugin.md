@@ -1,4 +1,20 @@
-# Plugin quickstart: trainable nodes from C++
+---
+title: Your first C++ plugin
+description: Build the template plugin from an installed CyxWiz, check it, load it, train with its node and update it.
+type: tutorial
+area: sdk
+audience: plugin-developer
+status: stable
+since: 1.0.7
+owner: sdk
+last_reviewed: 2026-11-25
+related:
+  - ../guides/trainable-nodes.md
+  - ../plugin-api-reference.md
+  - ../guides/troubleshooting.md
+redirect_from:
+  - extending/plugin-quickstart.md
+---
 
 Build the template plugin from an installed CyxWiz, check it, load it, train
 with its node, and update it after a change. You need no CyxWiz sources:
@@ -82,11 +98,11 @@ The SDK folder holds:
 | `lib/` | The library your plugin links: `cyxwiz-backend.lib` on Windows, `libcyxwiz-backend.so` on Linux, `libcyxwiz-backend.dylib` on macOS. At run time your plugin uses the Engine's own copy. (The 1.0.7 Linux and macOS SDKs lack it: there, add `-DCYXWIZ_SDK_BACKEND_LIBRARY="$sdk/../libcyxwiz-backend.so"` (`.dylib` on macOS) to the first `cmake` line of section 2) |
 | `lib/cmake/CyxWizSDK/` | The CMake package: `find_package(CyxWizSDK)`, the target `CyxWiz::PluginSDK`, the function `cyxwiz_plugin_folder()` |
 | `template/` | My Nodes: a plugin with one trainable node, Bent Identity, that builds as delivered |
-| `examples/python-nodes/` | Python example nodes ([python-nodes.md](python-nodes.md)) |
-| `examples/plugins/data-formats/` | A data plugin: an ARFF format for Data Input and an analytic for Explore > Plugins, as source and ready to Install in `built/` ([data-plugin-guide.md](data-plugin-guide.md)) |
+| `examples/python-nodes/` | Python example nodes ([python-nodes.md](../guides/python-nodes.md)) |
+| `examples/plugins/data-formats/` | A data plugin: an ARFF format for Data Input and an analytic for Explore > Plugins, as source and ready to Install in `built/` ([Data plugins](../guides/data-plugins.md)) |
 | `LICENSE`, `NOTICE` | The Apache License 2.0, which covers every file of the SDK |
 
-Every header is listed in [sdk-contents.md](sdk-contents.md). The SDK has
+Every header is listed in [sdk-contents.md](../sdk-contents.md). The SDK has
 no ArrayFire, ImGui, spdlog or JSON headers, and a trainable node needs
 none.
 
@@ -109,7 +125,9 @@ findstr /C:"Built with" "%SDK%\lib\cmake\CyxWizSDK\CyxWizSDKConfig.cmake"
 grep "Built with" "$sdk/lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake"
 ```
 
-It prints a line such as `# Built with: MSVC 19.44.35211.0 on Windows`.
+It prints a line such as `# Built with: MSVC <version> on Windows`, where
+`<version>` is the compiler's full version (it starts with `19.44` for
+Visual Studio 2022 version 17.14).
 
 | Platform | Use | Refused or unsafe |
 |---|---|---|
@@ -117,7 +135,7 @@ It prints a line such as `# Built with: MSVC 19.44.35211.0 on Windows`.
 | Linux | GCC with the same major version (`GNU 11.4.0` means `g++-11`), libstdc++. Ubuntu 22.04 and Debian have a `g++-11` package; on a distribution without one (Arch, recent Fedora) use GCC 11 from conda-forge in a folder of your own (`micromamba create -p ~/gcc11 -c conda-forge gxx_linux-64=11`, then `-DCMAKE_CXX_COMPILER=~/gcc11/bin/x86_64-conda-linux-gnu-g++`) or an Ubuntu 22.04 container | Clang; another GCC major. The check and the Engine say *built with compiler=gcc-15; this Engine with compiler=gcc-11* |
 | macOS | Apple clang with the same major version as "Built with" (`AppleClang 17.0.0`: compare with `clang --version`, or the *CXX compiler identification* line CMake prints; Xcode's version number does not follow clang's), libc++, and the architecture of your CyxWiz download (`x86_64` for macOS Intel, `arm64` for Apple Silicon) | Another clang major. A library of the other architecture fails to load |
 
-The [developer guide](plugin-developer-guide.md#10-build-fingerprint)
+The [developer guide](../guides/trainable-nodes.md#10-build-fingerprint)
 explains what the Engine compares.
 
 ## 2. Build the template
@@ -262,16 +280,16 @@ cyxwiz-plugin-check: all plugins pass
 | `FAIL the plugin did not load: ...` | The reason: API version, build fingerprint, a missing library file, or the operating system's error for the library |
 | `permission X: granted for this check only (the Engine asks the user)` | `plugin.json` declares a permission the user must approve in the Engine; the check grants it for this run only and saves nothing |
 | `FAIL the plugin did not initialise: ...` | `OnLoad` or `OnInitialize` returned `false`, threw or crashed |
-| `FAIL not added: ...` | The Engine refused one of your nodes (or dataset formats or analytics); the reason says why ([developer guide](plugin-developer-guide.md#nodes-the-engine-refuses)) |
+| `FAIL not added: ...` | The Engine refused one of your nodes (or dataset formats or analytics); the reason says why ([developer guide](../guides/trainable-nodes.md#nodes-the-engine-refuses)) |
 | `node ...: refuses a [4, 5] input with its default settings: ...` | `InferOutputShape` refused one of the two sample shapes the gradient check uses (`[3]` and `[4, 5]`); the node is checked with the other |
 | `FAIL node ...: refuses every input shape the check uses` | `InferOutputShape` refused both `[3]` and `[4, 5]`, so nothing could be checked |
-| `ok   node ...: Passed ...`, `FAIL node ...: Failed ...` | The gradient check ([developer guide](plugin-developer-guide.md#8-the-gradient-check)) |
+| `ok   node ...: Passed ...`, `FAIL node ...: Failed ...` | The gradient check ([developer guide](../guides/trainable-nodes.md#8-the-gradient-check)) |
 | `FAIL the plugin registered no nodes, dataset formats or analytics` | The check expects at least one of them |
 
 The exit code is 0 when every folder passes, 1 otherwise, 2 without a
 folder. For a plugin with dataset formats, `--open <file>` before the
 folder also reads that file through the format and runs the plugin's
-analytics on it ([data plugin guide](data-plugin-guide.md#7-test-and-debug)).
+analytics on it ([data plugin guide](../guides/data-plugins.md#7-test-and-debug)).
 
 ## 4. Load it in the Engine
 
@@ -293,7 +311,7 @@ When something goes wrong, Install says what:
 |---|---|
 | *Failed to load plugin from &lt;folder&gt;: &lt;reason&gt;* | Fix the reason (fingerprint, API version, missing library); the check prints the same |
 | *Plugin loaded but could not be initialized: &lt;folder&gt;* and the error | `OnLoad` or `OnInitialize` failed |
-| *Plugin installed, but N of its nodes were not added:* and one line per node | The plugin loaded; those nodes were refused ([developer guide](plugin-developer-guide.md#nodes-the-engine-refuses)) |
+| *Plugin installed, but N of its nodes were not added:* and one line per node | The plugin loaded; those nodes were refused ([developer guide](../guides/trainable-nodes.md#nodes-the-engine-refuses)) |
 | *&lt;name&gt; &lt;version&gt; is already loaded from &lt;folder&gt;. To load a new build: Unload it, rebuild, then Install again. If a model still uses its nodes, restart the Engine instead of Unload.* | See [section 6](#6-change-rebuild-reload) |
 
 A plugin that declares a permission the user must approve (file system,
@@ -362,8 +380,8 @@ are removed when the Engine starts.
    three library paths in `plugin.json` (`bin/<name>.dll`,
    `bin/lib<name>.so`, `bin/lib<name>.dylib`).
 3. Replace `BentIdentityModule` with your module, following the
-   [developer guide](plugin-developer-guide.md) and the
-   [node contract](node-contract.md).
+   [developer guide](../guides/trainable-nodes.md) and the
+   [node contract](../../reference/graph-spec/node-contract.md).
 4. The template's source starts with `SPDX-License-Identifier: Apache-2.0`;
    replace it with your own licence. Your plugin may use any licence.
 

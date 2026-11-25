@@ -1,7 +1,7 @@
 """Example nodes written only in Python (TOFIX125 P3): Softsign as a tier 1
 activation and Snake as a tier 2 node with a setting and a learnable
 parameter. Imported by test_python_nodes.py and bundled by
-test_python_bundle.py; docs/extending/python-nodes.md shows the same code.
+test_python_bundle.py; docs/sdk/guides/python-nodes.md shows the same code.
 """
 import pycyxwiz as cyx
 from pycyxwiz import nodes
