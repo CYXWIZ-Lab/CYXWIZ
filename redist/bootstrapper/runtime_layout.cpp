@@ -499,6 +499,17 @@ bool IsInstalledBaseExecutable(const std::filesystem::path& executable) {
     return actual.parent_path().parent_path().filename() == "base";
 }
 
+std::filesystem::path InstalledRuntimeRoot(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& environment_runtime) {
+    if (!environment_runtime.empty()) return environment_runtime;
+    if (executable.empty() || !IsInstalledBaseExecutable(executable)) return {};
+    std::error_code code;
+    auto actual = std::filesystem::weakly_canonical(executable, code);
+    if (code) actual = executable;
+    return actual.parent_path().parent_path().parent_path();
+}
+
 bool ResolveActiveRuntime(
     const std::filesystem::path& runtime_root,
     ActiveRuntime& output,

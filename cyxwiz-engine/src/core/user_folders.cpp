@@ -6,12 +6,14 @@
 
 namespace cyxwiz::core {
 
-bool IsInstalledRun() {
-    if (!user_folders_detail::EnvironmentPath("CYXWIZ_ACTIVE_RUNTIME_ROOT").empty()) return true;
+std::filesystem::path InstalledRuntimeRoot() {
     const auto exe_dir = ExecutableDirectory();
-    return !exe_dir.empty() &&
-           runtime::IsInstalledBaseExecutable(exe_dir / std::string(runtime::CurrentEngineExecutableName()));
+    return runtime::InstalledRuntimeRoot(
+        exe_dir.empty() ? std::filesystem::path{} : exe_dir / std::string(runtime::CurrentEngineExecutableName()),
+        ActiveRuntimeRootFromEnvironment());
 }
+
+bool IsInstalledRun() { return !InstalledRuntimeRoot().empty(); }
 
 RunFileLocations CurrentRunFileLocations() {
     return RunFileLocationsFor(IsInstalledRun(), ExecutableDirectory());

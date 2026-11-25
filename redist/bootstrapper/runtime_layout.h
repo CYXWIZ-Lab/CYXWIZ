@@ -62,6 +62,15 @@ struct ActiveRuntime {
 // The Engine's ownership check and its user-folder choice both ask this, so
 // they never disagree about what an installed run is.
 bool IsInstalledBaseExecutable(const std::filesystem::path& executable);
+// The installed runtime a program of an installed base runs in: the
+// bootstrapper's CYXWIZ_ACTIVE_RUNTIME_ROOT (`environment_runtime`) when it
+// is given, else <root>/runtime when `executable` (or a module of the
+// program) sits in <root>/runtime/base/<id>/ (a direct launch, a shortcut);
+// empty for a development build. One answer for the ownership check, the
+// Engine's add-on set-up and the Python environment host.
+std::filesystem::path InstalledRuntimeRoot(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& environment_runtime);
 
 bool ResolveActiveRuntime(
     const std::filesystem::path& runtime_root,

@@ -12,6 +12,16 @@
 #include "plugin_manager.h"
 #include "plugin_pack_trust.h"
 #include "../core/user_folders.h"
+#include "runtime_layout.h"
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>
+#else
+#include <dlfcn.h>
+#endif
 #include "registries/plugin_environment_registry.h"
 #include "security/permission_store.h"
 
@@ -36,15 +46,36 @@ namespace {
 
 std::vector<std::string> loaded_plugins;
 
-// In an installed runtime (the Engine's bootstrapper sets the variable), its
-// add-ons load only as the Engine loads them: checked against their signed
-// inventory. Read once per process.
+// This module's own file: in an installed base it sits in
+// <root>/runtime/base/<id>/, as the Engine does.
+std::filesystem::path ThisModulePath() {
+#ifdef _WIN32
+    HMODULE module = nullptr;
+    if (!::GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                              reinterpret_cast<LPCWSTR>(&ThisModulePath), &module)) {
+        return {};
+    }
+    std::wstring buffer(32768, L'\0');
+    const DWORD length = ::GetModuleFileNameW(module, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (length == 0 || length >= buffer.size()) return {};
+    buffer.resize(length);
+    return std::filesystem::path(buffer);
+#else
+    Dl_info info{};
+    if (::dladdr(reinterpret_cast<void*>(&ThisModulePath), &info) == 0 || !info.dli_fname) return {};
+    return std::filesystem::path(info.dli_fname);
+#endif
+}
+
+// In an installed runtime (started by the bootstrapper, or this module loaded
+// from an installed base), its add-ons load only as the Engine loads them:
+// checked against their signed inventory. Read once per process.
 void ConfigureInstalledAddOns(cyxwiz::plugin::PluginManager& manager) {
     static bool configured = false;
     if (configured) return;
     configured = true;
-    if (const auto root = cyxwiz::ActiveRuntimeRootFromEnvironment(); !root.empty())
-        cyxwiz::plugin::ConfigureInstalledPluginPacks(manager, root);
+    const auto root = cyxwiz::runtime::InstalledRuntimeRoot(ThisModulePath(), cyxwiz::ActiveRuntimeRootFromEnvironment());
+    if (!root.empty()) cyxwiz::plugin::ConfigureInstalledPluginPacks(manager, root);
 }
 
 // Loads and starts the plugin in `folder`. A permission the Engine would ask

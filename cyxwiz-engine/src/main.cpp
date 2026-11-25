@@ -98,15 +98,6 @@ const char* EnvironmentValue(const char* name) {
     return value != nullptr ? value : "";
 }
 
-std::filesystem::path EnvironmentRuntimeRoot() {
-#ifdef _WIN32
-    const auto* value = ::_wgetenv(L"CYXWIZ_ACTIVE_RUNTIME_ROOT");
-    return value ? std::filesystem::path(value) : std::filesystem::path{};
-#else
-    return EnvironmentValue("CYXWIZ_ACTIVE_RUNTIME_ROOT");
-#endif
-}
-
 int RunPackageSmoke() {
     constexpr const char* kForbiddenOverrides[] = {
         "AF_PLUGIN_PATH",
@@ -200,7 +191,7 @@ int main(int argc, char** argv) {
     std::string ownership_error;
     if (!cyxwiz::runtime::AcquirePackagedEngineOwnership(
             cyxwiz::core::ExecutableDirectory() / cyxwiz::runtime::CurrentEngineExecutableName(),
-            EnvironmentRuntimeRoot(), engine_ownership, ownership_error)) {
+            cyxwiz::ActiveRuntimeRootFromEnvironment(), engine_ownership, ownership_error)) {
         std::cerr << "CyxWiz Engine launch is blocked: " << ownership_error << '\n';
         return 78;
     }
@@ -426,7 +417,10 @@ int main(int argc, char** argv) {
             // An installed Engine also loads the add-ons (plugin packs) active
             // in its runtime (runtime/active-plugins.json), from their exact
             // folders, each checked against its signed inventory first.
-            if (const auto runtime_root = EnvironmentRuntimeRoot(); !runtime_root.empty()) {
+            // Also when the installed Engine was started directly (a shortcut,
+            // a double-click in the install folder): the same add-ons and the
+            // same checks as through the bootstrapper.
+            if (const auto runtime_root = cyxwiz::core::InstalledRuntimeRoot(); !runtime_root.empty()) {
                 cyxwiz::plugin::ConfigureInstalledPluginPacks(pm, runtime_root);
             }
             // Plugins loaded in an earlier session and set to load at startup

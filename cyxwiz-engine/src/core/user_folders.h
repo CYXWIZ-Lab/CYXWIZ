@@ -333,6 +333,9 @@ inline RunFileLocations RunFileLocationsFor(bool installed, const std::filesyste
 // Installed: CYXWIZ_ACTIVE_RUNTIME_ROOT is set, or the Engine runs from
 // <root>/runtime/base/<id>/ (the rule the Engine's ownership check uses).
 bool IsInstalledRun();
+// The installed runtime this Engine runs in, launched by the bootstrapper or
+// directly (runtime::InstalledRuntimeRoot); empty for a development build.
+std::filesystem::path InstalledRuntimeRoot();
 RunFileLocations CurrentRunFileLocations();
 // engine_log.txt of this run (empty when no folder is known).
 std::filesystem::path EngineLogPath();

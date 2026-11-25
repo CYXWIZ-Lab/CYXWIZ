@@ -92,6 +92,20 @@ void Run() {
     Check(!IsInstalledBaseExecutable(f.root / "base" /
                                      CurrentEngineExecutableName()),
           "An Engine directly in runtime/base is not in a base folder");
+    // The runtime root, launched by the bootstrapper or directly.
+    std::error_code ignored;
+    const auto canonical_root = std::filesystem::weakly_canonical(f.root, ignored);
+    Check(std::filesystem::equivalent(InstalledRuntimeRoot(f.engine, {}),
+                                      canonical_root, ignored),
+          "A direct launch of an installed Engine finds its runtime root");
+    Check(InstalledRuntimeRoot(f.engine, f.parent / "other") ==
+              f.parent / "other",
+          "The bootstrapper's runtime root wins");
+    Check(InstalledRuntimeRoot(f.parent / "build/bin" /
+                                   CurrentEngineExecutableName(),
+                               {})
+              .empty(),
+          "A development build has no runtime root");
   }
   {
     const auto developer =
