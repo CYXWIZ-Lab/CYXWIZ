@@ -322,7 +322,7 @@ bool PythonEngine::Initialize(std::string* error_out) {
             return false;
         }
 
-        py::initialize_interpreter();
+        StartEmbeddedInterpreter();  // bytecode in the user's cache folder
         initialized_ = true;
         initialized_by_us_ = true;  // We initialized it, so we'll finalize it
 
