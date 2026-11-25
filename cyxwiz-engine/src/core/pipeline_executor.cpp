@@ -1,4 +1,5 @@
 #include "pipeline_executor.h"
+#include "user_folders.h"
 #include "column_list.h"
 #include "dataset_lineage.h"
 #include "sha256_digest.h"
@@ -2035,9 +2036,7 @@ std::filesystem::path DefaultExportDirectory(
 
     std::error_code ec;
     auto temp = std::filesystem::temp_directory_path(ec);
-    return ec
-        ? std::filesystem::path(".") / "cyxwiz" / "exports"
-        : temp / "cyxwiz" / "exports";
+    return ec ? RequireNoProjectRunDir("exports") : temp / "cyxwiz" / "exports";
 }
 
 // A relative output path resolves against the project folder when the node's
@@ -3469,8 +3468,9 @@ bool PipelineExecutor::ResolveAutomaticPreprocessingStatePaths(
            << '-' << std::setfill('0') << std::setw(3)
            << milliseconds.count();
 
+    // No project open: the user's no-project folder, never the working folder.
     const std::filesystem::path artifact_root = artifact_root_.empty()
-        ? std::filesystem::current_path() / "artifacts"
+        ? RequireNoProjectRunDir("artifacts")
         : std::filesystem::path(artifact_root_);
 
     const auto node_slug = [](const Node& node, const std::string& fallback) {

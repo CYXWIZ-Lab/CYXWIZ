@@ -1,4 +1,5 @@
 #include "training_executor.h"
+#include "user_folders.h"
 #include "training_report_window.h"
 #include <set>
 #include <cyxwiz/optimizers/adam.h>
@@ -1362,8 +1363,10 @@ void TrainingExecutor::Train(
     std::string terminal_status;
     std::string terminal_reason;
 
+    // No folder given (no project open): the user's no-project folder, never
+    // the working folder (an installed Engine's base is read-only).
     std::filesystem::path checkpoint_root = config_.checkpoint_dir.empty()
-        ? (std::filesystem::current_path() / ".cyxwiz" / "checkpoints")
+        ? RequireNoProjectRunDir("checkpoints")
         : std::filesystem::path(config_.checkpoint_dir);
     checkpoint_root /= last_run ? last_run->run_id : "training-run";
     checkpoint_manager = std::make_unique<CheckpointManager>(checkpoint_root.string());

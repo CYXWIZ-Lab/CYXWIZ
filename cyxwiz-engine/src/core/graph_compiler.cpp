@@ -8776,6 +8776,7 @@ void ResolveProjectRelativePaths(TrainingConfiguration& config, const std::strin
     }
     absolute(config.initialize_from_checkpoint);
     absolute(config.initialize_from_weights_file);
+    absolute(config.checkpoint_dir);  // a DataLoader's typed checkpoint folder
 }
 
 } // namespace cyxwiz

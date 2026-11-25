@@ -51,6 +51,7 @@
 #include "../core/debug_operator_trace_producer.h"
 #include "../core/compute_runtime_config.h"
 #include "../core/compute_runtime_paths.h"
+#include "../core/user_folders.h"
 #include "../core/execution_device_preferences.h"
 #include "../core/keyboard_shortcuts.h"
 #include "../extension/python/python_node_factory.h"
@@ -4029,9 +4030,16 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 "StartTrainingFromGraph: using project checkpoint directory '{}'",
                 config.checkpoint_dir);
         }
-        // Embedding weights, the warm-start checkpoint and the Embedding
-        // Output file are project-relative, like Data Input paths.
-        if (project.HasActiveProject()) cyxwiz::ResolveProjectRelativePaths(config, project.GetProjectRoot());
+        // Embedding weights, the warm-start checkpoint, the Embedding Output
+        // file and a typed checkpoint folder are project-relative, like Data
+        // Input paths. With no project a relative checkpoint folder goes to
+        // the user's no-project folder, never the working folder.
+        if (project.HasActiveProject()) {
+            cyxwiz::ResolveProjectRelativePaths(config, project.GetProjectRoot());
+        } else if (!config.checkpoint_dir.empty() && std::filesystem::path(config.checkpoint_dir).is_relative()) {
+            if (const auto base = cyxwiz::NoProjectRunDir("checkpoints"); !base.empty())
+                config.checkpoint_dir = (base / config.checkpoint_dir).lexically_normal().string();
+        }
 
         auto& registry = cyxwiz::DataRegistry::Instance();
         auto& tm = cyxwiz::TrainingManager::Instance();
