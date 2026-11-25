@@ -1,7 +1,7 @@
 {
   "id": "td3_inverted_pendulum",
   "name": "TD3 on InvertedPendulum-v5",
-  "description": "Twin Delayed DDPG on the MuJoCo Simulation plugin's InvertedPendulum-v5 (load the plugin first) with the TD3 node's defaults (Stable-Baselines3's, with Gaussian action noise of 0.1): 1 copy, layers of 400 and 300 with ReLU, stops when the mean return of the last 100 episodes reaches 950 (101,000-121,000 steps; Stable-Baselines3: 109,000-123,100), within 150,000 steps. About 13-18 minutes on an NVIDIA GPU with the CUDA GPU pack. Open it, then Train (F5).",
+  "description": "Twin Delayed DDPG on the Simulation (MuJoCo) plugin's InvertedPendulum-v5 (load the plugin first) with the TD3 node's defaults (Stable-Baselines3's, with Gaussian action noise of 0.1): 1 copy, layers of 400 and 300 with ReLU, stops when the mean return of the last 100 episodes reaches 950 (101,000-121,000 steps; Stable-Baselines3: 109,000-123,100), within 150,000 steps. About 13-18 minutes on an NVIDIA GPU with the CUDA GPU pack. Open it, then Train (F5).",
   "category": "Reinforcement Learning",
   "tags": [
     "td3",

@@ -43,7 +43,7 @@ std::vector<ExtensionPaletteEntry> BuildExtensionPalette(
 // Case-insensitive match on name, group, keywords and description.
 bool ExtensionPaletteEntryMatches(const ExtensionPaletteEntry& entry, const std::string& query);
 
-// "5 nodes from MuJoCo Simulation", "3 nodes from 2 plugins",
+// "5 nodes from Simulation (MuJoCo)", "3 nodes from 2 plugins",
 // "9 nodes from 2 plugins and 1 Python bundle", "No nodes".
 // provider_names: display name per provider id (the id when unknown).
 std::string ExtensionPaletteSummary(

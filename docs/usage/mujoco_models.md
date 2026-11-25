@@ -1,6 +1,6 @@
 # MuJoCo models: the Environment Library and your projects
 
-The MuJoCo Simulation plugin's **Environment Library** (Simulation >
+The Simulation (MuJoCo) plugin's **Environment Library** (Simulation >
 Environment Library) lists the models you can load into the
 [MuJoCo Viewport](mujoco_viewport.md) and name in a **MuJoCo Plant** node:
 

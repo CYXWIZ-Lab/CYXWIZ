@@ -1,7 +1,7 @@
 {
   "id": "sac_inverted_pendulum",
   "name": "SAC on InvertedPendulum-v5",
-  "description": "Soft Actor-Critic on the MuJoCo Simulation plugin's InvertedPendulum-v5 (load the plugin first) with the SAC node's defaults (Stable-Baselines3's): 1 copy, two layers of 256 with ReLU, stops when the mean return of the last 100 episodes reaches 950 (about 100,000 steps; Stable-Baselines3: 105,000-109,000), within 150,000 steps. About 12-16 minutes on an NVIDIA GPU with the CUDA GPU pack. Open it, then Train (F5).",
+  "description": "Soft Actor-Critic on the Simulation (MuJoCo) plugin's InvertedPendulum-v5 (load the plugin first) with the SAC node's defaults (Stable-Baselines3's): 1 copy, two layers of 256 with ReLU, stops when the mean return of the last 100 episodes reaches 950 (about 100,000 steps; Stable-Baselines3: 105,000-109,000), within 150,000 steps. About 12-16 minutes on an NVIDIA GPU with the CUDA GPU pack. Open it, then Train (F5).",
   "category": "Reinforcement Learning",
   "tags": [
     "sac",

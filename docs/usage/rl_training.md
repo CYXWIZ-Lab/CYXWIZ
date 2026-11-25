@@ -35,7 +35,7 @@ graph (choose the hidden width and the activation when you insert it).
 
 | Node | What it does |
 |---|---|
-| **Environment** | Picks an environment (the built-in CartPole-v1, or one a loaded plugin offers, such as the MuJoCo Simulation plugin's InvertedPendulum-v5 and HalfCheetah-v5; see [Environments](rl_environments.md)) and how many **Copies** step side by side. Properties lists the environment's facts (observation, actions, episode limit, step time) and its own settings, with the plugin's labels and checks. **Observation** feeds both networks; **Environment** goes to PPO. |
+| **Environment** | Picks an environment (the built-in CartPole-v1, or one a loaded plugin offers, such as the Simulation (MuJoCo) plugin's InvertedPendulum-v5 and HalfCheetah-v5; see [Environments](rl_environments.md)) and how many **Copies** step side by side. Properties lists the environment's facts (observation, actions, episode limit, step time) and its own settings, with the plugin's labels and checks. **Observation** feeds both networks; **Environment** goes to PPO. |
 | Layers | Ordinary layer nodes, the ones supervised graphs use: Dense, the activations, Layer Norm, Dropout. The policy and the value network are separate chains, as in SB3's MlpPolicy. |
 | **Policy Head** | Ends the policy layers. Adds the output layer sized from the environment: one logit per choice (categorical) for discrete actions, one mean per action (Gaussian, with one learned log standard deviation per action, **Log std at start**) for continuous ones. Properties shows what it adds. Do not put a Softmax before it. |
 | **Value Head** | Ends the value layers: adds the one-output layer (the expected return). |

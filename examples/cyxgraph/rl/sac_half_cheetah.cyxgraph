@@ -1,7 +1,7 @@
 {
   "id": "sac_half_cheetah",
   "name": "SAC on HalfCheetah-v5",
-  "description": "Soft Actor-Critic on the MuJoCo Simulation plugin's HalfCheetah-v5 (load the plugin first), with RL Zoo's settings: 1 copy, actor and Q networks of two layers of 256 with ReLU, a replay buffer of 1,000,000 steps, learning from step 10,000, 1,000,000 steps (no target stop). About 2-3 hours on an NVIDIA GPU with the CUDA GPU pack (a GTX 1050 Ti); the final mean return is around 8,300-11,100 (Stable-Baselines3 with the same settings: 7,800-10,700), about twice PPO's on the same task. Open it, then Train (F5).",
+  "description": "Soft Actor-Critic on the Simulation (MuJoCo) plugin's HalfCheetah-v5 (load the plugin first), with RL Zoo's settings: 1 copy, actor and Q networks of two layers of 256 with ReLU, a replay buffer of 1,000,000 steps, learning from step 10,000, 1,000,000 steps (no target stop). About 2-3 hours on an NVIDIA GPU with the CUDA GPU pack (a GTX 1050 Ti); the final mean return is around 8,300-11,100 (Stable-Baselines3 with the same settings: 7,800-10,700), about twice PPO's on the same task. Open it, then Train (F5).",
   "category": "Reinforcement Learning",
   "tags": [
     "sac",

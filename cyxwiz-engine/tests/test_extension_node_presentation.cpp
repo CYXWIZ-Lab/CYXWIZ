@@ -92,8 +92,8 @@ void TestPalette() {
     Check(!cyxwiz::ExtensionPaletteEntryMatches(entries[2], "dense"), "no false match");
     Check(cyxwiz::ExtensionPaletteEntryMatches(entries[2], ""), "an empty query matches all");
 
-    Check(cyxwiz::ExtensionPaletteSummary(entries, {{kMuJoCo, "MuJoCo Simulation"}}) ==
-              "5 nodes from MuJoCo Simulation",
+    Check(cyxwiz::ExtensionPaletteSummary(entries, {{kMuJoCo, "Simulation (MuJoCo)"}}) ==
+              "5 nodes from Simulation (MuJoCo)",
           "the section summary names the plugin");
     Check(cyxwiz::ExtensionPaletteSummary(entries, {}) == "5 nodes from com.cyxwiz.simulation.mujoco",
           "an unknown provider name falls back to its id");
@@ -138,13 +138,13 @@ void TestInfoFacts() {
     auto plant = nodes[4];
     plant.source_path = "D:/dev/CyxWiz_Engine/plugins/simulation/mujoco";
     const auto facts = cyxwiz::BuildExtensionInfoFacts(
-        plant, {"MuJoCo Simulation", "1.0.0", "CyxWiz Lab"});
+        plant, {"Simulation (MuJoCo)", "1.0.0", "CyxWiz Lab"});
     Check(facts.category_line == "Plugins / Simulation / Control", "category line");
     Check(facts.chips.size() == 4 && facts.chips[0] == "Plugin" && facts.chips[1] == "Simulation node" &&
               facts.chips[2] == "Cannot train" && facts.chips[3] == "Pins follow its settings",
           "chips say plugin, simulation, cannot train, dynamic pins");
     std::map<std::string, std::string> rows(facts.provided_by.begin(), facts.provided_by.end());
-    Check(rows["Plugin"] == "MuJoCo Simulation" && rows["Version"] == "1.0.0" &&
+    Check(rows["Plugin"] == "Simulation (MuJoCo)" && rows["Version"] == "1.0.0" &&
               rows["Author"] == "CyxWiz Lab" &&
               rows["Type id"] == "com.cyxwiz.simulation.mujoco:MuJoCoPlant" &&
               rows["Source"] == "D:/dev/CyxWiz_Engine/plugins/simulation/mujoco",

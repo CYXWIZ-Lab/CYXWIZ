@@ -4,7 +4,7 @@ The MuJoCo plugin's 3D view: it shows a MuJoCo model, runs it, and shows a
 trained policy playing. Open it from **Simulation > MuJoCo Viewport**, or it
 opens by itself when you press **Play policy** on a MuJoCo task (see
 [Train, play and export a policy](rl_walkthrough.md)). The plugin must be
-loaded (**Plugin Manager**, MuJoCo Simulation).
+loaded (**Plugin Manager**, Simulation (MuJoCo)).
 
 ## The control row
 

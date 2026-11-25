@@ -20,14 +20,14 @@ real robots). For every setting and panel, see
   their small networks as fused GPU kernels and train several times faster
   than on the CPU (see [What runs where on a GPU](gpu_providers.md)). On the CPU every
   example still trains; it just takes longer.
-- **The MuJoCo Simulation plugin** (InvertedPendulum and HalfCheetah only).
+- **The Simulation (MuJoCo) plugin** (InvertedPendulum and HalfCheetah only).
   Open **Apps > Plugin Manager**:
   - if the plugin is already in the Engine's `plugins` folder, click
     **Refresh**;
   - otherwise click **Install...** and choose the plugin's folder (the one
     holding `plugin.json`).
 
-  The Plugin Manager then lists *MuJoCo Simulation* as initialised, and the
+  The Plugin Manager then lists *Simulation (MuJoCo)* as initialised, and the
   Console says `Registered 2 environments for 'com.cyxwiz.simulation.mujoco'`.
   A plugin loaded this way stays loaded for the session.
 - **The examples** are in `examples/cyxgraph/rl/`. Open one with **File >

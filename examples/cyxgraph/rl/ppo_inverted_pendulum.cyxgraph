@@ -1,7 +1,7 @@
 {
   "id": "ppo_inverted_pendulum",
   "name": "PPO on InvertedPendulum-v5",
-  "description": "PPO on the MuJoCo Simulation plugin's InvertedPendulum-v5 (load the plugin first), tuned: 4 copies, stops when the last 100 episodes average 950 (about 120,000 steps, a few minutes). Open it, then Train (F5).",
+  "description": "PPO on the Simulation (MuJoCo) plugin's InvertedPendulum-v5 (load the plugin first), tuned: 4 copies, stops when the last 100 episodes average 950 (about 120,000 steps, a few minutes). Open it, then Train (F5).",
   "category": "Reinforcement Learning",
   "tags": [
     "ppo",

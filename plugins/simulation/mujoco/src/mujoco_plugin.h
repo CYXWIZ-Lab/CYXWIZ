@@ -1,6 +1,6 @@
 #pragma once
 
-// MuJoCo Simulation Plugin for CyxWiz Engine
+// Simulation (MuJoCo) plugin for CyxWiz Engine
 //
 // - IPlugin lifecycle: initialize/shutdown MuJoCo
 // - IPanelProvider: MuJoCo 3D viewport and Environment Library panels

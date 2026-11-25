@@ -1,7 +1,7 @@
 {
   "id": "ppo_half_cheetah",
   "name": "PPO on HalfCheetah-v5",
-  "description": "PPO on the MuJoCo Simulation plugin's HalfCheetah-v5 (load the plugin first), with RL Zoo's tuned settings: 1 copy, observation and reward normalisation, two layers of 256 with ReLU, 1,000,000 steps (no target stop). About 10-13 minutes on an NVIDIA GPU with the CUDA GPU pack, over an hour on the CPU; the final mean return is around 3,800-5,100 (Stable-Baselines3 with the same settings: 2,970-4,660). Open it, then Train (F5).",
+  "description": "PPO on the Simulation (MuJoCo) plugin's HalfCheetah-v5 (load the plugin first), with RL Zoo's tuned settings: 1 copy, observation and reward normalisation, two layers of 256 with ReLU, 1,000,000 steps (no target stop). About 10-13 minutes on an NVIDIA GPU with the CUDA GPU pack, over an hour on the CPU; the final mean return is around 3,800-5,100 (Stable-Baselines3 with the same settings: 2,970-4,660). Open it, then Train (F5).",
   "category": "Reinforcement Learning",
   "tags": [
     "ppo",

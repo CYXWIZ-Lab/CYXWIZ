@@ -4726,7 +4726,7 @@ void NodeMetadataRegistry::InitializeRLNodes() {
         {"environment", "gym", "gymnasium", "rl", "reinforcement", "mujoco", "cartpole"}, 0, false,
         "N copies of an environment to train in",
         "Picks an environment from the ones the Engine and the loaded plugins offer (CartPole-v1 is built in; "
-        "the MuJoCo Simulation plugin adds InvertedPendulum-v5 and HalfCheetah-v5) and steps several copies "
+        "the Simulation (MuJoCo) plugin adds InvertedPendulum-v5 and HalfCheetah-v5) and steps several copies "
         "side by side. Its observation feeds the policy and value (or Q) layers; its Environment pin goes to the "
         "learner, PPO, SAC, TD3 or DQN. "
         "The environment's own settings come from its plugin.",

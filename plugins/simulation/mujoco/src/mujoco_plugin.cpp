@@ -61,9 +61,9 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
     // First: MuJoCo's warnings go to the Engine log, not MUJOCO_LOG.TXT in
     // the working folder.
     InstallMuJoCoLogHandlers(ctx);
-    ctx.LogInfo("MuJoCo Simulation: OnLoad");
+    ctx.LogInfo("Simulation (MuJoCo): OnLoad");
 
-    ctx.LogInfo(std::string("MuJoCo Simulation: Using MuJoCo version ") + mj_versionString());
+    ctx.LogInfo(std::string("Simulation (MuJoCo): Using MuJoCo version ") + mj_versionString());
 
     // Capture main GLFW window for renderer context management.
     main_window_ = glfwGetCurrentContext();
@@ -116,7 +116,7 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
 }
 
 bool MuJoCoPlugin::OnInitialize(PluginContext& ctx) {
-    ctx.LogInfo("MuJoCo Simulation: OnInitialize");
+    ctx.LogInfo("Simulation (MuJoCo): OnInitialize");
 
     // Note: Registration of interfaces (IPanelProvider, INodeProvider)
     // is handled engine-side via QueryInterface in PluginManager to avoid DLL singleton
@@ -127,7 +127,7 @@ bool MuJoCoPlugin::OnInitialize(PluginContext& ctx) {
 }
 
 void MuJoCoPlugin::OnShutdown(PluginContext& ctx) {
-    ctx.LogInfo("MuJoCo Simulation: OnShutdown");
+    ctx.LogInfo("Simulation (MuJoCo): OnShutdown");
     sim_executor_.Stop();  // Must stop before freeing model/renderer
     // A running download reports to the library panel: finish it while the panel exists
     menagerie_downloader_.CancelDownload();
@@ -141,7 +141,7 @@ void MuJoCoPlugin::OnShutdown(PluginContext& ctx) {
 }
 
 void MuJoCoPlugin::OnUnload(PluginContext& ctx) {
-    ctx.LogInfo("MuJoCo Simulation: OnUnload");
+    ctx.LogInfo("Simulation (MuJoCo): OnUnload");
     ctx_ = nullptr;
     state_ = PluginState::Unloaded;
     RemoveMuJoCoLogHandlers();  // last: MuJoCo's own handlers back before the library goes
@@ -832,7 +832,7 @@ std::vector<PluginEnvironmentInfo> MuJoCoPlugin::GetEnvironments() {
             }
             environments.push_back(std::move(info));
         } else if (ctx_) {
-            ctx_->LogWarn("MuJoCo Simulation: " + task.id + " is not offered: " + error);
+            ctx_->LogWarn("Simulation (MuJoCo): " + task.id + " is not offered: " + error);
         }
     }
     return environments;

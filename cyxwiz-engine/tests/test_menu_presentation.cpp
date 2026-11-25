@@ -44,14 +44,14 @@ MenuInputs SampleInputs() {
     // the Engine does not have
     in.plugin_commands = {
         {"sim.plugin:run", "Simulation", "run", "Run Simulation", "Runs the loaded model.", false,
-         "Load a model first.", false, false, "MuJoCo Simulation", true},
+         "Load a model first.", false, false, "Simulation (MuJoCo)", true},
         {"sim.plugin:stop", "Simulation", "run", "Stop", "Stops the run.", false, "Nothing is running.", false, false,
-         "MuJoCo Simulation", true},
+         "Simulation (MuJoCo)", true},
         {"sim.plugin:load", "Simulation", "model", "Load MJCF Model...", "Opens a model file.", true, "", false, false,
-         "MuJoCo Simulation", false},
+         "Simulation (MuJoCo)", false},
         {"other.plugin:sync", "Robots", "", "Sync Robots", "Syncs the robots.", true, "", false, false, "", false}};
     in.loaded_plugins = {{"com.cyxwiz.examples.activation-nodes", "Example Activation Nodes", "2 nodes", true},
-                         {"com.cyxwiz.simulation.mujoco", "MuJoCo Simulation", "2 windows, 5 nodes", true},
+                         {"com.cyxwiz.simulation.mujoco", "Simulation (MuJoCo)", "2 windows, 5 nodes", true},
                          {"com.example.viewer", "Viewer", "1 window", false}};
     return in;
 }
@@ -352,7 +352,7 @@ int main() {
     {
         const Menu* sim = simulation_menu(model);
         Check(sim && sim->items.size() == 8, "Simulation: a heading, 3 commands, 2 separators, 2 windows");
-        Check(sim->items[0].kind == MenuItem::Kind::Header && sim->items[0].label == "MuJoCo Simulation",
+        Check(sim->items[0].kind == MenuItem::Kind::Header && sim->items[0].label == "Simulation (MuJoCo)",
               "the plugin's commands sit under its name");
         Check(sim->items[1].id == "plugin.command" && sim->items[1].argument == "sim.plugin:run" &&
                   !sim->items[1].enabled && sim->items[1].disabled_reason == "Load a model first.",
@@ -389,7 +389,7 @@ int main() {
                   !run->items[2].enabled && run->items[2].disabled_reason == "Nothing is running." &&
                   run->items[5].id == "simulation.clear",
               "the graph run's commands with their reasons");
-        Check(run->items[6].kind == MenuItem::Kind::Separator && run->items[7].label == "MuJoCo Simulation" &&
+        Check(run->items[6].kind == MenuItem::Kind::Separator && run->items[7].label == "Simulation (MuJoCo)" &&
                   run->items[8].argument == "sim.plugin:load",
               "the plugin's run commands give way; its other commands stay");
         Check(run->items[10].id == "simulation.monitor" && run->items[10].checked, "the Monitor shows as open");
