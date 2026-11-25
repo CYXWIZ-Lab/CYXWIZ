@@ -39,6 +39,8 @@ int main() {
     Check(list.entries.size() == 2, "two plugins recorded");
     Check(cyxwiz::PluginLoadsAtStartup(list, kActivation), "on by default");
     Check(!cyxwiz::PluginLoadsAtStartup(list, "com.example.unknown"), "unknown plugin does not load");
+    Check(cyxwiz::PluginLoadsAtStartup(list, "com.example.unknown", true),
+          "an installed add-on not listed yet loads at startup (its card says so)");
 
     // The user's choice survives a reload from another folder.
     cyxwiz::SetPluginLoadAtStartup(list, kMuJoCo, false);

@@ -65,10 +65,6 @@ void SetLoadAtStartup(const std::string& plugin_id, const std::string& folder, b
     WritePluginStartupList(list);
 }
 
-bool LoadsAtStartup(const std::string& plugin_id) {
-    return PluginLoadsAtStartup(ReadPluginStartupList(), plugin_id);
-}
-
 size_t LoadStartupPlugins(PluginManager& manager) {
     size_t loaded = 0;
     std::vector<PluginStartupEntry> packs;

@@ -24,7 +24,6 @@ void RecordLoadedPlugins(const PluginManager& manager);
 void RecordPluginUnloaded(const std::string& plugin_id);
 // Lists the plugin first when it is not listed yet.
 void SetLoadAtStartup(const std::string& plugin_id, const std::string& folder, bool on);
-bool LoadsAtStartup(const std::string& plugin_id);
 
 // Loads and initialises the listed plugins that load at startup. A plugin
 // needing a permission decision asks through the usual dialog. Returns the

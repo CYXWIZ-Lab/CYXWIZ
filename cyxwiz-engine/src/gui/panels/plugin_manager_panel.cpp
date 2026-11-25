@@ -381,7 +381,8 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
             ImGui::PopTextWrapPos();
         }
         if (!startup_list_read_) ReloadStartupList();
-        bool at_startup = cyxwiz::PluginLoadsAtStartup(startup_list_, p->manifest.id);
+        bool at_startup = cyxwiz::PluginLoadsAtStartup(
+            startup_list_, p->manifest.id, p->origin == plugin::LoadedPlugin::Origin::SignedPack);
         if (ImGui::Checkbox("Load when the Engine starts", &at_startup)) {
             plugin::SetLoadAtStartup(p->manifest.id, p->plugin_dir.generic_string(), at_startup);
             ReloadStartupList();

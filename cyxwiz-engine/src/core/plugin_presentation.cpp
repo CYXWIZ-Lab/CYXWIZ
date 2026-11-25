@@ -82,11 +82,11 @@ void SetPluginLoadAtStartup(PluginStartupList& list, const std::string& id, bool
     if (auto* entry = Find(list, id)) entry->load_at_startup = on;
 }
 
-bool PluginLoadsAtStartup(const PluginStartupList& list, const std::string& id) {
+bool PluginLoadsAtStartup(const PluginStartupList& list, const std::string& id, bool installed_add_on) {
     for (const auto& entry : list.entries) {
         if (entry.id == id) return entry.load_at_startup;
     }
-    return false;
+    return installed_add_on;
 }
 
 std::vector<PluginStartupEntry> PluginsToLoadAtStartup(

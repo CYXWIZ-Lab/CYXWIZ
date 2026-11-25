@@ -37,7 +37,9 @@ void RecordPluginLoaded(PluginStartupList& list, const std::string& id, const st
 // The user unloaded it: it no longer loads at startup.
 void RecordPluginRemoved(PluginStartupList& list, const std::string& id);
 void SetPluginLoadAtStartup(PluginStartupList& list, const std::string& id, bool on);
-bool PluginLoadsAtStartup(const PluginStartupList& list, const std::string& id);
+// A listed plugin keeps the user's choice. One not listed loads at startup
+// only when it is an installed add-on (PluginsToLoadAtStartup loads those).
+bool PluginLoadsAtStartup(const PluginStartupList& list, const std::string& id, bool installed_add_on = false);
 // The plugins to load when the Engine starts. `pack_plugins` are the plugin
 // packs active in the installed runtime (id and their current folder): a listed
 // one loads from that folder, whatever folder was recorded (a pack update moves
