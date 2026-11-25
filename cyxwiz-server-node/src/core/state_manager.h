@@ -88,9 +88,7 @@ struct SystemMetrics {
 struct EarningsInfo {
     double training_earnings = 0.0;
     double inference_earnings = 0.0;
-    double pool_mining_earnings = 0.0;
     double total_earnings = 0.0;
-    std::string currency = "CYXWIZ";
     double usd_equivalent = 0.0;
 };
 
@@ -112,7 +110,6 @@ public:
     virtual void OnMetricsUpdated() {}
     virtual void OnConnectionStatusChanged() {}
     virtual void OnEarningsChanged() {}
-    virtual void OnWalletChanged() {}
 };
 
 // State manager singleton
@@ -133,8 +130,6 @@ public:
     EarningsInfo GetEarningsThisWeek() const;
     EarningsInfo GetEarningsThisMonth() const;
     ConnectionStatus GetConnectionStatus() const;
-    std::string GetWalletAddress() const;
-    double GetWalletBalance() const;
 
     // State setters (trigger observer notifications)
     void UpdateJobs(const std::vector<JobState>& jobs);
@@ -148,7 +143,6 @@ public:
     void UpdateMetrics(const SystemMetrics& metrics);
     void UpdateConnectionStatus(ConnectionStatus status);
     void UpdateEarnings(const EarningsInfo& today, const EarningsInfo& week, const EarningsInfo& month);
-    void UpdateWallet(const std::string& address, double balance);
 
 private:
     void NotifyJobsChanged();
@@ -156,7 +150,6 @@ private:
     void NotifyMetricsUpdated();
     void NotifyConnectionStatusChanged();
     void NotifyEarningsChanged();
-    void NotifyWalletChanged();
 
     // Thread safety
     mutable std::mutex mutex_;
@@ -170,8 +163,6 @@ private:
     EarningsInfo earnings_week_;
     EarningsInfo earnings_month_;
     ConnectionStatus connection_status_ = ConnectionStatus::Disconnected;
-    std::string wallet_address_;
-    double wallet_balance_ = 0.0;
 };
 
 } // namespace cyxwiz::servernode::core

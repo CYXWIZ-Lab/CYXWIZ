@@ -54,9 +54,8 @@ bool ParseGraphDocument(const std::string& json_text, GraphDocument& out, std::s
 
 namespace gui {
 
-// Saved-graph parameter migrations (also used by the editor's pattern import).
-void MigrateLegacyNodeParameters(NodeType type, std::map<std::string, std::string>& params,
-                                 bool prefer_legacy = false);
+// Saved-graph parameter migrations.
+void MigrateLegacyNodeParameters(NodeType type, std::map<std::string, std::string>& params);
 
 // True (and logged) when a node is a Dense standing in for a sequence/NER
 // placeholder; such graphs must be re-authored with the real node type.

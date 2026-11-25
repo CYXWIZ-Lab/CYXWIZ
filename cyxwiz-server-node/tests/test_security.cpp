@@ -1,5 +1,5 @@
 // test_security.cpp - Unit tests for security components
-// Tests API key management, rate limiting, audit logging, TLS config, and wallet
+// Tests API key management, rate limiting, audit logging, TLS config
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_session.hpp>
@@ -13,7 +13,6 @@
 #include "../src/api/rate_limiter.h"
 #include "../src/security/audit_logger.h"
 #include "../src/security/tls_config.h"
-#include "../src/security/wallet_manager.h"
 #include "../src/security/docker_manager.h"
 
 using namespace cyxwiz::servernode::api;
@@ -354,15 +353,11 @@ TEST_CASE("Audit Logger - Event Types", "[security][audit]") {
         logger.Log(AuditEvent::RATE_LIMIT_EXCEEDED, "a", "r", false);
         logger.Log(AuditEvent::MODEL_DEPLOYED, "a", "r", true);
         logger.Log(AuditEvent::MODEL_UNDEPLOYED, "a", "r", true);
-        logger.Log(AuditEvent::WALLET_CONNECTED, "a", "r", true);
-        logger.Log(AuditEvent::WALLET_DISCONNECTED, "a", "r", true);
-        logger.Log(AuditEvent::TRANSACTION_INITIATED, "a", "r", true);
-        logger.Log(AuditEvent::TRANSACTION_COMPLETED, "a", "r", true);
         logger.Log(AuditEvent::TLS_ENABLED, "a", "r", true);
         logger.Log(AuditEvent::TLS_DISABLED, "a", "r", false);
         logger.Log(AuditEvent::INVALID_CERTIFICATE, "a", "r", false);
 
-        REQUIRE(logger.GetEntryCount() >= count_before + 16);
+        REQUIRE(logger.GetEntryCount() >= count_before + 12);
     }
 }
 
@@ -370,7 +365,6 @@ TEST_CASE("Audit Logger - GetAuditEventName", "[security][audit]") {
     SECTION("Event names are correct") {
         REQUIRE(std::string(GetAuditEventName(AuditEvent::API_KEY_CREATED)) == "API_KEY_CREATED");
         REQUIRE(std::string(GetAuditEventName(AuditEvent::RATE_LIMIT_EXCEEDED)) == "RATE_LIMIT_EXCEEDED");
-        REQUIRE(std::string(GetAuditEventName(AuditEvent::WALLET_CONNECTED)) == "WALLET_CONNECTED");
     }
 }
 
@@ -434,121 +428,6 @@ TEST_CASE("TLS Manager - Insecure Fallback", "[security][tls]") {
 
     REQUIRE(server_creds != nullptr);
     REQUIRE(client_creds != nullptr);
-}
-
-// ========== Wallet Manager Tests ==========
-
-TEST_CASE("Wallet Manager - Address Validation", "[security][wallet]") {
-    SECTION("Valid Solana addresses") {
-        // Valid base58 addresses (32-44 chars)
-        REQUIRE(WalletManager::IsValidSolanaAddress("11111111111111111111111111111111"));  // 32 chars
-        REQUIRE(WalletManager::IsValidSolanaAddress("CYXWiz1111111111111111111111111111111111111"));  // 43 chars
-        REQUIRE(WalletManager::IsValidSolanaAddress("7EYnhQoR9YM3N7UoaKRoA44Uy8JeaZV3qyouov87awMs"));  // 44 chars
-    }
-
-    SECTION("Invalid addresses") {
-        // Too short
-        REQUIRE_FALSE(WalletManager::IsValidSolanaAddress("111111111111111"));
-
-        // Invalid characters (0, O, I, l not in base58)
-        REQUIRE_FALSE(WalletManager::IsValidSolanaAddress("0OOOOOOOOOOOOOOOOOOOOOOOOOOOOOO"));  // Contains 0 and O
-
-        // Empty
-        REQUIRE_FALSE(WalletManager::IsValidSolanaAddress(""));
-
-        // Too long
-        REQUIRE_FALSE(WalletManager::IsValidSolanaAddress(
-            "1111111111111111111111111111111111111111111111111111111111111"));
-    }
-}
-
-TEST_CASE("Wallet Manager - Connection State", "[security][wallet]") {
-    WalletManager wallet(SolanaNetwork::Devnet);
-
-    SECTION("Initially disconnected") {
-        REQUIRE_FALSE(wallet.IsConnected());
-        REQUIRE(wallet.GetAddress().empty());
-    }
-
-    SECTION("Invalid address connection fails") {
-        REQUIRE_FALSE(wallet.ConnectExternalWallet("invalid"));
-        REQUIRE_FALSE(wallet.IsConnected());
-    }
-
-    SECTION("Disconnect clears state") {
-        // Note: This test may fail if no network, but should handle gracefully
-        wallet.ConnectExternalWallet("11111111111111111111111111111111");
-        wallet.Disconnect();
-        REQUIRE_FALSE(wallet.IsConnected());
-        REQUIRE(wallet.GetAddress().empty());
-    }
-}
-
-TEST_CASE("Wallet Manager - Network Configuration", "[security][wallet]") {
-    SECTION("Mainnet configuration") {
-        WalletManager wallet(SolanaNetwork::Mainnet);
-        REQUIRE(wallet.GetNetwork() == SolanaNetwork::Mainnet);
-        REQUIRE(wallet.GetRPCUrl().find("mainnet") != std::string::npos);
-    }
-
-    SECTION("Devnet configuration") {
-        WalletManager wallet(SolanaNetwork::Devnet);
-        REQUIRE(wallet.GetNetwork() == SolanaNetwork::Devnet);
-        REQUIRE(wallet.GetRPCUrl().find("devnet") != std::string::npos);
-    }
-
-    SECTION("Testnet configuration") {
-        WalletManager wallet(SolanaNetwork::Testnet);
-        REQUIRE(wallet.GetNetwork() == SolanaNetwork::Testnet);
-        REQUIRE(wallet.GetRPCUrl().find("testnet") != std::string::npos);
-    }
-
-    SECTION("Custom RPC URL") {
-        WalletManager wallet("https://custom-rpc.example.com");
-        REQUIRE(wallet.GetRPCUrl() == "https://custom-rpc.example.com");
-    }
-}
-
-TEST_CASE("Wallet Manager - Earnings Tracking", "[security][wallet]") {
-    WalletManager wallet(SolanaNetwork::Devnet);
-
-    SECTION("Initial earnings are zero") {
-        REQUIRE(wallet.GetTotalEarnings() == 0.0);
-        REQUIRE(wallet.GetPendingEarnings() == 0.0);
-    }
-
-    SECTION("Recording earnings updates totals") {
-        wallet.RecordEarning(10.5, "job-001");
-        wallet.RecordEarning(5.25, "job-002");
-
-        REQUIRE(wallet.GetTotalEarnings() == 15.75);
-        REQUIRE(wallet.GetPendingEarnings() == 15.75);
-    }
-}
-
-TEST_CASE("Wallet Manager - State Persistence", "[security][wallet]") {
-    TempPath state_path("cyxwiz_wallet_state", ".json");
-
-    // Create and save state
-    {
-        WalletManager wallet1(SolanaNetwork::Devnet);
-        wallet1.ConnectExternalWallet("11111111111111111111111111111111");
-        wallet1.RecordEarning(100.0, "test-job");
-        wallet1.SaveState(state_path.String());
-    }
-
-    // Load state in new instance
-    {
-        WalletManager wallet2(SolanaNetwork::Devnet);
-        REQUIRE(wallet2.LoadState(state_path.String()));
-        REQUIRE(wallet2.GetTotalEarnings() == 100.0);
-    }
-}
-
-TEST_CASE("Wallet Manager - CYXWIZ Mint Address", "[security][wallet]") {
-    std::string mint = WalletManager::GetCYXWIZMintAddress();
-    REQUIRE_FALSE(mint.empty());
-    REQUIRE(WalletManager::IsValidSolanaAddress(mint));
 }
 
 // ========== Docker Manager Tests ==========

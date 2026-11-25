@@ -74,6 +74,25 @@ click each (hover for what each does).
   - When the graph cannot be turned into code, both are greyed with the
     reason under them ("The canvas is empty. Add a node first.", "Graph
     must have at least one Output node.").
+  - A graph the framework cannot express is written as a script that stops
+    at its first line with the reason: a graph with no model layers (a data
+    or analysis pipeline such as PCA, K-Means or a portfolio solver; run it
+    in the Studio), an RL graph that does not compile, or, in PyTorch, a
+    graph with a layer the export cannot write yet (an Upsample, for
+    example), named in the reason. A pool is written as the Engine sizes it:
+    a Max or Avg Pool's stride is its window when not set, and a Global Avg
+    or Max Pool is one value per channel on a feature map, or the mean or
+    maximum over time on a sequence.
+  - PyTorch and PyCyxWiz code take a layer's input width from the graph: a
+    recurrent layer, or a LayerNorm set to `AUTO`, reads the width of what
+    feeds it (an Embedding, Dense, recurrent, attention or transformer layer,
+    through Dropout, activations and normalization, or a Data Input or
+    Reshape shape of rows or steps). When the data sets that width (a
+    time-series window, for example), PyTorch's LayerNorm is a
+    `LazyLayerNorm` that reads it on the first forward pass, as
+    `nn.LazyLinear` does for Dense (PyCyxWiz has no lazy LayerNorm and
+    stops with that reason); a recurrent layer then uses its own
+    `input_size`, or 512, so set `input_size` to the number of features.
   - A line under the bar says what was written where and when: "Generated
     118 lines of PyTorch code into Script Editor tab mnist_mlp_pytorch.py ·
     14:32" (**Hide** removes it). A generated file's header carries the time
@@ -379,7 +398,7 @@ unchanged".
 
 **Full size** (the expand button beside Saved runs) gives the debugger the
 whole width. It hides the side panels (Asset Browser, Nodes, Patterns,
-Properties, Info, Wallet) while the debugger is shown. Press it again,
+Properties, Info) while the debugger is shown. Press it again,
 switch to another tab or close the debugger, and the panels it hid come
 back.
 

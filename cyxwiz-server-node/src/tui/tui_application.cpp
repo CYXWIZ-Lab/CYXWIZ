@@ -758,11 +758,11 @@ Element TUIApplication::RenderEarnings() {
     return hbox({
         text(" Earnings: ") | bold,
         text("Today: ") | dim,
-        text(format_earnings(earnings_today_) + " CYXWIZ") | color(Color::Green),
+        text(format_earnings(earnings_today_)) | color(Color::Green),
         text(" | Week: ") | dim,
-        text(format_earnings(earnings_week_) + " CYXWIZ") | color(Color::Green),
+        text(format_earnings(earnings_week_)) | color(Color::Green),
         text(" | Month: ") | dim,
-        text(format_earnings(earnings_month_) + " CYXWIZ") | color(Color::Green),
+        text(format_earnings(earnings_month_)) | color(Color::Green),
         filler(),
     });
 }

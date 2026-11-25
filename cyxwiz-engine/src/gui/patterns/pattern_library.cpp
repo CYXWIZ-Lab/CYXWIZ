@@ -140,40 +140,40 @@ bool PatternLibrary::LoadPatternFromFile(const std::string& filepath) {
 }
 
 bool PatternLibrary::LoadPatternFile(const std::string& filepath, bool user) {
-    std::ifstream file(filepath);
-    if (!file.is_open()) {
-        spdlog::error("Failed to open pattern file: {}", filepath);
+    Pattern pattern;
+    std::string error;
+    if (!ReadPatternFile(filepath, pattern, &error)) {
+        spdlog::error("Pattern file {} not read: {}", filepath, error);
         return false;
     }
+    // A user pattern is known by its file, so it never replaces a shipped one of the same id.
+    if (user) pattern.id = "user:" + fs::path(filepath).stem().string();
+    pattern.user = user;
 
-    try {
-        std::string content((std::istreambuf_iterator<char>(file)),
-                            std::istreambuf_iterator<char>());
-
-        Pattern pattern;
-        if (ParsePatternJson(content, pattern)) {
-            // Use filename (without extension) as ID if not specified
-            if (pattern.id.empty()) {
-                pattern.id = fs::path(filepath).stem().string();
-            }
-            // A user pattern is known by its file, so it never replaces a shipped one of the same id.
-            if (user) pattern.id = "user:" + fs::path(filepath).stem().string();
-            pattern.file_path = filepath;
-            pattern.user = user;
-
-            patterns_[pattern.id] = pattern;
-            ++revision_;
-            spdlog::debug("Loaded pattern: {} ({})", pattern.name, pattern.id);
-            return true;
-        }
-    } catch (const std::exception& e) {
-        spdlog::error("Error parsing pattern file {}: {}", filepath, e.what());
-    }
-
-    return false;
+    patterns_[pattern.id] = pattern;
+    ++revision_;
+    spdlog::debug("Loaded pattern: {} ({})", pattern.name, pattern.id);
+    return true;
 }
 
-bool PatternLibrary::ParsePatternJson(const std::string& json_content, Pattern& out_pattern) {
+bool PatternLibrary::ReadPatternFile(const std::string& filepath, Pattern& out_pattern, std::string* error) const {
+    const auto fail = [error](std::string reason) {
+        if (error) *error = std::move(reason);
+        return false;
+    };
+    std::ifstream file(filepath, std::ios::binary);
+    if (!file.is_open()) return fail("the file cannot be opened");
+    const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    out_pattern = {};
+    if (!ParsePatternJson(content, out_pattern)) return fail("it is not valid pattern JSON");
+    if (out_pattern.template_data.nodes.empty()) return fail("it has no template nodes");
+    // Use filename (without extension) as ID if not specified
+    if (out_pattern.id.empty()) out_pattern.id = fs::path(filepath).stem().string();
+    out_pattern.file_path = filepath;
+    return true;
+}
+
+bool PatternLibrary::ParsePatternJson(const std::string& json_content, Pattern& out_pattern) const {
     try {
         json j = json::parse(json_content);
 
@@ -416,11 +416,34 @@ bool PatternLibrary::InstantiatePatternWithCreator(
     NodeCreatorCallback node_creator,
     std::string* error
 ) {
+    const Pattern* pattern = GetPattern(pattern_id);
+    if (pattern)
+        return InstantiatePatternWithCreator(*pattern, params, out_nodes, out_links, next_node_id, next_link_id,
+                                             base_position, std::move(node_creator), error);
+    out_nodes.clear();
+    out_links.clear();
+    spdlog::error("Pattern '{}' was not inserted: the pattern is not in the library", pattern_id);
+    if (error) *error = "the pattern is not in the library";
+    return false;
+}
+
+bool PatternLibrary::InstantiatePatternWithCreator(
+    const Pattern& source,
+    const std::map<std::string, std::string>& params,
+    std::vector<MLNode>& out_nodes,
+    std::vector<NodeLink>& out_links,
+    int& next_node_id,
+    int& next_link_id,
+    ImVec2 base_position,
+    NodeCreatorCallback node_creator,
+    std::string* error
+) const {
+    const Pattern* pattern = &source;
     // Nothing goes out unless the whole pattern goes out.
     const auto refuse = [&](std::string reason) {
         out_nodes.clear();
         out_links.clear();
-        spdlog::error("Pattern '{}' was not inserted: {}", pattern_id, reason);
+        spdlog::error("Pattern '{}' was not inserted: {}", source.id, reason);
         if (error) *error = std::move(reason);
         return false;
     };
@@ -428,8 +451,6 @@ bool PatternLibrary::InstantiatePatternWithCreator(
     out_links.clear();
     if (error) error->clear();
 
-    const Pattern* pattern = GetPattern(pattern_id);
-    if (!pattern) return refuse("the pattern is not in the library");
     if (!pattern->needs.empty()) return refuse("it is not ready yet: " + pattern->needs);
     if (!node_creator) return refuse("there is no canvas to create its nodes on");
 

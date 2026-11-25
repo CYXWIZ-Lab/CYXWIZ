@@ -96,22 +96,6 @@ bool ConfigManager::LoadConfig(const std::string& path, NodeConfig& config) {
             if (api["default_rate_limit"]) config.api_default_rate_limit = api["default_rate_limit"].as<int>();
         }
 
-        // Pool mining settings
-        if (yaml["pool_mining"]) {
-            auto pool = yaml["pool_mining"];
-            if (pool["enabled"]) config.pool_mining_enabled = pool["enabled"].as<bool>();
-            if (pool["pool_address"]) config.pool_address = pool["pool_address"].as<std::string>();
-            if (pool["intensity"]) config.mining_intensity = pool["intensity"].as<float>();
-            if (pool["mine_when_idle_only"]) config.mine_when_idle_only = pool["mine_when_idle_only"].as<bool>();
-        }
-
-        // Wallet settings
-        if (yaml["wallet"]) {
-            auto wallet = yaml["wallet"];
-            if (wallet["address"]) config.wallet_address = wallet["address"].as<std::string>();
-            if (wallet["auto_withdraw_threshold"]) config.auto_withdraw_threshold = wallet["auto_withdraw_threshold"].as<double>();
-        }
-
         // Logging settings
         if (yaml["logging"]) {
             auto logging = yaml["logging"];
@@ -196,20 +180,6 @@ bool ConfigManager::SaveConfig(const NodeConfig& config, const std::string& path
         out << YAML::Key << "api" << YAML::Value << YAML::BeginMap;
         out << YAML::Key << "require_authentication" << YAML::Value << config.api_require_auth;
         out << YAML::Key << "default_rate_limit" << YAML::Value << config.api_default_rate_limit;
-        out << YAML::EndMap;
-
-        // Pool mining settings
-        out << YAML::Key << "pool_mining" << YAML::Value << YAML::BeginMap;
-        out << YAML::Key << "enabled" << YAML::Value << config.pool_mining_enabled;
-        out << YAML::Key << "pool_address" << YAML::Value << config.pool_address;
-        out << YAML::Key << "intensity" << YAML::Value << config.mining_intensity;
-        out << YAML::Key << "mine_when_idle_only" << YAML::Value << config.mine_when_idle_only;
-        out << YAML::EndMap;
-
-        // Wallet settings
-        out << YAML::Key << "wallet" << YAML::Value << YAML::BeginMap;
-        out << YAML::Key << "address" << YAML::Value << config.wallet_address;
-        out << YAML::Key << "auto_withdraw_threshold" << YAML::Value << config.auto_withdraw_threshold;
         out << YAML::EndMap;
 
         // Logging settings

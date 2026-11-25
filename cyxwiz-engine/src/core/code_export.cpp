@@ -6,6 +6,7 @@
 #include "extension_node_metadata.h"
 #include "graph_compiler.h"
 #include "loss_node_types.h"
+#include "node_metadata_registry.h"
 #include "pipeline_runtime_capabilities.h"
 #include "recurrent_configuration_policy.h"
 #include "rl_graph_compile.h"
@@ -43,6 +44,14 @@ std::string LocalClockText(const char* format) {
 }
 
 namespace {
+
+// A node type as the Node Browser names it ("Avg Pool 2D"), for refusals.
+std::string NodeTypeLabel(NodeType type) {
+    auto& registry = NodeMetadataRegistry::Instance();
+    if (!registry.IsInitialized()) registry.Initialize();
+    const auto* metadata = registry.GetMetadata(type);
+    return metadata ? metadata->name : "these";
+}
 
 std::string TrimCopy(const std::string& value) {
     auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char ch) {
@@ -267,6 +276,8 @@ private:
     std::string RecurrentInputSize(const MLNode& node) const;
     // True when `node` reads a feature map (a convolution or pool before it,
     // or rows reshaped to an image, through shape-keeping layers).
+    enum class InputLayout { FeatureMap, Sequence, Unknown };
+    InputLayout LayoutRead(const MLNode& node) const;
     bool ReadsFeatureMap(const MLNode& node) const;
     std::string NodeTypeToTensorFlowLayer(const MLNode& node, int layer_idx);
     std::string NodeTypeToKerasLayer(const MLNode& node);
@@ -636,6 +647,15 @@ GraphCodeExporter::FindUnsupportedSequentialLayerError(
                    ": code export does not support Conv3D (volume rows) yet; train it in Studio";
         }
         if (auto refusal = cyxwiz::ExtensionCodeExportRefusal(*node)) return refusal;
+        // A pool the Engine refuses to size is refused here too, with its reason.
+        if (node->type == NodeType::MaxPool2D || node->type == NodeType::AvgPool2D ||
+            node->type == NodeType::AdaptiveAvgPool) {
+            try {
+                spatial::ResolveGeometry(node->type, node->parameters, 0);
+            } catch (const std::invalid_argument& error) {
+                return EffectiveNodeName(*node) + ": " + error.what();
+            }
+        }
         switch (node->type) {
             case NodeType::CenterCrop:
             case NodeType::RandomCrop:
@@ -1015,6 +1035,7 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
     // Forward pass
     code += "    def forward(self, x):\n";
     layer_idx = 0;
+    std::string unwritten_layer;  // the first model layer the forward has no code for
     for (int node_id : sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
@@ -1231,14 +1252,42 @@ std::string GraphCodeExporter::GeneratePyTorchCode(const std::vector<int>& sorte
             case NodeType::DQN:
                 break;
 
+            case NodeType::GlobalAvgPool:
+            case NodeType::GlobalMaxPool:
+                if (!NodeTypeToPythonLayer(*node).empty()) {
+                    code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                } else if (LayoutRead(*node) == InputLayout::Sequence) {  // [batch, length, features]: over time
+                    code += std::string("        x = x.") +
+                            (node->type == NodeType::GlobalAvgPool ? "mean(dim=1)" : "amax(dim=1)") + "\n";
+                } else if (unwritten_layer.empty()) {
+                    // Pooled over the wrong axes, the script would train another network.
+                    unwritten_layer = EffectiveNodeName(*node) +
+                                      ": code export cannot tell whether it pools a feature map or a sequence here; "
+                                      "train it in Studio";
+                }
+                break;
+
             // Every other node with a module in __init__ (Conv2D, the pools,
             // ...) is called on x. Without this the forward left them out and
             // the layers after them called the wrong self.layerN (ORA-26).
+            // A model layer with no module here is not written at all: the
+            // export is refused below, naming it, instead of writing a model
+            // without it.
             default:
                 if (node->type != NodeType::PluginCustom && !NodeTypeToPythonLayer(*node).empty())
                     code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
+                else if (node->type != NodeType::PluginCustom && GraphCompiler{}.IsModelLayer(node->type) &&
+                         unwritten_layer.empty())
+                    unwritten_layer = EffectiveNodeName(*node) + ": code export does not write " +
+                                      NodeTypeLabel(node->type) + " layers yet; train it in Studio";
                 break;
         }
+    }
+    // A model without one of its layers would run and train a different
+    // network (LeNet-5 lost both average pools): say which, and stop.
+    if (!unwritten_layer.empty()) {
+        modules_.clear();  // no module of this graph is written
+        return BlockedCodegenConfiguration("PyTorch", unwritten_layer);
     }
     code += "        return x\n\n";
 
@@ -2157,25 +2206,59 @@ std::string GraphCodeExporter::GeneratePyCyxWizCode(const std::vector<int>& sort
     return code;
 }
 
-bool GraphCodeExporter::ReadsFeatureMap(const MLNode& node) const {
+// What a node reads, from its first input back through the layers that keep
+// the sample's layout (activations, normalization, Dropout, Identity, merges)
+// to one that sets it: a convolution or pool (a feature map), an Embedding,
+// a sequence-returning recurrent layer, attention or a transformer layer (a
+// sequence), or a Data Input / Reshape shape (three entries a feature map,
+// two a sequence).
+GraphCodeExporter::InputLayout GraphCodeExporter::LayoutRead(const MLNode& node) const {
     const MLNode* at = &node;
     for (size_t guard = 0; guard < nodes_.size(); ++guard) {
-        if (at->inputs.empty()) return false;
+        if (at->inputs.empty()) return InputLayout::Unknown;
         const MLNode* source = nullptr;
         for (const auto& link : links_)
             if (link.to_node == at->id && link.to_pin == at->inputs.front().id) source = FindNodeById(link.from_node);
-        if (!source) return false;
-        if (spatial::IsSpatialLayer(source->type)) return true;
-        if (source->type == NodeType::Reshape || source->type == NodeType::View) {
-            const auto shape = source->parameters.find("shape");
-            return shape != source->parameters.end() && std::count(shape->second.begin(), shape->second.end(), ',') == 2;
+        if (!source) return InputLayout::Unknown;
+        if (spatial::IsSpatialLayer(source->type)) return InputLayout::FeatureMap;
+        switch (source->type) {
+            case NodeType::Embedding:
+            case NodeType::MultiHeadAttention:
+            case NodeType::TransformerEncoder:
+            case NodeType::TransformerDecoder:
+            case NodeType::PositionalEncoding:
+            case NodeType::TimeDistributed:
+                return InputLayout::Sequence;
+            case NodeType::LSTM:
+            case NodeType::GRU:
+            case NodeType::RNN:
+                return PythonBoolLiteral(GetParamOrDefault(*source, "return_sequences", "false")) == "True"
+                           ? InputLayout::Sequence
+                           : InputLayout::Unknown;
+            case NodeType::Reshape:
+            case NodeType::View:
+            case NodeType::DataInput: {
+                const auto shape = source->parameters.find("shape");
+                if (shape == source->parameters.end()) return InputLayout::Unknown;
+                const auto commas = std::count(shape->second.begin(), shape->second.end(), ',');
+                return commas == 2 ? InputLayout::FeatureMap : commas == 1 ? InputLayout::Sequence : InputLayout::Unknown;
+            }
+            default:
+                break;
         }
-        if (!spatial::IsShapePreservingLayer(source->type) && source->type != NodeType::BatchNorm &&
-            source->type != NodeType::Dropout && source->type != NodeType::Add)
-            return false;
+        const bool keeps_layout = spatial::IsShapePreservingLayer(source->type) ||
+                                  source->type == NodeType::BatchNorm || source->type == NodeType::LayerNorm ||
+                                  source->type == NodeType::Dropout || source->type == NodeType::Identity ||
+                                  source->type == NodeType::Add || source->type == NodeType::Concatenate ||
+                                  source->type == NodeType::Multiply || source->type == NodeType::Average;
+        if (!keeps_layout) return InputLayout::Unknown;
         at = source;
     }
-    return false;
+    return InputLayout::Unknown;
+}
+
+bool GraphCodeExporter::ReadsFeatureMap(const MLNode& node) const {
+    return LayoutRead(node) == InputLayout::FeatureMap;
 }
 
 std::string GraphCodeExporter::InferredInputWidth(const MLNode& node) const {
@@ -2311,10 +2394,40 @@ std::string GraphCodeExporter::NodeTypeToPythonLayer(const MLNode& node) {
             break;
         }
 
+        // A pool sized as the Engine sizes it (the stride is the window when
+        // not set, "same" / "valid" padding resolved); an invalid one is
+        // refused before this (FindUnsupportedSequentialLayerError).
         case NodeType::MaxPool2D:
-            code = "nn.MaxPool2d(kernel_size=" + GetParamOrAliases(node, {"pool_size", "kernel_size"}, "2") +
-                   ", stride=" + GetParamOrDefault(node, "stride", "2") + ", padding=" +
-                   GetParamOrDefault(node, "padding", "0") + ")";
+        case NodeType::AvgPool2D: {
+            spatial::Geometry g;
+            try {
+                g = spatial::ResolveGeometry(node.type, node.parameters, 0);
+            } catch (const std::invalid_argument&) {
+                break;
+            }
+            code = std::string(node.type == NodeType::MaxPool2D ? "nn.MaxPool2d" : "nn.AvgPool2d") +
+                   "(kernel_size=" + std::to_string(g.kernel) + ", stride=" + std::to_string(g.stride) +
+                   ", padding=" + std::to_string(g.padding) + ")";
+            break;
+        }
+
+        case NodeType::AdaptiveAvgPool:
+            try {
+                code = "nn.AdaptiveAvgPool2d(output_size=" + std::to_string(spatial::AdaptiveOutputSize(node.parameters)) +
+                       ")";
+            } catch (const std::invalid_argument&) {  // refused before this, with the reason
+            }
+            break;
+
+        // On a feature map: one value per channel, as [batch, channels] rows
+        // (the Engine's GlobalAvgPool2D). On a sequence the forward takes the
+        // mean / max over time instead, with no module.
+        case NodeType::GlobalAvgPool:
+        case NodeType::GlobalMaxPool:
+            if (ReadsFeatureMap(node))
+                code = std::string("nn.Sequential(") +
+                       (node.type == NodeType::GlobalAvgPool ? "nn.AdaptiveAvgPool2d(1)" : "nn.AdaptiveMaxPool2d(1)") +
+                       ", nn.Flatten())";
             break;
 
         case NodeType::BatchNorm:

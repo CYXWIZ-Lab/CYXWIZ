@@ -994,6 +994,7 @@ int main(int, char** argv) {
           std::tuple{gui::NodeType::GeometricTransform, "Old geometric", "Random Crop, Image Rotate"},
           std::tuple{gui::NodeType::ColorTransform, "Old color", "Color Jitter replaced"},
           std::tuple{gui::NodeType::HDF5Dataset, "Old HDF5 reader", "Data Input replaced"},
+          std::tuple{gui::NodeType::HuggingFaceDataset, "Old hub dataset", "Hugging Face Dataset node, which was removed"},
           std::tuple{gui::NodeType::ImagePreprocessor, "Old preprocessor", "Resize and Normalize replaced"},
           // TOFIX195 S4.3: the RL sketch nodes the native PPO graph replaced.
           std::tuple{gui::NodeType::GymEnvironment, "Old gym", "which Environment replaced"},

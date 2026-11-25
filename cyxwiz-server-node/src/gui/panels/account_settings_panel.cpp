@@ -522,7 +522,7 @@ void AccountSettingsPanel::RenderPreferencesSection() {
     // Display preferences
     ImGui::Text("Display");
     static int currency_display = 0;
-    const char* currencies[] = { "CYXWIZ", "USD", "EUR" };
+    const char* currencies[] = { "USD", "EUR" };
     ImGui::Combo("Earnings Display", &currency_display, currencies, IM_ARRAYSIZE(currencies));
 
     ImGui::Spacing();

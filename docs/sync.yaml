@@ -1,0 +1,43 @@
+# Where the docs of each area were last checked against the code.
+#
+# synced_at is a commit on the integration branch: the docs of that area
+# describe the code as it was at that commit. After you update an area's
+# pages, set synced_at to the commit you checked them against (usually HEAD).
+#
+#   python scripts/docs/docs_drift.py            every area: what changed since
+#   python scripts/docs/docs_drift.py --files    also list the changed files
+#
+# code: git pathspecs (globs) of the code each area documents.
+# An empty synced_at means the area has not been checked yet.
+
+install:
+  code: [installer/**, redist/**, cmake/CyxWizInstallerTargets.cmake, scripts/release/**]
+  synced_at:
+
+main-window:
+  code: [cyxwiz-engine/src/gui/main_window*, cyxwiz-engine/src/gui/panels/toolbar*, cyxwiz-engine/src/gui/panels/menu*, cyxwiz-engine/src/gui/console*]
+  synced_at:
+
+graph-editor:
+  code: [cyxwiz-engine/src/gui/node_editor*, cyxwiz-engine/src/gui/node_*, cyxwiz-engine/src/core/node_metadata*, cyxwiz-engine/src/gui/panels/node_*]
+  synced_at:
+
+data-studio:
+  code: [cyxwiz-engine/src/gui/data_*, cyxwiz-engine/src/gui/panels/data_studio*, cyxwiz-engine/src/core/data_*, cyxwiz-engine/src/data/**]
+  synced_at:
+
+training:
+  code: [cyxwiz-engine/src/core/training_*, cyxwiz-engine/src/core/graph_compiler*, cyxwiz-engine/src/gui/panels/training_*, cyxwiz-backend/src/**]
+  synced_at:
+
+scripting:
+  code: [cyxwiz-engine/src/scripting/**, cyxwiz-engine/src/gui/panels/script_editor*, cyxwiz-backend/python/**]
+  synced_at:
+
+sdk:
+  code: [cyxwiz-backend/include/cyxwiz/**, cyxwiz-engine/src/plugin/**, cyxwiz-engine/src/extension/**]
+  synced_at:
+
+server-and-cloud:
+  code: [cyxwiz-server-node/**, cyxwiz-protocol/**, cyxwiz-engine/src/network/**]
+  synced_at:

@@ -2,9 +2,11 @@
 // the Pattern Browser inserts it - PatternLibrary with the registry's node
 // factory - and then:
 // - a full graph compiles (its Data Input given the pattern's sample shape,
-//   since no data is loaded here), and the small ones train a few steps;
+//   since no data is loaded here) and its model builds, and the small ones
+//   train a few steps;
 // - a block compiles inside a small graph (data -> block -> Flatten -> Dense
-//   -> loss -> optimizer);
+//   -> loss -> optimizer) and its model builds (a block whose sample shape
+//   does not fit its layers compiled but failed at Train);
 // - a pattern that cannot be used yet refuses to insert and says why;
 // - a network written from torchvision (ResNet-18, the MobileNets) keeps every
 //   layer that holds weights named as torchvision names it, so the published
@@ -19,6 +21,7 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_node_factory.h"
+#include "../src/core/model_builder.h"
 #include "../src/core/rl_graph_compile.h"
 #include "../src/core/training_executor.h"
 #include "../src/gui/data_input_capabilities.h"
@@ -202,6 +205,12 @@ std::optional<cyxwiz::TrainingConfiguration> Compile(const std::string& name, co
     }
     Check(config.is_valid, name + ": the graph is valid");
     if (!clean || !config.is_valid) return std::nullopt;
+    // Train builds the model from the compiled layers: the widths must fit.
+    // (An RL graph trains its policy through the RL trainer, not this builder.)
+    if (config.rl) return config;
+    const auto built = cyxwiz::BuildExecutableFromConfig(config);
+    Check(built.ok(), name + ": the model builds: " + built.error_message);
+    if (!built.ok()) return std::nullopt;
     return config;
 }
 
@@ -360,7 +369,10 @@ int main() {
 
     // Small enough to train here: {classes, vocabulary (0: numbers)}.
     const std::map<std::string, std::pair<int, int>> train = {
-        {"mlp_basic", {10, 0}}, {"cnn_basic", {10, 0}}, {"lenet5", {10, 0}}, {"rnn_basic", {2, 200}}};
+        {"mlp_basic", {10, 0}}, {"cnn_basic", {10, 0}}, {"lenet5", {10, 0}}, {"rnn_basic", {2, 200}},
+        // Decoder -> Layer Norm -> Flatten -> head: the head reads the whole
+        // flattened sequence (it was built for one token's width).
+        {"transformer_decoder", {5000, 5000}}};
 
     // Written by scripts/examples/torch_to_cyxgraph.py: {layers with weights, the head}, as
     // docs/usage/pretrained_weights.md lists them.
@@ -429,6 +441,21 @@ int main() {
             CheckPublishedNames(library, *pattern, it->second.first, it->second.second, shape);
     }
     std::cout << graphs << " graphs, " << blocks << " blocks, " << not_ready << " not ready\n";
+
+    // The Residual Block on a feature map with fewer channels than `filters`:
+    // the skip Add reads the block input through its Identity, so the compiler
+    // refuses the two shapes (it used to compile and fail at the first batch).
+    if (const Pattern* residual = library.GetPattern("resnet_block")) {
+        Inserted g = Insert(library, *residual);
+        WrapBlock(g, "[16, 16, 32]");
+        const auto config = cyxwiz::GraphCompiler{}.Compile(g.nodes, g.links, /*allow_unloaded_data=*/true);
+        bool refused = false;
+        for (const auto& issue : config.issues) {
+            refused |= issue.level == cyxwiz::IssueLevel::Error &&
+                       issue.message.find("needs inputs of one shape: [16, 16, 64] and [16, 16, 32]") != std::string::npos;
+        }
+        Check(!config.is_valid && refused, "resnet_block on 32 channels: the skip Add's shapes are refused");
+    }
     if (failures > 0) {
         std::cerr << failures << " failures\n";
         return 1;

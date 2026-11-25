@@ -125,7 +125,7 @@ int main() {
         "nodes.freeze_but_last",
         "train.optimizer_settings", "train.compare_test_results", "train.export_test_report",
         "train.load_checkpoint", "data.import", "data.create_custom", "deploy.connect", "deploy.deploy",
-        "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin", "deploy.marketplace",
+        "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin",
         "help.browse_tutorials", "help.shortcuts", "help.report_issue", "help.check_updates", "help.about",
         "account.settings", "account.servers"};
     for (const auto& id : dialog_openers) Check(dialog_labels.count(id) == 1, "dialog opener has ...: " + id);
@@ -176,11 +176,11 @@ int main() {
         "data.import", "data.create_custom", "data.statistics", "data.augment",
         "script.python_console", "script.run",
         "deploy.connect", "deploy.quantize_int8", "deploy.quantize_int4", "deploy.quantize_fp16", "deploy.deploy",
-        "deploy.marketplace", "apps.panel", "apps.plugin", "apps.plugin_manager",
+        "apps.panel", "apps.plugin", "apps.plugin_manager",
         "help.tutorial", "help.browse_tutorials", "help.documentation", "help.shortcuts", "help.api_reference",
         "help.report_issue", "help.check_updates", "help.about", "account.sign_out",
         // not in any menu today
-        "view.command_palette", "script.stop", "account.wallet"};
+        "view.command_palette", "script.stop"};
     for (const auto& id : inventory) Check(Find(model, id) != nullptr, "inventory action present: " + id);
 
     // Rule: the Planned set is exactly this (kept visible, never enabled).
@@ -188,7 +188,7 @@ int main() {
     WalkModel(model, [&](const MenuItem& item, int, const std::string&) { if (item.planned) planned.insert(item.id); });
     const std::set<std::string> expected_planned = {
         "export.gguf", "deploy.quantize_int8", "deploy.quantize_int4", "deploy.quantize_fp16",
-        "deploy.marketplace", "help.check_updates", "data.augment"};
+        "help.check_updates", "data.augment"};
     Check(planned == expected_planned, "planned set");
 
     // Rule: every printed shortcut comes from the table, and within one

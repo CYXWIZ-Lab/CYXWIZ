@@ -818,8 +818,6 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                         {Planned(f, "deploy.quantize_int8", "INT8", "8-bit integer weights."),
                          Planned(f, "deploy.quantize_int4", "INT4", "4-bit integer weights."),
                          Planned(f, "deploy.quantize_fp16", "FP16", "16-bit float weights.")}));
-        i.push_back(Sep());
-        i.push_back(Planned(f, "deploy.marketplace", "Publish to Marketplace...", "Offers the model on the marketplace."));
         model.menus.push_back(std::move(m));
     }
 
@@ -990,7 +988,6 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
             // Who you are is drawn above these (the chip's initials, name, email, plan).
             model.account_chip = AccountChipFor(in.user_name, in.user_username, in.user_email, in.user_role);
             i.push_back(Action(f, "account.settings", "Account Settings...", "Opens your account settings."));
-            i.push_back(Action(f, "account.wallet", "Wallet", "Opens the Wallet panel."));
             i.push_back(Action(f, "account.servers", "Servers...",
                                "Opens Preferences > Servers: the central server and your nodes."));
             i.push_back(Sep());

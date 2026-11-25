@@ -18,7 +18,7 @@
       {"id": "data_split", "type": "DataSplit", "name": "Train/Val/Test Split", "pos": [240, 260], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1", "seed": "42", "stratified": "true"}},
       {"id": "data_loader", "type": "DataLoader", "name": "Data Loader", "pos": [480, 260], "params": {"batch_size": "32", "epochs": "10", "shuffle": "true", "drop_last": "false"}},
       {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [720, 260], "params": {"num_embeddings": "$vocab_size", "vocab_size": "$vocab_size", "embedding_dim": "$d_model", "padding_idx": "0"}},
-      {"id": "pos", "type": "PositionalEncoding", "name": "Position Encoding", "pos": [960, 260], "params": {"d_model": "$d_model", "max_len": "$max_sequence_length", "max_length": "$max_sequence_length"}},
+      {"id": "pos", "type": "PositionalEncoding", "name": "Position Encoding", "pos": [960, 260], "params": {"d_model": "$d_model", "max_sequence_length": "$max_sequence_length"}},
       {"id": "encoder", "type": "TransformerEncoder", "name": "BERT Encoder", "pos": [1200, 260], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "nhead": "$num_heads", "ff_dim": "$ff_dim", "dim_feedforward": "$ff_dim", "dropout": "0.0"}},
       {"id": "token_head", "type": "TimeDistributed", "name": "Token Classifier", "pos": [1440, 260], "params": {"units": "$num_classes", "activation": "linear"}},
       {"id": "loss", "type": "CrossEntropyLoss", "name": "Token Cross Entropy", "pos": [1680, 260], "params": {"reduction": "mean", "ignore_index": "-100"}},

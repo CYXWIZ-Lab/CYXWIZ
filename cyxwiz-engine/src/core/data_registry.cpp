@@ -463,7 +463,6 @@ std::string DataRegistry::TypeToString(DatasetType type) {
         case DatasetType::FashionMNIST: return "FashionMNIST";
         case DatasetType::CIFAR10: return "CIFAR-10";
         case DatasetType::CIFAR100: return "CIFAR-100";
-        case DatasetType::HuggingFace: return "HuggingFace";
         case DatasetType::Kaggle: return "Kaggle";
         case DatasetType::Custom: return "Custom";
         default: return "Unknown";

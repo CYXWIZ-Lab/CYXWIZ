@@ -58,7 +58,6 @@ bool DataRegistry::DeserializeConfig(const std::string& json_str, DatasetInfo& i
         else if (type_str == "FashionMNIST") info.type = DatasetType::FashionMNIST;
         else if (type_str == "CIFAR10") info.type = DatasetType::CIFAR10;
         else if (type_str == "CIFAR100") info.type = DatasetType::CIFAR100;
-        else if (type_str == "HuggingFace") info.type = DatasetType::HuggingFace;
         else if (type_str == "Kaggle") info.type = DatasetType::Kaggle;
         else if (type_str == "Custom") info.type = DatasetType::Custom;
         else info.type = DatasetType::None;

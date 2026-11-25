@@ -3,7 +3,7 @@
   "name": "Multi-Head Attention Block",
   "kind": "block",
   "description": "LayerNorm, Multi-Head Attention and Dropout, added to the block's input (the residual). The input is [sequence, d_model].",
-  "sample_shape": "[8, 64]",
+  "sample_shape": "[8, $d_model]",
   "category": "BuildingBlocks",
   "tags": ["attention", "multi-head", "transformer", "block", "building-block"],
   "parameters": [
