@@ -43,28 +43,12 @@ service DaemonService {
     rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
     rpc SetConfig(SetConfigRequest) returns (SetConfigResponse);
 
-    // Earnings & Wallet
+    // Earnings
     rpc GetEarnings(GetEarningsRequest) returns (GetEarningsResponse);
-    rpc GetWalletInfo(GetWalletInfoRequest) returns (GetWalletInfoResponse);
-    rpc SetWalletAddress(SetWalletAddressRequest) returns (SetWalletAddressResponse);
 
     // Logs
     rpc GetLogs(GetLogsRequest) returns (GetLogsResponse);
     rpc StreamLogs(StreamLogsRequest) returns (stream LogEntry);
-
-    // Pool Mining
-    rpc GetPoolStatus(GetPoolStatusRequest) returns (GetPoolStatusResponse);
-    rpc JoinPool(JoinPoolRequest) returns (JoinPoolResponse);
-    rpc LeavePool(LeavePoolRequest) returns (LeavePoolResponse);
-    rpc SetMiningIntensity(SetMiningIntensityRequest) returns (SetMiningIntensityResponse);
-    rpc StartMining(StartMiningRequest) returns (StartMiningResponse);
-    rpc StopMining(StopMiningRequest) returns (StopMiningResponse);
-
-    // Marketplace
-    rpc ListMarketplaceModels(ListMarketplaceModelsRequest) returns (ListMarketplaceModelsResponse);
-    rpc GetMarketplaceModel(GetMarketplaceModelRequest) returns (GetMarketplaceModelResponse);
-    rpc DownloadMarketplaceModel(DownloadMarketplaceModelRequest) returns (stream DownloadProgress);
-    rpc CancelMarketplaceDownload(CancelMarketplaceDownloadRequest) returns (CancelMarketplaceDownloadResponse);
 
     // Daemon Control
     rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
@@ -207,27 +191,6 @@ message EarningsInfo {
     double pending_payout = 5;
     int64 jobs_completed = 6;
     int64 tokens_served = 7;
-}
-
-message PoolInfo {
-    string pool_id = 1;
-    string pool_name = 2;
-    string pool_address = 3;
-    bool is_joined = 4;
-    float mining_intensity = 5;    // 0.0 - 1.0
-    double pool_earnings = 6;
-    int32 active_miners = 7;
-    float pool_hashrate = 8;
-}
-
-message MiningStats {
-    float hashrate_mhs = 1;           // MH/s
-    int64 shares_submitted = 2;
-    int64 shares_accepted = 3;
-    int64 shares_rejected = 4;
-    double estimated_daily = 5;       // CYXWIZ tokens
-    double estimated_monthly = 6;
-    int64 mining_uptime_seconds = 7;
 }
 
 // ============================================================================
@@ -428,31 +391,13 @@ message SetConfigResponse {
     bool restart_required = 3;
 }
 
-// Earnings & Wallet
+// Earnings
 message GetEarningsRequest {
     int64 since_timestamp = 1;     // Optional: filter by time
 }
 
 message GetEarningsResponse {
     EarningsInfo earnings = 1;
-}
-
-message GetWalletInfoRequest {}
-
-message GetWalletInfoResponse {
-    string wallet_address = 1;
-    double balance = 2;
-    double pending_earnings = 3;
-    bool is_connected = 4;
-}
-
-message SetWalletAddressRequest {
-    string wallet_address = 1;
-}
-
-message SetWalletAddressResponse {
-    bool success = 1;
-    string error_message = 2;
 }
 
 // Logs
@@ -468,128 +413,6 @@ message GetLogsResponse {
 
 message StreamLogsRequest {
     string level_filter = 1;
-}
-
-// Pool Mining
-message GetPoolStatusRequest {}
-
-message GetPoolStatusResponse {
-    PoolInfo pool = 1;
-    bool is_mining = 2;
-    float current_intensity = 3;
-    MiningStats stats = 4;
-}
-
-message JoinPoolRequest {
-    string pool_address = 1;
-}
-
-message JoinPoolResponse {
-    bool success = 1;
-    string error_message = 2;
-}
-
-message LeavePoolRequest {}
-
-message LeavePoolResponse {
-    bool success = 1;
-    string error_message = 2;
-}
-
-message SetMiningIntensityRequest {
-    float intensity = 1;           // 0.0 - 1.0
-}
-
-message SetMiningIntensityResponse {
-    bool success = 1;
-    string error_message = 2;
-}
-
-message StartMiningRequest {}
-
-message StartMiningResponse {
-    bool success = 1;
-    string error_message = 2;
-}
-
-message StopMiningRequest {}
-
-message StopMiningResponse {
-    bool success = 1;
-    string error_message = 2;
-}
-
-// Marketplace
-enum ModelCategory {
-    MODEL_CATEGORY_ALL = 0;
-    MODEL_CATEGORY_LLM = 1;
-    MODEL_CATEGORY_VISION = 2;
-    MODEL_CATEGORY_AUDIO = 3;
-    MODEL_CATEGORY_EMBEDDING = 4;
-    MODEL_CATEGORY_MULTIMODAL = 5;
-}
-
-message MarketplaceListing {
-    string id = 1;
-    string name = 2;
-    string description = 3;
-    string format = 4;              // "GGUF", "ONNX", etc.
-    int64 size_bytes = 5;
-    double price_per_request = 6;   // CYXWIZ tokens
-    float rating = 7;               // 0.0 - 5.0
-    int64 download_count = 8;
-    string owner_id = 9;
-    repeated string tags = 10;
-    ModelCategory category = 11;
-    string architecture = 12;
-    int64 parameter_count = 13;
-    string thumbnail_url = 14;
-    int64 created_at = 15;
-}
-
-message ListMarketplaceModelsRequest {
-    string query = 1;               // Search text
-    ModelCategory category = 2;
-    int32 limit = 3;
-    int32 offset = 4;
-    string sort_by = 5;             // "rating", "downloads", "newest"
-}
-
-message ListMarketplaceModelsResponse {
-    repeated MarketplaceListing listings = 1;
-    int32 total_count = 2;
-}
-
-message GetMarketplaceModelRequest {
-    string model_id = 1;
-}
-
-message GetMarketplaceModelResponse {
-    MarketplaceListing listing = 1;
-}
-
-message DownloadMarketplaceModelRequest {
-    string model_id = 1;
-    string target_directory = 2;
-}
-
-message DownloadProgress {
-    string model_id = 1;
-    int64 bytes_downloaded = 2;
-    int64 total_bytes = 3;
-    float progress = 4;             // 0.0 - 1.0
-    bool completed = 5;
-    string error_message = 6;
-    string local_path = 7;          // Set when completed
-}
-
-message CancelMarketplaceDownloadRequest {
-    string model_id = 1;
-}
-
-message CancelMarketplaceDownloadResponse {
-    bool success = 1;
-    string error_message = 2;
 }
 
 // Daemon Control

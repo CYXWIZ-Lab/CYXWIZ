@@ -4,7 +4,7 @@ Problems we know about in CyxWiz Studio, mostly in the GPU runtimes it builds on
 which devices are affected, and what to do. Each entry says whether CyxWiz already works around it.
 This file ships with every release package, next to `LICENSE`.
 
-Last updated: 2026-11-21.
+Last updated: 2026-11-25.
 
 ## GPU runtimes
 
@@ -74,6 +74,20 @@ Last updated: 2026-11-21.
   have no font yet and show as "?".
 - **What to do:** read Arabic values in a dashboard or plot; the data itself is unchanged.
 - **Status:** the other windows are to follow.
+
+## Tools
+
+### Regular expressions: ^ and $ may match at every line on Windows without Multiline
+
+- **Affects:** Windows builds made with Visual Studio 2022 (MSVC toolset 14.44 or older). Builds
+  made with Visual Studio 2026 (toolset 14.50), macOS and Linux are not affected.
+- **What happens:** in Tools > Utilities > Regex Tester, the Regex Tester node and `pycyxwiz.utilities`, `^` and `$` match at
+  the start and end of every line even when Multiline is off. That compiler's regex library has
+  no separate multiline mode. With Multiline on, every build behaves the same.
+- **What to do:** to match only the start or end of the whole text, use a pattern that does not
+  rely on `^` / `$` (for example check the first match's position), or use a Python script
+  (`re` without `re.M`).
+- **Status:** open; builds are to move to the newer compiler.
 
 ## Reporting a new issue
 

@@ -75,6 +75,12 @@ void CreateNodeDialog::Open(const fs::path& script, std::shared_ptr<scripting::S
     StartInspect();
 }
 
+std::string CreateNodeDialog::RunningStep() const {
+    if (!pending_.valid() || pending_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) return {};
+    const char* step = call_ == Call::Inspect ? "Reading " : call_ == Call::Check ? "Checking " : "Writing the node from ";
+    return step + script_.filename().string();
+}
+
 void CreateNodeDialog::StartInspect() {
     inputs_.stage = CreateNodeStage::Inspecting;
     call_ = Call::Inspect;

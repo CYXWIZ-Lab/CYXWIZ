@@ -81,16 +81,6 @@ struct NodeConfig {
     bool api_require_auth = true;
     int api_default_rate_limit = 100;
 
-    // Pool mining
-    bool pool_mining_enabled = false;
-    std::string pool_address = "pool.cyxwiz.io:3333";
-    float mining_intensity = 0.5f;
-    bool mine_when_idle_only = true;
-
-    // Wallet
-    std::string wallet_address;
-    double auto_withdraw_threshold = 100.0;
-
     // Pricing - what this node charges for compute
     enum class BillingModel {
         Hourly = 0,        // Charged per hour of compute time
@@ -100,25 +90,20 @@ struct NodeConfig {
     };
     BillingModel billing_model = BillingModel::Hourly;
 
-    // Base prices (in CYXWIZ tokens)
-    double price_per_hour = 0.10;           // Default: 0.10 CYXWIZ/hour
-    double price_per_epoch = 0.01;          // Default: 0.01 CYXWIZ/epoch
-    double price_per_job_base = 1.0;        // Default: 1.0 CYXWIZ flat rate
-    double price_per_inference = 0.0001;    // Default: 0.0001 CYXWIZ/inference
+    // Base prices
+    double price_per_hour = 0.10;           // Default: 0.10 per hour
+    double price_per_epoch = 0.01;          // Default: 0.01 per epoch
+    double price_per_job_base = 1.0;        // Default: 1.0 flat rate
+    double price_per_inference = 0.0001;    // Default: 0.0001 per inference
 
     // Minimum charges
-    double minimum_charge = 0.01;           // Minimum 0.01 CYXWIZ per job
+    double minimum_charge = 0.01;           // Minimum 0.01 per job
     int minimum_duration_minutes = 1;       // Minimum 1 minute billing
 
     // Volume discounts (as percentages, e.g., 0.05 = 5% off)
     double discount_1h_plus = 0.0;          // Discount for jobs > 1 hour
     double discount_24h_plus = 0.10;        // 10% off for jobs > 24 hours
     double discount_bulk = 0.15;            // 15% off for repeat customers
-
-    // Accepted payment methods
-    bool accepts_cyxwiz_token = true;
-    bool accepts_sol = false;
-    bool accepts_usdc = false;
 
     // Free tier
     bool free_tier_enabled = false;

@@ -126,7 +126,6 @@
 #define ICON_FA_DATABASE            "\xef\x87\x80"  // U+F1C0 - database
 #define ICON_FA_LIST_CHECK          "\xef\x82\xae"  // U+F0AE - task list
 #define ICON_FA_LIST_UL             "\xef\x83\x8a"  // U+F0CA - unordered list
-#define ICON_FA_WALLET              "\xef\x95\x95"  // U+F555 - wallet
 
 // Cloud/Download
 #define ICON_FA_CLOUD_ARROW_DOWN    "\xef\x83\x80"  // U+F0ED - cloud download
@@ -225,7 +224,6 @@
 #define ICON_FA_VOLUME_XMARK        "\xef\x9a\xa9"  // U+F6A9
 
 // Blockchain/Crypto
-#define ICON_FA_COINS               "\xef\x94\x9e"  // U+F51E
 #define ICON_FA_MONEY_BILL          "\xef\x83\x96"  // U+F0D6
 #define ICON_FA_CREDIT_CARD         "\xef\x82\x9d"  // U+F09D
 #define ICON_FA_BITCOIN_SIGN        "\xee\x82\xb4"  // U+E0B4
@@ -234,10 +232,8 @@
 // Server Node specific icons
 #define ICON_FA_BARS_PROGRESS       "\xef\xa0\xa8"  // U+F828 - progress bars
 #define ICON_FA_ROCKET              "\xef\x84\xb5"  // U+F135 - rocket/deploy
-#define ICON_FA_STORE               "\xef\x95\x8e"  // U+F54E - marketplace/store
 #define ICON_FA_SCROLL              "\xef\x9c\x8e"  // U+F70E - logs/scroll
 #define ICON_FA_CIRCLE_PLAY         "\xef\x85\x84"  // U+F144 - play circle
-#define ICON_FA_PICKAXE             "\xef\x9c\x94"  // U+F714 - mining (using similar)
 
 // Common/Simple shapes
 #define ICON_FA_CIRCLE_DOT          "\xef\x86\x92"  // U+F192

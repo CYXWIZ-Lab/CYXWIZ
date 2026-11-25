@@ -53,18 +53,20 @@ Process, transform, and prepare data for analysis or training.
 - Transforming datasets
 - Feature engineering
 
+### 6. **kaggle_datasets.cyx** - Kaggle Download Example
+Download a Kaggle dataset with the `kaggle` Python package and save it as
+files the Engine can load. Needs a Kaggle account and API token (see the
+script's header).
+
+**Use when:**
+- The data you want is published on Kaggle
+
+The Engine copies these files next to its executable, under
+`scripts/templates/`.
+
 ## How to Use Templates
 
-### Method 1: Via Script Editor (Future Feature)
-
-1. Open Script Editor panel
-2. Click **File → New → From Template**
-3. Select desired template from list
-4. Template loads into editor
-5. Customize the TODO sections
-6. Save with your own filename
-
-### Method 2: Manual Copy
+### Method 1: Manual Copy
 
 1. Browse to `scripts/templates/` directory
 2. Open desired template in text editor
@@ -72,7 +74,7 @@ Process, transform, and prepare data for analysis or training.
 4. Customize for your needs
 5. Save as new script
 
-### Method 3: Command Line
+### Method 2: Command Line
 
 ```bash
 # Copy template to working directory

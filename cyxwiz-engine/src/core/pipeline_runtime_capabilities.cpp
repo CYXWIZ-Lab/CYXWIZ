@@ -253,8 +253,7 @@ bool ValidatePipelineRuntimeParameterCapabilities(
 
 void CanonicalizePipelineParameterAliases(
     gui::NodeType node_type,
-    std::map<std::string, std::string>& parameters,
-    bool prefer_legacy) {
+    std::map<std::string, std::string>& parameters) {
     if (node_type == gui::NodeType::GroupNorm ||
         node_type == gui::NodeType::InstanceNorm) {
         const auto legacy = parameters.find("epsilon");
@@ -264,7 +263,7 @@ void CanonicalizePipelineParameterAliases(
 
         const auto canonical = parameters.find("eps");
         if (!TrimRuntimeValue(legacy->second).empty() &&
-            (prefer_legacy || canonical == parameters.end() ||
+            (canonical == parameters.end() ||
              TrimRuntimeValue(canonical->second).empty())) {
             parameters["eps"] = legacy->second;
         }
@@ -281,7 +280,7 @@ void CanonicalizePipelineParameterAliases(
         if (!TrimRuntimeValue(shared_key->second).empty()) {
             for (const char* canonical_key : {"left_on", "right_on"}) {
                 const auto canonical = parameters.find(canonical_key);
-                if (prefer_legacy || canonical == parameters.end() ||
+                if (canonical == parameters.end() ||
                     TrimRuntimeValue(canonical->second).empty()) {
                     parameters[canonical_key] = shared_key->second;
                 }
@@ -302,7 +301,7 @@ void CanonicalizePipelineParameterAliases(
     }
 
     const auto canonical = parameters.find("group_columns");
-    if (prefer_legacy || canonical == parameters.end() ||
+    if (canonical == parameters.end() ||
         TrimRuntimeValue(canonical->second).empty()) {
         parameters["group_columns"] = legacy->second;
     }
@@ -580,9 +579,6 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"CIFAR10Dataset", "legacy CIFAR10Dataset graph execution is not implemented; placeholder metadata creation is disabled",
          gui::NodeType::CIFAR10Dataset, std::nullopt, true,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"HuggingFaceDataset", "legacy HuggingFaceDataset graph execution is not implemented; placeholder metadata creation is disabled",
-         gui::NodeType::HuggingFaceDataset, std::nullopt, true,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"KaggleDataset", "legacy KaggleDataset graph execution is not implemented; placeholder metadata creation is disabled",
          gui::NodeType::KaggleDataset, std::nullopt, true,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
@@ -839,7 +835,6 @@ GetPipelineSourceRuntimeCapabilities() {
         {"ImageFolderDataset"},
         {"MNISTDataset"},
         {"CIFAR10Dataset"},
-        {"HuggingFaceDataset"},
         {"KaggleDataset"},
         {"ParquetInput"},
     };

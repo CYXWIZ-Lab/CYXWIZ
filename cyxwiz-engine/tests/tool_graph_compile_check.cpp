@@ -1,8 +1,10 @@
-// Compiles saved .cyxgraph files with the Engine's GraphCompiler, without the
-// GUI, and prints the issues plus the resolved training recipe. Used to check
-// graphs before a (long) run is launched on another machine.
+// Compiles saved .cyxgraph files (and pattern templates, instantiated as the
+// Engine opens them) with the Engine's GraphCompiler, without the GUI, and
+// prints the issues plus the resolved training recipe. Used to check graphs
+// before a (long) run is launched on another machine.
 //
-// Usage: cyxwiz-graph-compile-check [--reference known_good.cyxgraph] <graph.cyxgraph> [more ...]
+// Usage: cyxwiz-graph-compile-check [--reference known_good.cyxgraph] [--parameters] [--layers]
+//        [--input-shape "[h, w, c]"] <graph.cyxgraph> [more ...]
 // Exit code: 0 when every graph compiles valid (or, with --reference, has no
 // issue beyond the reference's), 1 otherwise.
 //
@@ -10,11 +12,15 @@
 // generation-preview vocabulary metadata) report errors even for graphs that
 // train fine in the Engine. --reference compiles a graph known to train and
 // reports only the issues it does not have (node names are normalized so a
-// renamed node does not count as a new issue).
+// renamed node does not count as a new issue). --input-shape gives every Data
+// Input the shape one sample has (what Apply sets from the data): without it,
+// --parameters counts nothing for a graph whose input shape is unknown.
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_document.h"
+#include "../src/core/graph_node_factory.h"
 #include "../src/core/model_builder.h"
 #include "../src/gui/loaders/data_loader.h"
+#include "../src/gui/patterns/pattern_library.h"
 
 #include <nlohmann/json.hpp>
 
@@ -51,6 +57,22 @@ bool LoadGraph(const std::filesystem::path& path, std::vector<gui::MLNode>& node
     }
     std::stringstream buffer;
     buffer << in.rdbuf();
+    // A pattern template is instantiated as the Engine opens one: through the
+    // pattern library (its parameter defaults, its checks), nodes from the
+    // node factory.
+    const json root = json::parse(buffer.str(), nullptr, false);
+    if (root.is_object() && root.contains("template")) {
+        auto& library = gui::patterns::PatternLibrary::Instance();
+        gui::patterns::Pattern pattern;
+        int factory_node_id = 1, next_pin_id = 1;  // the library numbers the nodes itself
+        const auto create = [&](gui::NodeType type, const std::string& name) {
+            return gui::CreateGraphNode(type, name, factory_node_id, next_pin_id);
+        };
+        int next_node_id = 1, next_link_id = 1;
+        return library.ReadPatternFile(path.string(), pattern, &error) &&
+               library.InstantiatePatternWithCreator(pattern, {}, nodes, links, next_node_id, next_link_id,
+                                                     ImVec2(0, 0), create, &error);
+    }
     cyxwiz::GraphDocument document;
     if (!cyxwiz::ParseGraphDocument(buffer.str(), document, error)) return false;
     nodes = std::move(document.nodes);
@@ -61,6 +83,7 @@ bool LoadGraph(const std::filesystem::path& path, std::vector<gui::MLNode>& node
 struct Compiled {
     cyxwiz::TrainingConfiguration config;
     std::vector<std::string> issue_keys;  // level + message, node names normalized
+    bool has_data_input = false;
 };
 
 std::string ReplaceAll(std::string text, const std::string& from, const std::string& to) {
@@ -73,10 +96,17 @@ std::string ReplaceAll(std::string text, const std::string& from, const std::str
 
 const char* LevelName(cyxwiz::IssueLevel level);
 
-bool CompileGraph(const std::filesystem::path& path, Compiled& out, std::string& error) {
+bool CompileGraph(const std::filesystem::path& path, const std::string& input_shape, Compiled& out,
+                  std::string& error) {
     std::vector<gui::MLNode> nodes;
     std::vector<gui::NodeLink> links;
     if (!LoadGraph(path, nodes, links, error)) return false;
+    out.has_data_input = false;
+    for (auto& node : nodes) {
+        if (node.type != gui::NodeType::DataInput) continue;
+        out.has_data_input = true;
+        if (!input_shape.empty()) node.parameters["shape"] = input_shape;
+    }
     cyxwiz::GraphCompiler compiler;
     out.config = compiler.Compile(nodes, links, true);
     for (const auto& issue : out.config.issues) {
@@ -100,12 +130,15 @@ const char* LevelName(cyxwiz::IssueLevel level) {
 int main(int argc, char** argv) {
     std::vector<std::filesystem::path> graphs;
     std::filesystem::path reference_path;
+    std::string input_shape;  // --input-shape: one sample's shape, for every Data Input
     bool print_parameters = false;  // --parameters: build the model and count its parameters
     bool print_layers = false;      // --layers: each compiled layer's node and shapes (TOFIX123)
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--reference" && i + 1 < argc) {
             reference_path = argv[++i];
+        } else if (arg == "--input-shape" && i + 1 < argc) {
+            input_shape = argv[++i];
         } else if (arg == "--parameters") {
             print_parameters = true;
         } else if (arg == "--layers") {
@@ -115,14 +148,15 @@ int main(int argc, char** argv) {
         }
     }
     if (graphs.empty()) {
-        std::cerr << "usage: cyxwiz-graph-compile-check [--reference known_good.cyxgraph] [--parameters] [--layers] <graph.cyxgraph> [more ...]\n";
+        std::cerr << "usage: cyxwiz-graph-compile-check [--reference known_good.cyxgraph] [--parameters] [--layers] "
+                     "[--input-shape \"[h, w, c]\"] <graph.cyxgraph> [more ...]\n";
         return 2;
     }
     std::multiset<std::string> reference_keys;
     if (!reference_path.empty()) {
         Compiled reference;
         std::string error;
-        if (!CompileGraph(reference_path, reference, error)) {
+        if (!CompileGraph(reference_path, input_shape, reference, error)) {
             std::cerr << "reference " << reference_path.string() << ": " << error << "\n";
             return 2;
         }
@@ -135,7 +169,7 @@ int main(int argc, char** argv) {
         std::cout << "== " << path.filename().string() << "\n";
         Compiled compiled;
         std::string error;
-        if (!CompileGraph(path, compiled, error)) {
+        if (!CompileGraph(path, input_shape, compiled, error)) {
             std::cout << "   load failed: " << error << "\n";
             all_ok = false;
             continue;
@@ -184,8 +218,17 @@ int main(int argc, char** argv) {
         if (print_parameters) {
             // The model CyxWiz trains for this graph (TOFIX112: the PyTorch
             // export must declare the same parameters).
-            auto built = cyxwiz::BuildExecutableFromConfig(config);
-            if (!built.ok()) {
+            // A model built from an unknown input has width 1 or a 1-token
+            // sequence: not the model Train builds, so it is not counted.
+            if (!compiled.has_data_input) {
+                std::cout << "   parameters=unavailable (a block: it has no Data Input; its model is built "
+                             "inside a graph)\n";
+                all_ok = false;
+            } else if (config.input_shape.empty()) {
+                std::cout << "   parameters=unavailable (the Data Input has no shape: it comes from the data, "
+                             "which is not loaded here; pass --input-shape)\n";
+                all_ok = false;
+            } else if (auto built = cyxwiz::BuildExecutableFromConfig(config); !built.ok()) {
                 std::cout << "   parameters=unavailable (" << built.error_message << ")\n";
                 all_ok = false;
             } else {

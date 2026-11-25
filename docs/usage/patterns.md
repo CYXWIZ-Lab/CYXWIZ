@@ -35,6 +35,13 @@ browser asks first:
   then holds two graphs; delete the one you do not want before you train.
 - **Cancel**: nothing changes.
 
+A pattern file also opens as a graph: **Load...** in the graph menu, with a
+pattern's `.cyxgraph` file, puts the pattern on the canvas in place of the
+graph, with the pattern's default settings, as a new untitled graph (Save
+asks for a name). It is checked as Insert checks it: a pattern that is not
+ready, or with a node or link the Engine does not know, is not opened and
+the log says why.
+
 ## Full graphs and blocks
 
 Patterns come in two kinds.
@@ -155,7 +162,11 @@ the settings folder's `patterns` folder; the library knows each as
 
 Inserting is all or nothing: `PatternLibrary::InstantiatePatternWithCreator`
 refuses the whole pattern, with the reason, when a node type is unknown or a
-template, or a link names a node or pin that is not there. What the browser
+template, or a link names a node or pin that is not there. Opening a pattern
+file (**Load...**, and `cyxwiz-graph-compile-check` without the GUI) reads it
+with `PatternLibrary::ReadPatternFile` and instantiates the parsed pattern
+through the same function, so a node type given by a parameter
+(`"type": "$activation"`) takes the parameter's default there too. What the browser
 and the Save dialog show (chips, list, insert words, the selection summary)
 is `core/pattern_browser_presentation`, checked by
 `test_pattern_browser_presentation` against the shipped files;

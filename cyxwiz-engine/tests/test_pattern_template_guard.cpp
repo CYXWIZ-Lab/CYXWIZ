@@ -1,3 +1,4 @@
+#include "../src/core/graph_node_factory.h"
 #include "../src/core/node_metadata_registry.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/gui/patterns/pattern_library.h"
@@ -615,6 +616,47 @@ void CheckSaveSelectionRoundTrip() {
     std::filesystem::remove_all(dir);
 }
 
+// A pattern read from its file and instantiated from the parsed pattern: the
+// path File > Open and the headless compile check take (the Pattern Browser
+// inserts by id; test_shipped_patterns covers every shipped pattern that way).
+// A node type given by a pattern parameter ("$activation") takes its default
+// (TOFIX233 A1: such patterns did not open as a graph before); a pattern that
+// is not ready is refused with its reason; a saved graph is not a pattern.
+void CheckPatternReadFromFile() {
+    auto& library = gui::patterns::PatternLibrary::Instance();
+    const auto patterns = FindRepoRoot() / "cyxwiz-engine" / "resources" / "patterns";
+    const auto open = [&](const std::string& file, std::vector<gui::MLNode>& nodes, std::string& error) {
+        gui::patterns::Pattern pattern;
+        int factory_node_id = 1, next_pin_id = 1, next_node_id = 1, next_link_id = 1;
+        std::vector<gui::NodeLink> links;
+        const auto create = [&](gui::NodeType type, const std::string& name) {
+            return gui::CreateGraphNode(type, name, factory_node_id, next_pin_id);
+        };
+        return library.ReadPatternFile((patterns / file).string(), pattern, &error) &&
+               library.InstantiatePatternWithCreator(pattern, {}, nodes, links, next_node_id, next_link_id,
+                                                     ImVec2(0, 0), create, &error);
+    };
+
+    std::vector<gui::MLNode> nodes;
+    std::string error;
+    Check(open("mlp_basic.cyxgraph", nodes, error), "MLP Basic opens from its file: " + error);
+    Check(std::count_if(nodes.begin(), nodes.end(),
+                        [](const gui::MLNode& node) { return node.type == gui::NodeType::ReLU; }) == 2,
+          "its two $activation nodes take the parameter's default, ReLU");
+
+    nodes.clear();
+    Check(!open("lstm_seq2seq.cyxgraph", nodes, error) && nodes.empty() &&
+              error.rfind("it is not ready yet: ", 0) == 0,
+          "a pattern that is not ready is refused from its file too, saying why: " + error);
+
+    gui::patterns::Pattern not_a_pattern;
+    Check(!library.ReadPatternFile(
+              (FindRepoRoot() / "examples" / "cyxgraph" / "model_tools" / "mnist_cnn.cyxgraph").string(),
+              not_a_pattern, &error) &&
+              error == "it has no template nodes",
+          "a saved graph is not read as a pattern: " + error);
+}
+
 int main() {
     const auto training_graph = [](std::initializer_list<gui::NodeType> types) {
         std::vector<gui::MLNode> nodes;
@@ -828,6 +870,7 @@ int main() {
     CheckSerializedPinIndexGuard();
     CheckDataBoundaryVersionGuard();
     CheckSaveSelectionRoundTrip();
+    CheckPatternReadFromFile();
 
     std::cout << "Pattern template guard passed\n";
     return 0;

@@ -8,10 +8,10 @@
 #include "../core/graph_document.h"
 #include "../core/graph_node_factory.h"
 #include "subgraph_document.h"
-#include "node_type_import_registry.h"
 #include "../core/data_input_parameters.h"
 #include "../core/pipeline_runtime_capabilities.h"
 #include "node_import_guardrails.h"
+#include "patterns/pattern_library.h"
 #include "../core/file_dialogs.h"
 #include "../core/project_manager.h"
 #include "../core/project_data_path.h"
@@ -24,19 +24,6 @@
 #include <spdlog/spdlog.h>
 
 namespace gui {
-
-// ========== Pattern to Graph Conversion ==========
-
-// Resolve legacy pattern/import names through one shared authority.
-static NodeType StringToNodeType(const std::string& type_str) {
-    const auto resolved = ResolveNodeTypeImportName(type_str);
-    if (resolved.has_value()) {
-        return *resolved;
-    }
-
-    spdlog::warn("Unknown node type '{}'", type_str);
-    return NodeType::Unknown;
-}
 
 void NodeEditor::DetachFromFile() {
     current_file_path_.clear();
@@ -63,177 +50,38 @@ void NodeEditor::DetachFromExample() {
     DetachFromFile();
 }
 
-bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
+bool NodeEditor::LoadPatternAsGraph(const std::string& filepath) {
+    // The Pattern Browser's instantiation: parameter defaults (in node types
+    // too), every node type and link checked first, a pattern that is not
+    // ready refused, the user's node defaults applied.
+    auto& library = patterns::PatternLibrary::Instance();
+    patterns::Pattern pattern;
+    std::vector<MLNode> nodes;
+    std::vector<NodeLink> links;
+    int next_node_id = 1;
+    int next_link_id = 1;
+    std::string error;
+    const auto create = [this](NodeType type, const std::string& name) {
+        MLNode node = CreateNode(type, name);
+        ApplyUserNodeDefaults(node);
+        return node;
+    };
+    if (!library.ReadPatternFile(filepath, pattern, &error) ||
+        !library.InstantiatePatternWithCreator(pattern, {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0),
+                                               create, &error)) {
+        spdlog::error("Cannot open pattern {} as a graph: {}", filepath, error);
+        return false;
+    }
     if (!CanReplaceGraph("load a graph")) return false;
-    // Clear existing graph
     ClearGraph();
     // A template is a new graph, not the file it came from.
     DetachFromFile();
-
-    const auto& tmpl = j["template"];
-
-    // Map string IDs to integer IDs
-    std::unordered_map<std::string, int> id_map;
-    int next_id = 1;
-
-    // Load nodes from template
-    if (tmpl.contains("nodes") && tmpl["nodes"].is_array()) {
-        for (const auto& node_json : tmpl["nodes"]) {
-            std::string str_id = node_json.value("id", "");
-            std::string type_str = node_json.value("type", "Dense");
-            std::string name = node_json.value("name", type_str);
-
-            // Convert string type to NodeType enum
-            NodeType node_type = StringToNodeType(type_str);
-            if (node_type == NodeType::Unknown) {
-                spdlog::error("Cannot load pattern node '{}' with unknown type '{}'",
-                              name,
-                              type_str);
-                ClearGraph();
-                return false;
-            }
-            MLNode early_node;
-            early_node.type = node_type;
-            early_node.name = name;
-            if (RejectDenseEncodedSequencePlaceholder(early_node, "Pattern")) {
-                ClearGraph();
-                return false;
-            }
-
-            // Create node with proper pins
-            MLNode node = CreateNode(node_type, name);
-            node.id = next_id;
-            id_map[str_id] = next_id;
-            next_id++;
-
-            // Parse position (two formats supported: pos_x/pos_y or pos: [x, y])
-            float pos_x = node_json.value("pos_x", 0.0f);
-            float pos_y = node_json.value("pos_y", 0.0f);
-
-            if (node_json.contains("pos") && node_json["pos"].is_array() && node_json["pos"].size() >= 2) {
-                pos_x = node_json["pos"][0].get<float>();
-                pos_y = node_json["pos"][1].get<float>();
-            }
-
-            // Apply any node parameters (substitute pattern parameters with defaults)
-            if (node_json.contains("params") && node_json["params"].is_object()) {
-                for (auto& [key, value] : node_json["params"].items()) {
-                    std::string param_value;
-                    if (value.is_string()) {
-                        param_value = value.get<std::string>();
-                        // Handle pattern parameter references like "$hidden1_size"
-                        if (!param_value.empty() && param_value[0] == '$') {
-                            // Find the default value for this parameter
-                            std::string param_name = param_value.substr(1);
-                            if (j.contains("parameters") && j["parameters"].is_array()) {
-                                for (const auto& p : j["parameters"]) {
-                                    if (p.value("name", "") == param_name) {
-                                        param_value = p.value("default_value", param_value);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    } else if (value.is_number_integer()) {
-                        param_value = std::to_string(value.get<int>());
-                    } else if (value.is_number_float()) {
-                        param_value = std::to_string(value.get<float>());
-                    } else if (value.is_boolean()) {
-                        param_value = value.get<bool>() ? "true" : "false";
-                    }
-                    node.parameters[key] = param_value;
-                }
-            }
-            MigrateLegacyNodeParameters(node.type, node.parameters, true);
-            if (RejectDenseEncodedSequencePlaceholder(node, "Pattern")) {
-                ClearGraph();
-                return false;
-            }
-
-            nodes_.push_back(node);
-
-            // Queue position
-            pending_positions_[node.id] = ImVec2(pos_x, pos_y);
-        }
+    if (const std::string refused = InsertPattern(nodes, links); !refused.empty()) {
+        spdlog::error("Cannot open pattern {} as a graph: {}", filepath, refused);
+        return false;
     }
-
-    pending_positions_frames_ = 3;
-
-    // Load links from template
-    int link_id = 1;
-    if (tmpl.contains("links") && tmpl["links"].is_array()) {
-        for (const auto& link_json : tmpl["links"]) {
-            std::string from_str = link_json.value("from", "");
-            std::string to_str = link_json.value("to", "");
-
-            auto from_it = id_map.find(from_str);
-            auto to_it = id_map.find(to_str);
-
-            if (from_it == id_map.end() || to_it == id_map.end()) {
-                spdlog::warn("Link references unknown node: {} -> {}", from_str, to_str);
-                continue;
-            }
-
-            int from_node_id = from_it->second;
-            int to_node_id = to_it->second;
-
-            const MLNode* from_node = FindNodeById(from_node_id);
-            const MLNode* to_node = FindNodeById(to_node_id);
-
-            if (!from_node || !to_node) {
-                spdlog::warn("Could not find nodes for link: {} -> {}", from_str, to_str);
-                continue;
-            }
-
-            // Get pin indices (default to first pin)
-            int from_pin_idx = link_json.value("from_pin", 0);
-            int to_pin_idx = link_json.value("to_pin", 0);
-
-            if (from_pin_idx < 0 ||
-                from_pin_idx >= static_cast<int>(from_node->outputs.size())) {
-                spdlog::warn(
-                    "Skipping pattern link {} -> {}: source pin index {} is out of range for node '{}' ({} outputs)",
-                    from_str,
-                    to_str,
-                    from_pin_idx,
-                    from_node->name,
-                    from_node->outputs.size());
-                continue;
-            }
-            if (to_pin_idx < 0 ||
-                to_pin_idx >= static_cast<int>(to_node->inputs.size())) {
-                spdlog::warn(
-                    "Skipping pattern link {} -> {}: target pin index {} is out of range for node '{}' ({} inputs)",
-                    from_str,
-                    to_str,
-                    to_pin_idx,
-                    to_node->name,
-                    to_node->inputs.size());
-                continue;
-            }
-
-            // Create link using actual pin IDs
-            NodeLink link;
-            link.id = link_id++;
-            link.from_pin = from_node->outputs[from_pin_idx].id;
-            link.to_pin = to_node->inputs[to_pin_idx].id;
-            link.from_node = from_node_id;
-            link.to_node = to_node_id;
-            link.type = LinkType::TensorFlow;
-
-            links_.push_back(link);
-        }
-    }
-
-    // Update next IDs
-    next_node_id_ = next_id;
-    next_link_id_ = link_id;
     ForgetUndoHistory();
-
-    std::string name = j.value("name", "Imported Pattern");
-    spdlog::info("Loaded pattern '{}' as graph ({} nodes, {} links)",
-                 name, nodes_.size(), links_.size());
-
+    spdlog::info("Loaded pattern '{}' as graph ({} nodes, {} links)", pattern.name, nodes_.size(), links_.size());
     return true;
 }
 
@@ -761,7 +609,7 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
             // A template example names its data relative to its own folder
             // (or a parent, e.g. examples/datasets/...), as a saved graph does.
             cyxwiz::SetGraphDataSearchDirectoryFromGraphFile(filepath);
-            return LoadPatternAsGraph(graph_json);
+            return LoadPatternAsGraph(filepath);
         }
 
         // Before the nodes load: their data inputs resolve relative paths

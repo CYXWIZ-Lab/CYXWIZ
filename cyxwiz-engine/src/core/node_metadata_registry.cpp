@@ -1237,7 +1237,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::ImageFolderDataset, NodeCategory::DataSources, "Image Folder Dataset", {"image", "folder", "dataset"}},
         {NodeType::MNISTDataset, NodeCategory::DataSources, "MNIST Dataset", {"mnist", "dataset"}},
         {NodeType::CIFAR10Dataset, NodeCategory::DataSources, "CIFAR-10 Dataset", {"cifar", "dataset"}},
-        {NodeType::HuggingFaceDataset, NodeCategory::DataSources, "Hugging Face Dataset", {"huggingface", "dataset", "hub"}},
         {NodeType::KaggleDataset, NodeCategory::DataSources, "Kaggle Dataset", {"kaggle", "dataset"}},
         {NodeType::PluginCustom, NodeCategory::Plugin, "Custom Plugin Node", {"plugin", "custom", "extension"}},
     };

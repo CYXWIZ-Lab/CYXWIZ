@@ -593,8 +593,9 @@ public:
     // export harness). Empty with a log line when the graph cannot be sorted.
     std::string GenerateCodeText(cyxwiz::CodeFramework framework);
 
-    // Load pattern template format as graph (converts string IDs to int, resolves parameters)
-    bool LoadPatternAsGraph(const nlohmann::json& j);
+    // Opens a pattern template file as a new graph, through the pattern
+    // library's instantiation (as the Pattern Browser inserts it).
+    bool LoadPatternAsGraph(const std::string& filepath);
 
     // Legacy Data Input/Split/Loader graphs retain their original pin layout
     // until the user explicitly requests this migration.

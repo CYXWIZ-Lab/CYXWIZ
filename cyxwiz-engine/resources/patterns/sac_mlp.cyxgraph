@@ -1,6 +1,7 @@
 {
   "id": "sac_mlp",
   "name": "SAC (MLP 256-256)",
+  "kind": "graph",
   "description": "Soft Actor-Critic as in Stable-Baselines3's SAC MlpPolicy: an Environment, an actor of two Dense layers with ReLU ending in a Policy Head (a tanh-squashed Gaussian), Q layers of the same shape ending in a Q Head (SAC builds twin Q networks and their targets from them; the action joins the first Q layer), and SAC with its replay buffer. SAC learns continuous actions: pick a MuJoCo task on the Environment node (its plugin loaded) and press Tuned for on SAC to load tuned settings, then Train.",
   "category": "Reinforcement Learning",
   "tags": ["sac", "soft actor-critic", "off-policy", "replay", "reinforcement", "rl", "policy", "mujoco"],

@@ -28,6 +28,8 @@ public:
     // Every frame.
     void Render();
     bool IsOpen() const { return open_ || popup_requested_; }
+    // The Python step still running ("Checking my_node.py"), or empty.
+    std::string RunningStep() const;
 
 private:
     void StartInspect();

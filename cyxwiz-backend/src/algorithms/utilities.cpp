@@ -18,6 +18,7 @@
 #include <openssl/evp.h>
 #endif
 #include "cyxwiz/portable_random.h"
+#include "cyxwiz/portable_regex.h"
 
 namespace cyxwiz {
 
@@ -1052,9 +1053,9 @@ RegexResult Utilities::TestRegex(
         if (flags.find('i') != std::string::npos) {
             regex_flags |= std::regex_constants::icase;
         }
-        // ^ and $ at every line (C++17, LWG 2503; ECMAScript only).
+        // ^ and $ at every line
         if (flags.find('m') != std::string::npos) {
-            regex_flags |= std::regex_constants::multiline;
+            regex_flags |= cyxwiz::portable::RegexMultiline();
         }
 
         std::regex re(pattern, regex_flags);
@@ -1114,9 +1115,9 @@ RegexResult Utilities::ReplaceRegex(
         if (flags.find('i') != std::string::npos) {
             regex_flags |= std::regex_constants::icase;
         }
-        // ^ and $ at every line (C++17, LWG 2503; ECMAScript only).
+        // ^ and $ at every line
         if (flags.find('m') != std::string::npos) {
-            regex_flags |= std::regex_constants::multiline;
+            regex_flags |= cyxwiz::portable::RegexMultiline();
         }
 
         std::regex re(pattern, regex_flags);

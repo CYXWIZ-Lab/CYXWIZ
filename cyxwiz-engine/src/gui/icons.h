@@ -146,7 +146,6 @@
 #define ICON_FA_CLOCK_ROTATE_LEFT   "\xef\x87\x9a"  // U+F1DA clock-rotate-left - history/undo
 #define ICON_FA_SPINNER             "\xef\x84\x90"  // U+F110 spinner - spinner/loading
 #define ICON_FA_TRIANGLE_EXCLAMATION "\xef\x81\xb1" // U+F071 triangle-exclamation - warning triangle
-#define ICON_FA_WALLET              "\xef\x95\x95"  // U+F555 wallet
 
 // Network/Connection
 #define ICON_FA_NETWORK_WIRED       "\xef\x9b\xbf"  // U+F6FF network-wired

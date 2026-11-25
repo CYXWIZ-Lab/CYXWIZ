@@ -24,6 +24,12 @@ private Data Studio tickets (`tofix*/track*`).
   development build keeps its log and layout in its build folder. Your layout
   starts from the default once after this update. See
   [Where the Engine keeps your files](usage/user_files.md).
+- **Closing while a node is being made asks first, then waits.** A Check
+  or Create still running in Make a Python node or Create node from script
+  is listed in the close dialog under **Making a node**. Close waits for
+  it, with the window still drawn ("Closing when the node step
+  finishes..."), and **Keep working** takes the close back. Before, the
+  Engine closed straight into an unexplained wait.
 - **The Pattern Browser, redesigned.** Category chips that wrap (they ran off
   the panel's edge), with counts and a new Reinforcement learning category
   (PPO was filed under Custom); search across every category; a card per
@@ -940,6 +946,28 @@ private Data Studio tickets (`tofix*/track*`).
 - The OpenCL provider is verified on NVIDIA and on Intel integrated
   graphics (UHD 630). When a machine has several OpenCL GPUs, the run's
   selected device decides which one serves it.
+
+### Removed
+
+- **The Wallet panel.** It is gone from View > Panels, the account menu and
+  the default layout. It showed made-up balances; paying for compute is not
+  done with crypto.
+- **Token prices and stakes in the node lists.** Connect to Server and
+  Deploy show a node's hourly price without a token name and no longer show
+  a staked amount. The Engine no longer reads escrow accounts or lamport
+  amounts from a reservation.
+- **Deploy > Publish to Marketplace.** The planned item is gone; models are
+  not published to a marketplace.
+- **The Hugging Face Dataset node and script template.** The node was a
+  preview that could not run; the `huggingface_datasets.cyx` script template
+  no longer ships. A saved graph with that node does not load and names the
+  node to remove; load the data with a Data Input node instead.
+- **Server Node: Marketplace, Pool Mining and Wallet.** The three sidebar
+  pages, the wallet address in the status bar, the Models page's Marketplace
+  tab and the unused Solana wallet code are gone, as are the
+  `pool_mining` and `wallet` sections of `server_config.yaml` (an old
+  file with them still loads; the sections are ignored). Earnings no longer
+  carry a token name.
 
 ### Fixed
 

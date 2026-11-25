@@ -8,7 +8,9 @@ target/
 .vs/
 .vscode/
 *.user
-.claude
+# Claude Code settings stay local; the project skills are shared with every agent
+.claude/*
+!.claude/skills/
 CLAUDE.md
 
 # CMake

@@ -823,7 +823,6 @@ set(ENGINE_SOURCES
     src/gui/panels/p2p_training_panel.cpp
     src/gui/panels/p2p_training_panel_recovery.cpp
     src/gui/panels/job_status_panel.cpp
-    src/gui/panels/wallet_panel.cpp
     src/gui/panels/plugin_manager_panel.cpp
     src/gui/theme.cpp
     src/gui/theme_nodes.cpp
@@ -1093,7 +1092,6 @@ set(ENGINE_HEADERS
     src/gui/panels/cloud_dataset_manager.h
     src/gui/panels/p2p_training_panel.h
     src/gui/panels/job_status_panel.h
-    src/gui/panels/wallet_panel.h
     src/gui/theme.h
     src/gui/dock_style.h
     # Data Studio (Phase 1 Week 1)
@@ -4855,6 +4853,11 @@ add_executable(cyxwiz-graph-compile-check
     src/core/dataset_catalog_registry.cpp
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
+    # Pattern templates are read as the Engine opens them (TOFIX233 A1).
+    src/gui/patterns/pattern_library.cpp
+    src/core/recycle_bin.cpp
+    src/core/pattern_browser_presentation.cpp
+    src/gui/node_type_import_registry.cpp
 )
 target_link_libraries(cyxwiz-graph-compile-check PRIVATE cyxwiz-training-core)
 

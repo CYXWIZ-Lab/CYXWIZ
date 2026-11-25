@@ -601,6 +601,33 @@ int main() {
               "Sequential tensor backward should produce finite gradients");
     }
 
+    {
+        // A Flatten whose input shape the compiler lost (its "output" is then
+        // the empty product, 1): the Dense after it keeps the running width.
+        cyxwiz::TrainingConfiguration config;
+        config.input_size = 6;
+        config.output_size = 3;
+        config.loss_type = gui::NodeType::MSELoss;
+        config.optimizer_type = gui::NodeType::Adam;
+        cyxwiz::CompiledLayer flatten;
+        flatten.type = gui::NodeType::Flatten;
+        flatten.node_id = 1;
+        flatten.name = "Flatten";
+        flatten.output_shape = {1};
+        cyxwiz::CompiledLayer dense;
+        dense.type = gui::NodeType::Dense;
+        dense.node_id = 2;
+        dense.name = "Dense";
+        dense.units = 3;
+        config.layers = {flatten, dense};
+        cyxwiz::BuiltModel built = cyxwiz::BuildSequentialFromConfig(config);
+        Check(built.ok(), "a Flatten with no known input shape still builds: " + built.error_message);
+        size_t weights = 0;
+        for (const auto& [name, tensor] : built.model->GetParameters()) weights += tensor.NumElements();
+        Check(weights == 3 * 6 + 3, "the Dense after it reads the running width, 6 (got " + std::to_string(weights) +
+                                         " parameters, 3 x 6 + 3 expected)");
+    }
+
     std::cout << "Tensor runtime contract passed\n";
     return 0;
 }

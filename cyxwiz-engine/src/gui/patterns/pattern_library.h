@@ -62,6 +62,23 @@ public:
         NodeCreatorCallback node_creator,
         std::string* error = nullptr
     );
+    // The same for a pattern read from a file that is not in the library (a
+    // pattern opened as a graph, or read by a headless tool).
+    bool InstantiatePatternWithCreator(
+        const Pattern& pattern,
+        const std::map<std::string, std::string>& params,
+        std::vector<MLNode>& out_nodes,
+        std::vector<NodeLink>& out_links,
+        int& next_node_id,
+        int& next_link_id,
+        ImVec2 base_position,
+        NodeCreatorCallback node_creator,
+        std::string* error = nullptr
+    ) const;
+
+    // Reads a pattern file without adding it to the library. False, with
+    // the reason in `error`, when it cannot be read or is not a pattern.
+    bool ReadPatternFile(const std::string& filepath, Pattern& out_pattern, std::string* error = nullptr) const;
 
     // Writes the selected nodes as one of My patterns (<user folder>/<file
     // name from `name`>.cyxgraph, replacing one of the same name) and reads it
@@ -102,7 +119,7 @@ private:
     bool LoadPatternFile(const std::string& filepath, bool user);
 
     // Parse pattern JSON
-    bool ParsePatternJson(const std::string& json_content, Pattern& out_pattern);
+    bool ParsePatternJson(const std::string& json_content, Pattern& out_pattern) const;
 
     // Substitute parameters in a template string
     std::string SubstituteParams(

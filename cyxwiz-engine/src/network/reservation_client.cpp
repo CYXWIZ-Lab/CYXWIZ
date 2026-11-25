@@ -149,8 +149,6 @@ std::optional<ReservationInfo> ReservationClient::ReserveNode(
     info.node_endpoint = response.node_endpoint();
     info.p2p_auth_token = response.p2p_auth_token();
     info.p2p_token_expires = response.p2p_token_expires();
-    info.escrow_account = response.escrow_account();
-    info.escrow_amount = response.escrow_amount();
     info.start_time = response.reservation_start();
     info.end_time = response.reservation_expires();
     info.price_per_hour = response.price_per_hour();
@@ -161,7 +159,6 @@ std::optional<ReservationInfo> ReservationClient::ReserveNode(
     spdlog::info("  Reservation ID: {}", info.reservation_id);
     spdlog::info("  Node endpoint: {}", info.node_endpoint);
     spdlog::info("  Duration: {} minutes", duration_minutes);
-    spdlog::info("  Escrow: {} lamports", info.escrow_amount);
 
     return info;
 }
@@ -240,9 +237,6 @@ bool ReservationClient::ConfirmJobComplete(
     }
 
     spdlog::info("Job completion confirmed! Payment released: {}", response.payment_released());
-    if (!response.payment_tx_hash().empty()) {
-        spdlog::info("  Transaction: {}", response.payment_tx_hash());
-    }
 
     // Clear current reservation
     current_reservation_ = ReservationInfo{};
@@ -255,7 +249,6 @@ bool ReservationClient::ExtendReservation(
     const std::string& reservation_id,
     int32_t additional_minutes,
     int64_t& new_expires,
-    int64_t& additional_escrow,
     std::string& p2p_auth_token) {
 
     if (!connected_ || !stub_) {
@@ -289,12 +282,10 @@ bool ReservationClient::ExtendReservation(
     }
 
     new_expires = response.new_expires();
-    additional_escrow = response.additional_escrow();
     p2p_auth_token = response.p2p_auth_token();
 
     // Update current reservation
     current_reservation_.end_time = new_expires;
-    current_reservation_.escrow_amount += additional_escrow;
     current_reservation_.p2p_auth_token = p2p_auth_token;
 
     spdlog::info("Reservation extended! New end time: {}", new_expires);

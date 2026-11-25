@@ -44,11 +44,6 @@ void ModelBrowserPanel::Render() {
             RenderDownloaded();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Marketplace")) {
-            selected_tab_ = 2;
-            RenderMarketplace();
-            ImGui::EndTabItem();
-        }
         ImGui::EndTabBar();
     }
 
@@ -134,25 +129,11 @@ void ModelBrowserPanel::RenderLocalModels() {
 }
 
 void ModelBrowserPanel::RenderDownloaded() {
-    ImGui::TextDisabled("Downloaded models from CyxWiz Hub");
+    ImGui::TextDisabled("Models this node downloaded");
     ImGui::Spacing();
 
     // Placeholder - would fetch from daemon's downloaded models list
     ImGui::Text("No downloaded models yet.");
-    ImGui::Spacing();
-    if (ImGui::Button(ICON_FA_CLOUD_ARROW_DOWN " Browse Hub")) {
-        // Switch to marketplace tab
-        selected_tab_ = 2;
-    }
-}
-
-void ModelBrowserPanel::RenderMarketplace() {
-    ImGui::TextDisabled("Browse models from CyxWiz Marketplace");
-    ImGui::Spacing();
-
-    // Placeholder - would connect to marketplace API
-    ImGui::Text("Marketplace coming soon...");
-    ImGui::Text("Browse and download models from the CyxWiz community.");
 }
 
 void ModelBrowserPanel::RenderDeployDialog() {

@@ -1088,7 +1088,7 @@ void DeploymentDialog::RenderSelectedNodeInfo() {
 
     // Pricing
     ImGui::Text("%s Billing: %s", ICON_FA_DOLLAR_SIGN, node.billing_model.c_str());
-    ImGui::Text("Price: %.4f CYXWIZ/hr", node.price_per_hour);
+    ImGui::Text("Price: %.4f/hr", node.price_per_hour);
     if (node.free_tier_available) {
         ImGui::TextColored(t.success, ICON_FA_GIFT " Free tier available");
     }
@@ -1098,7 +1098,6 @@ void DeploymentDialog::RenderSelectedNodeInfo() {
     // Trust
     ImGui::Text("%s Reputation: %.0f%%", ICON_FA_STAR, node.reputation_score * 100);
     ImGui::Text("Jobs Completed: %lld", (long long)node.total_jobs_completed);
-    ImGui::Text("Staked: %.2f CYXWIZ", node.staked_amount);
 
     ImGui::Columns(1);
 

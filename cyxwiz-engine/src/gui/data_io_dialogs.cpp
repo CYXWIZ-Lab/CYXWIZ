@@ -1277,7 +1277,7 @@ void DataLoaderDialog::RenderWeightsCard(bool path_committed) {
         std::error_code ec;
         const auto size = fs::file_size(resolved, ec);
         const auto written = ec ? fs::file_time_type{} : fs::last_write_time(resolved, ec);
-        if (!ec) key += "|" + std::to_string(size) + "|" + std::to_string(written.time_since_epoch().count());
+        if (!ec) key += "|" + std::to_string(size) + "|" + std::to_string(static_cast<long long>(written.time_since_epoch().count()));
     }
     const bool typing = ImGui::IsAnyItemActive() && !path_committed;
     if (has_path && compiled && key != weights_probe_key_ && !typing && (!weights_probe_ || weights_probe_->done)) {

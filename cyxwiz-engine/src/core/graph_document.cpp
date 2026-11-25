@@ -62,9 +62,8 @@ bool HasParamValue(const std::map<std::string, std::string>& params,
 
 void CopyLegacyParamIfMissing(std::map<std::string, std::string>& params,
                                      const std::string& canonical_key,
-                                     const std::string& legacy_key,
-                                     bool prefer_legacy = false) {
-    if ((!prefer_legacy && HasParamValue(params, canonical_key)) ||
+                                     const std::string& legacy_key) {
+    if (HasParamValue(params, canonical_key) ||
         !HasParamValue(params, legacy_key)) {
         return;
     }
@@ -84,9 +83,8 @@ std::string FirstCsvToken(const std::string& value) {
 
 void CopyLegacyColumnIfMissing(std::map<std::string, std::string>& params,
                                       const std::string& canonical_key,
-                                      const std::string& legacy_key,
-                                      bool prefer_legacy = false) {
-    if ((!prefer_legacy && HasParamValue(params, canonical_key)) ||
+                                      const std::string& legacy_key) {
+    if (HasParamValue(params, canonical_key) ||
         !HasParamValue(params, legacy_key)) {
         return;
     }
@@ -252,10 +250,8 @@ bool RejectDenseEncodedSequencePlaceholder(const MLNode& node,
 }
 
 void MigrateLegacyNodeParameters(NodeType type,
-                                 std::map<std::string, std::string>& params,
-                                 bool prefer_legacy) {
-    cyxwiz::CanonicalizePipelineParameterAliases(
-        type, params, prefer_legacy);
+                                 std::map<std::string, std::string>& params) {
+    cyxwiz::CanonicalizePipelineParameterAliases(type, params);
     switch (type) {
         case NodeType::DataInput:
             cyxwiz::MigrateDataInputFormatAliases(params);
@@ -269,25 +265,25 @@ void MigrateLegacyNodeParameters(NodeType type,
             if (params.find("path_base") == params.end()) params["path_base"] = "exports";
             break;
         case NodeType::TimeSeriesWindow:
-            CopyLegacyColumnIfMissing(params, "value_col", "target_column", prefer_legacy);
-            CopyLegacyColumnIfMissing(params, "value_col", "column", prefer_legacy);
-            CopyLegacyColumnIfMissing(params, "value_col", "columns", prefer_legacy);
-            CopyLegacyParamIfMissing(params, "input_width", "window_size", prefer_legacy);
-            CopyLegacyParamIfMissing(params, "shift", "forecast_horizon", prefer_legacy);
+            CopyLegacyColumnIfMissing(params, "value_col", "target_column");
+            CopyLegacyColumnIfMissing(params, "value_col", "column");
+            CopyLegacyColumnIfMissing(params, "value_col", "columns");
+            CopyLegacyParamIfMissing(params, "input_width", "window_size");
+            CopyLegacyParamIfMissing(params, "shift", "forecast_horizon");
             break;
 
         case NodeType::TimeSeriesFeatures:
-            CopyLegacyColumnIfMissing(params, "value_col", "columns", prefer_legacy);
-            CopyLegacyParamIfMissing(params, "lag_values", "lag_features", prefer_legacy);
-            CopyLegacyParamIfMissing(params, "lag_values", "lag_periods", prefer_legacy);
-            CopyLegacyParamIfMissing(params, "rolling_windows", "rolling_window", prefer_legacy);
-            CopyLegacyParamIfMissing(params, "rolling_aggregations", "rolling_features", prefer_legacy);
+            CopyLegacyColumnIfMissing(params, "value_col", "columns");
+            CopyLegacyParamIfMissing(params, "lag_values", "lag_features");
+            CopyLegacyParamIfMissing(params, "lag_values", "lag_periods");
+            CopyLegacyParamIfMissing(params, "rolling_windows", "rolling_window");
+            CopyLegacyParamIfMissing(params, "rolling_aggregations", "rolling_features");
             break;
 
         case NodeType::Differencing:
-            CopyLegacyColumnIfMissing(params, "value_col", "column", prefer_legacy);
-            CopyLegacyColumnIfMissing(params, "value_col", "columns", prefer_legacy);
-            CopyLegacyColumnIfMissing(params, "value_col", "target_column", prefer_legacy);
+            CopyLegacyColumnIfMissing(params, "value_col", "column");
+            CopyLegacyColumnIfMissing(params, "value_col", "columns");
+            CopyLegacyColumnIfMissing(params, "value_col", "target_column");
             break;
 
         default:
@@ -345,6 +341,12 @@ bool ReadLoadableNodeType(const nlohmann::json& node_json, gui::NodeType& node_t
                 : "an Image Preprocessor node, which Resize and Normalize replaced";
         error = "node '" + node_json.value("name", std::string("<unnamed>")) + "' is " + replaced +
                 ": remove it from the file or rebuild that step with those nodes";
+        return false;
+    }
+    if (node_type == NodeType::HuggingFaceDataset) {
+        error = "node '" + node_json.value("name", std::string("<unnamed>")) +
+                "' is a Hugging Face Dataset node, which was removed: remove it from the file and load "
+                "the data with a Data Input node (double-click it, pick the files, Apply)";
         return false;
     }
     if (node_type == NodeType::HDF5Dataset) {

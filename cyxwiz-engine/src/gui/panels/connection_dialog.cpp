@@ -307,8 +307,7 @@ void ConnectionDialog::RenderNodeTable() {
                 // Show USD price per hour like cloud providers
                 ImGui::Text("$%.2f/hr", node.price_usd_equivalent);
             } else if (node.price_per_hour > 0) {
-                // Show CYX token price per hour
-                ImGui::Text("%.2f CYX/hr", node.price_per_hour);
+                ImGui::Text("%.2f/hr", node.price_per_hour);
             } else {
                 ImGui::TextDisabled("N/A");
             }
@@ -425,16 +424,12 @@ void ConnectionDialog::RenderSelectedNodeInfo() {
         ImGui::TextDisabled("free jobs to rebuild trust.");
     } else if (node.price_usd_equivalent > 0) {
         // Normal pricing - show hourly rate like cloud providers
-        ImGui::Text("Price: $%.2f/hr (%.2f CYX)", node.price_usd_equivalent, node.price_per_hour);
+        ImGui::Text("Price: $%.2f/hr", node.price_usd_equivalent);
 
         // Show discount info
         ImGui::TextDisabled("10%% off for >1hr, 20%% off for >24hr");
     } else if (node.price_per_hour > 0) {
-        ImGui::Text("Price: %.2f CYX/hr", node.price_per_hour);
-    }
-
-    if (node.staked_amount > 0) {
-        ImGui::Text("Staked: %.2f CYX", node.staked_amount);
+        ImGui::Text("Price: %.2f/hr", node.price_per_hour);
     }
 
     ImGui::Columns(1);
@@ -748,7 +743,7 @@ void ConnectionDialog::StartP2PTraining() {
     spdlog::info("  Batch Size: {}", reservation_batch_size_);
 
     // Build JobConfig for P2P transmission to Server Node
-    // Note: No wallet/payment_address needed - escrow was handled during reservation
+    // The reservation already covers payment; the job carries no payment details.
     cyxwiz::protocol::JobConfig config;
     config.set_job_id(active_reservation_.job_id);
     config.set_job_type(cyxwiz::protocol::JOB_TYPE_TRAINING);
@@ -901,10 +896,9 @@ bool ConnectionDialog::ExtendActiveReservation(int additional_minutes) {
         return false;
     }
     int64_t new_expires = 0;
-    int64_t additional_escrow = 0;
     std::string token;
     if (!reservation_client_->ExtendReservation(active_reservation_.reservation_id, additional_minutes, new_expires,
-                                                additional_escrow, token)) {
+                                                token)) {
         reservation_error_ = "Could not extend the reservation: " + reservation_client_->GetLastError();
         return false;
     }

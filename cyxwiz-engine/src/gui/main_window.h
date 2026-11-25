@@ -33,7 +33,6 @@ class DataInputDialog;
 class Console;
 class Viewport;
 class Properties;
-class WalletPanel;
 class ThemeEditorPanel;
 class CloudBrowserPanel;
 class CloudDatasetManagerPanel;
@@ -130,6 +129,10 @@ public:
 
     // Check if a script is currently running
     bool IsScriptRunning() const;
+
+    // Python steps that make a node (Make a Python node, Create node from
+    // script) still running: closing waits for them.
+    std::vector<std::string> NodeStepsRunning() const;
 
     // Stop any running script
     void StopRunningScript();
@@ -455,7 +458,6 @@ private:
     std::unique_ptr<cyxwiz::ConnectionDialog> connection_dialog_;
     std::unique_ptr<cyxwiz::JobStatusPanel> job_status_panel_;
     std::unique_ptr<cyxwiz::P2PTrainingPanel> p2p_training_panel_;
-    std::unique_ptr<gui::WalletPanel> wallet_panel_;
     std::unique_ptr<cyxwiz::TaskProgressPanel> task_progress_panel_;
     std::unique_ptr<cyxwiz::PatternBrowserPanel> pattern_browser_;
     // The side panels the Studio Debugger's Full size hid, shown again when

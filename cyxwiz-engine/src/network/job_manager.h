@@ -51,11 +51,6 @@ public:
     // Job submission with full configuration (to Central Server)
     bool SubmitJob(const cyxwiz::protocol::JobConfig& config, std::string& out_job_id);
 
-    // Simplified job submission for testing
-    bool SubmitSimpleJob(const std::string& model_definition,
-                         const std::string& dataset_uri,
-                         std::string& out_job_id);
-
     // P2P workflow: Submit job and get node assignment from Central Server
     bool SubmitJobWithP2P(const cyxwiz::protocol::JobConfig& config,
                          std::string& out_job_id);

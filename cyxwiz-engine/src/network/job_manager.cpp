@@ -237,26 +237,6 @@ bool JobManager::SubmitJob(const cyxwiz::protocol::JobConfig& config, std::strin
     return true;
 }
 
-bool JobManager::SubmitSimpleJob(const std::string& model_definition,
-                                   const std::string& dataset_uri,
-                                   std::string& out_job_id) {
-    // Create a simple job config for testing
-    // Note: payment_address is not needed here - Central Server gets it from JWT
-    cyxwiz::protocol::JobConfig config;
-    config.set_job_type(cyxwiz::protocol::JOB_TYPE_TRAINING);
-    config.set_priority(cyxwiz::protocol::PRIORITY_NORMAL);
-    config.set_model_definition(model_definition);
-    config.set_dataset_uri(dataset_uri);
-    config.set_batch_size(32);
-    config.set_epochs(10);
-    config.set_required_device(cyxwiz::protocol::DEVICE_CUDA); // Request CUDA GPU
-    config.set_estimated_memory(1024 * 1024 * 1024);  // 1 GB
-    config.set_estimated_duration(600);                // 10 minutes
-    config.set_payment_amount(1.0);                    // 1 CYXWIZ token
-
-    return SubmitJob(config, out_job_id);
-}
-
 void JobManager::CancelJob(const std::string& job_id) {
     if (!IsConnected()) {
         spdlog::error("Not connected to server");

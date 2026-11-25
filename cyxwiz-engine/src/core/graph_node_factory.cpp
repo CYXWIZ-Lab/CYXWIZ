@@ -1444,22 +1444,6 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::HuggingFaceDataset: {
-            // HuggingFaceDataset - Load dataset from HuggingFace Hub
-            NodePin dataset_out;
-            dataset_out.id = next_pin_id_++;
-            dataset_out.type = PinType::Dataset;
-            dataset_out.name = "Dataset";
-            dataset_out.is_input = false;
-            node.outputs.push_back(dataset_out);
-
-            node.parameters["dataset_id"] = "";                // HuggingFace dataset ID (e.g., "imdb", "squad")
-            node.parameters["split"] = "train";                // train, test, validation
-            node.parameters["subset"] = "";                    // Dataset subset/config (optional)
-            node.parameters["streaming"] = "false";            // Enable streaming for large datasets
-            break;
-        }
-
         case NodeType::KaggleDataset: {
             // KaggleDataset - Load dataset from Kaggle
             NodePin dataset_out;

@@ -45,6 +45,8 @@ public:
     ~ScriptEditorPanel() override;
 
     void Render() override;
+    // Create node from script's Python step still running, or empty.
+    std::string CreateNodeStepRunning() const;
 
     // Set scripting engine (shared with other panels)
     void SetScriptingEngine(std::shared_ptr<scripting::ScriptingEngine> engine);

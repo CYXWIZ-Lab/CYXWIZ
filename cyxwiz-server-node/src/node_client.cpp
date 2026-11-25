@@ -96,7 +96,6 @@ protocol::NodeInfo HardwareDetector::DetectHardwareInfo(const std::string& node_
 
     // Staking (not implemented yet)
     info.set_staked_amount(0.0);
-    info.set_wallet_address("");  // TODO: Get from config or generate
 
     // Status
     info.set_is_online(true);
@@ -962,8 +961,7 @@ bool NodeClient::ReportReservationEndFromNode(
             if (response.payment_released()) {
                 spdlog::info("========================================");
                 spdlog::info("[PAYMENT] Payment released successfully!");
-                spdlog::info("  Amount received: {} lamports", response.amount_received());
-                spdlog::info("  Transaction hash: {}", response.payment_tx_hash());
+                spdlog::info("  Amount received: {}", response.amount_received());
                 spdlog::info("========================================");
             } else {
                 spdlog::info("Reservation end reported. Waiting for engine confirmation.");

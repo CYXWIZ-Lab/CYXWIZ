@@ -21,8 +21,8 @@ project and your account at the right end.
 | Help | Tutorials, keyboard shortcuts, **Documentation** (F1), **API Reference**, **What's New**, **Known Issues**, Report Issue, **Open Logs Folder**, About |
 
 An item that cannot run now is greyed; hover it for the reason. Items marked
-*(planned)* are not built yet (Check for Updates, Deploy > Quantize, Publish
-to Marketplace, Data > Augment).
+*(planned)* are not built yet (Check for Updates, Deploy > Quantize,
+Data > Augment).
 
 ## The right end
 
@@ -35,8 +35,8 @@ to Marketplace, Data > Augment).
   - signed in, your initials in a circle, your name (the first name when the
     whole name is long) and your plan (*Pro*, *Admin*). Hover for your email.
     The menu starts with your name, email and plan, then **Account
-    Settings...**, **Wallet**, **Servers...** (Preferences > Servers: the
-    central server and your nodes) and **Sign out**.
+    Settings...**, **Servers...** (Preferences > Servers: the central server
+    and your nodes) and **Sign out**.
 
 ## New in the menus
 
