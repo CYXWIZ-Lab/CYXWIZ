@@ -328,3 +328,6 @@ if(CYXWIZ_HAS_ONNX_EXPORT)
         message(STATUS "ONNX Export tests disabled - ONNX package not found")
     endif()
 endif()
+
+# Test executables of this folder use a scratch user folder (cmake/CyxWizTestScratchUserFolders.cmake).
+cyxwiz_scratch_user_folders_for_tests()

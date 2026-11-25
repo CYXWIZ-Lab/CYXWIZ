@@ -162,3 +162,9 @@ if(CYXWIZ_RL_ORACLE_PYTHON AND TARGET _cyxwiz_envs)
              COMMAND ${CYXWIZ_RL_ORACLE_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mujoco_python_envs.py
                      $<TARGET_FILE_DIR:_cyxwiz_envs> ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
+
+# Test executables use a scratch user folder (cmake/CyxWizTestScratchUserFolders.cmake in the
+# Engine tree; a plugin built on its own has no such folder to protect).
+if(COMMAND cyxwiz_scratch_user_folders_for_tests)
+    cyxwiz_scratch_user_folders_for_tests()
+endif()

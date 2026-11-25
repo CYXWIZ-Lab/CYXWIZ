@@ -17,6 +17,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Add custom cmake modules path (for FindONNXRuntime, etc.)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(CyxWizWindowsResources)
+include(CyxWizTestScratchUserFolders)
 include(CyxWizHttplib)
 
 # Build options
@@ -155,6 +156,7 @@ if(CYXWIZ_BUILD_INSTALLER_ONLY)
             COMMAND test_installer_verification_summary
         )
     endif()
+    cyxwiz_scratch_user_folders_for_tests()
 
     message(STATUS "Configured standalone CyxWiz installer targets")
     return()

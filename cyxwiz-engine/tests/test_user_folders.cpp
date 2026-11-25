@@ -162,6 +162,24 @@ void CheckOverrideAndRunFiles() {
     }
 }
 
+// A test executable runs in its own scratch profile from the start
+// (tests/support/scratch_user_folders.cpp), never in the user's folders.
+void CheckTestScratchDefault() {
+    const fs::path scratch = (fs::temp_directory_path() / "cyxwiz-tests").lexically_normal();
+    for (const auto& folder : {cyxwiz::UserConfigDir(), cyxwiz::UserStateDir(), cyxwiz::UserLogDir(),
+                               cyxwiz::UserCacheDir()}) {
+        Check(StartsWith(folder, scratch), "a test's user folder is in its scratch profile: " + folder.string());
+        Check(folder.string().find("test_user_folders-") != std::string::npos,
+              "the scratch profile is named after the test executable: " + folder.string());
+    }
+    const fs::path before = cyxwiz::UserStateDir();
+    {
+        cyxwiz::ScopedUserFoldersOverrideForTesting scope(Root() / "inner");
+        Check(StartsWith(cyxwiz::UserStateDir(), Root() / "inner"), "a test's own override wins");
+    }
+    CheckPath(cyxwiz::UserStateDir(), before, "closing a test's own override restores the scratch profile");
+}
+
 void CheckInstalledRun() {
     SetVariable("CYXWIZ_ACTIVE_RUNTIME_ROOT", "");
     Check(!cyxwiz::core::IsInstalledRun(), "a test in the build folder is a development run");
@@ -175,6 +193,7 @@ void CheckInstalledRun() {
 }  // namespace
 
 int main() {
+    CheckTestScratchDefault();
     CheckWindowsTable();
     CheckMacTable();
     CheckLinuxTable();

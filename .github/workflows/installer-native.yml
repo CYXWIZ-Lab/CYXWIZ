@@ -345,6 +345,12 @@ jobs:
           build/bin/generate_installer_metadata_fixture
           build/installer-bootstrap-metadata
 
+      # Tests keep their files in a scratch folder of their own: prove they
+      # leave the user's CyxWiz folders alone (checked after the tests).
+      - name: Record the user's CyxWiz folders before the tests
+        id: user-folders
+        run: python scripts/checks/check_user_folders_untouched.py record "${{ runner.temp }}/user-folders.json"
+
       - name: Run native installer contracts
         if: inputs.release_mode != true
         run: ctest --test-dir build --build-config Release --output-on-failure
@@ -354,6 +360,10 @@ jobs:
         run: >-
           ctest --test-dir build --build-config Release --output-on-failure
           --exclude-regex '^installer_setup_signed_bundle_contract$'
+
+      - name: Check the tests left the user's CyxWiz folders alone
+        if: ${{ !cancelled() && steps.user-folders.outcome == 'success' }}
+        run: python scripts/checks/check_user_folders_untouched.py check "${{ runner.temp }}/user-folders.json"
 
       - name: Prove embedded setup trust cannot be replaced
         if: inputs.release_mode == true

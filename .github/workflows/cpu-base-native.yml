@@ -348,6 +348,12 @@ jobs:
           test_mujoco_graph_clock test_mujoco_environments test_mujoco_viewport
           test_plugin_presentation test_rl_graph_training
 
+      # Tests keep their files in a scratch folder of their own: prove they
+      # leave the user's CyxWiz folders alone (checked after the tests).
+      - name: Record the user's CyxWiz folders before the tests
+        id: user-folders
+        run: python scripts/checks/check_user_folders_untouched.py record "${{ runner.temp }}/user-folders.json"
+
       # CPU only: the runners have no GPU.
       - name: Run the MuJoCo plugin tests on the CPU
         shell: pwsh
@@ -459,6 +465,10 @@ jobs:
           $code = $LASTEXITCODE
           Write-Host ('test_rl_graph_training: {0:N0} s' -f ((Get-Date) - $started).TotalSeconds)
           if ($code -ne 0) { throw "test_rl_graph_training failed with exit code $code" }
+
+      - name: Check the tests left the user's CyxWiz folders alone
+        if: ${{ !cancelled() && steps.user-folders.outcome == 'success' }}
+        run: python scripts/checks/check_user_folders_untouched.py check "${{ runner.temp }}/user-folders.json"
 
       # Accelerator packs redistribute the CUDA, OpenCL and oneAPI runtimes
       # from the ArrayFire 3.10 install above; nothing is compiled. CI cannot

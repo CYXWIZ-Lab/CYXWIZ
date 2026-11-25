@@ -53,3 +53,6 @@ find_package(imgui CONFIG REQUIRED)
 add_executable(test_data_convert_format_controls ../test_data_convert_format_controls.cpp)
 target_link_libraries(test_data_convert_format_controls PRIVATE imgui::imgui)
 add_test(NAME test_data_convert_format_controls COMMAND test_data_convert_format_controls)
+
+# Test executables of this folder use a scratch user folder (cmake/CyxWizTestScratchUserFolders.cmake).
+cyxwiz_scratch_user_folders_for_tests()

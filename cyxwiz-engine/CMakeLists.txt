@@ -9783,3 +9783,6 @@ if(_cyxwiz_engine_tests)
     set_property(TEST ${_cyxwiz_engine_tests} APPEND PROPERTY ENVIRONMENT
         "CYXWIZ_DEBUG_RUN_ROOT=${CMAKE_BINARY_DIR}/test_debug_runs")
 endif()
+
+# Test executables of this folder use a scratch user folder (cmake/CyxWizTestScratchUserFolders.cmake).
+cyxwiz_scratch_user_folders_for_tests()

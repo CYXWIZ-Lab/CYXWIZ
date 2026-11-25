@@ -188,6 +188,12 @@ jobs:
       - name: Build the oracle tests
         run: cmake --build build --config Release --target cyxwiz-oracle-tests --parallel
 
+      # Tests keep their files in a scratch folder of their own: prove they
+      # leave the user's CyxWiz folders alone (checked after the tests).
+      - name: Record the user's CyxWiz folders before the tests
+        id: user-folders
+        run: python scripts/checks/check_user_folders_untouched.py record "${{ runner.temp }}/user-folders.json"
+
       # Every oracle test prints the commit it was built from and the device it
       # ran on; the training tests check that every run stayed on ArrayFire CPU.
       - name: Run the oracle tests
@@ -195,6 +201,10 @@ jobs:
           ctest --test-dir build --build-config Release
           -L oracle -L cpu --output-on-failure --timeout 1200
           --parallel 2 --output-junit oracle-cpu-junit.xml
+
+      - name: Check the tests left the user's CyxWiz folders alone
+        if: ${{ !cancelled() && steps.user-folders.outcome == 'success' }}
+        run: python scripts/checks/check_user_folders_untouched.py check "${{ runner.temp }}/user-folders.json"
 
       - name: Upload the oracle logs
         if: always()
