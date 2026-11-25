@@ -1,6 +1,6 @@
 ---
 title: CyxWiz Engine documentation
-description: Start here to install the CyxWiz Engine, learn its window, build a model in the graph editor and look up any part of it.
+description: Start here to learn the CyxWiz Engine with a tutorial, install it, learn its window, build a model in the graph editor and look up any part of it.
 type: landing
 area: general
 audience: user
@@ -9,6 +9,7 @@ since: 1.0.7
 owner: docs
 last_reviewed: 2026-11-25
 related:
+  - tutorials/index.md
   - install/index.md
   - main-window/index.md
   - user-guide/graph-editor/index.md
@@ -16,15 +17,26 @@ related:
 redirect_from: []
 ---
 
+## Get started with a tutorial
+
+Train your first model in about 15 minutes: open a starter graph, look at
+each node, press **Train** and read the results.
+
+[Training a model in CyxWiz Engine, 6x speed (video)](https://engine.cyxwiz.ai/media/v/mnist-session.mp4)
+
+1. [Tour the main window](tutorials/tour-the-main-window.md)
+2. [Train your first model from a starter graph](tutorials/first-model-from-a-starter.md)
+3. [Bring in and prepare your own data](tutorials/prepare-your-own-data.md)
+
+The [learning path](tutorials/index.md) has six lessons, then lessons on
+text, audio, time series and Python.
+
+## Install and first launch
+
 The CyxWiz Engine is a desktop application for building machine-learning
 models as graphs: you place nodes on a canvas, connect them, set their
 properties, and train, debug, test and export the result on your own
 computer.
-
-New here? Install the Engine, open a task starter from the start page, and
-press **Train**. Then read the graph editor guide to build your own.
-
-## Get started
 
 | | |
 | --- | --- |

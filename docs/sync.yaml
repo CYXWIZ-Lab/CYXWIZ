@@ -66,3 +66,9 @@ concepts:
 internals:
   code: [CMakeLists.txt, CMakePresets.json, cmake/**, cyxwiz-engine/CMakeLists.txt, cyxwiz-engine/src/application*, cyxwiz-engine/src/main.cpp, cyxwiz-engine/src/core/async_task*, cyxwiz-engine/src/core/node_metadata_registry*, cyxwiz-engine/src/plugin/**, cyxwiz-protocol/proto/**, redist/**, scripts/**, tests/**, cyxwiz-engine/tests/**]
   synced_at: 202a19691
+
+# The tutorials: the five task starters, the graph lessons 3 and 4 build, the
+# Python lesson's script, their sample data, and the start page that offers them.
+tutorials:
+  code: [examples/cyxgraph/mnist_mlp.cyxgraph, examples/cyxgraph/review_sentiment_classifier.cyxgraph, examples/cyxgraph/speech_command_classifier.cyxgraph, examples/cyxgraph/timeseries/airline_passengers_dense.cyxgraph, examples/cyxgraph/cats_dogs_classifier.cyxgraph, examples/cyxgraph/missing_values_fix.cyxgraph, examples/datasets/**, examples/python/digits_mlp.py, cyxwiz-engine/src/gui/starter_graphs*, cyxwiz-engine/src/gui/dialogs/start_page*, cyxwiz-engine/src/gui/data_studio/missing_view*, cyxwiz-engine/src/gui/panels/model_panel*, cyxwiz-engine/src/gui/panels/export_dialog*, cyxwiz-engine/src/core/code_export*]
+  synced_at: 202a19691
