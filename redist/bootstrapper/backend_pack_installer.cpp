@@ -1,5 +1,6 @@
 #include "backend_pack_installer.h"
 #include "backend_pack_hash.h"
+#include "backend_pack_installed_files.h"
 #include "backend_pack_path.h"
 #include "backend_pack_progress_cadence.h"
 #include "base_repair_publication.h"
@@ -55,75 +56,6 @@ bool IsPrivateDeliveryExtraction(
         std::filesystem::canonical(source, filesystem_error);
     if (filesystem_error || !IsWithin(delivery_root, canonical_source)) {
         error = "Private extraction is outside the delivery staging root";
-        return false;
-    }
-    return true;
-}
-
-bool ValidateFile(
-    const std::filesystem::path& path,
-    const VerifiedPackComponent& component,
-    std::string& error,
-    const Sha256FileProgress& hash_progress = {}) {
-    std::error_code filesystem_error;
-    const auto status = std::filesystem::symlink_status(path, filesystem_error);
-    if (filesystem_error || !std::filesystem::is_regular_file(status) ||
-        std::filesystem::is_symlink(status)) {
-        error = "Component is missing or is not a regular file: " +
-                component.relative_path;
-        return false;
-    }
-    const auto size = std::filesystem::file_size(path, filesystem_error);
-    if (filesystem_error || size != component.size) {
-        error = "Component size differs from signed metadata: " +
-                component.relative_path;
-        return false;
-    }
-    std::string digest;
-    if (!Sha256File(path, digest, error, hash_progress)) return false;
-    if (digest != component.sha256) {
-        error = "Component SHA-256 differs from signed metadata: " +
-                component.relative_path;
-        return false;
-    }
-    return true;
-}
-
-bool EnumerateExactPayload(
-    const std::filesystem::path& root,
-    const std::set<std::string>& expected,
-    std::string& error) {
-    std::error_code filesystem_error;
-    const auto root_status =
-        std::filesystem::symlink_status(root, filesystem_error);
-    if (filesystem_error || !std::filesystem::is_directory(root_status) ||
-        std::filesystem::is_symlink(root_status)) {
-        error = "Pack payload root is missing or unsafe";
-        return false;
-    }
-    std::set<std::string> observed;
-    for (std::filesystem::recursive_directory_iterator iterator(root), end;
-         iterator != end; ++iterator) {
-        const auto status = iterator->symlink_status(filesystem_error);
-        if (filesystem_error || std::filesystem::is_symlink(status)) {
-            error = "Pack payload contains a link or unreadable entry";
-            return false;
-        }
-        if (std::filesystem::is_directory(status)) continue;
-        if (!std::filesystem::is_regular_file(status)) {
-            error = "Pack payload contains an unsupported filesystem entry";
-            return false;
-        }
-        const auto relative =
-            std::filesystem::relative(iterator->path(), root, filesystem_error);
-        if (filesystem_error) {
-            error = "Cannot resolve a pack payload path";
-            return false;
-        }
-        observed.insert(FoldBackendPackPath(relative.generic_string()));
-    }
-    if (observed != expected) {
-        error = "Pack payload files differ from signed component inventory";
         return false;
     }
     return true;
@@ -374,7 +306,7 @@ BackendPackInstallResult BackendPackInstaller::Apply(
                    runtime_root_, payload.source_directory, error)) {
         return Finish(BackendPackInstallStatus::InvalidRequest, error);
     }
-    if (!EnumerateExactPayload(
+    if (!VerifyExactPackInventory(
             payload.source_directory, expected_paths, error)) {
         return Finish(BackendPackInstallStatus::IntegrityFailure, error);
     }
@@ -396,7 +328,7 @@ BackendPackInstallResult BackendPackInstaller::Apply(
                 }
                 return !cancel_requested_.load();
             };
-            if (!ValidateFile(
+            if (!VerifyPackComponentFile(
                     payload.source_directory /
                         BackendPackNativeRelativePath(
                             component.relative_path),
@@ -445,9 +377,9 @@ BackendPackInstallResult BackendPackInstaller::Apply(
     bool replace_existing = false;
     std::unique_ptr<RuntimeMutationLease> mutation_lease;
     if (destination_exists && !base_repair) {
-        bool valid = EnumerateExactPayload(destination, expected_paths, error);
+        bool valid = VerifyExactPackInventory(destination, expected_paths, error);
         for (const auto& component : payload.components) {
-            if (valid && !ValidateFile(
+            if (valid && !VerifyPackComponentFile(
                     destination /
                         BackendPackNativeRelativePath(component.relative_path),
                     component, error)) {
@@ -593,7 +525,7 @@ BackendPackInstallResult BackendPackInstaller::Apply(
                         }
                         return !cancel_requested_.load();
                     };
-                if (!ValidateFile(
+                if (!VerifyPackComponentFile(
                         staged_payload / BackendPackNativeRelativePath(
                             component.relative_path),
                         component, error, publish_hash_progress)) {

@@ -1,4 +1,5 @@
 #include "backend_pack_hash.h"
+#include "backend_pack_installed_files.h"
 #include "backend_pack_installed_metadata.h"
 #include "backend_pack_lifecycle_service.h"
 #include "backend_pack_metadata_cache.h"
@@ -1310,6 +1311,109 @@ int main() {
                                              fixture.Verifier(), evidence, error) &&
                 evidence.plugin_id == "com.cyxwiz.simulation.mujoco",
             "plugin delivery must retain signed installed-version evidence");
+
+        // The installed add-on against its signed inventory: the check the
+        // Engine runs before it loads the pack, and the add-on cards' Damaged.
+        {
+            const auto folder = PluginPackDirectory(
+                fixture.runtime, "com.cyxwiz.simulation.mujoco", "mujoco-v1");
+            VerifiedBackendPackManifest installed;
+            failures += !Expect(
+                VerifyInstalledPluginPack(fixture.runtime, "com.cyxwiz.simulation.mujoco",
+                                          "mujoco-v1", fixture.Verifier(), installed, error) &&
+                    installed.components.size() == 3 &&
+                    CheckInstalledPackFiles(folder, installed.components).ok() &&
+                    CheckInstalledPackFiles(folder, installed.components).files_checked == 3,
+                "a delivered add-on must verify with its signed inventory (" + error + ")");
+
+            const auto finding = [&](const std::string& path, PackFileFault fault) {
+                const auto check = CheckInstalledPackFiles(folder, installed.components);
+                return std::any_of(check.findings.begin(), check.findings.end(),
+                                   [&](const PackFileFinding& item) {
+                                       return item.relative_path == path && item.fault == fault;
+                                   });
+            };
+            const auto write_byte = [](const std::filesystem::path& path, char value) {
+                std::ofstream(path, std::ios::binary | std::ios::trunc).put(value);
+            };
+            // Same size, other contents: the reason names the file.
+            write_byte(folder / "bin" / "mujoco.dll", '\x01');
+            PackFileFault fault = PackFileFault::None;
+            std::string file_error;
+            failures += !Expect(
+                finding("bin/mujoco.dll", PackFileFault::ContentDiffers) &&
+                    !VerifyPackComponentFile(folder / "bin" / "mujoco.dll",
+                                             *std::find_if(installed.components.begin(),
+                                                           installed.components.end(),
+                                                           [](const VerifiedPackComponent& item) {
+                                                               return item.relative_path == "bin/mujoco.dll";
+                                                           }),
+                                             file_error, {}, &fault) &&
+                    fault == PackFileFault::ContentDiffers &&
+                    file_error.find("bin/mujoco.dll") != std::string::npos,
+                "a changed add-on library of the same size must be refused, naming the file");
+            write_byte(folder / "bin" / "mujoco.dll", '\0');
+
+            std::filesystem::rename(folder / "THIRD_PARTY_LICENSES" / "MuJoCo" / "LICENSE.txt",
+                                    fixture.root / "LICENSE.aside");
+            failures += !Expect(
+                finding("THIRD_PARTY_LICENSES/MuJoCo/LICENSE.txt", PackFileFault::Missing),
+                "a missing add-on component must be refused");
+            std::filesystem::rename(fixture.root / "LICENSE.aside",
+                                    folder / "THIRD_PARTY_LICENSES" / "MuJoCo" / "LICENSE.txt");
+
+            write_byte(folder / "bin" / "extra.dll", '\0');
+            failures += !Expect(finding("bin/extra.dll", PackFileFault::NotListed),
+                                "an unlisted library in an add-on folder must be refused");
+            std::filesystem::remove(folder / "bin" / "extra.dll");
+            write_byte(folder / "notes.txt", '\0');
+            failures += !Expect(finding("notes.txt", PackFileFault::NotListed),
+                                "an unlisted file of any kind in an add-on folder must be refused");
+            std::filesystem::remove(folder / "notes.txt");
+            failures += !Expect(CheckInstalledPackFiles(folder, installed.components).ok(),
+                                "the restored add-on must verify again");
+
+            VerifiedBackendPackManifest other;
+            failures += !Expect(
+                !VerifyInstalledPluginPack(fixture.runtime, "com.example.other", "mujoco-v1",
+                                           fixture.Verifier(), other, error),
+                "signed metadata of another plugin must be refused");
+
+            // A revoked pack key refuses the installed metadata.
+            std::ifstream trust_stream(fixture.trust_path);
+            Json trust = Json::parse(trust_stream);
+            for (auto& key : trust["keys"]) key["revoked"] = key["key_id"] == "pack-2026";
+            const auto revoked_path = fixture.root / "revoked-keys.json";
+            WriteJson(revoked_path, trust);
+            auto revoked_trust = BackendPackTrustStore::Load(revoked_path, error);
+            failures += !Expect(
+                revoked_trust &&
+                    !VerifyInstalledPluginPack(
+                        fixture.runtime, "com.cyxwiz.simulation.mujoco", "mujoco-v1",
+                        BackendPackMetadataVerifier(std::move(*revoked_trust), "0.2.0", "win64",
+                                                    "x86_64"),
+                        other, error),
+                "add-on metadata signed by a revoked key must be refused");
+
+            // No installed metadata (nor the cached manifest older installs use).
+            const std::filesystem::path evidence_files[] = {
+                fixture.runtime / "installed-metadata" / "mujoco-v1.json",
+                fixture.runtime / "catalogs" / "manifests" / "mujoco-v1.json"};
+            for (std::size_t index = 0; index < 2; ++index) {
+                std::error_code ignored;
+                std::filesystem::rename(evidence_files[index],
+                                        fixture.root / ("evidence-" + std::to_string(index)), ignored);
+            }
+            failures += !Expect(
+                !VerifyInstalledPluginPack(fixture.runtime, "com.cyxwiz.simulation.mujoco",
+                                           "mujoco-v1", fixture.Verifier(), other, error),
+                "an add-on with no installed metadata must be refused");
+            for (std::size_t index = 0; index < 2; ++index) {
+                std::error_code ignored;
+                std::filesystem::rename(fixture.root / ("evidence-" + std::to_string(index)),
+                                        evidence_files[index], ignored);
+            }
+        }
 
         // After a CPU base update the add-on is installed for another base:
         // its retained manifest is still read, so its card keeps its version.

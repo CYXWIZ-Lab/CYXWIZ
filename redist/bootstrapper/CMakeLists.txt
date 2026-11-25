@@ -63,6 +63,7 @@ target_link_libraries(cyxwiz-backend-pack-maintenance PUBLIC
 add_library(cyxwiz-backend-pack-service STATIC
     backend_pack_update_policy.cpp
     backend_pack_installed_metadata.cpp
+    backend_pack_installed_files.cpp
     backend_pack_acquisition.cpp
     backend_pack_archive_extractor.cpp
     backend_pack_compatibility.cpp
