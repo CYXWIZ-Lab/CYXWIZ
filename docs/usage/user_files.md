@@ -29,13 +29,17 @@ On Linux, `XDG_STATE_HOME` and `XDG_CACHE_HOME` replace `~/.local/state` and
 | `imgui.ini` | Settings | The window layout, the open panels and the windows of their own |
 | `tutorial_progress.json` | Settings | Which tutorials you finished |
 | `recent_projects.json`, `node_presets.json`, `node_approvals.json`, `plugin_startup.json`, `plugin_permissions.json` | Settings | Recent projects (on macOS and Linux in `~/.config/cyxwiz`), node presets, approved Python nodes, plugins loaded at start and their permissions |
+| `python_scan.json` | Settings | The Python interpreters found at the last Python check |
 | `plugins/`, `nodes/`, `patterns/` | Settings | Your own plugins, Python nodes and patterns |
 | `engine_log.txt` | Logs | The log of this launch; `engine_log.1.txt` to `engine_log.4.txt` are the four launches before |
 | `compute/` | Machine state | The saved compute device and the route qualification evidence |
 | `Engine/debug_runs/` (`engine/debug_runs/` on Linux) | Machine state | Studio Debugger runs and the last training trace |
 | `cache/plugins/` | Caches | Copies of the plugin libraries the Engine loads |
-| `python/pycache/` | Caches | Compiled Python bytecode of the scripts and tools the Engine runs |
+| `python/pycache/` | Caches | An installed Engine's compiled Python bytecode: of its own Python and of every Python it starts (the Python check, new environments, a project's environment, pip) |
+| `cloud/` | Caches | Cached CyxCloud dataset files |
 | `no-project/` | Caches | What a run writes when no project is open: `artifacts/`, `checkpoints/`, `prepared/` (prepared data) |
+| `cyxwiz/exports/` | The temporary folder | Files an export node writes when no project is open (`no-project/exports/` in Caches if there is no temporary folder) |
+| `.cyxwiz/menagerie/`, `.cyxwiz/imported/` | Your home folder (`%USERPROFILE%` on Windows) | The MuJoCo add-on: downloaded Menagerie models and models imported from a URL |
 
 With a project open, runs write into the project folder as before
 (`artifacts/`, `checkpoints/`, the prepared-data cache).
@@ -55,7 +59,10 @@ An installed Engine (started from the CyxWiz launcher, or from
   Python script run with no project open that writes a file by a relative
   name writes it there.
 - Python keeps its compiled bytecode in the Caches folder, never as
-  `__pycache__` beside the bundled `.py` files.
+  `__pycache__` beside the bundled `.py` files. This holds for every Python the
+  Engine starts too: the Python check, a new project environment, the
+  project's environment and pip (the Engine sets `PYTHONPYCACHEPREFIX` for
+  them).
 - The MuJoCo add-on writes no `MUJOCO_LOG.TXT`: MuJoCo's warnings go to the
   Engine log and the Console, each kind once; the number of repeats is logged
   when the add-on unloads. A MuJoCo error is logged before the Engine closes.
@@ -64,8 +71,9 @@ An installed Engine (started from the CyxWiz launcher, or from
 
 An Engine run from a build folder (`build/bin/Release` and the like) keeps
 `engine_log.txt`, `imgui.ini` and `tutorial_progress.json` in that build
-folder and works in it, so each build keeps its own log and layout. Your
-settings, presets, plugins and caches are in your user folders, as for an
+folder and works in it, so each build keeps its own log and layout. Python
+writes its bytecode as it always does (`__pycache__` beside the `.py` files).
+Your settings, presets, plugins and caches are in your user folders, as for an
 installed Engine.
 
 ## Starting fresh
