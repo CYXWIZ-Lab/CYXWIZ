@@ -1,7 +1,7 @@
 #pragma once
 
 // One address for the CyxWiz server side (TOFIX168 step 3), with the same
-// rules as the cyxcloud CLI (cyx_cloud docs/usage/cli.md):
+// rules as the cyxcloud CLI (docs/server-and-cloud/cyxcloud/cli.md):
 //
 //   https://HOST[:PORT]   a front door with TLS: central, the CyxCloud gateway
 //                         and the CyxWiz API all at that one origin
@@ -50,8 +50,8 @@ ServerEndpoints ResolveServerAddress(const std::string& address);
 // fe80::/10), and LAN names (one label, or .local .lan .internal .home.arpa).
 bool PlainHttpAllowed(const std::string& host);
 
-// The server's private CA, a PEM file (a test server's ca.crt, cyx_cloud
-// docs/usage/tls.md), for a server whose certificate no public authority
+// The server's private CA, a PEM file (a test server's ca.crt,
+// docs/server-and-cloud/cyxcloud/tls.md), for a server whose certificate no public authority
 // signed. Process-wide: the Engine and the server node set it from their
 // settings. When the setting is empty the environment variable
 // CYXWIZ_CA_FILE is used (scripts, CI); when both are empty, the system's

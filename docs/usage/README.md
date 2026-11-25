@@ -114,12 +114,24 @@ To write your own nodes in Python or C++, see
 | [Language model generation](../user-guide/evaluation/language-model-generation.md) | Using a trained language model in the Engine |
 | [Fine-tuning language models](../user-guide/training/fine-tune-language-models.md) | Fine-tuning on prompt/answer examples |
 | [Exporting a model](export_import.md) | Export Model and the formats it writes |
-| [Server Connection](server-connection.md) | Reserving a server node and training on it |
+| [Training on other machines](../distributed-training/index.md) | Remote training: what it is, its limits (experimental) |
+| [Run a remote job](../distributed-training/run-a-remote-job.md) | Deploy > Connect to Server: reserving a server node and training on it |
+| [Train from a CyxCloud dataset](../distributed-training/cloud-datasets.md) | A Data Input on a file in CyxCloud, streamed by the node |
+| [Servers and CyxCloud](../server-and-cloud/index.md) | The server address, server nodes, CyxCloud, ports and security notes |
 
 ## Scripting
 
 | Page | What it covers |
 | --- | --- |
-| [Notebooks in the Script Editor](notebooks.md) | Jupyter notebooks as cells |
+| [Script with Python](../user-guide/scripting/index.md) | The scripting section: Script Editor, notebooks, Python console, Variable Explorer |
+| [Write and run scripts](../user-guide/scripting/script-editor.md) | New scripts, run, run a selection or a section, save, completion |
+| [Debug a script](../user-guide/scripting/debug-a-script.md) | Breakpoints, stepping, watches, call stack |
+| [Notebooks](../user-guide/scripting/notebooks.md) | Jupyter and .cyx notebooks as cells |
+| [The .cyx document format](../user-guide/scripting/cyx-documents.md) | Cell markers and what the Engine writes |
+| [Use the Python console](../user-guide/scripting/python-console.md) | The Console's Python REPL session |
+| [The Variable Explorer](../user-guide/scripting/variable-explorer.md) | Values of the Python session and of each notebook |
+| [Python and project environments](../user-guide/scripting/python-environment.md) | Which Python runs, project environments, installing packages |
+| [Startup scripts](../user-guide/scripting/startup-scripts.md) | Code that runs at the start of every Python session |
+| [Script templates](../user-guide/scripting/script-templates.md) | Starter scripts in scripts/templates |
 | [Writing a module in Python](../sdk/guides/python-modules.md) | pycyxwiz modules, training from a script, gradient check |
 | [Python nodes](../sdk/guides/python-nodes.md) | Turning a Python module into a node for the canvas |
