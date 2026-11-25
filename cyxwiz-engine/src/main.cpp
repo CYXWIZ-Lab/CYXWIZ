@@ -234,7 +234,8 @@ int main(int argc, char** argv) {
     // check, venv creation, a project's venv, pip), keeps compiled bytecode in
     // the user's cache folder: the bundled Python in the base is read-only and
     // inventoried. Set before anything starts Python; children inherit it.
-    if (run_files.installed) cyxwiz::SetPythonBytecodeEnvironment(cyxwiz::PythonBytecodeDir());
+    const bool bytecode_set =
+        !run_files.installed || cyxwiz::SetPythonBytecodeEnvironment(cyxwiz::PythonBytecodeDir());
 
     // Logging: the console, the Console panel and engine_log.txt. Without a
     // writable log folder the Engine still runs and says why it has no file.
@@ -302,6 +303,8 @@ int main(int argc, char** argv) {
                      run_files.working_dir.string(), working_dir_problem,
                      std::filesystem::current_path().string());
     }
+    if (!bytecode_set)
+        spdlog::warn("Python's bytecode folder could not be set; Python may write __pycache__ beside its files");
     spdlog::debug("Launch working directory: {}", launch_cwd.string());
 
     spdlog::info("Starting CyxWiz Engine {} from {}", cyxwiz::GetVersionString(), exe_dir.string());

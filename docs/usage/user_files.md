@@ -62,7 +62,8 @@ An installed Engine (started from the CyxWiz launcher, or from
   `__pycache__` beside the bundled `.py` files. This holds for every Python the
   Engine starts too: the Python check, a new project environment, the
   project's environment and pip (the Engine sets `PYTHONPYCACHEPREFIX` for
-  them).
+  them). A terminal opened from the Engine inherits it, so a Python you run
+  there keeps its bytecode in the same folder.
 - The MuJoCo add-on writes no `MUJOCO_LOG.TXT`: MuJoCo's warnings go to the
   Engine log and the Console, each kind once; the number of repeats is logged
   when the add-on unloads. A MuJoCo error is logged before the Engine closes.

@@ -1473,6 +1473,7 @@ add_test(NAME test_child_process COMMAND test_child_process)
 if(CYXWIZ_HAS_PYTHON)
 add_executable(test_sandbox_timeout
     tests/test_sandbox_timeout.cpp
+    src/core/executable_directory.cpp
     src/scripting/python_engine.cpp
     src/scripting/python_environment.cpp
     src/scripting/python_sandbox.cpp
