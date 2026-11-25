@@ -9587,9 +9587,13 @@ target_compile_definitions(test_graph_training_job PRIVATE
 
 set_source_files_properties(src/gui/dialogs/about_dialog.cpp PROPERTIES COMPILE_DEFINITIONS "CYXWIZ_GIT_COMMIT=\"${CYXWIZ_GIT_COMMIT}\"")
 
-# Vendored sources stay as upstream wrote them: GCC and Clang warnings in them
-# are not ours to fix (TOFIX187).
-if(NOT MSVC)
+# Vendored sources stay as upstream wrote them: their warnings are not ours to
+# fix (TOFIX187), with any compiler. MSVC warned 17 times in tweetnacl.c on a
+# clean build; its warnings are named (/w would override /W4, itself a warning).
+if(MSVC)
+    set_property(SOURCE src/plugin/security/tweetnacl.c
+        APPEND PROPERTY COMPILE_OPTIONS /wd4018 /wd4132 /wd4146 /wd4244 /wd4245 /wd4295)
+else()
     set_property(SOURCE external/ImGuiColorTextEdit/TextEditor.cpp src/plugin/security/tweetnacl.c
         APPEND PROPERTY COMPILE_OPTIONS "-w")
 endif()
