@@ -45,6 +45,9 @@ struct LoadedPlugin {
     // A SignedPack's library copies, held against writes and deletion while
     // the library is loaded (released by Unload or this object).
     std::shared_ptr<void> copy_lock;
+    // A SignedPack's libraries beside its library, loaded first by full path
+    // (freed after it by Unload or this object).
+    std::shared_ptr<void> pack_dependencies;
 
     ~LoadedPlugin();
 };
@@ -91,6 +94,12 @@ public:
 private:
     // Platform abstraction
     static void* LoadDLL(const std::filesystem::path& path, std::string& error_out);
+    // An add-on's library from its checked copies (the library first in
+    // `copies`): the libraries beside it are loaded first, each by its full
+    // path, then the library, so the copies' folder is never searched and
+    // nothing else in it can load. `dependencies` keeps them loaded.
+    static void* LoadPackDLL(const std::vector<std::filesystem::path>& copies,
+                             std::shared_ptr<void>& dependencies, std::string& error_out);
     static void  UnloadDLL(void* handle);
     static void* GetSymbol(void* handle, const char* name);
     static std::string GetLastDLLError();

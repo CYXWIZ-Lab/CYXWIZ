@@ -287,7 +287,7 @@ bool RemoveUnlistedCopies(const std::filesystem::path& folder, const std::set<st
 std::filesystem::path ShadowCopyPackLibrary(const std::string& plugin_id, const std::filesystem::path& plugin_dir,
                                             const PackLoadCheck& pack, const PackComponent& library,
                                             std::unique_ptr<CopyLock>& lock, std::vector<PackFileIssue>& issues,
-                                            std::string& error) {
+                                            std::vector<std::filesystem::path>& copies, std::string& error) {
     const auto libraries = PackLibraryComponents(pack, library);
     const auto cache_root = LibraryCacheRoot();
     if (cache_root.empty()) {
@@ -319,7 +319,9 @@ std::filesystem::path ShadowCopyPackLibrary(const std::string& plugin_id, const 
             std::set<std::string> names;
             for (const auto& file : files) names.insert(file.filename().string());
             if (!RemoveUnlistedCopies(folder, names, issues, error)) return {};
-            return folder / files.front().filename();
+            copies.clear();
+            for (const auto& file : files) copies.push_back(folder / file.filename());
+            return copies.front();
         }
         // Changed in the cache: start again from the checked pack folder.
         lock.reset();
@@ -474,6 +476,50 @@ void* PluginLoader::LoadDLL(const std::filesystem::path& path, std::string& erro
         error_out = ::dlerror();
     }
     return handle;
+#endif
+}
+
+void* PluginLoader::LoadPackDLL(const std::vector<std::filesystem::path>& copies,
+                                std::shared_ptr<void>& dependencies, std::string& error_out) {
+#ifdef _WIN32
+    // The libraries beside the library by full path, in as many passes as
+    // their own imports of each other need; then the library, whose import
+    // of each is satisfied by the module of that name already loaded. Only
+    // the default folders (the Engine's, System32) are ever searched.
+    DWORD previous_mode = 0;
+    ::SetThreadErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX, &previous_mode);
+    auto loaded = std::make_shared<std::vector<HMODULE>>();
+    std::vector<std::filesystem::path> pending(copies.begin() + 1, copies.end());
+    bool progress = true;
+    while (!pending.empty() && progress) {
+        progress = false;
+        for (auto it = pending.begin(); it != pending.end();) {
+            if (HMODULE module = ::LoadLibraryExW(it->wstring().c_str(), nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS)) {
+                loaded->push_back(module);
+                it = pending.erase(it);
+                progress = true;
+            } else {
+                ++it;
+            }
+        }
+    }
+    HMODULE library = nullptr;
+    if (pending.empty()) {
+        library = ::LoadLibraryExW(copies.front().wstring().c_str(), nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+        if (!library) error_out = GetLastDLLError();
+    } else {
+        error_out = "cannot load " + pending.front().filename().string() + ": " + GetLastDLLError();
+    }
+    ::SetThreadErrorMode(previous_mode, nullptr);
+    // Freed after the library, in reverse order.
+    dependencies = std::shared_ptr<void>(loaded.get(), [loaded](void*) {
+        for (auto it = loaded->rbegin(); it != loaded->rend(); ++it) ::FreeLibrary(*it);
+    });
+    if (!library) dependencies.reset();
+    return library;
+#else
+    dependencies.reset();
+    return LoadDLL(copies.front(), error_out);  // packs are Windows-only for now
 #endif
 }
 
@@ -710,11 +756,12 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
     // checked on the copy, the bytes that run. An add-on's copies are checked
     // against its signed inventory and held against writes until loaded.
     std::unique_ptr<CopyLock> copy_lock;
+    std::vector<std::filesystem::path> pack_copies;
     std::filesystem::path load_path;
     if (pack) {
         std::vector<PackFileIssue> copy_issues;
         load_path = ShadowCopyPackLibrary(loaded->manifest.id, plugin_dir, *pack, *pack_library, copy_lock,
-                                          copy_issues, error_out);
+                                          copy_issues, pack_copies, error_out);
         if (load_path.empty()) return refuse_pack(std::move(copy_issues), error_out);
     } else {
         load_path = ShadowCopyLibrary(loaded->manifest.id, dll_path, error_out);
@@ -761,7 +808,8 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
     }
 
     // 4. Load DLL
-    loaded->dll_handle = LoadDLL(load_path, error_out);
+    loaded->dll_handle = pack ? LoadPackDLL(pack_copies, loaded->pack_dependencies, error_out)
+                              : LoadDLL(load_path, error_out);
     // The copies stay held while the plugin is loaded: a library it loads
     // later (delay-loaded) is read from them then.
     loaded->copy_lock = std::shared_ptr<void>(std::move(copy_lock));
@@ -937,6 +985,7 @@ void PluginLoader::Unload(LoadedPlugin& plugin) {
         UnloadDLL(plugin.dll_handle);
         plugin.dll_handle = nullptr;
     }
+    plugin.pack_dependencies.reset();
     plugin.copy_lock.reset();
 
     plugin.state = PluginState::Unloaded;
