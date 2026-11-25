@@ -160,6 +160,11 @@ void PluginManager::SetPackPlugins(InstalledPluginPacks packs) {
     }
 }
 
+void PluginManager::SetStartupLoading(bool loading) {
+    std::lock_guard lock(mutex_);
+    startup_loading_ = loading;
+}
+
 std::vector<PackRefusal> PluginManager::GetPackRefusals() const {
     std::lock_guard lock(mutex_);
     std::vector<PackRefusal> refusals = installed_packs_.refusals;
@@ -254,6 +259,7 @@ bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir, std::str
                 refusal.issues = std::move(result.issues);
                 refusal.files_listed = pack->components.size();
                 refusal.checked_at = std::chrono::system_clock::now();
+                refusal.at_start = startup_loading_;
                 spdlog::warn("{}", RefusalLogLine(refusal));
                 load_refusals_[pack->plugin_id] = std::move(refusal);
             } else {
@@ -269,6 +275,7 @@ bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir, std::str
             return false;
         }
         load_refusals_.erase(pack->plugin_id);
+        loaded->pack_checked_at_start = startup_loading_;
         if (plugins_.count(pack->plugin_id)) {
             if (error_out) *error_out = "a plugin with the id " + pack->plugin_id + " is already loaded";
             return false;

@@ -191,11 +191,22 @@ int main() {
                            "Graphs that use its nodes show them as not installed.",
               "what happened, in words");
         Equal(failed.hint,
-              "Repair it to put the signed files back. It also opens from Preferences > Devices > Installed packs.",
-              "what to do");
+              "Repair it to put the signed files back: the installer applies the repair once this Engine is closed. "
+              "It also opens from Preferences > Devices > Installed packs.",
+              "what to do, with the Engine closed for the repair");
         Equal(detail(failed, "Check"), "1 of 15 files differs from the signed list", "how many files differ");
         Equal(detail(failed, "File"), mujoco_dll + ": same size, different contents", "which file and how");
         Equal(detail(failed, "Checked"), "at this start, 14:02", "when it was checked");
+        refused.at_start = false;
+        Equal(cyxwiz::PluginTrustLine(refused).line, "Signed add-on, check failed when it loaded",
+              "a refusal from Refresh or Install... is not called a start-up one");
+        Equal(detail(cyxwiz::PluginTrustLine(refused), "Checked"), "when it loaded, 14:02",
+              "and its time says so");
+        refused.at_start = true;
+        signed_pack.at_start = false;
+        Equal(cyxwiz::PluginTrustLine(signed_pack).line, "Signed add-on, verified when it loaded",
+              "an add-on loaded by Refresh");
+        signed_pack.at_start = true;
 
         refused.issues.push_back({"bin/extra.dll", cyxwiz::plugin::PackFileProblem::NotListed});
         Equal(detail(cyxwiz::PluginTrustLine(refused), "Check"),

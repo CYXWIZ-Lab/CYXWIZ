@@ -197,7 +197,7 @@ PluginTrustView PluginTrustLine(const PluginTrustFacts& facts) {
             Detail(view.details, "Loaded from", "a copy in the Engine's plugin cache");
             return view;
         case PluginTrustKind::SignedAddOn: {
-            view.line = "Signed add-on, verified at start";
+            view.line = facts.at_start ? "Signed add-on, verified at start" : "Signed add-on, verified when it loaded";
             view.note = version;
             view.tone = PluginTrustTone::Verified;
             Detail(view.details, "Pack", facts.pack_id);
@@ -217,7 +217,7 @@ PluginTrustView PluginTrustLine(const PluginTrustFacts& facts) {
         case PluginTrustKind::RefusedAddOn:
             break;
     }
-    view.line = "Signed add-on, check failed at start";
+    view.line = facts.at_start ? "Signed add-on, check failed at start" : "Signed add-on, check failed when it loaded";
     view.note = version;
     view.tone = PluginTrustTone::Failed;
     std::string reason = facts.reason.empty() ? std::string("its files differ from its signed package") : facts.reason;
@@ -225,7 +225,8 @@ PluginTrustView PluginTrustLine(const PluginTrustFacts& facts) {
     if (reason.rfind("its ", 0) == 0) reason[0] = 'I';
     view.body = reason +
                 ", so the Engine did not load this add-on. Graphs that use its nodes show them as not installed.";
-    view.hint = "Repair it to put the signed files back. It also opens from Preferences > Devices > Installed packs.";
+    view.hint = "Repair it to put the signed files back: the installer applies the repair once this Engine is "
+                "closed. It also opens from Preferences > Devices > Installed packs.";
     Detail(view.details, "Pack", facts.pack_id);
     std::size_t differing = 0;
     std::size_t unlisted = 0;
@@ -251,7 +252,9 @@ PluginTrustView PluginTrustLine(const PluginTrustFacts& facts) {
     }
     Detail(view.details, facts.issues.size() > 1 ? "Files" : "File", files);
     Detail(view.details, "Why", facts.detail);
-    Detail(view.details, "Checked", facts.checked_at.empty() ? std::string{} : "at this start, " + facts.checked_at);
+    Detail(view.details, "Checked",
+           facts.checked_at.empty() ? std::string{}
+                                    : (facts.at_start ? "at this start, " : "when it loaded, ") + facts.checked_at);
     Detail(view.details, "Folder", facts.folder);
     Detail(view.details, "Signed with", facts.files_listed == 0 ? std::string{} : kSignedWith);
     return view;

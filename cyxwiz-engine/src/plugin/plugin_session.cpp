@@ -71,6 +71,12 @@ size_t LoadStartupPlugins(PluginManager& manager) {
     for (const auto& pack : manager.GetPackPlugins())
         packs.push_back({pack.plugin_id, pack.directory.generic_string(), true});
     const auto entries = PluginsToLoadAtStartup(ReadPluginStartupList(), packs);
+    // An add-on checked now reads "verified at start" / "check failed at start".
+    struct StartupLoading {
+        PluginManager& manager;
+        explicit StartupLoading(PluginManager& m) : manager(m) { manager.SetStartupLoading(true); }
+        ~StartupLoading() { manager.SetStartupLoading(false); }
+    } startup_loading(manager);
     for (const auto& entry : entries) {
         if (manager.GetLoadedPlugin(entry.id)) continue;
         if (!std::filesystem::exists(std::filesystem::path(entry.folder) / "plugin.json")) {

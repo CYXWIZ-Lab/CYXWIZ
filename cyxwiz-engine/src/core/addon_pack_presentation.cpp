@@ -278,9 +278,9 @@ void BuildDamagedCard(AddOnCardView& card, const BackendPackManagerRecord& recor
         context == AddOnCardContext::Installer
             ? reason + ", so the Engine does not load this add-on. Review & "
                        "repair puts the signed files back."
-            : reason + ", so the Engine did not load it at start. Repair puts "
-                       "the signed files back; your graphs and projects are "
-                       "not touched.";
+            : reason + ", so the Engine does not load it. Repair puts the "
+                       "signed files back once the Engine is closed; your "
+                       "graphs and projects are not touched.";
     card.checked = picked;
     card.can_select = selectable;
     card.can_repair = selectable;

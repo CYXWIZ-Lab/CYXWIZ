@@ -54,6 +54,9 @@ public:
     // The add-ons not loaded and why: refused at start (signed metadata) or
     // when their files were checked (cleared when one later loads).
     std::vector<PackRefusal> GetPackRefusals() const;
+    // Set while the Engine loads its plugins at start: an add-on's check then
+    // reads "at start", later ones (Refresh, Install...) "when it loaded".
+    void SetStartupLoading(bool loading);
 
     // Discover all plugin directories in search paths and the active plugin packs
     std::vector<std::filesystem::path> DiscoverPlugins() const;
@@ -166,6 +169,7 @@ private:
     std::vector<std::filesystem::path> search_paths_;
     InstalledPluginPacks installed_packs_;
     std::unordered_map<std::string, PackRefusal> load_refusals_;  // plugin id -> refused at load
+    bool startup_loading_ = false;
 
     // Thread safety
     mutable std::recursive_mutex mutex_;

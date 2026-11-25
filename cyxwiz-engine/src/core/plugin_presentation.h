@@ -89,6 +89,7 @@ struct PluginTrustFacts {
     std::uint64_t bytes_checked = 0;
     double check_ms = 0.0;
     std::string checked_at;          // "14:02"
+    bool at_start = true;            // checked while the Engine started (else Refresh, Install...)
     // A refused add-on
     std::string reason;              // "bin\mujoco.dll does not match its signed package"
     std::string detail;              // the check's own words (a metadata refusal)

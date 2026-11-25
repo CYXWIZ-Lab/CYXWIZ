@@ -118,6 +118,7 @@ static PluginTrustFacts TrustFacts(const plugin::LoadedPlugin& p) {
     facts.bytes_checked = p.pack_bytes_checked;
     facts.check_ms = p.pack_check_ms;
     facts.checked_at = ClockTime(p.pack_checked_at);
+    facts.at_start = p.pack_checked_at_start;
     return facts;
 }
 
@@ -132,6 +133,7 @@ static PluginTrustFacts TrustFacts(const plugin::PackRefusal& refusal) {
     facts.files_listed = refusal.files_listed;
     facts.issues = refusal.issues;
     facts.checked_at = ClockTime(refusal.checked_at);
+    facts.at_start = refusal.at_start;
     return facts;
 }
 

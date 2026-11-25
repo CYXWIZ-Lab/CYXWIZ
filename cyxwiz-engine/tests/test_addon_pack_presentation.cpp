@@ -865,8 +865,9 @@ void TestDamagedCard() {
               engine.can_uninstall && !engine.can_install,
           "The Engine's card reads Damaged with Repair add-on... and Uninstall add-on...");
     Check(engine.explanation ==
-              dll + " does not match its signed package, so the Engine did not load it at start. "
-                    "Repair puts the signed files back; your graphs and projects are not touched.",
+              dll + " does not match its signed package, so the Engine does not load it. "
+                    "Repair puts the signed files back once the Engine is closed; your graphs and projects are "
+                    "not touched.",
           "The Engine's wording: " + engine.explanation);
     Check(Detail(engine, "Files") == "1 of 15 differs: " + dll && Detail(engine, "Checked") == "at 14:02" &&
               Detail(engine, "Signed metadata") == "Verified",

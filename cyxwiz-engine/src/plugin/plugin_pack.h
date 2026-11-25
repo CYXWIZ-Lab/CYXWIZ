@@ -93,6 +93,7 @@ struct PackRefusal {
     std::vector<PackFileIssue> issues;
     std::size_t files_listed = 0;      // files in the signed inventory (0: metadata not read)
     std::chrono::system_clock::time_point checked_at{};
+    bool at_start = true;              // checked while the Engine started (else Refresh, Install...)
 };
 
 struct InstalledPluginPacks {
