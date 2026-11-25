@@ -12,7 +12,7 @@ related:
   - index.md
   - first-model-from-a-starter.md
   - ../user-guide/scripting/script-editor.md
-  - ../sdk/python-api/index.md
+  - ../python/reference/index.md
 ---
 
 Everything the graph of lesson 2 does, you can also write in Python. The
@@ -123,5 +123,5 @@ checks.
 
 - The Script Editor in full: [Write and run scripts](../user-guide/scripting/script-editor.md)
 - The console and its ready-made names: [Use the Python console](../user-guide/scripting/python-console.md)
-- Every class and function of pycyxwiz: [pycyxwiz API reference](../sdk/python-api/index.md)
+- Every class and function of pycyxwiz: [pycyxwiz API reference](../python/reference/index.md)
 - Turn a script into a node: [Your first Python node](../sdk/get-started/first-python-node.md)
