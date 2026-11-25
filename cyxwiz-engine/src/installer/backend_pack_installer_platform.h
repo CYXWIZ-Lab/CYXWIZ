@@ -66,6 +66,11 @@ public:
     virtual InstallerOperationResult InstallPlugin(
         const std::string& pack_id,
         const InstallerOperationDetailObserver& observer = {}) = 0;
+    // An installed add-on whose files differ from its signed inventory: its
+    // folder is replaced from the signed pack (--plugin-pack-id with --repair).
+    virtual InstallerOperationResult RepairPlugin(
+        const std::string& pack_id,
+        const InstallerOperationDetailObserver& observer = {}) = 0;
     virtual InstallerOperationResult DeactivateBackend(
         const std::string& backend,
         const InstallerOperationDetailObserver& observer = {}) = 0;

@@ -28,7 +28,8 @@ enum class AddOnCardStatus {
     WithEngineUpdate,   // installed; the CPU base update reinstalls it
     AfterEngineUpdate,  // not installed; it can be added after the CPU base update
     Unavailable,        // not offered by the signed catalog, or unverifiable
-    NotPublished        // a known add-on with no pack for this platform
+    NotPublished,       // a known add-on with no pack for this platform
+    Damaged             // installed; its files differ from its signed package
 };
 
 using AddOnDetail = std::pair<std::string, std::string>;
@@ -53,6 +54,7 @@ struct AddOnCardView {
     // when the explanation already says why.
     std::string select_disabled_reason;
     bool can_install = false;        // Engine: Install add-on... (opens the installer)
+    bool can_repair = false;         // Engine: Repair add-on... (opens the installer, ticked)
     bool can_uninstall = false;      // Uninstall add-on
     std::vector<AddOnDetail> details;  // every fact, empty values skipped
 };
@@ -73,7 +75,7 @@ std::vector<AddOnCardView> BuildAddOnCards(
 
 // The installer summary's lines for the add-ons a plan installs: each one's
 // name, and what happens to it when it is installed already ("Simulation
-// (MuJoCo), reinstalled for the new CPU Engine"). Plan order.
+// (MuJoCo), reinstalled for the new CPU Engine", "..., repaired"). Plan order.
 std::vector<std::string> PlannedAddOnLines(
     const BackendPackInstallerPlan& plan,
     const std::vector<BackendPackManagerRecord>& records);

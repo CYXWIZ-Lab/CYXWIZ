@@ -7,6 +7,19 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Installed add-ons are checked against their signed package before they
+  load.** The Engine loaded an add-on's files (Simulation (MuJoCo)) without
+  comparing them with anything signed, so a damaged or changed library loaded,
+  and the Plugin Manager called every plugin unsigned. Now every file of an
+  installed add-on (none missing or added, each one's size and SHA-256) and
+  the library copies the Engine loads (held against changes until loaded) are
+  checked first. A damaged add-on is not loaded: the log names the file, the
+  Plugin Manager shows it as **Not loaded** with **Repair add-on...**, and its
+  card in **Preferences > Installed packs** and in the CyxWiz Installer reads
+  **Damaged**; ticked, the installer repairs it from its signed package
+  (**Review & repair**). Plugin Manager cards say *Signed add-on, verified at
+  start* or *Developer plugin, not signed*, and the add-on is called
+  **Simulation (MuJoCo)** there too. See [Add-ons](usage/addons.md).
 - **The installed Engine no longer writes into its own folder.** Its log,
   layout (`imgui.ini`), tutorial state, Python bytecode and MuJoCo's warnings
   were written into the installed base folder, where an update or a rollback

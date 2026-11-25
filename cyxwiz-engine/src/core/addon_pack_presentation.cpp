@@ -235,6 +235,64 @@ void BuildAfterBaseUpdateCard(AddOnCardView& card, AddOnCardContext context,
     card.can_install = false;
 }
 
+// Why a damaged add-on is not loaded: the file that differs (a path keeps
+// its spelling), or its signed record.
+std::string DamageReason(const BackendPackManagerRecord& record) {
+    return record.file_issues.empty()
+        ? std::string("Its signed package record could not be verified")
+        : plugin::PackRefusalReason(record.file_issues);
+}
+
+// "1 of 15 differs: bin\mujoco.dll"
+std::string DamagedFiles(const BackendPackManagerRecord& record) {
+    if (record.file_issues.empty()) return {};
+    std::size_t differing = 0;
+    std::string names;
+    for (const auto& issue : record.file_issues) {
+        if (issue.problem != plugin::PackFileProblem::NotListed) ++differing;
+        names += (names.empty() ? "" : ", ") + plugin::PackDisplayPath(issue.path);
+    }
+    const std::size_t unlisted = record.file_issues.size() - differing;
+    std::string text;
+    if (differing > 0) {
+        text = std::to_string(differing) + " of " + std::to_string(record.files_listed) +
+               (differing == 1 ? " differs" : " differ");
+    }
+    if (unlisted > 0) {
+        text += (text.empty() ? "" : ", ") + std::to_string(unlisted) +
+                " not in the signed list";
+    }
+    return text + ": " + names;
+}
+
+// An installed add-on whose files differ from its signed package: the
+// Engine does not load it. Ticked (the Installer) it is repaired from its
+// signed pack; the Engine's card opens the Installer with it ticked.
+void BuildDamagedCard(AddOnCardView& card, const BackendPackManagerRecord& record,
+                      bool picked, bool selectable, AddOnCardContext context) {
+    Status(card, AddOnCardStatus::Damaged, picked ? "Repair selected" : "Damaged",
+           picked ? InstallerPackPresentationTone::Accent
+                  : InstallerPackPresentationTone::Danger);
+    const std::string reason = DamageReason(record);
+    card.explanation =
+        context == AddOnCardContext::Installer
+            ? reason + ", so the Engine does not load this add-on. Review & "
+                       "repair puts the signed files back."
+            : reason + ", so the Engine did not load it at start. Repair puts "
+                       "the signed files back; your graphs and projects are "
+                       "not touched.";
+    card.checked = picked;
+    card.can_select = selectable;
+    card.can_repair = selectable;
+    card.can_install = false;
+    card.can_uninstall = true;
+    if (!selectable) {
+        card.select_disabled_reason =
+            "Repair needs its signed pack in the catalog; it is not offered "
+            "now.";
+    }
+}
+
 void BuildInstalledCard(AddOnCardView& card) {
     Status(card, AddOnCardStatus::Installed, "Installed",
            InstallerPackPresentationTone::Success);
@@ -307,6 +365,26 @@ AddOnCardView BuildCard(const std::string& plugin_id,
         AddDetail(card.details, "Update", AddOnUpdateWords(*record));
     }
     AddDetail(card.details, "Signed metadata", record->delivery_metadata_error);
+    if (installed && installed->files_checked) {
+        if (record->delivery_metadata_error.empty()) {
+            AddDetail(card.details, "Signed metadata",
+                      installed->files_error.empty() ? "Verified"
+                                                     : installed->files_error);
+        } else {
+            AddDetail(card.details, "Installed metadata", installed->files_error);
+        }
+        if (installed->files_error.empty() || !installed->file_issues.empty()) {
+            AddDetail(card.details, "Files",
+                      installed->file_issues.empty()
+                          ? std::to_string(installed->files_listed) +
+                                " match the signed list"
+                          : DamagedFiles(*installed));
+        }
+        AddDetail(card.details, "Checked",
+                  installed->files_checked_at.empty()
+                      ? std::string{}
+                      : "at " + installed->files_checked_at);
+    }
 
     if (next && installed) {
         BuildBaseUpdateCard(card, context);
@@ -337,6 +415,13 @@ AddOnCardView BuildCard(const std::string& plugin_id,
 
     const bool selectable = IsBackendPackSelectableForInstaller(*record);
     const bool picked = selected_pack_ids.contains(record->pack_id);
+
+    // Damaged: the installed pack itself (not an update to another pack).
+    if (record->installed && record->active && !record->update_available &&
+        IsDamagedAddOn(*record)) {
+        BuildDamagedCard(card, *record, picked, selectable, context);
+        return card;
+    }
 
     if (record->installed && record->update_decision &&
         record->update_decision->disposition !=
@@ -472,7 +557,13 @@ std::vector<std::string> PlannedAddOnLines(
                        candidate.plugin_id == record->plugin_id &&
                        candidate.installed;
             });
-        if (installed != records.end()) {
+        const bool repair =
+            std::find(plan.repair_plugin_pack_ids.begin(),
+                      plan.repair_plugin_pack_ids.end(),
+                      pack_id) != plan.repair_plugin_pack_ids.end();
+        if (repair) {
+            line += ", repaired";
+        } else if (installed != records.end()) {
             line += plan.update_base ? ", reinstalled for the new CPU Engine"
                     : installed->installed_for_other_base
                         ? ", reinstalled for this CPU Engine"

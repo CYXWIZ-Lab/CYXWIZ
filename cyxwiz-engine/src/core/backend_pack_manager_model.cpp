@@ -1,4 +1,5 @@
 #include "backend_pack_manager_model.h"
+#include "addon_identity.h"
 
 #include <algorithm>
 #include <iomanip>
@@ -93,6 +94,12 @@ CheckOperationBoundary(BackendPackAction action,
 }
 
 } // namespace
+
+bool IsDamagedAddOn(const BackendPackManagerRecord &record) {
+  return record.pack_kind == BackendPackRecordKind::Plugin && record.installed &&
+         !record.installed_for_other_base && record.files_checked &&
+         (!record.file_issues.empty() || !record.files_error.empty());
+}
 
 BackendPackActionDecision
 EvaluateBackendPackAction(BackendPackAction action,
@@ -421,7 +428,8 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
       return plan;
     }
     if (record->installed && record->active && !record->update_available) {
-      continue;
+      if (!IsDamagedAddOn(*record)) continue;
+      plan.repair_plugin_pack_ids.push_back(record->pack_id);
     }
     if (record->download_size_bytes >
         std::numeric_limits<std::uint64_t>::max() - plan.download_size_bytes) {
@@ -498,6 +506,20 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     plan.message = "CPU base is already the only active compute route";
   } else if (plan.pack_ids.empty() && plan.plugin_pack_ids.empty()) {
     plan.message = "No optional backend-pack download is required";
+  } else if (plan.pack_ids.empty() &&
+             plan.repair_plugin_pack_ids.size() == plan.plugin_pack_ids.size()) {
+    // Only damaged add-ons ticked: they are repaired.
+    const auto record = std::find_if(
+        catalog_records.begin(), catalog_records.end(), [&](const auto &item) {
+          return item.pack_id == plan.repair_plugin_pack_ids.front();
+        });
+    plan.message =
+        plan.repair_plugin_pack_ids.size() == 1 && record != catalog_records.end()
+            ? "Repair the " + AddOnTitle(record->plugin_id) +
+                  " add-on from its signed package"
+            : "Repair " + AddOnCount(plan.repair_plugin_pack_ids.size()) +
+                  " from their signed packages";
+    plan.message += "; the CPU Engine and compute packs are unchanged";
   } else if (plan.pack_ids.empty()) {
     plan.message = AddOnCount(plan.plugin_pack_ids.size()) +
                    " will be downloaded and installed; no device check is "

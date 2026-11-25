@@ -941,6 +941,17 @@ public:
   }
 
   cyxwiz::installer::InstallerOperationResult
+  RepairPlugin(
+      const std::string &pack_id,
+      const cyxwiz::installer::InstallerOperationDetailObserver &observer)
+      override {
+    calls.push_back("repair-plugin:" + pack_id);
+    if (observer)
+      observer({"activating", 0, 0, 0, 0, "Repairing the plugin pack"});
+    return Result(pack_id);
+  }
+
+  cyxwiz::installer::InstallerOperationResult
   DeactivateBackend(
       const std::string &backend,
       const cyxwiz::installer::InstallerOperationDetailObserver &observer)
@@ -1119,6 +1130,50 @@ void TestInstallerAddOnExecution() {
   Check(!failed.succeeded &&
             failed.message.find("mujoco-v1 failed") != std::string::npos,
         "A failed add-on installation is reported");
+
+  // A damaged add-on in the plan is repaired, not installed again.
+  cyxwiz::BackendPackInstallerPlan repair;
+  repair.plugin_pack_ids = {"mujoco-v1", "other-v1"};
+  repair.repair_plugin_pack_ids = {"mujoco-v1"};
+  RecordingInstallerPlatform repairing;
+  const auto repaired = cyxwiz::installer::ExecuteInstallerPlan(repairing, repair);
+  Check(repaired.succeeded &&
+            repairing.calls == std::vector<std::string>{"repair-plugin:mujoco-v1",
+                                                        "plugin:other-v1"},
+        "A damaged add-on goes to the helper's repair, the others to install");
+}
+
+// An installed add-on is damaged when its check found a file that differs.
+// (The repair plan is tested on real catalog records in
+// test_addon_pack_presentation.)
+void TestDamagedAddOnRecord() {
+  cyxwiz::BackendPackManagerRecord addon;
+  addon.pack_kind = cyxwiz::BackendPackRecordKind::Plugin;
+  addon.plugin_id = "com.cyxwiz.simulation.mujoco";
+  addon.pack_id = "mujoco-v1";
+  addon.installed_pack_id = "mujoco-v1";
+  addon.companion_base_id = "base-v1";
+  addon.download_size_bytes = 3355443;
+  addon.installed = true;
+  addon.active = true;
+  addon.catalog_support = cyxwiz::BackendPackCatalogSupport::Supported;
+  addon.delivery_metadata_available = true;
+  addon.update_decision = cyxwiz::runtime::BackendPackUpdateDecision{
+      cyxwiz::runtime::BackendPackUpdateDisposition::SamePackage, "Already installed"};
+  addon.files_checked = true;
+
+  Check(!cyxwiz::IsDamagedAddOn(addon), "An add-on whose files match is not damaged");
+  addon.files_error = "No trusted signature";
+  Check(cyxwiz::IsDamagedAddOn(addon), "An add-on whose signed record fails is damaged");
+  addon.files_error.clear();
+  addon.file_issues = {{"bin/mujoco.dll", cyxwiz::plugin::PackFileProblem::ContentDiffers}};
+  Check(cyxwiz::IsDamagedAddOn(addon), "An add-on with a changed file is damaged");
+  addon.files_checked = false;
+  Check(!cyxwiz::IsDamagedAddOn(addon), "An add-on not checked is not called damaged");
+  addon.files_checked = true;
+  addon.installed_for_other_base = true;
+  Check(!cyxwiz::IsDamagedAddOn(addon),
+        "An add-on installed for another base is not called damaged (it needs a reinstall)");
 }
 
 } // namespace
@@ -1272,6 +1327,7 @@ int main(int argc, char** argv) {
   TestInstallerPlanExecution();
   TestInstallerBaseUpdateExecution();
   TestInstallerAddOnExecution();
+  TestDamagedAddOnRecord();
   std::cout << "Backend pack manager model tests passed\n";
   return 0;
 }

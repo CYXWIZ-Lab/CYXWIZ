@@ -1,8 +1,8 @@
 // Preferences > Installed packs > Add-ons: the same add-on card as the CyxWiz
-// Installer's Individual components (core/addon_pack_presentation). Install
-// and uninstall open the installer, which runs the signed pack helper
-// (--plugin-pack-id, --remove-pack-id); the Engine never changes pack files
-// itself.
+// Installer's Individual components (core/addon_pack_presentation). Install,
+// repair and uninstall open the installer, which runs the signed pack helper
+// (--plugin-pack-id, with --repair, --remove-pack-id); the Engine never
+// changes pack files itself.
 
 #include "toolbar.h"
 
@@ -64,7 +64,8 @@ void ToolbarPanel::RenderBackendAddOns(
         if (!card.explanation.empty()) {
             const bool warn = card.status == AddOnCardStatus::NeedsEngineUpdate ||
                               card.status == AddOnCardStatus::NeedsReinstall ||
-                              card.status == AddOnCardStatus::UpdateBlocked;
+                              card.status == AddOnCardStatus::UpdateBlocked ||
+                              card.status == AddOnCardStatus::Damaged;
             if (warn) ImGui::PushStyleColor(ImGuiCol_Text, t.warning);
             ImGui::TextUnformatted(card.explanation.c_str());
             if (warn) ImGui::PopStyleColor();
@@ -91,6 +92,19 @@ void ToolbarPanel::RenderBackendAddOns(
             }
             if (installer_available && ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Opens the CyxWiz Installer with this add-on selected.");
+            }
+            action_drawn = true;
+        }
+        if (card.can_repair) {
+            if (action_drawn) ImGui::SameLine();
+            if (ui::SecondaryButton("Repair add-on...", installer_available, kNoInstaller,
+                                    ui::ButtonSize::Regular)) {
+                core::WindowManager::LaunchExecutable(
+                    installer.string(),
+                    {"--runtime-root", runtime_root.string(), "--select", card.pack_id});
+            }
+            if (installer_available && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Opens the CyxWiz Installer with this add-on selected for repair.");
             }
             action_drawn = true;
         }

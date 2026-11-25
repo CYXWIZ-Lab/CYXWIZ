@@ -860,6 +860,7 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_decision_reconciliation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/addon_pack_presentation.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/core/addon_pack_files.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/installer_pack_presentation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/installer_verification_summary.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/compute_device_presentation.cpp"

@@ -3,6 +3,7 @@
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../../core/async_task_manager.h"
+#include "../../core/addon_pack_files.h"
 #include "../../core/backend_pack_catalog_adapter.h"
 #include "../../core/backend_pack_manager_model.h"
 #include "../../core/backend_pack_qualification_adapter.h"
@@ -216,6 +217,18 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
                 runtime_root, next_runtime, snapshot);
             backend_pack_catalog_records_ = BuildBackendPackCatalogRecords(
                 snapshot, next_runtime, active_plugins);
+            // An installed add-on whose files differ from its signed package
+            // is Damaged on its card, with Repair.
+            std::string file_trust_error;
+            if (auto file_trust = runtime::BackendPackTrustStore::Load(
+                    runtime_root / "trust" / "trusted-keys.json", file_trust_error)) {
+                CheckInstalledAddOnFiles(
+                    backend_pack_catalog_records_, runtime_root,
+                    runtime::BackendPackMetadataVerifier(
+                        std::move(*file_trust), GetVersionString(),
+                        std::string(runtime::CurrentBackendPackPlatformId()),
+                        std::string(runtime::CurrentBackendPackArchitectureId())));
+            }
             backend_pack_catalog_available_ = true;
             backend_pack_catalog_message_ = BackendPackCatalogSummary(
                 snapshot.catalog.catalog_id, backend_pack_catalog_records_);

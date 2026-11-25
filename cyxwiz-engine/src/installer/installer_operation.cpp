@@ -199,14 +199,20 @@ InstallerPlanExecutionResult ExecuteInstallerPlan(
 
   for (const auto &pack_id : plan.plugin_pack_ids) {
     ++package_index;
+    const bool repair =
+        std::find(plan.repair_plugin_pack_ids.begin(),
+                  plan.repair_plugin_pack_ids.end(),
+                  pack_id) != plan.repair_plugin_pack_ids.end();
     Report(observer, completed_steps, total_steps,
-           "Acquiring and installing " + pack_id, package_index,
-           package_count, pack_id);
-    const auto result = platform.InstallPlugin(
-        pack_id, [&](const InstallerHelperProgress &detail) {
-          ReportDetail(observer, completed_steps, total_steps, detail, false,
-                       package_index, package_count, pack_id);
-        });
+           (repair ? "Repairing " : "Acquiring and installing ") + pack_id,
+           package_index, package_count, pack_id);
+    const auto detail_observer = [&](const InstallerHelperProgress &detail) {
+      ReportDetail(observer, completed_steps, total_steps, detail, false,
+                   package_index, package_count, pack_id);
+    };
+    const auto result = repair
+                            ? platform.RepairPlugin(pack_id, detail_observer)
+                            : platform.InstallPlugin(pack_id, detail_observer);
     AppendMessage(batch.message, result.message);
     if (!result.succeeded || !result.activated)
       return batch;

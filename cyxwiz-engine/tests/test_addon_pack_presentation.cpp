@@ -11,6 +11,7 @@
 #include "backend_pack_platform.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <cstdlib>
 #include <iostream>
 #include <set>
@@ -835,6 +836,68 @@ void TestPlannedAddOnLines() {
           "A valid plan's summary lists the plan's add-on lines");
 }
 
+// An installed add-on whose files differ from its signed package (the check
+// the Engine runs before it loads one): Damaged, with Repair (mockup of
+// 2026-11-25: Engine Installed packs, Installer Add-ons).
+void TestDamagedCard() {
+    auto records =
+        cyxwiz::BuildBackendPackCatalogRecords(Catalog(), ActiveBase(), ActiveMuJoCo());
+    for (auto& record : records) {
+        if (record.pack_id != kMuJoCoPack) continue;
+        record.files_checked = true;
+        record.files_listed = 15;
+        record.files_checked_at = "14:02";
+    }
+    Check(MuJoCoCard(InstallerCards(records, {})).status == cyxwiz::AddOnCardStatus::Installed &&
+              Detail(MuJoCoCard(EngineCards(records)), "Files") == "15 match the signed list" &&
+              Detail(MuJoCoCard(EngineCards(records)), "Signed metadata") == "Verified",
+          "An add-on whose files match stays Installed, its check under Details");
+
+    const std::string dll =
+        std::filesystem::path("bin/mujoco.dll").make_preferred().string();
+    for (auto& record : records) {
+        if (record.pack_id == kMuJoCoPack)
+            record.file_issues = {{"bin/mujoco.dll", cyxwiz::plugin::PackFileProblem::ContentDiffers}};
+    }
+    const auto engine = MuJoCoCard(EngineCards(records));
+    Check(engine.status == cyxwiz::AddOnCardStatus::Damaged && engine.status_text == "Damaged" &&
+              engine.tone == cyxwiz::InstallerPackPresentationTone::Danger && engine.can_repair &&
+              engine.can_uninstall && !engine.can_install,
+          "The Engine's card reads Damaged with Repair add-on... and Uninstall add-on...");
+    Check(engine.explanation ==
+              dll + " does not match its signed package, so the Engine did not load it at start. "
+                    "Repair puts the signed files back; your graphs and projects are not touched.",
+          "The Engine's wording: " + engine.explanation);
+    Check(Detail(engine, "Files") == "1 of 15 differs: " + dll && Detail(engine, "Checked") == "at 14:02" &&
+              Detail(engine, "Signed metadata") == "Verified",
+          "Details say which file differs and when it was checked");
+
+    const auto unticked = MuJoCoCard(InstallerCards(records, {}));
+    Check(unticked.status == cyxwiz::AddOnCardStatus::Damaged && unticked.status_text == "Damaged" &&
+              unticked.can_select && !unticked.checked,
+          "Unticked, the Installer's card reads Damaged");
+    const auto ticked = MuJoCoCard(InstallerCards(records, {kMuJoCoPack}));
+    Check(ticked.status_text == "Repair selected" &&
+              ticked.tone == cyxwiz::InstallerPackPresentationTone::Accent && ticked.checked &&
+              ticked.explanation ==
+                  dll + " does not match its signed package, so the Engine does not load this add-on. "
+                        "Review & repair puts the signed files back.",
+          "Ticked, it reads Repair selected");
+    Check(Resolve(records, kMuJoCoPlugin) == kMuJoCoPack,
+          "The Engine's Repair add-on... ticks the installed pack (--select)");
+
+    const auto selection = cyxwiz::ResolveBackendPackInstallerSelection(
+        cyxwiz::BackendPackInstallChoice::Custom, records, {kMuJoCoPack});
+    const auto plan = cyxwiz::BuildBackendPackInstallerPlan(
+        selection, records, cyxwiz::CyxWizInstallerMode::Maintenance);
+    Check(plan.valid && plan.plugin_pack_ids == std::vector<std::string>{kMuJoCoPack} &&
+              plan.repair_plugin_pack_ids == std::vector<std::string>{kMuJoCoPack},
+          "A ticked damaged add-on is repaired by the plan: " + plan.message);
+    const auto lines = cyxwiz::PlannedAddOnLines(plan, records);
+    Check(lines == std::vector<std::string>{"Simulation (MuJoCo), repaired"},
+          "The summary says it is repaired");
+}
+
 }  // namespace
 
 int main() {
@@ -855,6 +918,7 @@ int main() {
     TestEngineManagerWording();
     TestNoBaseUpdateStatesWithoutBaseUpdate();
     TestPlannedAddOnLines();
+    TestDamagedCard();
     std::cout << "test_addon_pack_presentation: all checks passed\n";
     return 0;
 }

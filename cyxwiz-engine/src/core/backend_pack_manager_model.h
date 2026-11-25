@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../plugin/plugin_pack.h"
 #include "backend_pack_compatibility.h"
 #include "backend_pack_update_policy.h"
 
@@ -80,7 +81,19 @@ struct BackendPackManagerRecord {
   bool delivery_metadata_available = false;
   std::string delivery_metadata_error;
   std::optional<runtime::BackendPackCompatibilityDecision> compatibility;
+  // An installed add-on's files against its signed inventory
+  // (CheckInstalledAddOnFiles, core/addon_pack_files.h); nothing is known
+  // when files_checked is false. integrity_verified is set when they match.
+  bool files_checked = false;
+  std::size_t files_listed = 0;
+  std::vector<plugin::PackFileIssue> file_issues;
+  std::string files_error;       // its signed metadata or the check itself failed
+  std::string files_checked_at;  // "14:02"
 };
+
+// An installed add-on whose files differ from its signed inventory: the
+// Engine does not load it, and Repair puts the signed files back.
+bool IsDamagedAddOn(const BackendPackManagerRecord &record);
 
 struct BackendPackManagerContext {
   bool packaged_runtime = false;
@@ -117,6 +130,9 @@ struct BackendPackInstallerPlan {
   // and the backend packs, with no route qualification. A base update also
   // queues the new base's pack of every installed add-on, so none is lost.
   std::vector<std::string> plugin_pack_ids;
+  // The ones of plugin_pack_ids that are installed and damaged: repaired
+  // from their signed pack (the helper's --plugin-pack-id with --repair).
+  std::vector<std::string> repair_plugin_pack_ids;
   std::vector<std::string> remove_pack_ids;
   std::vector<std::string> deactivate_backends;
   std::uint64_t download_size_bytes = 0;

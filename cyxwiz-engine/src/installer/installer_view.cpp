@@ -332,7 +332,8 @@ void RenderAddOnCard(InstallerViewState &state,
   if (!card.explanation.empty()) {
     const bool warn = card.status == AddOnCardStatus::NeedsEngineUpdate ||
                       card.status == AddOnCardStatus::NeedsReinstall ||
-                      card.status == AddOnCardStatus::UpdateBlocked;
+                      card.status == AddOnCardStatus::UpdateBlocked ||
+                      card.status == AddOnCardStatus::Damaged;
     if (warn)
       ImGui::PushStyleColor(ImGuiCol_Text, t.warning);
     ImGui::TextUnformatted(card.explanation.c_str());
@@ -1072,10 +1073,18 @@ void RenderSummary(InstallerViewState &state,
     ImGui::EndDisabled();
   } else if (has_changes) {
     ImGui::BeginDisabled(!can_apply);
+    // Only repairs (damaged add-ons ticked): "Review & repair".
+    const bool repairs_only =
+        !plan.repair_plugin_pack_ids.empty() && !plan.install_base &&
+        !plan.update_base && plan.pack_ids.empty() &&
+        plan.deactivate_backends.empty() &&
+        plan.repair_plugin_pack_ids.size() == plan.plugin_pack_ids.size();
     const char *review_label = state.uninstall_completed
                                    ? ICON_FA_DOWNLOAD " Install again"
                                    : plan.update_base
                                    ? ICON_FA_DOWNLOAD " Review & update"
+                                   : repairs_only
+                                   ? ICON_FA_DOWNLOAD " Review & repair"
                                    : ICON_FA_DOWNLOAD " Review & install";
     if (cyxwiz::ui::PrimaryButton(review_label, true, nullptr, cyxwiz::ui::ButtonSize::Regular, -1.0f)) {
       state.pending_plan = plan;
@@ -1184,7 +1193,10 @@ void RenderReviewPopup(InstallerViewState &state,
     }
   }
   if (!state.pending_plan.plugin_pack_ids.empty()) {
-    ImGui::Text("Install add-ons (no device check):");
+    ImGui::Text(state.pending_plan.repair_plugin_pack_ids.size() ==
+                        state.pending_plan.plugin_pack_ids.size()
+                    ? "Repair add-ons from their signed packages (no device check):"
+                    : "Install add-ons (no device check):");
     const auto lines =
         PlannedAddOnLines(state.pending_plan, catalog.records);
     for (std::size_t index = 0; index < lines.size(); ++index) {

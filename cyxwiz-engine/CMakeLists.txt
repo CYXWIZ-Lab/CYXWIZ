@@ -293,6 +293,7 @@ set(ENGINE_SOURCES
     src/core/backend_pack_catalog_adapter.cpp
     src/core/backend_pack_manager_model.cpp
     src/core/addon_pack_presentation.cpp  # add-on cards (Installer + Backend Manager)
+    src/core/addon_pack_files.cpp  # the add-on cards' check of the installed files (Damaged)
     src/core/runtime_console_commands.cpp
     src/core/runtime_truth_query.cpp
     src/core/runtime_log_filter.cpp

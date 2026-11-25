@@ -2,6 +2,7 @@
 
 #include <cyxwiz/version.h>
 
+#include "core/addon_pack_files.h"
 #include "backend_pack_platform.h"
 #include "installer_cancellation_channel.h"
 #include "installer_helper_session.h"
@@ -135,6 +136,10 @@ void PollHelperProgress(
     }
 }
 
+// What the helper does besides its operation: route verification deferred
+// to the Engine (compute packs), or a repair of an installed pack.
+enum class HelperFlag { None, DeferRouteVerification, Repair };
+
 #ifdef _WIN32
 
 std::wstring QuoteWindowsArgument(const std::wstring& value) {
@@ -205,7 +210,7 @@ int RunHelper(
     const std::filesystem::path& metadata_root,
     bool elevate,
     InstallerPackageSource package_source,
-    bool defer_route_verification,
+    HelperFlag flag,
     const std::wstring& operation,
     const std::string& value,
     const InstallerOperationDetailObserver& observer,
@@ -228,8 +233,9 @@ int RunHelper(
             std::to_wstring(CurrentInstallerProcessId()) +
         (package_source == InstallerPackageSource::OfflineSibling
              ? L" --offline" : L"") +
-        (defer_route_verification
+        (flag == HelperFlag::DeferRouteVerification
              ? L" --defer-route-verification" : L"") +
+        (flag == HelperFlag::Repair ? L" --repair" : L"") +
         (elevate ? L" --all-users" : L"");
     if (elevate) {
         SHELLEXECUTEINFOW execute{};
@@ -278,7 +284,7 @@ int RunHelper(
     const std::filesystem::path& metadata_root,
     bool elevate,
     InstallerPackageSource package_source,
-    bool defer_route_verification,
+    HelperFlag flag,
     const char* operation,
     const std::string& value,
     const InstallerOperationDetailObserver& observer,
@@ -308,9 +314,10 @@ int RunHelper(
     if (package_source == InstallerPackageSource::OfflineSibling) {
         arguments.emplace_back("--offline");
     }
-    if (defer_route_verification) {
+    if (flag == HelperFlag::DeferRouteVerification) {
         arguments.emplace_back("--defer-route-verification");
     }
+    if (flag == HelperFlag::Repair) arguments.emplace_back("--repair");
     if (elevate) arguments.emplace_back("--all-users");
     std::vector<char*> native_arguments;
     native_arguments.reserve(arguments.size() + 1);
@@ -452,6 +459,18 @@ public:
         lifecycle.ReadInstalledMetadata(runtime_root_, active, snapshot);
         state.records =
             BuildBackendPackCatalogRecords(snapshot, active, active_plugins);
+        // An installed add-on whose files differ from its signed package is
+        // Damaged on its card; ticked, it is repaired.
+        std::string file_trust_error;
+        if (auto file_trust = runtime::BackendPackTrustStore::Load(
+                catalog_root / "trust" / "trusted-keys.json", file_trust_error)) {
+            CheckInstalledAddOnFiles(
+                state.records, runtime_root_,
+                runtime::BackendPackMetadataVerifier(
+                    std::move(*file_trust), ClientVersion(),
+                    std::string(runtime::CurrentBackendPackPlatformId()),
+                    std::string(runtime::CurrentBackendPackArchitectureId())));
+        }
         ReconcileBackendPackDecisionEvidence(
             state.records, state.verification);
         state.available = true;
@@ -509,7 +528,7 @@ public:
 #else
             "--pack-id",
 #endif
-            true,
+            HelperFlag::DeferRouteVerification,
             {"The selected pack identity is invalid",
              "The signed backend-pack helper is missing from this installation",
              " was installed and made available; verify it in CyxWiz Engine Devices before use",
@@ -527,12 +546,30 @@ public:
 #else
             "--plugin-pack-id",
 #endif
-            false,
+            HelperFlag::None,
             {"The selected add-on identity is invalid",
              "The signed pack helper is missing from this installation",
              " was installed; CyxWiz Engine loads it at its next start",
              nullptr,
              "Add-on installation failed with helper exit code "});
+    }
+
+    InstallerOperationResult RepairPlugin(
+        const std::string& pack_id,
+        const InstallerOperationDetailObserver& observer) override {
+        return RunPackInstall(
+            pack_id, observer,
+#ifdef _WIN32
+            L"--plugin-pack-id",
+#else
+            "--plugin-pack-id",
+#endif
+            HelperFlag::Repair,
+            {"The selected add-on identity is invalid",
+             "The signed pack helper is missing from this installation",
+             " was repaired from its signed package; CyxWiz Engine loads it at its next start",
+             nullptr,
+             "Add-on repair failed with helper exit code "});
     }
 
     InstallerOperationResult InstallBase(
@@ -552,7 +589,7 @@ public:
         std::string error;
         const int exit_code = RunHelper(
             helper, runtime_root_, CurrentCatalogRoot(), elevate_,
-            package_source_, true,
+            package_source_, HelperFlag::DeferRouteVerification,
 #ifdef _WIN32
             L"--base-pack-id",
 #else
@@ -601,7 +638,7 @@ public:
         std::string error;
         const int exit_code = RunHelper(
             helper, runtime_root_, CurrentCatalogRoot(), elevate_,
-            package_source_, true,
+            package_source_, HelperFlag::DeferRouteVerification,
 #ifdef _WIN32
             L"--update-base-pack-id",
 #else
@@ -651,7 +688,7 @@ public:
         std::string error;
         const int exit_code = RunHelper(
             helper, runtime_root_, CurrentCatalogRoot(), elevate_,
-            InstallerPackageSource::CatalogHttps, false,
+            InstallerPackageSource::CatalogHttps, HelperFlag::None,
 #ifdef _WIN32
             L"--deactivate-backend",
 #else
@@ -690,7 +727,7 @@ public:
         std::string error;
         const int exit_code = RunHelper(
             helper, runtime_root_, CurrentCatalogRoot(), elevate_,
-            InstallerPackageSource::CatalogHttps, false,
+            InstallerPackageSource::CatalogHttps, HelperFlag::None,
 #ifdef _WIN32
             L"--remove-pack-id",
 #else
@@ -775,7 +812,7 @@ private:
     InstallerOperationResult RunPackInstall(
         const std::string& pack_id,
         const InstallerOperationDetailObserver& observer,
-        HelperOperation operation, bool defer_route_verification,
+        HelperOperation operation, HelperFlag flag,
         const PackInstallWording& wording) {
         InstallerOperationResult result;
         if (!IsIdentifier(pack_id)) {
@@ -790,7 +827,7 @@ private:
         std::string error;
         const int exit_code = RunHelper(
             helper, runtime_root_, CurrentCatalogRoot(), elevate_,
-            package_source_, defer_route_verification, operation,
+            package_source_, flag, operation,
             pack_id, observer,
             [this](const std::string& token) { BeginHelper(token); },
             [this](const std::string& token) { FinishHelper(token); }, error);
