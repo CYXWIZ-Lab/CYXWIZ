@@ -89,6 +89,8 @@ struct BackendPackManagerRecord {
   std::vector<plugin::PackFileIssue> file_issues;
   std::string files_error;       // its signed metadata or the check itself failed
   std::string files_checked_at;  // "14:02"
+  bool files_check_pending = false;  // being checked off the UI thread
+  std::string files_check_note;      // why its files could not be checked (not damaged)
 };
 
 // An installed add-on whose files differ from its signed inventory: the

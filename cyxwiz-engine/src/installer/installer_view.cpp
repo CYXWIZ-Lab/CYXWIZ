@@ -355,6 +355,8 @@ void RenderAddOnCard(InstallerViewState &state,
     ImGui::TextUnformatted(card.error.c_str());
     ImGui::PopStyleColor();
   }
+  if (!card.files_note.empty())
+    ImGui::TextDisabled("%s", card.files_note.c_str());
   ImGui::PopTextWrapPos();
   if (card.can_uninstall &&
       cyxwiz::ui::DangerButton("Uninstall add-on", !operation_running,

@@ -46,6 +46,13 @@ the Gymnasium task models, MIT). The licence files are in the package's
 `THIRD_PARTY_LICENSES` folder. In the Engine, **Details** lists the pack id,
 the plugin id, the CPU Engine it is built for and the licence files.
 
+An installed add-on's card also checks its files against the signed package,
+with the installation's own trust file (the one the Engine checks with when it
+loads the add-on). In the Engine this runs in the background: the card says
+*Checking its files against the signed package...* until it is done, then
+**Details** lists **Files** and **Checked**. When the trust file cannot be read
+the card says so and the add-on is not called damaged.
+
 ## When the CPU Engine is updated
 
 An add-on is built for one CPU Engine release. An update of the CPU Engine

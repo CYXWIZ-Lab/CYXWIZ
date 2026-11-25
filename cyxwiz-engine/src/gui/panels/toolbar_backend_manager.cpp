@@ -209,17 +209,25 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             backend_pack_catalog_records_ = BuildBackendPackCatalogRecords(
                 snapshot, next_runtime, active_plugins);
             // An installed add-on whose files differ from its signed package
-            // is Damaged on its card, with Repair.
-            std::string file_trust_error;
-            if (auto file_trust = runtime::BackendPackTrustStore::Load(
-                    runtime_root / "trust" / "trusted-keys.json", file_trust_error)) {
-                CheckInstalledAddOnFiles(
-                    backend_pack_catalog_records_, runtime_root,
-                    runtime::BackendPackMetadataVerifier(
-                        std::move(*file_trust), GetVersionString(),
-                        std::string(runtime::CurrentBackendPackPlatformId()),
-                        std::string(runtime::CurrentBackendPackArchitectureId())));
-            }
+            // is Damaged on its card, with Repair. Hashing every add-on takes
+            // 0.1-1 s (more on a first read): off the UI thread, the cards say
+            // "Checking..." meanwhile.
+            MarkAddOnFileChecksPending(backend_pack_catalog_records_);
+            const std::uint64_t generation = ++addon_file_check_generation_;
+            auto checked = std::make_shared<std::vector<BackendPackManagerRecord>>(
+                backend_pack_catalog_records_);
+            AsyncTaskManager::Instance().RunAsync(
+                "Checking add-on files",
+                [checked, runtime_root](LambdaTask& task) {
+                    CheckInstalledAddOnFiles(*checked, runtime_root, GetVersionString());
+                    task.MarkCompleted("Add-on files checked");
+                },
+                nullptr,
+                [this, checked, generation](bool, const std::string&) {
+                    // A newer read of the catalog replaced the records meanwhile.
+                    if (generation != addon_file_check_generation_) return;
+                    MergeAddOnFileChecks(backend_pack_catalog_records_, *checked);
+                });
             backend_pack_catalog_available_ = true;
             backend_pack_catalog_message_ = BackendPackCatalogSummary(
                 snapshot.catalog.catalog_id, backend_pack_catalog_records_);

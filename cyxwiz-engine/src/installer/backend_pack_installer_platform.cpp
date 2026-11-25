@@ -456,17 +456,9 @@ public:
         state.records =
             BuildBackendPackCatalogRecords(snapshot, active, active_plugins);
         // An installed add-on whose files differ from its signed package is
-        // Damaged on its card; ticked, it is repaired.
-        std::string file_trust_error;
-        if (auto file_trust = runtime::BackendPackTrustStore::Load(
-                catalog_root / "trust" / "trusted-keys.json", file_trust_error)) {
-            CheckInstalledAddOnFiles(
-                state.records, runtime_root_,
-                runtime::BackendPackMetadataVerifier(
-                    std::move(*file_trust), ClientVersion(),
-                    std::string(runtime::CurrentBackendPackPlatformId()),
-                    std::string(runtime::CurrentBackendPackArchitectureId())));
-        }
+        // Damaged on its card; ticked, it is repaired. Checked with the
+        // installation's own trust file, as the Engine checks it at load.
+        CheckInstalledAddOnFiles(state.records, runtime_root_, ClientVersion());
         ReconcileBackendPackDecisionEvidence(
             state.records, state.verification);
         state.available = true;

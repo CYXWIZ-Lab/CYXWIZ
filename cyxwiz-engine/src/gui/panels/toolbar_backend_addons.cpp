@@ -75,6 +75,7 @@ void ToolbarPanel::RenderBackendAddOns(
             ImGui::TextColored(t.warning, "%s", card.action_hint.c_str());
         }
         if (!card.error.empty()) ImGui::TextColored(t.error, "%s", card.error.c_str());
+        if (!card.files_note.empty()) ImGui::TextDisabled("%s", card.files_note.c_str());
         ImGui::PopTextWrapPos();
 
         // Row actions: the one that applies, then Details.

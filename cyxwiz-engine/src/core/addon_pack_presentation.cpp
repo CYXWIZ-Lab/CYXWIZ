@@ -365,6 +365,12 @@ AddOnCardView BuildCard(const std::string& plugin_id,
         AddDetail(card.details, "Update", AddOnUpdateWords(*record));
     }
     AddDetail(card.details, "Signed metadata", record->delivery_metadata_error);
+    if (installed && installed->files_check_pending) {
+        card.files_note = "Checking its files against the signed package...";
+        AddDetail(card.details, "Files", "Checking...");
+    } else if (installed && !installed->files_check_note.empty()) {
+        card.files_note = installed->files_check_note;
+    }
     if (installed && installed->files_checked) {
         if (record->delivery_metadata_error.empty()) {
             AddDetail(card.details, "Signed metadata",

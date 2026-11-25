@@ -653,6 +653,9 @@ private:
     std::shared_ptr<runtime::BackendPackLifecycleService>
         backend_pack_lifecycle_service_;
     std::vector<BackendPackManagerRecord> backend_pack_catalog_records_;
+    // Bumped by each read of the records; an add-on file check of an older
+    // read is dropped when it ends.
+    std::uint64_t addon_file_check_generation_ = 0;
     bool backend_pack_catalog_loaded_ = false;
     bool backend_pack_catalog_available_ = false;
     std::string backend_pack_catalog_message_;

@@ -45,6 +45,7 @@ struct AddOnCardView {
     std::string licence;             // third-party licences in the pack
     std::string action_hint;         // a warning line (an update to select, a loss)
     std::string error;               // why signed metadata could not be read
+    std::string files_note;          // muted: its files are being checked, or could not be
     AddOnCardStatus status = AddOnCardStatus::Optional;
     std::string status_text;
     InstallerPackPresentationTone tone = InstallerPackPresentationTone::Neutral;
