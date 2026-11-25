@@ -1976,8 +1976,9 @@ std::string GraphCodeExporter::GeneratePyCyxWizCode(const std::vector<int>& sort
             }
 
             case NodeType::Split: {
-                // Output 1 = the first split_size entries, Output 2 = the rest.
-                std::string split_size = GetParamOrDefault(*node, "split_size", "2");
+                // Output 1 = the first split_size entries, Output 2 = the rest;
+                // without the setting, 1, as the compiler reads it.
+                std::string split_size = GetParamOrDefault(*node, "split_size", "1");
                 std::string dim = GetParamOrDefault(*node, "dim", "1");
                 const std::string source = input_expr(*node, 0);
                 code += "        " + out + " = " + source + ".split([" + split_size + ", " + source +
