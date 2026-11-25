@@ -3045,6 +3045,53 @@ set_target_properties(test_node_contract_gates PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Tool: the Node reference of the docs =====
+# Dumps the node contract inventory plus the palette placement and the Node
+# Documentation text as JSON; scripts/docs/generate_node_reference.py turns it
+# into docs/reference/nodes, and node_reference_docs fails when those pages
+# no longer match the code.
+add_executable(tool_node_reference_dump
+    tests/tool_node_reference_dump.cpp
+    tests/node_contract_inventory.cpp
+    tests/node_workflow_evidence.cpp
+    src/gui/node_type_import_registry.cpp
+    src/gui/node_editor_nodes.cpp
+    src/gui/properties_contract.cpp
+    src/gui/node_documentation.cpp
+    src/gui/ui_tokens.cpp
+    src/core/appearance_options.cpp
+    src/core/node_palette.cpp
+    src/core/preparation_recipe.cpp
+)
+target_include_directories(tool_node_reference_dump PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imnodes
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(tool_node_reference_dump PRIVATE
+    cyxwiz-training-core
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+target_compile_definitions(tool_node_reference_dump PRIVATE
+    CYXWIZ_NODE_FACTORY_ONLY
+    CYXWIZ_NODE_REFERENCE_REPOSITORY_ROOT="${CMAKE_SOURCE_DIR}"
+)
+if(WIN32)
+    target_compile_definitions(tool_node_reference_dump PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(tool_node_reference_dump PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(Python3_EXECUTABLE)
+    add_test(NAME node_reference_docs
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/docs/generate_node_reference.py"
+                $<TARGET_FILE:tool_node_reference_dump> --check)
+endif()
+
 # ===== Test: Built-in scalar simulation runtime contract =====
 add_executable(test_graph_executor_simulation
     tests/test_graph_executor_simulation.cpp

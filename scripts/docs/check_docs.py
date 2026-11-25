@@ -24,7 +24,9 @@ NEW_TREE = {
     "release-notes", "internals", "security", "legal", "about",
 }
 NEW_TREE_FILES = {"index.md", "faq.md", "known-issues.md", "glossary.md", "deprecations.md"}
-SKIP_DIRS = {"templates", "next"}  # templates hold placeholders; release-note fragments have no front matter
+# templates hold placeholders; release-note fragments have no front matter; _notes are hand notes a
+# generator merges into its pages (their links are still checked)
+SKIP_DIRS = {"templates", "next", "_notes"}
 
 REQUIRED = ["title", "description", "type", "area", "status", "since", "owner", "last_reviewed"]
 ALLOWED = {
