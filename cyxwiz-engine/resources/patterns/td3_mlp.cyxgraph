@@ -1,6 +1,7 @@
 {
   "id": "td3_mlp",
   "name": "TD3 (MLP 400-300)",
+  "kind": "graph",
   "description": "Twin Delayed DDPG as in Stable-Baselines3's TD3 MlpPolicy: an Environment, an actor of two Dense layers (400 and 300) with ReLU ending in a Policy Head (a deterministic tanh action), Q layers of the same shape ending in a Q Head (TD3 builds twin Q networks and their targets from them; the action joins the first Q layer), and TD3 with its replay buffer and Gaussian exploration noise. TD3 learns continuous actions: pick a MuJoCo task on the Environment node (its plugin loaded) and press Tuned for on TD3 to load tuned settings, then Train.",
   "category": "Reinforcement Learning",
   "tags": ["td3", "twin delayed ddpg", "ddpg", "off-policy", "replay", "reinforcement", "rl", "policy", "mujoco"],

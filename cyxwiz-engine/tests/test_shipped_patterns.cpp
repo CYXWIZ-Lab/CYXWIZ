@@ -320,18 +320,30 @@ int main() {
         return cyxwiz::PreprocessingDomain::Tabular;
     };
     cyxwiz::SetGraphCompilerDatasetHooks(std::move(hooks));
-    // The Engine's built-in CartPole, as the Environment node lists it.
+    // The Engine's built-in CartPole and the MuJoCo plugin's HalfCheetah, as the Environment node lists them.
     cyxwiz::SetRLEnvironmentLookup([](const std::string& key, const std::map<std::string, std::string>&,
                                       cyxwiz::plugin::PluginEnvironmentInfo& info, std::string&) {
-        if (key != "cyxwiz.builtin:CartPole-v1") return false;
-        info.id = "CartPole-v1";
-        info.name = "Cart Pole";
-        info.observation_size = 4;
-        info.discrete_actions = true;
-        info.action_size = 1;
-        info.action_count = 2;
-        info.max_episode_steps = 500;
-        return true;
+        if (key == "cyxwiz.builtin:CartPole-v1") {
+            info.id = "CartPole-v1";
+            info.name = "Cart Pole";
+            info.observation_size = 4;
+            info.discrete_actions = true;
+            info.action_size = 1;
+            info.action_count = 2;
+            info.max_episode_steps = 500;
+            return true;
+        }
+        if (key == "com.cyxwiz.simulation.mujoco:HalfCheetah-v5") {
+            info.id = "HalfCheetah-v5";
+            info.name = "Half Cheetah";
+            info.observation_size = 17;
+            info.action_size = 6;
+            info.action_low.assign(6, -1.0f);
+            info.action_high.assign(6, 1.0f);
+            info.max_episode_steps = 1000;
+            return true;
+        }
+        return false;
     });
     cyxwiz::test::InstallQualifiedRouteSnapshot();  // a test run trains on this PC's devices
 
@@ -364,6 +376,10 @@ int main() {
         Check(!pattern->description.empty(), id + ": has a description");
         // Custom is where a category the Engine does not know lands: a shipped pattern names a known one.
         Check(pattern->category != gui::patterns::PatternCategory::Custom, id + ": its category is a known one");
+        // A policy trains on its environment, never inside a data graph: every RL pattern is a full graph.
+        Check(pattern->category != gui::patterns::PatternCategory::ReinforcementLearning ||
+                  pattern->kind == PatternKind::Graph,
+              id + ": a Reinforcement Learning pattern is a full graph");
         std::set<std::string> node_ids;
         for (const auto& node : pattern->template_data.nodes) {
             Check(node_ids.insert(node.id).second, id + ": node id '" + node.id + "' is used once");
