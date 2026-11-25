@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cctype>
+#include <cwctype>
 #include <chrono>
 #include <fstream>
 #include <functional>
@@ -482,14 +483,21 @@ void* PluginLoader::LoadDLL(const std::filesystem::path& path, std::string& erro
 void* PluginLoader::LoadPackDLL(const std::vector<std::filesystem::path>& copies,
                                 std::shared_ptr<void>& dependencies, std::string& error_out) {
 #ifdef _WIN32
-    // The libraries beside the library by full path, in as many passes as
-    // their own imports of each other need; then the library, whose import
-    // of each is satisfied by the module of that name already loaded. Only
-    // the default folders (the Engine's, System32) are ever searched.
+    // The libraries (.dll) beside the library by full path, in as many
+    // passes as their own imports of each other need; then the library, whose
+    // import of each is satisfied by the module of that name already loaded.
+    // Only the default folders (the Engine's, System32) are ever searched, so
+    // a file that does not load (data, or a library it does not use) is left
+    // alone: the library loads without it or names what it misses.
     DWORD previous_mode = 0;
     ::SetThreadErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX, &previous_mode);
     auto loaded = std::make_shared<std::vector<HMODULE>>();
-    std::vector<std::filesystem::path> pending(copies.begin() + 1, copies.end());
+    std::vector<std::filesystem::path> pending;
+    for (auto it = copies.begin() + 1; it != copies.end(); ++it) {
+        auto extension = it->extension().wstring();
+        std::transform(extension.begin(), extension.end(), extension.begin(), ::towlower);
+        if (extension == L".dll") pending.push_back(*it);
+    }
     bool progress = true;
     while (!pending.empty() && progress) {
         progress = false;
@@ -503,12 +511,10 @@ void* PluginLoader::LoadPackDLL(const std::vector<std::filesystem::path>& copies
             }
         }
     }
-    HMODULE library = nullptr;
-    if (pending.empty()) {
-        library = ::LoadLibraryExW(copies.front().wstring().c_str(), nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-        if (!library) error_out = GetLastDLLError();
-    } else {
-        error_out = "cannot load " + pending.front().filename().string() + ": " + GetLastDLLError();
+    HMODULE library = ::LoadLibraryExW(copies.front().wstring().c_str(), nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    if (!library) {
+        error_out = GetLastDLLError();
+        if (!pending.empty()) error_out += " (" + pending.front().filename().string() + " beside it did not load)";
     }
     ::SetThreadErrorMode(previous_mode, nullptr);
     // Freed after the library, in reverse order.
