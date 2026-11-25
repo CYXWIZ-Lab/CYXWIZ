@@ -611,10 +611,16 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
 
     // 0. An installed add-on: every file of its folder against the signed
     // inventory (the exact file set, sizes, SHA-256) before plugin.json is read.
+    // plugin.json is held against writes from before its check until it is
+    // parsed, so the bytes parsed are the bytes checked.
     PackFolderCheck folder_check;
+    CopyLock manifest_lock;
     if (pack) {
         if (!pack->checks.check_folder || !pack->checks.check_file)
             return refuse_pack({}, "its files cannot be checked against its signed package");
+        std::string hold_error;
+        if (!manifest_lock.Hold(plugin_dir / "plugin.json", hold_error))
+            return refuse_pack({{"plugin.json", PackFileProblem::Unreadable}}, hold_error);
         folder_check = pack->checks.check_folder(plugin_dir, pack->components);
         if (!folder_check.ok()) {
             return refuse_pack(folder_check.issues,
@@ -639,6 +645,19 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
         loaded->state = PluginState::Failed;
         loaded->error_message = error_out;
         return nullptr;
+    }
+
+    // 2b. An add-on loads its native library, one of its signed files (a
+    // Python-only add-on is not supported).
+    const PackComponent* pack_library = nullptr;
+    if (pack) {
+        pack_library = loaded->manifest.library.empty()
+            ? nullptr
+            : FindPackComponent(pack->components, std::filesystem::path(loaded->manifest.library));
+        if (!pack_library) {
+            return refuse_pack({{loaded->manifest.library, PackFileProblem::NotListed}},
+                               "plugin.json names no library of its signed package");
+        }
     }
 
     // 3. Resolve library path
@@ -693,14 +712,8 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
     std::unique_ptr<CopyLock> copy_lock;
     std::filesystem::path load_path;
     if (pack) {
-        const PackComponent* library =
-            FindPackComponent(pack->components, std::filesystem::path(loaded->manifest.library));
-        if (!library) {
-            return refuse_pack({{loaded->manifest.library, PackFileProblem::NotListed}},
-                               "plugin.json names a library that is not part of its signed package");
-        }
         std::vector<PackFileIssue> copy_issues;
-        load_path = ShadowCopyPackLibrary(loaded->manifest.id, plugin_dir, *pack, *library, copy_lock,
+        load_path = ShadowCopyPackLibrary(loaded->manifest.id, plugin_dir, *pack, *pack_library, copy_lock,
                                           copy_issues, error_out);
         if (load_path.empty()) return refuse_pack(std::move(copy_issues), error_out);
     } else {
