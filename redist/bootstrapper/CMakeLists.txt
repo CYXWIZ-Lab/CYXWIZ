@@ -559,6 +559,10 @@ if(CYXWIZ_BUILD_TESTS)
         LibArchive::LibArchive
         OpenSSL::Crypto
     )
+    if(WIN32)
+        # The unreadable-folder check denies listing a folder (aclapi).
+        target_link_libraries(test_backend_pack_lifecycle_service PRIVATE advapi32)
+    endif()
     set_target_properties(test_backend_pack_lifecycle_service PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )

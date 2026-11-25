@@ -25,6 +25,16 @@
 
 #include <nlohmann/json.hpp>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <aclapi.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace {
 
 using Json = nlohmann::json;
@@ -150,6 +160,50 @@ bool WriteZip(
     archive_write_free(writer);
     return closed == ARCHIVE_OK;
 }
+
+// Denies (and gives back) the right to list a folder, to stand in for a
+// folder the process cannot read.
+#ifdef _WIN32
+bool SetListing(const std::filesystem::path& folder, ACCESS_MODE mode) {
+    EXPLICIT_ACCESS_W access{};
+    access.grfAccessPermissions = FILE_LIST_DIRECTORY;
+    access.grfAccessMode = mode;
+    access.grfInheritance = NO_INHERITANCE;
+    access.Trustee.TrusteeForm = TRUSTEE_IS_NAME;
+    access.Trustee.TrusteeType = TRUSTEE_IS_USER;
+    access.Trustee.ptstrName = const_cast<wchar_t*>(L"CURRENT_USER");
+    PACL current = nullptr;
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (GetNamedSecurityInfoW(folder.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr,
+                              &current, nullptr, &descriptor) != ERROR_SUCCESS) {
+        return false;
+    }
+    PACL updated = nullptr;
+    bool ok = SetEntriesInAclW(1, &access, current, &updated) == ERROR_SUCCESS &&
+              SetNamedSecurityInfoW(const_cast<wchar_t*>(folder.c_str()), SE_FILE_OBJECT,
+                                    DACL_SECURITY_INFORMATION, nullptr, nullptr, updated,
+                                    nullptr) == ERROR_SUCCESS;
+    if (updated) LocalFree(updated);
+    LocalFree(descriptor);
+    return ok;
+}
+bool DenyListing(const std::filesystem::path& folder) { return SetListing(folder, DENY_ACCESS); }
+void AllowListing(const std::filesystem::path& folder) {
+    // REVOKE_ACCESS removes the deny entry for CURRENT_USER.
+    SetListing(folder, REVOKE_ACCESS);
+}
+#else
+bool DenyListing(const std::filesystem::path& folder) {
+    if (::geteuid() == 0) return false;  // root lists anything
+    std::error_code error;
+    std::filesystem::permissions(folder, std::filesystem::perms::none, error);
+    return !error;
+}
+void AllowListing(const std::filesystem::path& folder) {
+    std::error_code error;
+    std::filesystem::permissions(folder, std::filesystem::perms::owner_all, error);
+}
+#endif
 
 class Fixture {
 public:
@@ -1372,6 +1426,27 @@ int main() {
             std::filesystem::remove(folder / "notes.txt");
             failures += !Expect(CheckInstalledPackFiles(folder, installed.components).ok(),
                                 "the restored add-on must verify again");
+
+            // A folder inside that cannot be listed refuses the pack; the
+            // check never throws (at Engine start that would end the Engine).
+            const auto locked = folder / "locked";
+            std::filesystem::create_directories(locked);
+            if (DenyListing(locked)) {
+                bool threw = false;
+                PackFilesCheck unreadable;
+                try {
+                    unreadable = CheckInstalledPackFiles(folder, installed.components);
+                } catch (...) {
+                    threw = true;
+                }
+                AllowListing(locked);
+                failures += !Expect(!threw && !unreadable.ok() && !unreadable.error.empty(),
+                                    "an add-on folder that cannot be listed must be refused, not throw (" +
+                                        unreadable.error + ")");
+            } else {
+                std::cout << "SKIP: listing of a folder cannot be denied here\n";
+            }
+            std::filesystem::remove_all(locked);
 
             VerifiedBackendPackManifest other;
             failures += !Expect(

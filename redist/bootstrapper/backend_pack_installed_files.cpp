@@ -136,8 +136,17 @@ PackFilesCheck CheckInstalledPackFiles(
     std::vector<std::string> unlisted;
     std::vector<std::string> missing;
     std::string error;
-    if (!VerifyExactPackInventory(folder, FoldedPackInventory(components),
-                                  error, &unlisted, &missing)) {
+    bool exact = false;
+    try {
+        exact = VerifyExactPackInventory(folder, FoldedPackInventory(components),
+                                         error, &unlisted, &missing);
+    } catch (const std::filesystem::filesystem_error& walk_error) {
+        // A folder that cannot be listed refuses the pack (Repair's own walk
+        // is unchanged: it stops the delivery with the exception).
+        check.error = std::string("Cannot list the pack folder: ") + walk_error.what();
+        return check;
+    }
+    if (!exact) {
         check.error = error;
         for (const auto& path : unlisted) {
             check.findings.push_back({path, PackFileFault::NotListed});
