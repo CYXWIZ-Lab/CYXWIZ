@@ -442,9 +442,25 @@ def package_inventory(install_root: Path) -> tuple[list[dict[str, Any]], int]:
 
 def base_inventory(base: Path) -> dict[str, str]:
     """Every file of the installed base and its digest."""
+    inventory: dict[str, str] = {}
+    for path in sorted(item for item in base.rglob("*") if item.is_file()):
+        relative = path.relative_to(base).as_posix()
+        try:
+            inventory[relative] = sha256_file(path)
+        except OSError as error:
+            raise CpuBaseSmokeError(f"Cannot read the installed base file {relative}: {error}") from error
+    return inventory
+
+
+def base_inventory_from_package(
+    files: list[dict[str, Any]], install_root: Path, base: Path
+) -> dict[str, str]:
+    """The base's part of a package inventory, so the base is hashed once before the checks."""
+    prefix = base.relative_to(install_root).as_posix() + "/"
     return {
-        path.relative_to(base).as_posix(): sha256_file(path)
-        for path in sorted(item for item in base.rglob("*") if item.is_file())
+        entry["path"][len(prefix):]: entry["sha256"]
+        for entry in files
+        if entry["path"].startswith(prefix)
     }
 
 
@@ -490,7 +506,7 @@ def verify(
     manifest = load_manifest(manifest_path, archive)
     base = install(archive, manifest, install_root)
     files, installed_size = package_inventory(install_root)
-    base_before = base_inventory(base)
+    base_before = base_inventory_from_package(files, install_root, base)
     profile = user_profile(install_root)
     profile.mkdir(parents=True, exist_ok=True)
     if platform.system() == "Windows":
