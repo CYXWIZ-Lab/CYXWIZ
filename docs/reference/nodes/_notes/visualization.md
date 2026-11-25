@@ -1,0 +1,176 @@
+---
+description: The Plot and Dashboard nodes, which show the data at their place in the graph; the Dashboard's layout, widgets, filters and caches.
+area: evaluation
+owner: evaluation
+related:
+  - ../../../user-guide/evaluation/plot-node.md
+  - ../../../user-guide/evaluation/plotting.md
+  - ../../../user-guide/data-studio/profile.md
+redirect_from:
+  - ../../../usage/dashboard.md
+---
+
+Both nodes take any table on their **Data** input, show the data at their
+place in the graph, save their settings (never the data) in the node
+(`plot_spec`, `dashboard_spec`), and are skipped by training.
+
+The Plot node is described in
+[Plot data on the canvas](../../../user-guide/evaluation/plot-node.md). The
+rest of this page is the Dashboard node.
+
+## Dashboard
+
+```text
+Data Input --> Dashboard
+```
+
+Search **Dashboard** on the canvas (or open the Visualization group),
+connect a table to it, and double-click it (or right-click it and choose
+**Configure...**). The node shows its state under it: *Not read yet*,
+*Reading ...*, *Dashboard · 12 widgets*, *Out of date*.
+
+### Data
+
+The line at the top says where the data comes from ("Data at Spotify ·
+8,582 rows × 15 columns · read 15:53"), with **Refresh** (**Cancel** while
+reading). Only the nodes above the dashboard run, in the background
+(**Background Tasks** shows them). A loaded Data Input is read directly; a
+Preparation Recipe runs as its steps and the dashboard reads the recipe's
+result. When a node above changes, the dashboard says it is out of date
+until you refresh; a node that runs only inside training says so instead of
+showing old charts.
+
+### The automatic layout
+
+The first time it opens, the dashboard profiles the data (the same profile
+as Data Studio's Profile tab) and builds:
+
+- the **target** (the Data Input's label column): a histogram for a number,
+  bars for a category;
+- a **bar chart per category column** with up to 30 values;
+- a **histogram per number column**;
+- **rows per year** for a date column (click a year to filter on it);
+- a **correlation matrix** of the number columns;
+- **missing values**: the share per column under the filters (texts marked
+  as missing in Data Studio count), when there are any;
+- the **target by its most correlated column** (a scatter, or a box per
+  class for a category target).
+
+**Regenerate** rebuilds these automatic widgets from the current data and
+roles; widgets you added stay. A column that only numbers the rows (a CSV's
+unnamed first column, read as `C0`, `column0` or `Unnamed: 0`, or one named
+`index`) is an ID and gets no widget.
+
+### Text columns
+
+A column with the Text role (long texts, or values mostly different per
+row, such as reviews) gets its own widgets:
+
+| Widget | Shows |
+| --- | --- |
+| KPIs | **Words per text (median)**, **Vocabulary (words)** and **Empty or missing texts** |
+| Text length (words) | A histogram; the longest 1% of texts share the last bin |
+| Top words, **Top 2-word phrases** | Horizontal bars, common English words left out (**Keep common words** in the widget's settings counts them) |
+| **Words by class** | Each top word's share of each class's texts (a heatmap), when a class column has up to 20 values |
+| **Sample texts** | The class, then the text |
+
+Words are the text in lower case, split into letters, digits and
+apostrophes. Click a word or phrase to keep the texts that have it (as a
+whole word: "sleep" does not keep "sleeping"); click a length bin to keep
+texts of that many words. The words are split once per text column in the
+background and saved in the project's `cache/dashboard_words` folder; a
+changed source file (new size or time) splits again. Deleting the folder is
+safe.
+
+### Sparse features
+
+Below a **Count Vectorizer** or **TF-IDF** node with **Output format:
+sparse**, the dashboard shows the sparse matrix itself (it runs the
+vectorizer the way training does, in the background): KPIs (rows,
+features, non-zero values, density, memory, labels), **Labels** (rows per
+class; click a bar to keep that class), **Top features**, **Features per
+row**, **Feature spread** (log scale), **Top features by class** and
+**Rows**. The figures are exact, read from the matrix. The matrix comes
+from the project's materialization cache, shared with training. A Plot
+node cannot draw sparse features and says to connect a Dashboard.
+
+### Summary strip and filters
+
+The summary strip shows rows (filtered, *of* all rows), columns, missing
+cells, duplicate rows and the target's mean (or most frequent value), with
+*all* for the unfiltered figure when a filter is on.
+
+Click a bar, a pie slice or a histogram bin: every **other** widget shows
+only those rows (the clicked widget keeps all its values, so you can pick
+another). The filter bar lists the conditions ("album_type = single ·
+2,219 of 8,582 rows"); click a condition to remove it, or **Clear all**.
+Clicking the same bar again removes its filter. Filters are saved in the
+node. Filtered bar charts and histograms show all rows in grey behind the
+filtered bars.
+
+### Fields and roles
+
+The left column lists the fields with their roles (ID, Target, Numeric,
+Category, Date, Text, ...). **Edit roles in Data Studio** opens Data
+Studio's Profile tab on this data. The Data Input's label comes first, then
+roles set in Data Studio, then inferred ones.
+
+### Widgets
+
+| Control | Does |
+| --- | --- |
+| **Add widget** | A KPI, Table, Missing values, or any plot type (grouped as in the Plot window), starting with fitting columns |
+| Click a widget's title | Edit it on the right: title, plot type, columns (X, Y, Colour by), a KPI's measure (rows, sum, mean, median, min, max, distinct, missing) and field, a table's columns and rows |
+| **All settings in the Plot window** | The full Plot window on the same data; changes go back into the widget |
+| **View large** | The plot in its own window (resize, dock, another screen), with the plot toolbar; it follows the filters, and a click there filters the dashboard |
+| Size and place | Width (1 to 12 columns), height, **Earlier** / **Later**, **Remove widget** |
+| **Re-query** | Runs every widget's query again |
+| **View SQL** | The query the widget runs, with the filters written in; **Open in Query tab** and **Copy** |
+
+Widgets read only the columns they need; tables over 1,000,000 rows are
+drawn from a reproducible sample of that many rows (the widget says
+*sampled*).
+
+### Export and Data Studio
+
+- **Export PNG** saves the summary strip and widgets as they are on
+  screen; scroll first if the widgets you want are further down.
+- **Open in Data Studio** opens the Query tab on the rows the dashboard
+  shows (the dataset with the current filters) and runs it:
+
+  ```sql
+  SELECT * FROM "Spotify" WHERE CAST("album_type" AS VARCHAR) IN ('single')
+  ```
+
+- Data Studio's Visualize tab and Query results have **Add to Dashboard**.
+  A plot arrives as an ordinary widget; a query arrives as a **query
+  widget** that runs its SQL over the rows the dashboard shows, so the
+  filters apply. Its settings show the query and **Edit in Query tab**; its
+  bars do not set filters.
+
+### Saved results
+
+A card's query result is saved in the project's `cache/query_results`
+folder (Parquet, kept under 512 MB, least recently used first), so a
+reopened dashboard shows every card at once. Background Tasks marks such a
+result "(saved)". The key holds the query, its values and the content of
+every table it reads, so an edited file or a new load runs again. Deleting
+the folder is safe. Queries run three at a time, cheap cards first, and a
+filter change stops the queries it supersedes.
+
+### When the data changes
+
+- New values or rows: every widget updates; the layout stays.
+- A column a widget uses is gone: the widget says so. When one new column
+  of the same type appeared (a rename), **Rebind to** it, or **Remove**.
+- A column became text where a widget needs numbers: the widget says so and
+  suggests a Bar.
+- New columns: existing widgets keep working; **Regenerate** adds cards
+  for them.
+
+## Related
+
+- [Plot data on the canvas](../../../user-guide/evaluation/plot-node.md)
+- [Plot data](../../../user-guide/evaluation/plotting.md)
+- [Profile a dataset](../../../user-guide/data-studio/profile.md)
+- [Query with SQL](../../../user-guide/data-studio/query.md)

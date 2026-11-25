@@ -72,3 +72,11 @@ internals:
 tutorials:
   code: [examples/cyxgraph/mnist_mlp.cyxgraph, examples/cyxgraph/review_sentiment_classifier.cyxgraph, examples/cyxgraph/speech_command_classifier.cyxgraph, examples/cyxgraph/timeseries/airline_passengers_dense.cyxgraph, examples/cyxgraph/cats_dogs_classifier.cyxgraph, examples/cyxgraph/missing_values_fix.cyxgraph, examples/datasets/**, examples/python/digits_mlp.py, cyxwiz-engine/src/gui/starter_graphs*, cyxwiz-engine/src/gui/dialogs/start_page*, cyxwiz-engine/src/gui/data_studio/missing_view*, cyxwiz-engine/src/gui/panels/model_panel*, cyxwiz-engine/src/gui/panels/export_dialog*, cyxwiz-engine/src/core/code_export*]
   synced_at: 202a19691
+
+# The generated Node reference (docs/reference/nodes): the node registry, the
+# Node Documentation text, the palette placement and the generator. ctest
+# node_reference_docs fails when the pages differ from the code; this marker
+# records when the hand notes in _notes/ were last checked.
+reference-nodes:
+  code: [cyxwiz-engine/src/core/node_metadata*, cyxwiz-engine/src/core/node_palette*, cyxwiz-engine/src/core/pipeline_runtime_capabilities*, cyxwiz-engine/src/gui/node_documentation*, cyxwiz-engine/resources/node_templates/**, cyxwiz-engine/tests/node_contract_inventory*, cyxwiz-engine/tests/tool_node_reference_dump.cpp, cyxwiz-engine/tests/workflow_evidence_manifest.json, scripts/docs/generate_node_reference.py]
+  synced_at: 49c4d9607
