@@ -171,8 +171,8 @@ Each item opens a tool window or a Data Studio tab on the right view:
   Command**, **Frame Time Overlay** (check items, saved).
 
 Pages: [Model tools](model-window.md),
-[Linear algebra](../usage/linear_algebra.md),
-[Monitoring](../usage/monitoring.md), [Utilities](../usage/utilities.md).
+[Linear algebra](linear-algebra.md),
+[Monitoring](monitor.md), [Utilities](utilities.md).
 
 ## Script
 

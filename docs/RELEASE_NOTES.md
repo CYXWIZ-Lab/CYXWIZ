@@ -17,7 +17,7 @@ private Data Studio tickets (`tofix*/track*`).
   graph inserted onto a canvas that has nodes asks first: Replace the canvas
   (Undo brings it back), Add beside it, or Cancel; it used to land on top of
   the graph. A double-click on a Nodes panel example opens it in the
-  browser. See [Patterns](usage/patterns.md).
+  browser. See [Patterns](main-window/pattern-browser.md).
 - **A pattern with a link to a missing pin is refused.** The link was
   skipped and the rest inserted, leaving a hole in the graph; now nothing is
   added and the browser names the pin and the node.
@@ -31,7 +31,7 @@ private Data Studio tickets (`tofix*/track*`).
   Block input node. The GAN, autoencoder, VAE, U-Net and sequence-to-sequence
   patterns need training the Engine does not have yet: inserting one is
   refused with the reason. The old "Phase 3 Demo" is now "Skip Connections
-  and Merges". See [Patterns](usage/patterns.md).
+  and Merges". See [Patterns](main-window/pattern-browser.md).
 - **An RNN layer reads its nonlinearity in any case.** "Tanh" passed the
   compile check but stopped the model build with "RNNLayer nonlinearity must
   be tanh or relu"; it now means tanh.
@@ -423,7 +423,7 @@ private Data Studio tickets (`tofix*/track*`).
   Screen (F11), Help > Documentation (F1), API Reference, What's New, Known
   Issues and Open Logs Folder (the first two were planned).
 - **Studio Debugger > Runtime > Timeline zooms and clusters** (guide in
-  `docs/usage/monitoring.md`): drag across the lanes to zoom, **Whole run**
+  `docs/main-window/monitor.md`): drag across the lanes to zoom, **Whole run**
   to go back; short events that would overlap merge into a bar with their
   count (hover lists them, click zooms in); a long event others happened
   during is a band under them; only failed events are red and warnings
@@ -445,7 +445,7 @@ private Data Studio tickets (`tofix*/track*`).
   - Plugin SDK: new header `cyxwiz/portable_random.h` (shuffle and draws
     that are the same with every compiler).
 - **Tools > Monitoring is one Monitor window** (guide in
-  `docs/usage/monitoring.md`, example `examples/python/system_memory.py`)
+  `docs/main-window/monitor.md`, example `examples/python/system_memory.py`)
   with tabs System, Memory, Loaded data and Frames. It replaces Memory
   Visualization and System Monitor.
   - Every figure is measured, on Windows, Linux and macOS. The old System
@@ -519,7 +519,7 @@ private Data Studio tickets (`tofix*/track*`).
   `GradCAMResult`, must be rebuilt against these headers.
 
 - **Tools > Optimization and Calculus is one window** (guide in
-  `docs/usage/optimization_calculus.md`). Its six menu items open it on
+  `docs/main-window/optimization-and-calculus.md`). Its six menu items open it on
   Optimizers, Curvature, Linear, Quadratic, Derivative or Integral. It takes
   typed formulas with exact derivatives, follows the training optimizers on
   a formula's contour map, solves linear and quadratic programs of any size
@@ -620,14 +620,14 @@ private Data Studio tickets (`tofix*/track*`).
   saved in `%APPDATA%\CyxWiz\patterns` (`~/.cyxwiz/patterns` on Linux and
   macOS) whatever folder the Engine starts in, with Show in folder and
   Delete (to the Recycle Bin or Trash). See
-  [Patterns](usage/patterns.md#my-patterns-saving-your-own).
+  [Patterns](main-window/pattern-browser.md#my-patterns-saving-your-own).
 
 - **ResNet-18, MobileNetV2 and MobileNetV3 Small patterns.** Full graphs of
   torchvision's networks, every layer named as torchvision names it, so
   torchvision's ImageNet weight files fill them through **Start from > A
   weights file**. **num_classes** sets the head (other than 1000, it starts
   fresh) and **freeze_backbone** trains only the head. See
-  [Patterns](usage/patterns.md#starting-from-torchvisions-weights).
+  [Patterns](main-window/pattern-browser.md#starting-from-torchvisions-weights).
 - **CyxWiz Cream theme.** A warm light theme beside CyxWiz Light: a cream
   window, ivory fields and menus, warm brown text, the CyxWiz purple accent
   (View > Theme or Preferences > Appearance; the Theme Editor changes any

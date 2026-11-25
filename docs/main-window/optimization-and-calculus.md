@@ -1,4 +1,20 @@
-# Optimization and calculus
+---
+title: Optimization and Calculus window
+description: The Tools > Optimization and Calculus window (optimizer paths, linear and quadratic programs, integrals, derivatives, curvature) and the Portfolio Weights node.
+type: reference
+area: general
+audience: user
+status: experimental
+since: 1.0.8
+owner: main-window
+last_reviewed: 2026-11-25
+related:
+  - linear-algebra.md
+  - ../python/maths-and-optimization.md
+  - utilities.md
+redirect_from:
+  - ../usage/optimization_calculus.md
+---
 
 **Tools > Optimization and Calculus** is one window that works with typed
 formulas and programs. It minimizes a formula with the optimizers training
@@ -8,10 +24,10 @@ a formula. Each answer is worked out in the background as you edit, and
 portfolio work on every run of a graph. Python has the same work as
 `pycyxwiz.calculus` and `pycyxwiz.optimize`.
 
-The Tools > Optimization and Calculus menu items (Gradient Descent
-Visualizer, Convexity Analyzer, Linear Programming (LP), Quadratic
-Programming (QP), Numerical Differentiation, Numerical Integration) open this
-window on that operation.
+The menu items **Gradient Descent Visualizer**, **Convexity Analyzer**,
+**Linear Programming (LP)**, **Quadratic Programming (QP)**, **Numerical
+Differentiation** and **Numerical Integration** open this window on that
+operation.
 
 ## The window
 
@@ -83,8 +99,9 @@ The answer:
   then b, with an optional name ending in a colon (`Labour: 1 2 1 1 <= 40`).
   **Use these rows** replaces the rows.
 - Quadratic adds **Q**, symmetric: typing an entry sets its mirror.
-- **Examples**: Two products, Production plan, Diet, Transport, No solution;
-  Quadratic (2 variables), Portfolio (3 assets), Box.
+- **Examples**: Two products, Production plan, Diet, Transport and No
+  solution for a linear program; Quadratic (2 variables), Portfolio (3
+  assets) and Box for a quadratic one.
 
 The answer:
 
@@ -187,7 +204,8 @@ no mix can earn is refused, naming the highest mean: "PortfolioWeights: no
 mix of these assets earns 0.02 a period without short positions; the highest mean is 0.00935647
 (growth)".
 
-Example: `examples/cyxgraph/portfolio/` (five assets, 120 months).
+Example: `examples/cyxgraph/portfolio/portfolio.cyxgraph` (five assets, 120
+months of made-up returns; its README explains it).
 
 ## Python
 
@@ -195,7 +213,9 @@ Example: `examples/cyxgraph/portfolio/` (five assets, 120 months).
 `step_errors`, `curvature`, `curvature_over_range` and `gauss_legendre`.
 `pycyxwiz.optimize` has `linprog`, `qp`, `portfolio` and `follow`. They are
 described with examples in
-[Maths and optimization with pycyxwiz](../python/maths-and-optimization.md). A worked
+[Maths and optimization with pycyxwiz](../python/maths-and-optimization.md),
+and listed in [pycyxwiz.calculus](../python/reference/calculus.md) and
+[pycyxwiz.optimize](../python/reference/optimize.md). A worked
 example checked against scipy and torch is
 `examples/python/optimization_calculus.py`.
 
@@ -208,7 +228,7 @@ example checked against scipy and torch is
   so small covariances (1e-4 a month) are as exact as large ones.
 - Optimizer paths are float32, as in training.
 - Every number is checked by `test_computation_truth_optimization`
-  (1,136 checks) against references made by
+  against references made by
   `tests/computation_truth/reference/generate_optimization_fixtures.py`:
   - sympy: values and exact derivatives of 21 formulas;
   - scipy: `quad` and the fixed rules, 7 linear programs (values, shadow
@@ -225,6 +245,12 @@ example checked against scipy and torch is
 - The adaptive integral has no extrapolation (QUADPACK's QAGS has it), so an
   integrable singularity such as 1/√x on [0, 1] stops at 50 intervals with
   "not converged". Its error estimate (4e-8) still covers the error.
-- The Typed and pasted programs take up to 40 variables. Python and the node
+- Typed and pasted programs take up to 40 variables. Python and the node
   take any number.
 - Curvature over a range and the contour maps need a formula of x and y.
+
+## Related
+
+- [Linear Algebra window](linear-algebra.md)
+- [Maths and optimization with pycyxwiz](../python/maths-and-optimization.md)
+- [Utilities window](utilities.md)

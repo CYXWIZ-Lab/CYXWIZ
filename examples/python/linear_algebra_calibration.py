@@ -9,7 +9,7 @@ squares finds those weights back from the readings; a fourth "sensor" that is
 only s1 + s2 makes A rank-deficient, and least squares then gives the
 shortest of the best weights; the SVD of the centred readings and the
 eigenvalues of their covariance give the same directions (PCA). Every answer
-is checked against numpy.linalg (docs/usage/linear_algebra.md).
+is checked against numpy.linalg (docs/main-window/linear-algebra.md).
 
 Run it with the Python pycyxwiz is built for, naming the folder that holds
 pycyxwiz (and, if different, the folder of its DLLs); it needs numpy:

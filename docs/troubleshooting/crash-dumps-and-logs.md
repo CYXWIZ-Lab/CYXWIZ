@@ -10,7 +10,7 @@ owner: general
 last_reviewed: 2026-11-25
 related:
   - index.md
-  - ../usage/console_logs.md
+  - ../main-window/console.md
   - ../user-guide/training/studio-debugger.md
   - ../main-window/preferences.md
 ---
@@ -56,7 +56,7 @@ Engine program (`cyxwiz-engine`), and shows the same messages in the
 
 **Help > Open Logs Folder** opens the folder in the file manager. The
 Console's levels, search and copy commands are described in
-[Console and logs](../usage/console_logs.md).
+[Console and logs](../main-window/console.md).
 
 ## The log has no Debug lines
 
@@ -119,7 +119,7 @@ problem privately instead: see
 
 ## Related
 
-- [Console and logs](../usage/console_logs.md)
+- [Console and logs](../main-window/console.md)
 - [The Studio Debugger](../user-guide/training/studio-debugger.md)
 - [Preferences](../main-window/preferences.md)
 - [Known issues](../known-issues.md)

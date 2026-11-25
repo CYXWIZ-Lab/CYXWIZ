@@ -1,9 +1,25 @@
-# Patterns
+---
+title: Pattern Browser
+description: The Pattern Browser panel, the shipped full graphs and blocks, what data each expects, and saving your own patterns.
+type: reference
+area: graph-editor
+audience: user
+status: experimental
+since: 1.0.8
+owner: graph-editor
+last_reviewed: 2026-11-25
+related:
+  - nodes-panel.md
+  - ../user-guide/graph-editor/find-and-add-nodes.md
+  - ../user-guide/training/start-from-pretrained-weights.md
+redirect_from:
+  - ../usage/patterns.md
+---
 
 A pattern is a ready-made graph or part of a graph that you insert into the
 canvas. Open the **Pattern Browser** with **View > Panels > Patterns panel**
-(Ctrl+Shift+P), or double-click a pattern under **Examples** at the end of
-the Nodes panel.
+(Ctrl+Shift+P) or the sidebar, or double-click a pattern under **Examples**
+at the end of the Nodes panel.
 
 ## Finding and inserting a pattern
 
@@ -18,9 +34,10 @@ the Nodes panel.
   the whole description, its **Settings** (type a number, or use - and +),
   and **Insert full graph** or **Insert block**.
 - **After Insert**, a green line under the button says what was added and
-  what to do next, until the canvas changes (Undo, a delete). When nothing could be added, an orange line says why (a
-  link in the pattern to a pin its node does not have, a node type the
-  Engine does not know, a run using the graph) and the canvas is unchanged.
+  what to do next, until the canvas changes (Undo, a delete). When nothing
+  could be added, an orange line says why (a link in the pattern to a pin
+  its node does not have, a node type the Engine does not know, a run using
+  the graph) and the canvas is unchanged.
 
 A **block** goes below the graph on the canvas. A **full graph** brings its
 own Data Input, loss and optimizer, so on a canvas that already has nodes the
@@ -62,7 +79,7 @@ Patterns come in two kinds.
 | Basic RNN, Basic GRU, Basic LSTM, Bidirectional LSTM, Transformer Encoder | Full graph | A CSV with a `text` column and a `label` column; the Text Tokenizer keeps `max_length` tokens |
 | Transformer Decoder (next token) | Full graph | A CSV of token ids: `sequence_length` token columns and a `next` column (the token that follows); predicts the next token |
 | Causal LM Generation Starter | Full graph | A CSV of token ids, one sequence per row; trained on the next token at every position |
-| PPO (MLP 64-64) | Full graph | No data: an Environment node (CartPole by default). See [Training a policy (PPO)](rl_training.md) |
+| PPO (MLP 64-64) | Full graph | No data: an Environment node (CartPole by default). See [Training a policy (PPO)](../usage/rl_training.md) |
 | Conv-BN-ReLU Block, Residual Block | Block | A feature map [height, width, channels]; the Residual Block's input must have `filters` channels |
 | Multi-Head Attention Block | Block | A sequence [length, d_model] |
 
@@ -91,8 +108,8 @@ Two pattern settings are for this:
   the head trains. Turn **Frozen** off on the layers later to fine-tune the
   whole network.
 
-See [Starting from published weights](../user-guide/training/start-from-pretrained-weights.md) for how layers
-are matched and what the match report says.
+See [Start from pretrained weights](../user-guide/training/start-from-pretrained-weights.md)
+for how layers are matched and what the match report says.
 
 ## Patterns that cannot be used yet
 
@@ -112,7 +129,8 @@ Each becomes a full graph when that training is built.
 
 ## My patterns: saving your own
 
-1. Select the nodes on the canvas (drag a box, or Ctrl+click).
+1. Select the nodes on the canvas: click the first, then Ctrl+click each
+   other one. (Dragging on empty canvas pans; there is no box selection.)
 2. Right-click the canvas and choose **Actions > Save selection as
    pattern...**.
 3. The dialog says what is kept: the nodes, the links between them, and
@@ -120,7 +138,7 @@ Each becomes a full graph when that training is built.
    a Data Input and an Output saves as a **full graph**. Any other selection
    saves as a **block**, with a **Block input** in front of each node that
    an outside link fed.
-4. Give it a **Name** (and, if you like, a description and a category), then
+4. Give it a **Name** (optional: a description and a category), then
    click **Save**. Node settings are kept as they are on the canvas. Saving
    under a name you already used replaces that pattern; the dialog warns you
    first.
@@ -175,3 +193,9 @@ also trains the small ones (Basic MLP, Basic CNN, LeNet-5, Basic RNN) for an
 epoch on synthetic data, and checks that the three torchvision networks keep
 every layer that holds weights under its torchvision name (41, 105 and 79
 layers), with the head taking `num_classes` and the rest `freeze_backbone`.
+
+## Related
+
+- [Nodes panel](nodes-panel.md)
+- [Find and add nodes](../user-guide/graph-editor/find-and-add-nodes.md)
+- [Start from pretrained weights](../user-guide/training/start-from-pretrained-weights.md)

@@ -120,7 +120,7 @@ updates.
   output is Float32 `pc_*` (and the label as `y`) for the rows with every
   feature. **scale** standardises first. The other linear steps (Truncated
   SVD, Whitening, Linear Projection) and Linear Solve are in
-  [Linear algebra](../../usage/linear_algebra.md#the-nodes).
+  [Linear algebra](../../main-window/linear-algebra.md#the-nodes).
 - **t-SNE** and **UMAP**: `tsne_*` / `umap_*` beside the input columns
   (keep_columns, default on), standardised first (standardise, default on),
   2 or 3 dimensions. t-SNE takes perplexity, learning_rate (0, the default:
@@ -140,4 +140,4 @@ first that the n × n matrix fits in memory.
 
 - [Explore your data](explore.md)
 - [Find groups of rows](clustering.md)
-- [Linear algebra](../../usage/linear_algebra.md)
+- [Linear algebra](../../main-window/linear-algebra.md)

@@ -1,6 +1,6 @@
 # Sensor calibration (linear algebra nodes)
 
-**Graph:** `sensor_calibration.cyxgraph`. **Docs:** [Linear algebra](../../../docs/usage/linear_algebra.md).
+**Graph:** `sensor_calibration.cyxgraph`. **Docs:** [Linear algebra](../../../docs/main-window/linear-algebra.md).
 
 Three sensors (`sensors.csv`: `s1`, `s2`, `s3`) and a reference meter
 (`meter.csv`: `meter`) are read 200 times. The data is made up for this

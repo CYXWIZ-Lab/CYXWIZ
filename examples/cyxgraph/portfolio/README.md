@@ -1,6 +1,6 @@
 # Portfolio weights (Portfolio Weights node)
 
-**Graph:** `portfolio.cyxgraph`. **Docs:** [Optimization and calculus](../../../docs/usage/optimization_calculus.md).
+**Graph:** `portfolio.cyxgraph`. **Docs:** [Optimization and calculus](../../../docs/main-window/optimization-and-calculus.md).
 
 `returns.csv` holds 120 months (2016-01 to 2025-12) of returns of five
 assets: `equity`, `growth`, `credit`, `bonds` and `gold`. The data is made up

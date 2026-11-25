@@ -54,7 +54,7 @@ catalog for plugins and for later use.
 In **Console > Commands** type `show code CW-C-0201`: it prints the family,
 the code's name and the last 20 log events with that code. `show logs
 codes CW-G-*` lists events of a whole family. See
-[Console and logs](../usage/console_logs.md).
+[Console and logs](../main-window/console.md).
 
 ## Compiler (CW-C)
 
@@ -201,4 +201,4 @@ by symptom in [Troubleshooting](../troubleshooting/index.md):
 
 - [Troubleshooting](../troubleshooting/index.md)
 - [Compile and run a graph](../user-guide/graph-editor/compile-and-run.md)
-- [Console and logs](../usage/console_logs.md)
+- [Console and logs](../main-window/console.md)

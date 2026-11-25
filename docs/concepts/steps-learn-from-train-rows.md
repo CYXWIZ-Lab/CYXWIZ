@@ -48,7 +48,7 @@ Rows are not marked in:
   a category with no Train row gets the Train mean;
 - PCA, Truncated SVD, Whitening and Linear Solve: their directions or x
   come from the Train rows (see
-  [Linear algebra](../usage/linear_algebra.md));
+  [Linear algebra](../main-window/linear-algebra.md));
 - TF-IDF and Count: a word seen only in Validation or Test rows is not a
   feature, and the IDF counts Train documents;
 - the Text Tokenizer's vocabulary.

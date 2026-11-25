@@ -74,7 +74,7 @@ Reference:
 
 - [The .cyx document format](cyx-documents.md): CyxWiz scripts and
   notebooks as plain text.
-- [Console and logs](../../usage/console_logs.md): the Console's Logs and
+- [Console and logs](../../main-window/console.md): the Console's Logs and
   Commands sessions.
 - [Keyboard shortcuts](../../reference/shortcuts.md): the Script Editor,
   notebook, debugger and Variable Explorer keys.

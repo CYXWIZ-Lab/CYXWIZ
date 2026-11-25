@@ -1,26 +1,42 @@
-# Utilities
+---
+title: Utilities window
+description: The Tools > Utilities window (calculator, unit conversion, seeded random values and UUIDs, hashes, JSON, regex) and pycyxwiz.utilities.
+type: reference
+area: general
+audience: user
+status: experimental
+since: 1.0.8
+owner: main-window
+last_reviewed: 2026-11-25
+related:
+  - optimization-and-calculus.md
+  - ../python/reference/utilities.md
+  - ../concepts/seeds-and-reproducibility.md
+redirect_from:
+  - ../usage/utilities.md
+---
 
 **Tools > Utilities** opens one window with six tabs. Each menu item opens it
 on its own tab:
 
 | Tab | What it does | Menu item |
 | --- | --- | --- |
-| Calculator | Works out an expression, with your own variables and a history | Calculator |
-| Units | Converts between units of length, mass, temperature, time, data, area, volume and speed | Unit Converter |
-| Random | Draws seeded random values with their statistics and histogram; makes UUIDs | Random Generator |
-| Hash | MD5, SHA-1, SHA-256 or SHA-512 of a text or a file; checks a hash you were given | Hash Generator |
-| JSON | Checks, formats or minifies JSON, shows its tree, finds a value by path | JSON Viewer |
-| Regex | Tests a regular expression, with its matches and a replacement | Regex Tester |
+| Calculator | Works out an expression, with your own variables and a history | **Calculator** |
+| Units | Converts between units of length, mass, temperature, time, data, area, volume and speed | **Unit Converter** |
+| Random | Draws seeded random values with their statistics and histogram; makes UUIDs | **Random Generator** |
+| Hash | MD5, SHA-1, SHA-256 or SHA-512 of a text or a file; checks a hash you were given | **Hash Generator** |
+| JSON | Checks, formats or minifies JSON, shows its tree, finds a value by path | **JSON Viewer** |
+| Regex | Tests a regular expression, with its matches and a replacement | **Regex Tester** |
 
-The same work is in Python as `pycyxwiz.utilities` (see [Python](#python) at
-the end of this page). Every result on this page was checked against Python's
+The same work is in Python as `pycyxwiz.utilities` (see
+[From Python](#from-python)). Every result on this page was checked against Python's
 `hashlib`, `json` and `re`, numpy, and the exact unit definitions (test
 `test_computation_truth_utilities`).
 
 Above the tabs, **Save as my default** keeps the open tab, the digits shown,
 the angle unit, the unit category, the hash algorithm, the JSON indent and the
-regex flags for next time. The same defaults are in **Preferences > General >
-Tools > Utilities**.
+regex flags for next time. The same defaults are in **Preferences > Tools**,
+under **Utilities**.
 
 In a narrow (docked) window the controls wrap and each tab's two halves sit
 one above the other.
@@ -149,7 +165,7 @@ for the groups. **Replace all** shows the result with **Copy the result**.
 The regex language is ECMAScript (C++ `std::regex`). `\w` and `\b` know ASCII
 letters only: in `café`, `\w+` matches `caf`.
 
-## Python
+## From Python
 
 ```python
 import pycyxwiz as cx
@@ -172,4 +188,11 @@ Errors raise: an expression that does not parse, an unknown unit, a bad
 pattern, an unknown algorithm, text that is not JSON or a malformed JSON path
 raises `ValueError`; a JSON path that is well formed but not in the document
 raises `KeyError`. The example `examples/python/utilities.py` runs every tab's
-work and prints the results.
+work and prints the results. The full list is in
+[pycyxwiz.utilities](../python/reference/utilities.md).
+
+## Related
+
+- [Optimization and Calculus window](optimization-and-calculus.md)
+- [pycyxwiz.utilities](../python/reference/utilities.md)
+- [Seeds and reproducibility](../concepts/seeds-and-reproducibility.md)

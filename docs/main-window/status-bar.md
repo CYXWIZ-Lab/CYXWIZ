@@ -68,5 +68,5 @@ the item's tooltip.
 ## Related
 
 - [The main window](index.md)
-- [Console and logs](../usage/console_logs.md): the full messages behind
+- [Console and logs](console.md): the full messages behind
   a status

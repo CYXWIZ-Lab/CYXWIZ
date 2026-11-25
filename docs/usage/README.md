@@ -15,10 +15,10 @@ To write your own nodes in Python or C++, see
 | [The Studio Debugger](../user-guide/training/studio-debugger.md) | Local Debug, layer capture and the layer views |
 | [Layouts and docking](../main-window/layouts-and-docking.md) | Arranging panels, moving the big windows out of the main window |
 | [Preferences](preferences.md) | How the Engine starts (start page or the last project), recent projects kept, asking before closing |
-| [Theme Editor](theme_editor.md) | Every colour the Engine draws, the accent, and saving your own theme |
-| [Asset Browser](asset_browser.md) | The project's folders and files, previews, new files |
+| [Theme Editor](../main-window/theme-editor.md) | Every colour the Engine draws, the accent, saving your own theme, and the node icon pack |
+| [Asset Browser](../main-window/asset-browser.md) | The project's folders and files, previews, new files |
 | [Properties](../main-window/properties.md) | The Properties panel for the selected node |
-| [Console and logs](console_logs.md) | Logs, the Python REPL and commands |
+| [Console and logs](../main-window/console.md) | Logs, the Python REPL and commands |
 
 ## Building a graph
 
@@ -31,7 +31,7 @@ To write your own nodes in Python or C++, see
 | [Set node properties](../user-guide/graph-editor/node-properties.md) | The Properties panel and node dialogs |
 | [Compile and run](../user-guide/graph-editor/compile-and-run.md) | Compile, the compile report, run modes, what Train does first |
 | [Node dialogs](../main-window/node-dialogs.md) | Configuring a node in its dialog |
-| [Patterns](patterns.md) | Ready-made full graphs and blocks, what data each expects, the ones not usable yet |
+| [Pattern Browser](../main-window/pattern-browser.md) | Ready-made full graphs and blocks, what data each expects, the ones not usable yet |
 | [Branched graphs](branched_graphs.md) | Split and merge inside a model |
 | [Groups, frames and names](../user-guide/graph-editor/groups-frames-and-names.md) | Grouping and naming nodes, frames, copy and paste, renaming |
 | [Your own nodes](extension_nodes.md) | Python node bundles and C++ plugins in the Engine: install, approve, use |
@@ -69,10 +69,10 @@ To write your own nodes in Python or C++, see
 | [Time series](../user-guide/data-studio/time-series.md) | Explore > Series and Forecast, and the time series nodes |
 | [Signal processing](../user-guide/data-studio/signal-processing.md) | Explore > Signal: spectrum, spectrogram, filters, wavelets |
 | [Text](../user-guide/data-studio/text.md) | Explore > Text: words, TF-IDF terms, VADER sentiment, tokens, word vectors and the word map |
-| [Linear algebra](linear_algebra.md) | Tools > Linear Algebra (matrices typed, pasted or from tables; into the graph), the PCA, Truncated SVD, Whitening, Linear Solve and Linear Projection nodes |
-| [Monitoring and diagnostics](monitoring.md) | Tools > Monitoring: the Monitor window (system, the Engine's memory over time, loaded data, frame times), Clear Caches, Free Unused Memory; Tools > Diagnostics: the frame-rate and Python command logs, the frame overlay |
-| [Utilities](utilities.md) | Tools > Utilities: calculator, exact unit conversion, seeded random values and UUIDs, hashes of text and files, JSON check and tree, regex with multiline and replace |
-| [Optimization and calculus](optimization_calculus.md) | Tools > Optimization and Calculus (optimizer paths, linear and quadratic programs, integrals, derivatives, curvature), the Portfolio Weights node |
+| [Linear algebra](../main-window/linear-algebra.md) | Tools > Linear Algebra (matrices typed, pasted or from tables; into the graph), the PCA, Truncated SVD, Whitening, Linear Solve and Linear Projection nodes |
+| [Monitoring and diagnostics](../main-window/monitor.md) | Tools > Monitoring: the Monitor window (system, the Engine's memory over time, loaded data, frame times), Clear Caches, Free Unused Memory; Tools > Diagnostics: the frame-rate and Python command logs, the frame overlay |
+| [Utilities](../main-window/utilities.md) | Tools > Utilities: calculator, exact unit conversion, seeded random values and UUIDs, hashes of text and files, JSON check and tree, regex with multiline and replace |
+| [Optimization and calculus](../main-window/optimization-and-calculus.md) | Tools > Optimization and Calculus (optimizer paths, linear and quadratic programs, integrals, derivatives, curvature), the Portfolio Weights node |
 | [Feature Importance](../user-guide/evaluation/feature-importance.md) | Which columns matter to a model |
 | [Hyperparameter Search](../user-guide/training/hyperparameter-search.md) | Train the graph with different property values and keep the best |
 | [Neural Architecture Search](../user-guide/training/neural-architecture-search.md) | Score the model, change its layers, search, train the best versions, put one on the canvas |

@@ -15,7 +15,7 @@ install:
   synced_at: 202a19691
 
 main-window:
-  code: [cyxwiz-engine/src/gui/main_window*, cyxwiz-engine/src/gui/panels/toolbar*, cyxwiz-engine/src/gui/panels/menu*, cyxwiz-engine/src/gui/console*]
+  code: [cyxwiz-engine/src/gui/main_window*, cyxwiz-engine/src/gui/panels/toolbar*, cyxwiz-engine/src/gui/panels/menu*, cyxwiz-engine/src/gui/console*, cyxwiz-engine/src/gui/panels/asset_browser*, cyxwiz-engine/src/gui/panels/theme_editor*, cyxwiz-engine/src/gui/panels/monitor_panel*, cyxwiz-engine/src/gui/panels/utilities_panel*, cyxwiz-engine/src/gui/panels/linear_algebra_panel*, cyxwiz-engine/src/gui/panels/optimization_*, cyxwiz-engine/src/gui/panels/pattern_browser*, cyxwiz-engine/src/core/asset_preview*, cyxwiz-engine/src/core/monitor_*, cyxwiz-engine/src/core/utilities_presentation*, cyxwiz-engine/src/core/linear_algebra_presentation*, cyxwiz-engine/src/core/optimization_presentation*, cyxwiz-engine/src/core/pattern_browser_presentation*, cyxwiz-engine/src/core/appearance_options*, cyxwiz-engine/src/core/runtime_log_*]
   synced_at: 202a19691
 
 graph-editor:

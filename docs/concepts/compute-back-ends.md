@@ -109,7 +109,7 @@ drop when a run ends.
 - The Monitor window's **System** tab (**Tools > Monitoring**) shows what
   the Engine holds on its device (the buffers, and the part in use) and, on
   NVIDIA GPUs, what the device itself has free. See
-  [Monitoring](../usage/monitoring.md).
+  [Monitoring](../main-window/monitor.md).
 - **Free unused memory** in the Monitor window returns the kept buffers to
   the driver and asks Python to collect its garbage. Memory in use stays.
 - A run that runs out of GPU memory says so (`CW-G-0701` or `CW-M-0702`);

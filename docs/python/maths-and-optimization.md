@@ -13,7 +13,7 @@ related:
   - reference/calculus.md
   - reference/optimize.md
   - performance.md
-  - ../usage/optimization_calculus.md
+  - ../main-window/optimization-and-calculus.md
 ---
 
 Use this for numerical work in the style of MATLAB: `pycyxwiz.linalg` for
@@ -132,6 +132,6 @@ mix of assets, as the Portfolio Weights node; `opt.follow(formula, start,
   [pycyxwiz.calculus](reference/calculus.md) and
   [pycyxwiz.optimize](reference/optimize.md): every function and what it
   returns.
-- [Optimization and calculus in the Engine](../usage/optimization_calculus.md).
+- [Optimization and calculus in the Engine](../main-window/optimization-and-calculus.md).
 - [Examples](examples.md): `linear_algebra_calibration.py` and
   `optimization_calculus.py`, each answer checked against NumPy and SciPy.

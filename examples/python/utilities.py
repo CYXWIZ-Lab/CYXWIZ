@@ -7,7 +7,7 @@ regex over a short contact list, seeded random values and UUIDs.
     python utilities.py <folder holding pycyxwiz> [<folder of its DLLs>]
 
 The numbers it prints are in docs/python/examples.md and
-docs/usage/utilities.md.
+docs/main-window/utilities.md.
 """
 import hashlib
 import os

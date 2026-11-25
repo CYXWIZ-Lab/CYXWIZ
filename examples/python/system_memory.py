@@ -8,7 +8,7 @@ Monitoring > System and Memory.
     python system_memory.py <folder holding pycyxwiz> [<folder of its DLLs>]
 
 The numbers depend on the machine; docs/python/examples.md and
-docs/usage/monitoring.md show one run.
+docs/main-window/monitor.md show one run.
 """
 import os
 import sys

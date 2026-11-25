@@ -151,7 +151,7 @@ as "CUDA on GeForce RTX ..." or "CPU". Training uses only verified routes.
 the test results.
 
 **Console**: the bottom panel that shows the Engine's log messages and runs
-**Commands**. See [Console and logs](usage/console_logs.md).
+**Commands**. See [Console and logs](main-window/console.md).
 
 **Conv2D**: a 2-D convolution layer for images.
 
@@ -470,7 +470,7 @@ implementation. See [Numerical accuracy](concepts/numerical-accuracy.md).
 Parquet files.
 
 **Pattern**: a ready-made graph or part of a graph that you insert from the
-**Pattern Browser**. See [Patterns](usage/patterns.md).
+**Pattern Browser**. See [Patterns](main-window/pattern-browser.md).
 
 **Permission**: something a plugin asks to do, such as reading files or
 making network connections, which you allow or deny.

@@ -91,7 +91,7 @@ Every lane and domain starter opens the same **Create a new project**
 dialog with that template picked. A template sets only the suggested
 project name and description: the new project starts with an empty canvas,
 whatever the lane's text says. To start from a working graph, use a task
-starter or the [Pattern Browser](../usage/patterns.md).
+starter or the [Pattern Browser](pattern-browser.md).
 
 ### Create a new project
 

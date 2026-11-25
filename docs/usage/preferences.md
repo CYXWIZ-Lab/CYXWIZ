@@ -49,7 +49,7 @@ Save) and when the Engine closes.
 
 ### Logs, Windows, Data
 
-- **Record Debug messages**: see [Console logs](console_logs.md).
+- **Record Debug messages**: see [Console logs](../main-window/console.md).
 - **Any window can have a window of its own**: see [Windows of their own](../main-window/layouts-and-docking.md#windows-of-their-own).
 - **Data budget (MB)**: see [Big data](../concepts/data-bigger-than-memory.md).
 

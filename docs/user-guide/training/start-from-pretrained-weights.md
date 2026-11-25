@@ -132,7 +132,7 @@ torchvision's:
 | MobileNetV3 small | `mobilenet_v3_small-047dcff4.pth` | 79 |
 
 The same three networks are in the Patterns panel as full graphs, named for
-these files; see [Patterns](../../usage/patterns.md#starting-from-torchvisions-weights).
+these files; see [Patterns](../../main-window/pattern-browser.md#starting-from-torchvisions-weights).
 Their graphs are written by `scripts/examples/torch_to_cyxgraph.py`, which
 turns a PyTorch network into canvas nodes named as PyTorch names its
 modules. It handles convolutions (depthwise too), BatchNorm, ReLU, ReLU6,

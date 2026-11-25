@@ -12,7 +12,7 @@ related:
   - script-editor.md
   - variable-explorer.md
   - python-environment.md
-  - ../../usage/console_logs.md
+  - ../../main-window/console.md
 ---
 
 Use this to try a line of Python, look at a value, or call `pycyxwiz`
@@ -33,7 +33,7 @@ round.
    command.").
 
 The Console's other sessions (**Logs**, **Commands**, **Agent LLM** and the
-local shells) are described in [Console and logs](../../usage/console_logs.md).
+local shells) are described in [Console and logs](../../main-window/console.md).
 
 ## Run code
 

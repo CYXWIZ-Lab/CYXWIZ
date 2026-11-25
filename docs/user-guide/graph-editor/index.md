@@ -71,4 +71,4 @@ flowchart LR
 
 - [Branched graphs](../../usage/branched_graphs.md): skip links, merges and
   multi-branch models.
-- [Patterns](../../usage/patterns.md): ready-made blocks and graphs.
+- [Patterns](../../main-window/pattern-browser.md): ready-made blocks and graphs.
