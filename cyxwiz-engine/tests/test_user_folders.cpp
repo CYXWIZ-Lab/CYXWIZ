@@ -180,6 +180,43 @@ void CheckTestScratchDefault() {
     CheckPath(cyxwiz::UserStateDir(), before, "closing a test's own override restores the scratch profile");
 }
 
+// The real folders as the Engine computes them from this process's
+// environment (what the scratch profile stands in for). Only computed, never
+// written.
+std::string Environment(const char* name) {
+#ifdef _WIN32
+    char* value = nullptr;
+    std::size_t length = 0;
+    std::string text;
+    if (_dupenv_s(&value, &length, name) == 0 && value) text = value;
+    std::free(value);
+    return text;
+#else
+    const char* value = std::getenv(name);
+    return value ? value : "";
+#endif
+}
+
+void CheckProcessEnvironmentResolution() {
+    const UserFolders real = ResolveUserFolders(cyxwiz::CurrentUserFolderPlatform(),
+                                                cyxwiz::user_folders_detail::ProcessEnvironment());
+#ifdef _WIN32
+    if (const fs::path local = Environment("LOCALAPPDATA"); local.is_absolute()) {
+        CheckPath(real.state, local / "CyxWiz", "the real state folder comes from LOCALAPPDATA");
+        CheckPath(real.cache, local / "CyxWiz" / "cache", "the real cache folder");
+    }
+    if (const fs::path roaming = Environment("APPDATA"); roaming.is_absolute()) {
+        CheckPath(real.config, roaming / "CyxWiz", "the real config folder comes from APPDATA");
+    }
+#else
+    if (const fs::path home = Environment("HOME"); home.is_absolute()) {
+        CheckPath(real.config, home / ".cyxwiz", "the real config folder comes from HOME");
+    }
+#endif
+    const fs::path scratch = (fs::temp_directory_path() / "cyxwiz-tests").lexically_normal();
+    Check(!StartsWith(real.state, scratch), "the real folders are not the scratch profile: " + real.state.string());
+}
+
 void CheckInstalledRun() {
     SetVariable("CYXWIZ_ACTIVE_RUNTIME_ROOT", "");
     Check(!cyxwiz::core::IsInstalledRun(), "a test in the build folder is a development run");
@@ -194,6 +231,7 @@ void CheckInstalledRun() {
 
 int main() {
     CheckTestScratchDefault();
+    CheckProcessEnvironmentResolution();
     CheckWindowsTable();
     CheckMacTable();
     CheckLinuxTable();
