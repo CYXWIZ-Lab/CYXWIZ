@@ -357,7 +357,10 @@ int main() {
 
     // Small enough to train here: {classes, vocabulary (0: numbers)}.
     const std::map<std::string, std::pair<int, int>> train = {
-        {"mlp_basic", {10, 0}}, {"cnn_basic", {10, 0}}, {"lenet5", {10, 0}}, {"rnn_basic", {2, 200}}};
+        {"mlp_basic", {10, 0}}, {"cnn_basic", {10, 0}}, {"lenet5", {10, 0}}, {"rnn_basic", {2, 200}},
+        // Decoder -> Layer Norm -> Flatten -> head: the head reads the whole
+        // flattened sequence (it was built for one token's width).
+        {"transformer_decoder", {5000, 5000}}};
 
     // Written by scripts/examples/torch_to_cyxgraph.py: {layers with weights, the head}, as
     // docs/usage/pretrained_weights.md lists them.

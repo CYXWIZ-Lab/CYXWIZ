@@ -1427,7 +1427,14 @@ bool BuildSequential(
                                  i, current_input_size);
                 } else {
                     model.Add<FlattenModule>(1);
-                    CYXWIZ_BUILDER_INFO("  [{}] Flatten", i);
+                    // The layer after it reads the whole flattened sample, as
+                    // the compiler resolved it: a transformer block followed
+                    // by Layer Norm had left the width at one token's
+                    // (Decoder -> Layer Norm -> Flatten -> Dense was built
+                    // for 64 inputs and fed 16 x 64).
+                    if (layer_cfg.output_shape.size() == 1 && layer_cfg.output_shape[0] > 0)
+                        current_input_size = layer_cfg.output_shape[0];
+                    CYXWIZ_BUILDER_INFO("  [{}] Flatten -> [N,{}]", i, current_input_size);
                 }
                 break;
             }
