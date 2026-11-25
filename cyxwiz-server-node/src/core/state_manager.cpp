@@ -61,16 +61,6 @@ ConnectionStatus StateManager::GetConnectionStatus() const {
     return connection_status_;
 }
 
-std::string StateManager::GetWalletAddress() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return wallet_address_;
-}
-
-double StateManager::GetWalletBalance() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return wallet_balance_;
-}
-
 // ========== Setters ==========
 
 void StateManager::UpdateJobs(const std::vector<JobState>& jobs) {
@@ -170,15 +160,6 @@ void StateManager::UpdateEarnings(const EarningsInfo& today, const EarningsInfo&
     NotifyEarningsChanged();
 }
 
-void StateManager::UpdateWallet(const std::string& address, double balance) {
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        wallet_address_ = address;
-        wallet_balance_ = balance;
-    }
-    NotifyWalletChanged();
-}
-
 // ========== Notifications ==========
 
 void StateManager::NotifyJobsChanged() {
@@ -242,19 +223,6 @@ void StateManager::NotifyEarningsChanged() {
     for (auto* observer : observers_copy) {
         if (observer) {
             observer->OnEarningsChanged();
-        }
-    }
-}
-
-void StateManager::NotifyWalletChanged() {
-    std::vector<StateObserver*> observers_copy;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        observers_copy = observers_;
-    }
-    for (auto* observer : observers_copy) {
-        if (observer) {
-            observer->OnWalletChanged();
         }
     }
 }

@@ -21,7 +21,6 @@ enum class DatasetType {
     FashionMNIST,
     CIFAR10,
     CIFAR100,
-    HuggingFace,
     Kaggle,
     Custom,
     Streaming,

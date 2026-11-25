@@ -335,9 +335,6 @@ NodeDisplayInfo GRPCClient::ConvertNodeInfo(const cyxwiz::protocol::NodeInfo& pr
         }
     }
 
-    // Staking
-    info.staked_amount = proto.staked_amount();
-
     return info;
 }
 

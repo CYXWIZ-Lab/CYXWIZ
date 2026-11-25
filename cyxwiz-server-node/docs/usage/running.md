@@ -127,7 +127,7 @@ through the web API (`network.cyxwiz_server` when set, else
 `network.auth_api_url`, default `http://127.0.0.1:3002/api`; see the Engine's
 docs/usage/server-address.md) when less than 2 hours remain, so a node can run
 for days. If renewal fails after the token has expired, sign in again in the
-GUI. There is no wallet sign-in.
+GUI.
 
 Live check against a running central server and web API:
 

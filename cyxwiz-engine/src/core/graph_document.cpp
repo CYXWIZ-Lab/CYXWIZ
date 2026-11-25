@@ -343,6 +343,12 @@ bool ReadLoadableNodeType(const nlohmann::json& node_json, gui::NodeType& node_t
                 ": remove it from the file or rebuild that step with those nodes";
         return false;
     }
+    if (node_type == NodeType::HuggingFaceDataset) {
+        error = "node '" + node_json.value("name", std::string("<unnamed>")) +
+                "' is a Hugging Face Dataset node, which was removed: remove it from the file and load "
+                "the data with a Data Input node (double-click it, pick the files, Apply)";
+        return false;
+    }
     if (node_type == NodeType::HDF5Dataset) {
         error = "node '" + node_json.value("name", std::string("<unnamed>")) +
                 "' is an HDF5 Reader node, which Data Input replaced: remove it from the file or rebuild "

@@ -19,9 +19,6 @@ class DeploymentPanel;
 class APIKeysPanel;
 class SettingsPanel;
 class LogsPanel;
-class PoolMiningPanel;
-class MarketplacePanel;
-class WalletPanel;
 class AnalyticsPanel;
 class FineTuningPanel;
 class LoginPanel;
@@ -61,11 +58,8 @@ private:
         FineTuning,
         Deploy,
         APIKeys,
-        Marketplace,
-        PoolMining,
         Settings,
         Logs,
-        Wallet,
         Account,
         COUNT
     };
@@ -92,9 +86,6 @@ private:
     std::unique_ptr<APIKeysPanel> api_keys_;
     std::unique_ptr<SettingsPanel> settings_;
     std::unique_ptr<LogsPanel> logs_;
-    std::unique_ptr<PoolMiningPanel> pool_mining_;
-    std::unique_ptr<MarketplacePanel> marketplace_;
-    std::unique_ptr<WalletPanel> wallet_;
     std::unique_ptr<AccountSettingsPanel> account_settings_;
 
     // State

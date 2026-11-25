@@ -9,9 +9,6 @@
 #include "gui/panels/api_keys_panel.h"
 #include "gui/panels/settings_panel.h"
 #include "gui/panels/logs_panel.h"
-#include "gui/panels/pool_mining_panel.h"
-#include "gui/panels/marketplace_panel.h"
-#include "gui/panels/wallet_panel.h"
 #include "gui/panels/analytics_panel.h"
 #include "gui/panels/fine_tuning_panel.h"
 #include "gui/panels/login_panel.h"
@@ -38,11 +35,8 @@ const ServerMainWindow::SidebarEntry ServerMainWindow::sidebar_entries_[] = {
     { SidebarItem::FineTuning,  ICON_FA_BRAIN,            "Fine-tuning",  "Model fine-tuning & transfer learning" },
     { SidebarItem::Deploy,      ICON_FA_ROCKET,           "Deploy",       "Deploy models for inference" },
     { SidebarItem::APIKeys,     ICON_FA_KEY,              "API Keys",     "Manage API keys" },
-    { SidebarItem::Marketplace, ICON_FA_STORE,            "Marketplace",  "Model marketplace" },
-    { SidebarItem::PoolMining,  ICON_FA_COINS,            "Pool Mining",  "Join mining pools" },
     { SidebarItem::Settings,    ICON_FA_GEAR,             "Settings",     "Node configuration" },
     { SidebarItem::Logs,        ICON_FA_SCROLL,           "Logs",         "View logs" },
-    { SidebarItem::Wallet,      ICON_FA_WALLET,           "Wallet",       "Wallet & earnings" },
     { SidebarItem::Account,     ICON_FA_CIRCLE_USER,      "Account",      "Account settings" },
 };
 
@@ -64,9 +58,6 @@ ServerMainWindow::ServerMainWindow(ipc::DaemonClient* daemon_client)
     api_keys_ = std::make_unique<APIKeysPanel>();
     settings_ = std::make_unique<SettingsPanel>();
     logs_ = std::make_unique<LogsPanel>();
-    pool_mining_ = std::make_unique<PoolMiningPanel>();
-    marketplace_ = std::make_unique<MarketplacePanel>();
-    wallet_ = std::make_unique<WalletPanel>();
     account_settings_ = std::make_unique<AccountSettingsPanel>();
 
     // Set daemon client on all panels
@@ -82,9 +73,6 @@ ServerMainWindow::ServerMainWindow(ipc::DaemonClient* daemon_client)
         api_keys_->SetDaemonClient(daemon_client_);
         settings_->SetDaemonClient(daemon_client_);
         logs_->SetDaemonClient(daemon_client_);
-        pool_mining_->SetDaemonClient(daemon_client_);
-        marketplace_->SetDaemonClient(daemon_client_);
-        wallet_->SetDaemonClient(daemon_client_);
         account_settings_->SetDaemonClient(daemon_client_);
         login_->SetDaemonClient(daemon_client_);
     }
@@ -262,16 +250,6 @@ void ServerMainWindow::RenderSidebar() {
         ImGui::TextColored(status_color, ICON_FA_CIRCLE);
         ImGui::SameLine();
         ImGui::Text("%s", status_text);
-
-        // Wallet info
-        auto* sm = core::BackendManager::Instance().GetStateManager();
-        if (sm) {
-            std::string wallet = sm->GetWalletAddress();
-            if (!wallet.empty()) {
-                std::string short_addr = wallet.substr(0, 4) + "..." + wallet.substr(wallet.length() - 4);
-                ImGui::Text("%s %s", ICON_FA_WALLET, short_addr.c_str());
-            }
-        }
     }
     ImGui::End();
 
@@ -324,20 +302,11 @@ void ServerMainWindow::RenderCurrentPanel() {
             case SidebarItem::APIKeys:
                 if (api_keys_) api_keys_->Render();
                 break;
-            case SidebarItem::Marketplace:
-                if (marketplace_) marketplace_->Render();
-                break;
-            case SidebarItem::PoolMining:
-                if (pool_mining_) pool_mining_->Render();
-                break;
             case SidebarItem::Settings:
                 if (settings_) settings_->Render();
                 break;
             case SidebarItem::Logs:
                 if (logs_) logs_->Render();
-                break;
-            case SidebarItem::Wallet:
-                if (wallet_) wallet_->Render();
                 break;
             case SidebarItem::Account:
                 if (account_settings_) account_settings_->Render();

@@ -21,7 +21,6 @@ public:
 private:
     void RenderLocalModels();
     void RenderDownloaded();
-    void RenderMarketplace();
     void RenderDeployDialog();
     void RenderDeleteConfirmDialog();
     void ScanLocalModels();

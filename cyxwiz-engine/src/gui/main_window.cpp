@@ -70,7 +70,6 @@
 #include "panels/connection_dialog.h"
 #include "panels/job_status_panel.h"
 #include "panels/p2p_training_panel.h"
-#include "panels/wallet_panel.h"
 #include "panels/task_progress_panel.h"
 #include "panels/pattern_browser.h"
 #include "panels/query_console.h"
@@ -576,7 +575,6 @@ MainWindow::MainWindow()
     annotation_editor_panel_ = std::make_unique<cyxwiz::AnnotationEditorPanel>();
     job_status_panel_ = std::make_unique<cyxwiz::JobStatusPanel>();
     p2p_training_panel_ = std::make_unique<cyxwiz::P2PTrainingPanel>();
-    wallet_panel_ = std::make_unique<gui::WalletPanel>();
     task_progress_panel_ = std::make_unique<cyxwiz::TaskProgressPanel>();
     // My patterns live with the user's settings, whatever folder the Engine starts in.
     // A folder whose name the system code page cannot spell leaves My patterns
@@ -992,8 +990,7 @@ MainWindow::MainWindow()
             node_browser_panel_ ? node_browser_panel_->GetVisiblePtr() : nullptr,
             pattern_browser_ ? pattern_browser_->GetVisiblePtr() : nullptr,
             properties_ ? properties_->GetVisiblePtr() : nullptr,
-            node_info_panel_ ? node_info_panel_->GetVisiblePtr() : nullptr,
-            wallet_panel_ ? wallet_panel_->GetVisiblePtr() : nullptr};
+            node_info_panel_ ? node_info_panel_->GetVisiblePtr() : nullptr};
         for (bool* visible : side) {
             if (visible && *visible) {
                 *visible = false;
@@ -2569,8 +2566,6 @@ MainWindow::~MainWindow() {
     pattern_browser_.reset();
     spdlog::info("~MainWindow: task_progress_panel_");
     task_progress_panel_.reset();
-    spdlog::info("~MainWindow: wallet_panel_");
-    wallet_panel_.reset();
     spdlog::info("~MainWindow: p2p_training_panel_");
     p2p_training_panel_.reset();
     spdlog::info("~MainWindow: job_status_panel_");
@@ -2942,7 +2937,6 @@ void MainWindow::Render() {
     TimedRender("connection dialog", connection_dialog_);
     TimedRender("job status", job_status_panel_);
     TimedRender("p2p training", p2p_training_panel_);
-    TimedRender("wallet", wallet_panel_);
     TimedRender("task progress", task_progress_panel_);
     TimedRender("pattern browser", pattern_browser_);
     TimedRender("query console", query_console_);
@@ -3319,7 +3313,7 @@ void MainWindow::BuildInitialDockLayout() {
     const ImGuiID dock_id_right_bottom =
         ImGui::DockBuilderSplitNode(dock_id_right, ImGuiDir_Down, 0.45f, nullptr, &dock_id_right);
     for (const char* name : {"Nodes", "Pattern Browser"}) ImGui::DockBuilderDockWindow(name, dock_id_left);
-    for (const char* name : {"Info", "Wallet"}) ImGui::DockBuilderDockWindow(name, dock_id_right_bottom);
+    ImGui::DockBuilderDockWindow("Info", dock_id_right_bottom);
     for (const char* name : {"Table Viewer", "Annotation Editor", "###Visualizer", "Query Console",
                              "Plot Output", "###CloudBrowser", "###DatasetManager", "Plugin Manager"})
         ImGui::DockBuilderDockWindow(name, dock_id_center_right);
@@ -3392,7 +3386,6 @@ void MainWindow::RegisterPanelsWithSidebar() {
     add("P2P Training", ICON_FA_NETWORK_WIRED, p2p_training_panel_, "Network");
     add("Cloud Browser", ICON_FA_CLOUD, cloud_browser_panel_, "Network");
     add("Cloud Manager", ICON_FA_CLOUD_ARROW_UP, cloud_dataset_manager_panel_, "Network");
-    add("Wallet", ICON_FA_WALLET, wallet_panel_, "Network");
 
     // Extensions
     add("Plugin Manager", ICON_FA_PLUG, plugin_manager_panel_, "Extensions");
@@ -3432,7 +3425,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (table_viewer_) table_viewer_->SetVisible(false);
     if (job_status_panel_) job_status_panel_->SetVisible(false);
     if (p2p_training_panel_) p2p_training_panel_->SetVisible(false);
-    if (wallet_panel_) wallet_panel_->SetVisible(false);
     if (task_progress_panel_) task_progress_panel_->SetVisible(false);
     if (pattern_browser_) pattern_browser_->SetVisible(false);
     if (query_console_) query_console_->SetVisible(false);

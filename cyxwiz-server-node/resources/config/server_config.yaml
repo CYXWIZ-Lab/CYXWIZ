@@ -64,16 +64,6 @@ api:
   require_authentication: true
   default_rate_limit: 100
 
-pool_mining:
-  enabled: false
-  pool_address: "pool.cyxwiz.io:3333"
-  intensity: 0.5
-  mine_when_idle_only: true
-
-wallet:
-  address: ""
-  auto_withdraw_threshold: 100.0
-
 logging:
   level: "info"
   file: "./logs/server-node.log"

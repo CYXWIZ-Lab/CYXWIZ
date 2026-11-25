@@ -65,7 +65,7 @@ private:
     void RenderModelSection();
     void RenderEmbeddedConfig();
     void RenderServerNodeConfig();
-    void RenderNodeDiscoverySection();  // Node marketplace/search
+    void RenderNodeDiscoverySection();  // Node search
     void RenderNodeTable();             // Table of available nodes
     void RenderNodeSearchFilters();     // Search/filter controls
     void RenderSelectedNodeInfo();      // Details of selected node

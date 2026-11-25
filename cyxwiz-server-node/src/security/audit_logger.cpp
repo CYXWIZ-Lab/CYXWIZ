@@ -22,11 +22,6 @@ const char* GetAuditEventName(AuditEvent event) {
         case AuditEvent::MODEL_DEPLOYED: return "MODEL_DEPLOYED";
         case AuditEvent::MODEL_UNDEPLOYED: return "MODEL_UNDEPLOYED";
         case AuditEvent::MODEL_UPDATED: return "MODEL_UPDATED";
-        case AuditEvent::WALLET_CONNECTED: return "WALLET_CONNECTED";
-        case AuditEvent::WALLET_DISCONNECTED: return "WALLET_DISCONNECTED";
-        case AuditEvent::TRANSACTION_INITIATED: return "TRANSACTION_INITIATED";
-        case AuditEvent::TRANSACTION_COMPLETED: return "TRANSACTION_COMPLETED";
-        case AuditEvent::TRANSACTION_FAILED: return "TRANSACTION_FAILED";
         case AuditEvent::TLS_ENABLED: return "TLS_ENABLED";
         case AuditEvent::TLS_DISABLED: return "TLS_DISABLED";
         case AuditEvent::INVALID_CERTIFICATE: return "INVALID_CERTIFICATE";

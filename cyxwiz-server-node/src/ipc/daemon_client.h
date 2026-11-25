@@ -132,68 +132,6 @@ struct LogEntry {
     std::string source;
 };
 
-// Pool Mining
-struct MiningStats {
-    float hashrate_mhs = 0.0f;
-    int64_t shares_submitted = 0;
-    int64_t shares_accepted = 0;
-    int64_t shares_rejected = 0;
-    double estimated_daily = 0.0;
-    double estimated_monthly = 0.0;
-    int64_t mining_uptime_seconds = 0;
-};
-
-struct PoolStatus {
-    std::string pool_id;
-    std::string pool_name;
-    std::string pool_address;
-    bool is_joined = false;
-    bool is_mining = false;
-    float mining_intensity = 0.5f;
-    double pool_earnings = 0.0;
-    int active_miners = 0;
-    float pool_hashrate = 0.0f;
-    MiningStats stats;
-};
-
-// Marketplace
-enum class ModelCategory {
-    All = 0,
-    LLM = 1,
-    Vision = 2,
-    Audio = 3,
-    Embedding = 4,
-    Multimodal = 5
-};
-
-struct MarketplaceListing {
-    std::string id;
-    std::string name;
-    std::string description;
-    std::string format;
-    int64_t size_bytes = 0;
-    double price_per_request = 0.0;
-    float rating = 0.0f;
-    int64_t download_count = 0;
-    std::string owner_id;
-    std::vector<std::string> tags;
-    ModelCategory category = ModelCategory::All;
-    std::string architecture;
-    int64_t parameter_count = 0;
-    std::string thumbnail_url;
-    int64_t created_at = 0;
-};
-
-struct DownloadProgress {
-    std::string model_id;
-    int64_t bytes_downloaded = 0;
-    int64_t total_bytes = 0;
-    float progress = 0.0f;
-    bool completed = false;
-    std::string error_message;
-    std::string local_path;
-};
-
 // Device Allocation for Central Server connection
 enum class AllocDeviceType {
     Gpu = 0,
@@ -233,7 +171,6 @@ struct DisconnectResult {
 using MetricsCallback = std::function<void(const SystemMetrics&)>;
 using JobUpdateCallback = std::function<void(const std::string& job_id, const JobInfo& job, const std::string& update_type)>;
 using LogCallback = std::function<void(const LogEntry&)>;
-using DownloadCallback = std::function<void(const DownloadProgress&)>;
 
 // TLS connection settings for remote daemon connections
 struct TLSConnectionSettings {
@@ -309,36 +246,14 @@ public:
     bool GetConfig(NodeConfig& config);
     bool SetConfig(const NodeConfig& config, bool& restart_required, std::string& error);
 
-    // Earnings & Wallet
+    // Earnings
     bool GetEarnings(EarningsInfo& earnings);
-    bool GetWalletAddress(std::string& address, double& balance, bool& is_connected);
-    bool SetWalletAddress(const std::string& address, std::string& error);
 
     // Logs
     bool GetLogs(std::vector<LogEntry>& entries, int limit = 100,
                  const std::string& level_filter = "");
     void StartLogStream(LogCallback callback, const std::string& level_filter = "");
     void StopLogStream();
-
-    // Pool Mining
-    bool GetPoolStatus(PoolStatus& status);
-    bool JoinPool(const std::string& pool_address, std::string& error);
-    bool LeavePool(std::string& error);
-    bool SetMiningIntensity(float intensity, std::string& error);
-    bool StartMining(std::string& error);
-    bool StopMining(std::string& error);
-
-    // Marketplace
-    bool ListMarketplaceModels(std::vector<MarketplaceListing>& listings,
-                               const std::string& query = "",
-                               ModelCategory category = ModelCategory::All,
-                               int limit = 50, int offset = 0,
-                               const std::string& sort_by = "rating");
-    bool GetMarketplaceModel(const std::string& model_id, MarketplaceListing& listing);
-    void DownloadMarketplaceModel(const std::string& model_id,
-                                  const std::string& target_dir,
-                                  DownloadCallback callback);
-    void CancelMarketplaceDownload(const std::string& model_id);
 
     // Daemon Control
     bool Shutdown(bool graceful, std::string& error);
@@ -362,12 +277,9 @@ private:
     std::thread metrics_stream_thread_;
     std::thread job_updates_thread_;
     std::thread log_stream_thread_;
-    std::thread download_thread_;
     std::atomic<bool> metrics_streaming_{false};
     std::atomic<bool> job_updates_streaming_{false};
     std::atomic<bool> log_streaming_{false};
-    std::atomic<bool> download_active_{false};
-    std::string active_download_model_id_;
 
     std::mutex stream_mutex_;
 
