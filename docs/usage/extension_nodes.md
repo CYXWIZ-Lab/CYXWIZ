@@ -93,7 +93,7 @@ within 2 seconds, without a restart.
   "Python is not available in this build of CyxWiz". Python nodes run in the
   open project's Python environment: after opening another project, Python
   moves to its environment by itself, or, when it cannot (see
-  [Notebooks: Changing project](notebooks.md)), they say "Python runs another
+  [Python and project environments: Changing project](../user-guide/scripting/python-environment.md#changing-project)), they say "Python runs another
   project's environment; restart the Engine (File > Restart) ..." until you
   restart.
 - **Errors.** An error in a node's code stops training: the training status

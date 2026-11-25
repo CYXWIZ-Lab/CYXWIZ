@@ -11,7 +11,7 @@ last_reviewed: 2026-11-25
 related:
   - plotting.md
   - plot-types.md
-  - ../../usage/notebooks.md
+  - ../scripting/notebooks.md
 redirect_from: []
 ---
 
@@ -139,4 +139,4 @@ The window shows `episode_reward`, `episode_length`, `policy_loss`,
 
 - [Plot data](plotting.md)
 - [Plot types](plot-types.md)
-- [Notebooks](../../usage/notebooks.md)
+- [Notebooks](../scripting/notebooks.md)
