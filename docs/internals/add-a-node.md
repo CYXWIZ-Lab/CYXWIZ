@@ -117,9 +117,12 @@ You do not add the node to any of those surfaces by hand.
      [The parity oracle](parity-oracle.md).
    - Add a graph that uses the node to a test or an `examples/` project
      when the node changes what a graph can do.
-10. **Document it in the same change.** Update the family page in
-    `docs/reference/nodes/categories/` or the area's user guide, and add a
-    release-note fragment in `docs/release-notes/next/` from
+10. **Document it in the same change.** The node's reference page is
+    generated: rebuild `tool_node_reference_dump` and run
+    `python scripts/docs/generate_node_reference.py` (ctest
+    `node_reference_docs` fails until you do). Hand-written notes for the
+    node or its family go in `docs/reference/nodes/_notes/`; how-to text goes
+    in the area's user guide. Add a release-note fragment in `docs/release-notes/next/` from
     `docs/internals/docs/templates/release-note-fragment.md`. Run
     `python scripts/docs/check_docs.py`.
 
