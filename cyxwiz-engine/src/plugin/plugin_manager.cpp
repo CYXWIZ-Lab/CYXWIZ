@@ -761,7 +761,9 @@ void PluginManager::ShutdownPlugin(const std::string& plugin_id) {
     RemoveRegistrations(plugin_id);
 
     plugin->state = PluginState::Loaded;
-    contexts_.erase(ctx_it);
+    // The context stays until UnloadPlugin: OnUnload is the plugin's last call
+    // and gets it (erasing it here skipped OnUnload after a shutdown, as at
+    // every Engine exit). A new InitializePlugin replaces it.
 
     spdlog::info("PluginManager: Plugin {} shut down", plugin_id);
 }

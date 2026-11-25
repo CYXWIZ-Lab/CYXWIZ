@@ -14,6 +14,9 @@
 #include "../src/plugin/registries/plugin_environment_registry.h"
 #include "../src/plugin/builtin/classic_control_environments.h"
 
+#include <spdlog/sinks/ringbuffer_sink.h>
+#include <spdlog/spdlog.h>
+
 #include <cmath>
 #include <cstdlib>
 #include <map>
@@ -524,6 +527,22 @@ int main() {
     manager.SetPluginStoppingHandler(nullptr);
     manager.UnloadPlugin(kPluginId);
     Check(NodesOfPlugin() == 0, "unloading a disabled plugin leaves nothing");
+
+    // The Engine's exit: ShutdownAll, then UnloadAll. OnUnload is the
+    // plugin's last call and still runs after the shutdown (it was skipped).
+    auto ring = std::make_shared<spdlog::sinks::ringbuffer_sink_mt>(256);
+    const auto previous_logger = spdlog::default_logger();
+    spdlog::set_default_logger(std::make_shared<spdlog::logger>("unload-check", ring));
+    LoadAndInitialize(manager, dir);
+    manager.ShutdownAll();
+    manager.UnloadAll();
+    bool unloaded = false;
+    for (const auto& line : ring->last_formatted()) {
+        if (line.find("Image Nodes: OnUnload") != std::string::npos) unloaded = true;
+    }
+    spdlog::set_default_logger(previous_logger);
+    Check(unloaded, "OnUnload runs after ShutdownAll at the Engine's exit");
+    Check(manager.GetLoadedPlugin(kPluginId) == nullptr, "UnloadAll unloads the shut-down plugin");
 
     std::cout << "test_plugin_unload_registrations: all checks passed\n";
     return 0;
