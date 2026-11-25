@@ -568,6 +568,19 @@ public:
         return Step::Ok;
     }
 
+    // An error nothing below caught (out of memory, a device or data library throwing): the node
+    // leaves the group and reports it, instead of the exception ending the whole daemon.
+    void Abort(const std::string& what) {
+        const std::string text = "The group worker stopped on an error: " + what;
+        spdlog::error("Group worker: {}", text);
+        try {
+            Leave(pb::LeaveRequest::REASON_TRAINING_ERROR, text);
+        } catch (...) {
+            // Leaving is a courtesy; the coordinator also drops a worker that stops answering.
+        }
+        worker_.Set(GroupWorkerState::Failed, text);
+    }
+
     void Leave(pb::LeaveRequest::Reason reason, const std::string& text) {
         if (worker_id_.empty()) return;
         pb::LeaveRequest request;
@@ -660,33 +673,39 @@ void GroupWorker::Run() {
         return go_on;
     };
     bool in_group = false;
-    while (!stop_.load()) {
-        Step step = Step::Ok;
-        if (!in_group) {
-            // Join, build (once), describe, then send or fetch the starting state.
-            step = session.Join();
-            if (step == Step::Ok) step = session.BuildModel();
-            if (step == Step::Ok) step = session.Describe();
-            if (step == Step::Ok) step = session.ProbeLink();
-            if (step == Step::Ok) step = session.ExchangeInitialState();
-            in_group = step == Step::Ok;
-        } else {
-            step = session.Round();
+    try {
+        while (!stop_.load()) {
+            Step step = Step::Ok;
+            if (!in_group) {
+                // Join, build (once), describe, then send or fetch the starting state.
+                step = session.Join();
+                if (step == Step::Ok) step = session.BuildModel();
+                if (step == Step::Ok) step = session.Describe();
+                if (step == Step::Ok) step = session.ProbeLink();
+                if (step == Step::Ok) step = session.ExchangeInitialState();
+                in_group = step == Step::Ok;
+            } else {
+                step = session.Round();
+            }
+            if (step == Step::End) break;
+            if (step == Step::Rejoin) {
+                in_group = false;
+                continue;
+            }
+            if (step == Step::Retry) {
+                if (!pause()) break;
+                continue;
+            }
+            retry_seconds = 1.0;
         }
-        if (step == Step::End) break;
-        if (step == Step::Rejoin) {
-            in_group = false;
-            continue;
+        if (stop_.load() && !Done()) {
+            session.Leave(protocol::LeaveRequest::REASON_OWNER_STOP, "the node was stopped");
+            Set(GroupWorkerState::Finished, "Stopped on this node");
         }
-        if (step == Step::Retry) {
-            if (!pause()) break;
-            continue;
-        }
-        retry_seconds = 1.0;
-    }
-    if (stop_.load() && !Done()) {
-        session.Leave(protocol::LeaveRequest::REASON_OWNER_STOP, "the node was stopped");
-        Set(GroupWorkerState::Finished, "Stopped on this node");
+    } catch (const std::exception& error) {
+        session.Abort(error.what());
+    } catch (...) {
+        session.Abort("an unknown error");
     }
     const GroupWorkerStatus status = Status();
     spdlog::info("Group worker: {}{}{}", GroupWorkerStateName(status.state), status.text.empty() ? "" : ": ", status.text);
@@ -725,6 +744,10 @@ bool GroupWorker::Wait(double seconds) {
 void GroupWorker::Track(grpc::ClientContext* context) {
     std::lock_guard<std::mutex> lock(mutex_);
     active_call_ = context;
+    // Stop() may have run after the worker's last stop check but before this call was tracked:
+    // cancel it now (gRPC applies a cancel made before the call starts), so Stop() never waits
+    // on a NextRound that has no deadline.
+    if (context && stop_.load()) context->TryCancel();
 }
 
 }  // namespace cyxwiz::servernode

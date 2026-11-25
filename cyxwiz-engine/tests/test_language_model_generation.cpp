@@ -260,6 +260,7 @@ public:
     cyxwiz::Tensor Backward(const cyxwiz::Tensor& grad_output) override { return grad_output; }
     void SetTraining(bool) override {}
     std::map<std::string, cyxwiz::Tensor> GetParameters() override { return {}; }
+    std::vector<cyxwiz::ModelStateEntry> GetState() override { return {}; }
     void SetParameters(const std::map<std::string, cyxwiz::Tensor>&) override {}
     std::map<std::string, cyxwiz::Tensor> GetGradients() override { return {}; }
     void UpdateParameters(cyxwiz::Optimizer*) override {}

@@ -23,6 +23,8 @@
 #include <filesystem>
 #include <mutex>
 #include <string>
+#include <chrono>
+#include <atomic>
 #include <thread>
 #include <vector>
 
@@ -167,8 +169,14 @@ public:
         return grpc::Status::OK;
     }
 
-    grpc::Status NextRound(grpc::ServerContext*, const wire::NextRoundRequest* request,
+    grpc::Status NextRound(grpc::ServerContext* context, const wire::NextRoundRequest* request,
                            grpc::ServerWriter<wire::RoundPiece>* writer) override {
+        // A coordinator that has not opened the next round: the call stays open until the worker
+        // cancels it.
+        while (hold_next_round.load()) {
+            if (context->IsCancelled()) return grpc::Status::CANCELLED;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
         std::lock_guard<std::mutex> lock(mutex);
         wire::RoundPiece first;
         auto* header = first.mutable_header();
@@ -255,6 +263,7 @@ public:
     std::vector<ReceivedUpdate> updates;
     std::vector<wire::LeaveRequest> leaves;
     std::string remove_worker;
+    std::atomic<bool> hold_next_round{false};
 
 private:
     std::string graph_;
@@ -399,6 +408,26 @@ TEST_CASE("A group worker joins, trains its rounds and leaves when the job ends"
         worker.Stop();
         CHECK(worker.Status().state == cyxwiz::servernode::GroupWorkerState::Finished);
         CHECK(worker.Status().text == "Stopped on this node");
+    }
+
+    SECTION("Stop ends a worker that waits for a round the coordinator has not opened") {
+        coordinator.hold_next_round.store(true);
+        cyxwiz::servernode::GroupWorker worker(Options(port, "the-ticket-of-this-node"));
+        worker.Start();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (worker.Status().state != cyxwiz::servernode::GroupWorkerState::WaitingForRound &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        REQUIRE(worker.Status().state == cyxwiz::servernode::GroupWorkerState::WaitingForRound);
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));  // NextRound is open and held
+        const auto stop_started = std::chrono::steady_clock::now();
+        worker.Stop();
+        const auto stop_took = std::chrono::steady_clock::now() - stop_started;
+        CHECK(stop_took < std::chrono::seconds(5));
+        CHECK(worker.Status().state == cyxwiz::servernode::GroupWorkerState::Finished);
+        CHECK(worker.Status().text == "Stopped on this node");
+        coordinator.hold_next_round.store(false);
     }
 
     server->Shutdown();
