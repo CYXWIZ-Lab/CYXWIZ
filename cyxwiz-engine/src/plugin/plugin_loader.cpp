@@ -153,15 +153,15 @@ std::filesystem::path ShadowCopyLibrary(const std::string& plugin_id, const std:
         return {};
     }
     const auto folder = cache_root / SafeFolderName(plugin_id) / LibraryContentKey(library_hex, files);
-    // A reused copy must still hold the content its key names: the library's
-    // copy, changed in place, keeps its size, so it is hashed, not compared
-    // by size.
+    // A reused copy must still hold the content of the build: a copy changed
+    // in place keeps its size, so every copy (the library and the libraries
+    // beside it) is hashed, not compared by size.
     const auto keep = [&](const std::filesystem::path& file, const std::filesystem::path& target) {
         std::error_code size_error;
         const bool same_size =
             std::filesystem::file_size(target, size_error) == std::filesystem::file_size(file, size_error) &&
             !size_error;
-        return same_size && (file != library || LibraryContentHex(target) == library_hex);
+        return same_size && LibraryContentHex(target) == (file == library ? library_hex : LibraryContentHex(file));
     };
     if (!PlaceLibraryCopies(folder, files, keep, error)) return {};
     return folder / library.filename();
