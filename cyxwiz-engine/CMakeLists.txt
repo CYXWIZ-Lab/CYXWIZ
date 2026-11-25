@@ -419,6 +419,7 @@ set(ENGINE_SOURCES
     # Plugin system (loader/manager only; host sources in cyxwiz-plugin-host)
     src/plugin/plugin_loader.cpp
     src/plugin/plugin_manager.cpp
+    src/plugin/plugin_pack_trust.cpp
     src/plugin/engine_plugin_context.cpp
     src/plugin/plugin_data_formats.cpp
     # Preprocessing system
@@ -3281,6 +3282,22 @@ target_compile_definitions(test_plugin_fingerprint PRIVATE
 add_dependencies(test_plugin_fingerprint fingerprint_ok_plugin fingerprint_other_plugin fingerprint_missing_plugin)
 set_target_properties(test_plugin_fingerprint PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME plugin_fingerprint COMMAND test_plugin_fingerprint)
+
+# ===== Test: an installed add-on is checked against its signed inventory before it loads =====
+add_executable(test_plugin_pack_load
+    tests/test_plugin_pack_load.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+    src/plugin/plugin_pack_trust.cpp
+)
+target_include_directories(test_plugin_pack_load PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_plugin_pack_load PRIVATE cyxwiz-plugin-host cyxwiz-backend cyxwiz-backend-pack-service
+    cyxwiz-runtime-bootstrap OpenSSL::Crypto imgui::imgui spdlog::spdlog nlohmann_json::nlohmann_json)
+target_compile_definitions(test_plugin_pack_load PRIVATE OK_PLUGIN="$<TARGET_FILE:fingerprint_ok_plugin>")
+add_dependencies(test_plugin_pack_load fingerprint_ok_plugin)
+set_target_properties(test_plugin_pack_load PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME plugin_pack_load COMMAND test_plugin_pack_load)
 
 # ===== Test: unloading a plugin removes its registrations (TOFIX125) =====
 add_executable(test_plugin_unload_registrations
@@ -9200,10 +9217,13 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
     pybind11_add_module(_cyxwiz_envs
         src/plugin/environment_host_module.cpp
         src/plugin/plugin_manager.cpp
+        src/plugin/plugin_pack_trust.cpp
         src/plugin/engine_plugin_context.cpp
         src/plugin/plugin_loader.cpp
     )
-    target_link_libraries(_cyxwiz_envs PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
+    # An installed runtime's add-ons load checked against their signed inventory.
+    target_link_libraries(_cyxwiz_envs PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui
+        cyxwiz-backend-pack-service cyxwiz-runtime-bootstrap)
     # Beside pycyxwiz and the backend DLLs it loads
     set_target_properties(_cyxwiz_envs PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
     if(WIN32)

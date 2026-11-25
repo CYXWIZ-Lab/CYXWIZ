@@ -2,6 +2,7 @@
 
 #include "plugin_types.h"
 #include "plugin_loader.h"
+#include "plugin_pack.h"
 #include "engine_plugin_context.h"
 #include "security/permission_dialog.h"
 #include <memory>
@@ -41,12 +42,18 @@ public:
     void SetSearchPaths(const std::vector<std::filesystem::path>& paths);
     const std::vector<std::filesystem::path>& GetSearchPaths() const { return search_paths_; }
 
-    // Plugin packs active in the installed runtime: exact plugin folders (id,
-    // folder), listed by discovery and loaded at startup from where they are.
-    void SetPackPlugins(std::vector<std::pair<std::string, std::filesystem::path>> plugins);
-    const std::vector<std::pair<std::string, std::filesystem::path>>& GetPackPlugins() const {
-        return pack_plugins_;
-    }
+    // The add-ons (plugin packs) active in the installed runtime, from
+    // ConfigureInstalledPluginPacks (plugin_pack_trust.h): the verified ones
+    // are listed by discovery and loaded at startup from their folders, each
+    // checked against its signed inventory first; the refused ones are kept
+    // with their reason. LoadPlugin then tells a folder apart: an active
+    // add-on loads checked, a refused one or any other folder under the
+    // runtime's plugins/ is refused, anything else is a developer plugin.
+    void SetPackPlugins(InstalledPluginPacks packs);
+    const std::vector<PackPlugin>& GetPackPlugins() const { return installed_packs_.packs; }
+    // The add-ons not loaded and why: refused at start (signed metadata) or
+    // when their files were checked (cleared when one later loads).
+    std::vector<PackRefusal> GetPackRefusals() const;
 
     // Discover all plugin directories in search paths and the active plugin packs
     std::vector<std::filesystem::path> DiscoverPlugins() const;
@@ -157,7 +164,8 @@ private:
 
     // Search paths for plugin directories
     std::vector<std::filesystem::path> search_paths_;
-    std::vector<std::pair<std::string, std::filesystem::path>> pack_plugins_;
+    InstalledPluginPacks installed_packs_;
+    std::unordered_map<std::string, PackRefusal> load_refusals_;  // plugin id -> refused at load
 
     // Thread safety
     mutable std::recursive_mutex mutex_;

@@ -25,6 +25,9 @@
 #include "interfaces/i_assistant_provider.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <optional>
 #include <queue>
 #include <set>
 
@@ -79,6 +82,31 @@ private:
     ITensorNodeProvider* provider_;
 };
 
+// A folder as the file system names it (case folded on Windows), to tell an
+// add-on's folder apart however the caller spelled it.
+std::string FolderKey(const std::filesystem::path& folder) {
+    std::error_code ec;
+    auto canonical = std::filesystem::weakly_canonical(std::filesystem::absolute(folder, ec), ec);
+    if (ec) canonical = std::filesystem::absolute(folder, ec).lexically_normal();
+    std::string key = canonical.generic_string();
+    while (key.size() > 1 && key.back() == '/') key.pop_back();
+#ifdef _WIN32
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+#endif
+    return key;
+}
+
+bool IsInside(const std::string& folder_key, const std::string& root_key) {
+    return folder_key.size() > root_key.size() && folder_key.compare(0, root_key.size(), root_key) == 0 &&
+           folder_key[root_key.size()] == '/';
+}
+
+std::string RefusalLogLine(const PackRefusal& refusal) {
+    return "Add-on " + refusal.title + " was not loaded: " + refusal.reason +
+           ". Repair it in CyxWiz Installer > Add-ons.";
+}
+
 std::vector<std::string> SplitChoices(const char* text) {
     std::vector<std::string> choices;
     std::string current;
@@ -123,17 +151,28 @@ void PluginManager::SetSearchPaths(const std::vector<std::filesystem::path>& pat
     }
 }
 
-void PluginManager::SetPackPlugins(std::vector<std::pair<std::string, std::filesystem::path>> plugins) {
+void PluginManager::SetPackPlugins(InstalledPluginPacks packs) {
     std::lock_guard lock(mutex_);
-    pack_plugins_ = std::move(plugins);
-    for (const auto& [id, folder] : pack_plugins_) {
-        spdlog::debug("  Plugin pack {}: {}", id, folder.string());
+    installed_packs_ = std::move(packs);
+    load_refusals_.clear();
+    for (const auto& pack : installed_packs_.packs) {
+        spdlog::debug("  Plugin pack {} ({}): {}", pack.plugin_id, pack.pack_id, pack.directory.string());
     }
+}
+
+std::vector<PackRefusal> PluginManager::GetPackRefusals() const {
+    std::lock_guard lock(mutex_);
+    std::vector<PackRefusal> refusals = installed_packs_.refusals;
+    for (const auto& pack : installed_packs_.packs) {
+        if (const auto it = load_refusals_.find(pack.plugin_id); it != load_refusals_.end())
+            refusals.push_back(it->second);
+    }
+    return refusals;
 }
 
 std::vector<std::filesystem::path> PluginManager::DiscoverPlugins() const {
     std::vector<std::filesystem::path> plugin_dirs;
-    for (const auto& pack : pack_plugins_) plugin_dirs.push_back(pack.second);
+    for (const auto& pack : installed_packs_.packs) plugin_dirs.push_back(pack.directory);
 
     for (const auto& search_path : search_paths_) {
         if (!std::filesystem::exists(search_path)) {
@@ -165,6 +204,80 @@ std::vector<std::filesystem::path> PluginManager::DiscoverPlugins() const {
 // ============================================================================
 
 bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir, std::string* error_out) {
+    // An installed add-on's folder: loaded only as the active, verified pack.
+    std::optional<PackPlugin> pack;
+    PackFileChecks checks;
+    {
+        std::lock_guard lock(mutex_);
+        if (!installed_packs_.runtime_root.empty()) {
+            const std::string key = FolderKey(plugin_dir);
+            for (const auto& candidate : installed_packs_.packs) {
+                if (FolderKey(candidate.directory) == key) pack = candidate;
+            }
+            if (!pack) {
+                for (const auto& refusal : installed_packs_.refusals) {
+                    if (FolderKey(refusal.directory) != key) continue;
+                    if (error_out) *error_out = refusal.reason;
+                    spdlog::debug("PluginManager: {} is refused: {}", plugin_dir.string(), refusal.reason);
+                    return false;
+                }
+                if (IsInside(key, FolderKey(installed_packs_.runtime_root / "plugins"))) {
+                    const std::string reason = "not an active installed add-on";
+                    spdlog::warn("PluginManager: {} was not loaded: {}", plugin_dir.string(), reason);
+                    if (error_out) *error_out = reason;
+                    return false;
+                }
+            }
+            checks = installed_packs_.checks;
+        }
+        if (pack && plugins_.count(pack->plugin_id)) {
+            spdlog::debug("PluginManager: Plugin {} is already loaded", pack->plugin_id);
+            return true;
+        }
+    }
+    if (pack) {
+        // Checked before plugin.json is read: its id comes from the signed pack.
+        const PackLoadCheck check{pack->pack_id, pack->package_version, pack->components, checks};
+        PackLoadResult result;
+        std::string error;
+        auto loaded = PluginLoader::LoadFromDirectory(plugin_dir, error, &check, &result);
+        std::lock_guard lock(mutex_);
+        if (!loaded) {
+            if (result.refused) {
+                PackRefusal refusal;
+                refusal.plugin_id = pack->plugin_id;
+                refusal.pack_id = pack->pack_id;
+                refusal.title = pack->title;
+                refusal.package_version = pack->package_version;
+                refusal.directory = pack->directory;
+                refusal.reason = error;
+                refusal.issues = std::move(result.issues);
+                refusal.files_listed = pack->components.size();
+                refusal.checked_at = std::chrono::system_clock::now();
+                spdlog::warn("{}", RefusalLogLine(refusal));
+                load_refusals_[pack->plugin_id] = std::move(refusal);
+            } else {
+                spdlog::error("PluginManager: Failed to load plugin from {}: {}", plugin_dir.string(), error);
+            }
+            if (error_out) *error_out = error;
+            return false;
+        }
+        if (loaded->manifest.id != pack->plugin_id) {
+            const std::string reason = "its plugin.json names " + loaded->manifest.id + ", not " + pack->plugin_id;
+            spdlog::error("PluginManager: Failed to load plugin from {}: {}", plugin_dir.string(), reason);
+            if (error_out) *error_out = reason;
+            return false;
+        }
+        load_refusals_.erase(pack->plugin_id);
+        if (plugins_.count(pack->plugin_id)) {
+            if (error_out) *error_out = "a plugin with the id " + pack->plugin_id + " is already loaded";
+            return false;
+        }
+        spdlog::debug("PluginManager: Loaded plugin {} ({})", loaded->manifest.name, pack->plugin_id);
+        plugins_[pack->plugin_id] = std::move(loaded);
+        return true;
+    }
+
     // Pre-check: parse manifest to get ID before loading DLL.
     // Avoids loading (and then unloading) a DLL that's already in use,
     // which would FreeLibrary the active plugin's code and crash.

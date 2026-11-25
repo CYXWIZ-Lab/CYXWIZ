@@ -10,6 +10,7 @@
 
 #include "plugin_loader.h"
 #include "plugin_manager.h"
+#include "plugin_pack_trust.h"
 #include "registries/plugin_environment_registry.h"
 #include "security/permission_store.h"
 
@@ -18,6 +19,7 @@
 #include <pybind11/stl.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -34,6 +36,21 @@ namespace {
 
 std::vector<std::string> loaded_plugins;
 
+// In an installed runtime (the Engine's bootstrapper sets the variable), its
+// add-ons load only as the Engine loads them: checked against their signed
+// inventory. Read once per process.
+void ConfigureInstalledAddOns(cyxwiz::plugin::PluginManager& manager) {
+    static bool configured = false;
+    if (configured) return;
+    configured = true;
+#ifdef _WIN32
+    const wchar_t* root = ::_wgetenv(L"CYXWIZ_ACTIVE_RUNTIME_ROOT");
+#else
+    const char* root = std::getenv("CYXWIZ_ACTIVE_RUNTIME_ROOT");
+#endif
+    if (root && *root) cyxwiz::plugin::ConfigureInstalledPluginPacks(manager, std::filesystem::path(root));
+}
+
 // Loads and starts the plugin in `folder`. A permission the Engine would ask
 // the user about is denied: this process cannot ask.
 std::string LoadPlugin(const std::string& folder_text) {
@@ -43,6 +60,7 @@ std::string LoadPlugin(const std::string& folder_text) {
     if (!cyxwiz::plugin::PluginLoader::ParseManifest(folder, manifest, error))
         throw std::runtime_error("plugin.json in " + folder.string() + ": " + error);
     auto& manager = cyxwiz::plugin::PluginManager::Instance();
+    ConfigureInstalledAddOns(manager);
     if (manager.GetLoadedPlugin(manifest.id)) return manifest.id;
     if (!manager.LoadPlugin(folder, &error)) throw std::runtime_error("The plugin did not load: " + error);
     auto& permissions = cyxwiz::plugin::security::PermissionStore::Instance();

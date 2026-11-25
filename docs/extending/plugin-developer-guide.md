@@ -57,7 +57,7 @@ The template's `plugin.json`:
 | `capabilities` | `ProvidesTensorNodes`. Shown only; the Engine finds your nodes through `QueryInterface`, whatever this says |
 | `permissions` | `Training`, as the template has. Nothing checks it for trainable nodes today. `FileSystem`, `Network`, `SystemCommands` and `Python` make the Engine ask the user (section 4) |
 | `platforms` | The library path per platform, relative to the folder |
-| `signature` | Leave it out. Only plugins signed with CyxWiz's own key pass; a value that does not verify refuses the load. Unsigned plugins load, with a warning in the log |
+| `signature` | Leave it out. Only plugins signed with CyxWiz's own key pass; a value that does not verify refuses the load. Unsigned plugins load, with a warning in the log; the Plugin Manager card says *Developer plugin, not signed* |
 
 All fields are in the [API reference](plugin-api-reference.md#3-pluginjson).
 
@@ -607,7 +607,8 @@ debugger: it needs the runtime libraries the launcher sets up.
   minor version or compiler (the fingerprint refuses the old build). Name
   the CyxWiz version you built against in your release notes.
 - Leave `signature` out: only CyxWiz's own key can sign. Unsigned plugins
-  load.
+  load, as developer plugins. Add-ons installed by the CyxWiz Installer are
+  signed packs instead, checked file by file before they load.
 - Raise `version` for each release. A plugin with `FileSystem`, `Network`,
   `SystemCommands` or `Python` asks the user to approve them again for each
   new version.

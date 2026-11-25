@@ -7,6 +7,8 @@
 #include <cctype>
 #include <chrono>
 #include <fstream>
+#include <functional>
+#include <memory>
 #include <system_error>
 
 #ifdef _WIN32
@@ -78,6 +80,58 @@ std::string LibraryContentKey(const std::string& library_hex, const std::vector<
     return key;
 }
 
+// Copies `files` into `folder` (<cache>/<plugin id>/<content key>/). When
+// the folder exists (this build was copied before and may be loaded), a file
+// `keep` accepts stays and the others are copied again; a file in use is the
+// same bytes. Otherwise the files are staged, then renamed into place: a
+// reader never sees half a copy. False with `error` when a copy fails.
+bool PlaceLibraryCopies(const std::filesystem::path& folder, const std::vector<std::filesystem::path>& files,
+                        const std::function<bool(const std::filesystem::path& file,
+                                                 const std::filesystem::path& target)>& keep,
+                        std::string& error) {
+    std::error_code ec;
+    if (std::filesystem::is_directory(folder, ec)) {
+        for (const auto& file : files) {
+            const auto target = folder / file.filename();
+            if (keep(file, target)) continue;
+            std::filesystem::copy_file(file, target, std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec) {
+                error = "cannot copy " + file.string() + ": " + ec.message();
+                return false;
+            }
+        }
+        return true;
+    }
+    const auto staging = folder.parent_path() / (folder.filename().string() + ".staging-" +
+                                                  std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::remove_all(staging, ec);
+    std::filesystem::create_directories(staging, ec);
+    if (ec) {
+        error = "cannot create " + staging.string() + ": " + ec.message();
+        return false;
+    }
+    for (const auto& file : files) {
+        std::filesystem::copy_file(file, staging / file.filename(),
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            error = "cannot copy " + file.string() + ": " + ec.message();
+            std::filesystem::remove_all(staging, ec);
+            return false;
+        }
+    }
+    std::filesystem::rename(staging, folder, ec);
+    if (ec) {
+        std::error_code ignored;
+        std::filesystem::remove_all(staging, ignored);
+        // Not copied by another Engine meanwhile
+        if (!std::filesystem::is_regular_file(folder / files.front().filename(), ignored)) {
+            error = "cannot place the copy in " + folder.string() + ": " + ec.message();
+            return false;
+        }
+    }
+    return true;
+}
+
 // Copies the plugin's library and the shared libraries beside it into
 // <cache>/<plugin id>/<content key>/ and returns the copy of the library.
 // The Engine loads the copy, so the build output is never locked: a
@@ -97,57 +151,155 @@ std::filesystem::path ShadowCopyLibrary(const std::string& plugin_id, const std:
         return {};
     }
     const auto folder = cache_root / SafeFolderName(plugin_id) / LibraryContentKey(library_hex, files);
-    const auto copy = folder / library.filename();
-    std::error_code ec;
-    if (std::filesystem::is_directory(folder, ec)) {
-        // This build was copied before (and may be loaded): fill in what is
-        // missing; a file in use is the same bytes. The library's copy must
-        // still hold the content its key names: one changed in place keeps
-        // its size, so it is hashed, not compared by size.
-        for (const auto& file : files) {
-            const auto target = folder / file.filename();
-            std::error_code size_error;
-            const bool same_size =
-                std::filesystem::file_size(target, size_error) == std::filesystem::file_size(file, size_error) &&
-                !size_error;
-            if (same_size && (file != library || LibraryContentHex(target) == library_hex))
-                continue;
-            std::filesystem::copy_file(file, target, std::filesystem::copy_options::overwrite_existing, ec);
-            if (ec) {
-                error = "cannot copy " + file.string() + ": " + ec.message();
-                return {};
-            }
-        }
-        return copy;
+    // A reused copy must still hold the content its key names: the library's
+    // copy, changed in place, keeps its size, so it is hashed, not compared
+    // by size.
+    const auto keep = [&](const std::filesystem::path& file, const std::filesystem::path& target) {
+        std::error_code size_error;
+        const bool same_size =
+            std::filesystem::file_size(target, size_error) == std::filesystem::file_size(file, size_error) &&
+            !size_error;
+        return same_size && (file != library || LibraryContentHex(target) == library_hex);
+    };
+    if (!PlaceLibraryCopies(folder, files, keep, error)) return {};
+    return folder / library.filename();
+}
+
+// ---------------------------------------------------------------------------
+// Installed add-ons: the copies that load are checked against the signed
+// inventory and held against writes until they are loaded.
+// ---------------------------------------------------------------------------
+
+std::string FoldPackPath(std::string path) {
+    std::transform(path.begin(), path.end(), path.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return path;
+}
+
+const PackComponent* FindPackComponent(const std::vector<PackComponent>& components,
+                                       const std::filesystem::path& relative) {
+    const std::string wanted = FoldPackPath(relative.lexically_normal().generic_string());
+    for (const auto& component : components) {
+        if (FoldPackPath(component.path) == wanted) return &component;
     }
-    // Staged, then renamed into place: a reader never sees half a copy.
-    const auto staging = folder.parent_path() / (folder.filename().string() + ".staging-" +
-                                                  std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::filesystem::remove_all(staging, ec);
-    std::filesystem::create_directories(staging, ec);
-    if (ec) {
-        error = "cannot create " + staging.string() + ": " + ec.message();
+    return nullptr;
+}
+
+// Open handles that let others read but not change or delete the copies,
+// until they are loaded (a mapped library is protected by the system then).
+class CopyLock {
+public:
+    CopyLock() = default;
+    CopyLock(const CopyLock&) = delete;
+    CopyLock& operator=(const CopyLock&) = delete;
+    ~CopyLock() {
+#ifdef _WIN32
+        for (HANDLE handle : handles_) ::CloseHandle(handle);
+#endif
+    }
+
+    bool Hold(const std::filesystem::path& file, std::string& error) {
+#ifdef _WIN32
+        HANDLE handle = ::CreateFileW(file.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                      OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle == INVALID_HANDLE_VALUE) {
+            error = "cannot hold " + file.filename().string() + " against changes (Windows error " +
+                    std::to_string(::GetLastError()) + ")";
+            return false;
+        }
+        handles_.push_back(handle);
+        return true;
+#else
+        // Packs are Windows-only for now; elsewhere the copy is read, not locked.
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(file, ec)) {
+            error = "cannot open " + file.filename().string();
+            return false;
+        }
+        return true;
+#endif
+    }
+
+private:
+#ifdef _WIN32
+    std::vector<HANDLE> handles_;
+#endif
+};
+
+// The library and the shared libraries beside it in the pack, from the
+// signed inventory (the folder holds exactly those files: checked before).
+std::vector<const PackComponent*> PackLibraryComponents(const PackLoadCheck& pack, const PackComponent& library) {
+    std::vector<const PackComponent*> result{&library};
+    const auto folder = std::filesystem::path(library.path).parent_path();
+    for (const auto& component : pack.components) {
+        const std::filesystem::path path(component.path);
+        if (&component != &library && path.parent_path() == folder && IsSharedLibraryName(path))
+            result.push_back(&component);
+    }
+    return result;
+}
+
+// The copy's key from the signed digests: no hashing of the originals.
+std::string PackContentKey(const std::vector<const PackComponent*>& libraries) {
+    std::string key = "pack-" + libraries.front()->sha256.substr(0, 32);
+    uint64_t others = 1469598103934665603ull;  // FNV-1a over the others' names and digests
+    for (size_t i = 1; i < libraries.size(); ++i) {
+        for (unsigned char c : libraries[i]->path + ":" + libraries[i]->sha256)
+            others = (others ^ c) * 1099511628211ull;
+    }
+    if (libraries.size() > 1)
+        key += "-" + security::PluginSignature::ToHex(reinterpret_cast<const uint8_t*>(&others), sizeof(others));
+    return key;
+}
+
+// Copies an add-on's libraries into the cache, then holds every copy against
+// writes and checks it against its signed size and SHA-256. A copy that
+// differs (changed in the cache) is copied again once; a second difference
+// refuses the load. On success `lock` holds the copies until they are loaded.
+std::filesystem::path ShadowCopyPackLibrary(const std::string& plugin_id, const std::filesystem::path& plugin_dir,
+                                            const PackLoadCheck& pack, const PackComponent& library,
+                                            std::unique_ptr<CopyLock>& lock, std::vector<PackFileIssue>& issues,
+                                            std::string& error) {
+    const auto libraries = PackLibraryComponents(pack, library);
+    const auto cache_root = LibraryCacheRoot();
+    if (cache_root.empty()) {
+        error = "no user cache folder to copy the library into";
         return {};
     }
-    for (const auto& file : files) {
-        std::filesystem::copy_file(file, staging / file.filename(),
-                                   std::filesystem::copy_options::overwrite_existing, ec);
+    const auto folder = cache_root / SafeFolderName(plugin_id) / PackContentKey(libraries);
+    std::vector<std::filesystem::path> files;
+    for (const auto* component : libraries) files.push_back(plugin_dir / std::filesystem::path(component->path));
+    const auto keep = [](const std::filesystem::path& file, const std::filesystem::path& target) {
+        std::error_code size_error;
+        return std::filesystem::file_size(target, size_error) == std::filesystem::file_size(file, size_error) &&
+               !size_error;
+    };
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (!PlaceLibraryCopies(folder, files, keep, error)) return {};
+        lock = std::make_unique<CopyLock>();
+        issues.clear();
+        for (const auto* component : libraries) {
+            const auto copy = folder / std::filesystem::path(component->path).filename();
+            PackFileProblem problem = PackFileProblem::ContentDiffers;
+            std::string file_error;
+            if (!lock->Hold(copy, file_error) || !pack.checks.check_file(copy, *component, problem, file_error)) {
+                issues.push_back({component->path, problem});
+                error = file_error;
+            }
+        }
+        if (issues.empty()) return folder / files.front().filename();
+        // Changed in the cache: start again from the checked pack folder.
+        lock.reset();
+        std::error_code ec;
+        std::filesystem::remove_all(folder, ec);
         if (ec) {
-            error = "cannot copy " + file.string() + ": " + ec.message();
-            std::filesystem::remove_all(staging, ec);
+            error = "a copy in " + folder.string() + " differs from the signed package and cannot be removed: " +
+                    ec.message();
             return {};
         }
     }
-    std::filesystem::rename(staging, folder, ec);
-    if (ec) {
-        std::error_code ignored;
-        std::filesystem::remove_all(staging, ignored);
-        if (!std::filesystem::is_regular_file(copy, ignored)) {  // not copied by another Engine meanwhile
-            error = "cannot place the copy in " + folder.string() + ": " + ec.message();
-            return {};
-        }
-    }
-    return copy;
+    error = "its library copies still differ from the signed package after copying them again: " + error;
+    return {};
 }
 
 // plugin.json -> manifest. In the Engine, not in plugin_types.h, so the
@@ -408,10 +560,35 @@ bool PluginLoader::ValidateApiVersion(const PluginVersion& plugin_api, std::stri
 
 std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
     const std::filesystem::path& plugin_dir,
-    std::string& error_out
+    std::string& error_out,
+    const PackLoadCheck* pack,
+    PackLoadResult* pack_result
 ) {
     auto loaded = std::make_unique<LoadedPlugin>();
     loaded->plugin_dir = plugin_dir;
+    const auto check_started = std::chrono::steady_clock::now();
+    const auto refuse_pack = [&](std::vector<PackFileIssue> issues, const std::string& reason) {
+        error_out = reason;
+        if (pack_result) {
+            pack_result->refused = true;
+            pack_result->issues = std::move(issues);
+        }
+        return nullptr;
+    };
+
+    // 0. An installed add-on: every file of its folder against the signed
+    // inventory (the exact file set, sizes, SHA-256) before plugin.json is read.
+    PackFolderCheck folder_check;
+    if (pack) {
+        if (!pack->checks.check_folder || !pack->checks.check_file)
+            return refuse_pack({}, "its files cannot be checked against its signed package");
+        folder_check = pack->checks.check_folder(plugin_dir, pack->components);
+        if (!folder_check.ok()) {
+            return refuse_pack(folder_check.issues,
+                               folder_check.issues.empty() ? folder_check.error
+                                                           : PackRefusalReason(folder_check.issues));
+        }
+    }
 
     // 1. Parse manifest
     if (!ParseManifest(plugin_dir, loaded->manifest, error_out)) {
@@ -478,8 +655,24 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
     loaded->dll_path = dll_path;
 
     // 3a. Load a private copy (see ShadowCopyLibrary); the signature is
-    // checked on the copy, the bytes that run.
-    std::filesystem::path load_path = ShadowCopyLibrary(loaded->manifest.id, dll_path, error_out);
+    // checked on the copy, the bytes that run. An add-on's copies are checked
+    // against its signed inventory and held against writes until loaded.
+    std::unique_ptr<CopyLock> copy_lock;
+    std::filesystem::path load_path;
+    if (pack) {
+        const PackComponent* library =
+            FindPackComponent(pack->components, std::filesystem::path(loaded->manifest.library));
+        if (!library) {
+            return refuse_pack({{loaded->manifest.library, PackFileProblem::NotListed}},
+                               "plugin.json names a library that is not part of its signed package");
+        }
+        std::vector<PackFileIssue> copy_issues;
+        load_path = ShadowCopyPackLibrary(loaded->manifest.id, plugin_dir, *pack, *library, copy_lock,
+                                          copy_issues, error_out);
+        if (load_path.empty()) return refuse_pack(std::move(copy_issues), error_out);
+    } else {
+        load_path = ShadowCopyLibrary(loaded->manifest.id, dll_path, error_out);
+    }
     if (load_path.empty()) {
         error_out = "Cannot copy the plugin library for loading: " + error_out;
         loaded->state = PluginState::Failed;
@@ -487,9 +680,20 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
         return nullptr;
     }
     loaded->loaded_from = load_path;
+    if (pack) {
+        // The signed inventory supersedes the manifest's own signature field.
+        loaded->origin = LoadedPlugin::Origin::SignedPack;
+        loaded->pack_id = pack->pack_id;
+        loaded->package_version = pack->package_version;
+        loaded->pack_files_checked = folder_check.files_checked;
+        loaded->pack_bytes_checked = folder_check.bytes_checked;
+        loaded->pack_check_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - check_started).count();
+        loaded->pack_checked_at = std::chrono::system_clock::now();
+    }
 
-    // 3b. Verify Ed25519 signature
-    {
+    // 3b. Verify Ed25519 signature (a developer plugin)
+    if (!pack) {
         auto sig_result = security::PluginSignature::Verify(load_path, loaded->manifest.signature);
         switch (sig_result.status) {
             case security::SignatureStatus::Valid:
@@ -512,6 +716,7 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
 
     // 4. Load DLL
     loaded->dll_handle = LoadDLL(load_path, error_out);
+    copy_lock.reset();  // mapped now: the system protects the loaded copies
     if (!loaded->dll_handle) {
         error_out = "Failed to load DLL: " + error_out;
         loaded->state = PluginState::Failed;
@@ -574,6 +779,12 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
     }
 
     loaded->state = PluginState::Loaded;
+    if (pack) {
+        spdlog::info("Plugin {}: signed add-on verified ({})", loaded->manifest.id, pack->pack_id);
+        spdlog::debug("Plugin {}: {} files, {:.1f} MB checked in {:.0f} ms", loaded->manifest.id,
+                      loaded->pack_files_checked, static_cast<double>(loaded->pack_bytes_checked) / 1e6,
+                      loaded->pack_check_ms);
+    }
     spdlog::debug("Plugin loaded: {} v{}", loaded->manifest.id, loaded->manifest.version.ToString());
     return loaded;
 }

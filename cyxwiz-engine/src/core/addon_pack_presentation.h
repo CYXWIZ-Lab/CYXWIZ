@@ -6,6 +6,7 @@
 // Preferences > Installed packs. Pure data in, data out: no ImGui, no global
 // state, no backend DLL calls (the installer compiles this file too).
 
+#include "addon_identity.h"
 #include "backend_pack_manager_model.h"
 #include "installer_pack_presentation.h"
 
@@ -55,15 +56,6 @@ struct AddOnCardView {
     bool can_uninstall = false;      // Uninstall add-on
     std::vector<AddOnDetail> details;  // every fact, empty values skipped
 };
-
-// The add-ons this release knows by plugin id, in card order. A known
-// add-on with no catalog pack for this platform still gets a Not published
-// card, as the compute backends do.
-const std::vector<std::string>& KnownAddOnPluginIds();
-
-// Display name of an add-on: its own wording for a known plugin id, else the
-// plugin id itself.
-std::string AddOnTitle(const std::string& plugin_id);
 
 // Where the cards are shown. The CyxWiz Installer applies a CPU Engine update
 // with its plan; the Engine's Installed packs only shows that one is

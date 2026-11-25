@@ -70,6 +70,15 @@ fingerprint, `CreatePlugin`, then (when the plugin is initialised)
 `SetImGuiContext`, `OnLoad`, `OnInitialize`, and the `QueryInterface`
 calls of section 6.
 
+An installed add-on (a signed plugin pack the CyxWiz Installer put in the
+installation) is checked first: before `plugin.json` is read, every file of
+its folder is compared with the pack's signed file list (no file missing or
+added, each one's size and SHA-256), and the library copies the Engine loads
+are hashed again and held against changes until they are loaded. A pack that
+does not match is not loaded; the Plugin Manager shows why, with **Repair
+add-on...**. A plugin from a plugin folder or **Install...** is not checked
+this way.
+
 ## 3. `plugin.json`
 
 The manifest sits in the plugin folder; the Engine reads it before it loads
@@ -87,7 +96,7 @@ the library. Unknown fields, capabilities and permissions are ignored.
 | `dependencies` | array of `{"id", "version"}` | Plugins that must run before yours. `version`: empty or `*` (any), `1.2.0` (exactly), `>=`, `>`, `<=`, `<`, `^1.2.0` (at least, same major; same minor below 1.0), `~1.2.0` (at least, same major.minor); several separated by spaces must all hold (`>=1.0 <2.0`). Your plugin does not start when a dependency is not installed, has another version or failed; the reason shows in the Install dialog, Plugin Manager and the log ("needs com.acme.base >=2.0.0; version 1.4.0 is installed"). When a dependency has not started yet (it waits for its permissions), yours waits and starts right after it |
 | `platforms` | `{"windows": {"library": ...}, "linux": ..., "macos": ...}` | The library path for each platform, relative to the folder |
 | `library` | string | Used when `platforms` has no entry for this platform. Without either, the first `.dll` (`.so`, `.dylib`) directly in the folder is used |
-| `signature` | hex string | Leave it out. A value is checked as an Ed25519 signature, by CyxWiz's own key, of the library's SHA-512 hash; a value that does not verify refuses the load (*Invalid signature: ...*). Without it the plugin loads, with *unsigned* in the log |
+| `signature` | hex string | Leave it out. A value is checked as an Ed25519 signature, by CyxWiz's own key, of the library's SHA-512 hash; a value that does not verify refuses the load (*Invalid signature: ...*). Without it the plugin loads, with *unsigned* in the log and *Developer plugin, not signed* on its Plugin Manager card. An installed add-on is not checked by this field: its signed pack file list is |
 
 | Capability | Meaning |
 |---|---|

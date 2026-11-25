@@ -499,7 +499,21 @@ DLL checks, the loader paths or the route evidence tied to that identity:
 At most one pack is active per plugin ID. It is published atomically under the
 same runtime mutation lease. Plugins whose companion base differs from the
 active base are inactive. The Engine loads each active plugin pack folder as an
-exact plugin folder; it does not scan `plugins/` for other versions.
+exact plugin folder; it does not scan `plugins/` for other versions, and it
+refuses any other folder under `plugins/`.
+
+Before it loads one, the Engine reads the pack's signed installed metadata
+(`installed-metadata/<pack-id>.json`, verified with `trust/trusted-keys.json`
+as Repair reads it, for exactly that plugin and pack id) and checks the folder
+with the same file check Repair uses (`backend_pack_installed_files.h`): the
+exact file set, then every component's size and SHA-256. It copies the
+libraries into its per-user cache, opens each copy without write or delete
+sharing, hashes it against its component and keeps it open until the library is
+loaded; a copy that differs is copied once more, a second difference refuses
+the load. A refused pack is not loaded and is reported with its reason; the
+add-on cards show it as Damaged, and Repair replaces the folder. The check
+proves integrity against the installed trust file; it does not protect against
+a same-user change of that file.
 
 Packaging names every third-party notice (`--third-party-license NAME=PATH`,
 PATH inside the plugin folder); a pack whose plugin ships third-party runtime
@@ -554,6 +568,13 @@ contracts. Qualification runs in the isolated route-probe child process; the
 helper activates the repaired pack only when that exact candidate passes.
 Failure leaves the complete pack inactive and retains the queued request for a
 later retry.
+
+A plugin pack is repaired from the CyxWiz Installer: a ticked Damaged add-on
+runs the helper with `--plugin-pack-id <pack-id> --repair`, which re-delivers
+the same signed pack, quarantines the damaged folder and publishes the
+verified one. Like every change of an installation, it needs the installation's
+Engine closed (the helper refuses with "CyxWiz is in use" while the Engine holds
+the runtime); the repaired add-on loads at the next start.
 
 Removal accepts optional backend packs only. It holds the shared runtime
 mutation lease, deactivates an exact active pack, removes any rollback

@@ -1,6 +1,10 @@
 #pragma once
 
+#include "plugin_pack.h"
 #include "plugin_types.h"
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <filesystem>
 #include <string>
@@ -27,6 +31,17 @@ struct LoadedPlugin {
     // filled when the plugin is initialised.
     std::vector<std::string> skipped_nodes;
 
+    // Where it came from: a developer folder (as built), or an installed
+    // add-on checked against its signed inventory before it loaded.
+    enum class Origin { Developer, SignedPack };
+    Origin origin = Origin::Developer;
+    std::string pack_id;                 // a SignedPack's pack and version
+    std::string package_version;
+    std::size_t pack_files_checked = 0;  // what the check read, and how long it took
+    std::uint64_t pack_bytes_checked = 0;
+    double pack_check_ms = 0.0;
+    std::chrono::system_clock::time_point pack_checked_at{};
+
     ~LoadedPlugin();
 };
 
@@ -37,10 +52,16 @@ struct LoadedPlugin {
 class PluginLoader {
 public:
     // Load plugin from a directory containing plugin.json
-    // Returns nullptr on failure, sets error_out
+    // Returns nullptr on failure, sets error_out.
+    // `pack`: an installed add-on. Its folder is checked against the signed
+    // inventory before plugin.json is read, its libraries are copied and the
+    // copies hashed (held open against writes) until they are loaded; a
+    // difference refuses the load and is described in `pack_result`.
     static std::unique_ptr<LoadedPlugin> LoadFromDirectory(
         const std::filesystem::path& plugin_dir,
-        std::string& error_out
+        std::string& error_out,
+        const PackLoadCheck* pack = nullptr,
+        PackLoadResult* pack_result = nullptr
     );
 
     // Load plugin from a specific DLL path (no manifest)
