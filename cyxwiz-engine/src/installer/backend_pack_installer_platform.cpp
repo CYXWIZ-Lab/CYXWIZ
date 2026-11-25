@@ -440,17 +440,13 @@ public:
             state.message = "The signed metadata root must be absolute";
             return state;
         }
-        auto trust = runtime::BackendPackTrustStore::Load(
-            catalog_root / "trust" / "trusted-keys.json", error);
-        if (!trust) {
+        auto verifier = runtime::LoadBackendPackMetadataVerifier(
+            catalog_root / "trust" / "trusted-keys.json", ClientVersion(), error);
+        if (!verifier) {
             state.message = "Cannot load the bundled trust store: " + error;
             return state;
         }
-        runtime::BackendPackLifecycleService lifecycle(
-            catalog_root, runtime::BackendPackMetadataVerifier(
-                std::move(*trust), ClientVersion(),
-                std::string(runtime::CurrentBackendPackPlatformId()),
-                std::string(runtime::CurrentBackendPackArchitectureId())));
+        runtime::BackendPackLifecycleService lifecycle(catalog_root, std::move(*verifier));
         runtime::VerifiedBackendPackCatalogSnapshot snapshot;
         if (!lifecycle.ReadCatalogSnapshot(CurrentUtc(), snapshot, error)) {
             state.message = "Cannot verify the current pack catalog: " + error;
@@ -492,16 +488,12 @@ public:
         }
         const auto catalog_root = CurrentCatalogRoot();
         std::string error;
-        auto trust = runtime::BackendPackTrustStore::Load(
-            catalog_root / "trust" / "trusted-keys.json", error);
-        if (!trust) {
+        auto verifier = runtime::LoadBackendPackMetadataVerifier(
+            catalog_root / "trust" / "trusted-keys.json", ClientVersion(), error);
+        if (!verifier) {
             result.message = "Cannot load the catalog trust store: " + error;
             return result;
         }
-        runtime::BackendPackMetadataVerifier verifier(
-            std::move(*trust), ClientVersion(),
-            std::string(runtime::CurrentBackendPackPlatformId()),
-            std::string(runtime::CurrentBackendPackArchitectureId()));
         runtime::HttpsBackendPackMetadataSource source;
         runtime::BackendPackMetadataRefreshRequest request;
         request.catalog_url = catalog_url_;
@@ -510,7 +502,7 @@ public:
         request.destination_root = runtime_root_;
         request.current_utc = CurrentUtc();
         const auto refreshed = runtime::RefreshBackendPackMetadata(
-            request, verifier, source);
+            request, *verifier, source);
         result.succeeded = refreshed.status ==
             runtime::BackendPackMetadataRefreshStatus::Refreshed;
         if (result.succeeded) online_refresh_succeeded_ = true;

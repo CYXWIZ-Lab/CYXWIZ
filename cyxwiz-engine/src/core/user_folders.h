@@ -261,6 +261,13 @@ inline std::filesystem::path RequireNoProjectRunDir(const std::filesystem::path&
     return dir;
 }
 
+// The installed runtime the bootstrapper started this process from
+// (CYXWIZ_ACTIVE_RUNTIME_ROOT, read wide on Windows); empty in a development
+// build or when it is not an absolute path.
+inline std::filesystem::path ActiveRuntimeRootFromEnvironment() {
+    return user_folders_detail::EnvironmentPath("CYXWIZ_ACTIVE_RUNTIME_ROOT");
+}
+
 // Points every folder above into `root` (a fake profile) for a test.
 class ScopedUserFoldersOverrideForTesting {
 public:

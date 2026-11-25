@@ -11,6 +11,7 @@
 #include "plugin_loader.h"
 #include "plugin_manager.h"
 #include "plugin_pack_trust.h"
+#include "../core/user_folders.h"
 #include "registries/plugin_environment_registry.h"
 #include "security/permission_store.h"
 
@@ -19,7 +20,6 @@
 #include <pybind11/stl.h>
 
 #include <algorithm>
-#include <cstdlib>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -43,12 +43,8 @@ void ConfigureInstalledAddOns(cyxwiz::plugin::PluginManager& manager) {
     static bool configured = false;
     if (configured) return;
     configured = true;
-#ifdef _WIN32
-    const wchar_t* root = ::_wgetenv(L"CYXWIZ_ACTIVE_RUNTIME_ROOT");
-#else
-    const char* root = std::getenv("CYXWIZ_ACTIVE_RUNTIME_ROOT");
-#endif
-    if (root && *root) cyxwiz::plugin::ConfigureInstalledPluginPacks(manager, std::filesystem::path(root));
+    if (const auto root = cyxwiz::ActiveRuntimeRootFromEnvironment(); !root.empty())
+        cyxwiz::plugin::ConfigureInstalledPluginPacks(manager, root);
 }
 
 // Loads and starts the plugin in `folder`. A permission the Engine would ask

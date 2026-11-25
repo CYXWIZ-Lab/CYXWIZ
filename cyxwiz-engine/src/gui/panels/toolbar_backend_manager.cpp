@@ -4,6 +4,7 @@
 #include "../ui_buttons.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/addon_pack_files.h"
+#include "../../core/user_folders.h"
 #include "../../core/backend_pack_catalog_adapter.h"
 #include "../../core/backend_pack_manager_model.h"
 #include "../../core/backend_pack_qualification_adapter.h"
@@ -71,12 +72,6 @@ std::string JoinOrUnavailable(const std::vector<std::string>& values) {
     return result;
 }
 
-std::filesystem::path ActiveRuntimeRoot() {
-    const char* value = std::getenv("CYXWIZ_ACTIVE_RUNTIME_ROOT");
-    return value && *value ? std::filesystem::path(value)
-                           : std::filesystem::path{};
-}
-
 std::filesystem::path BackendPackInstallerPath() {
     std::filesystem::path path = core::WindowManager::GetExecutablePath();
     path.replace_filename(
@@ -112,9 +107,9 @@ std::shared_ptr<runtime::BackendPackLifecycleService> CreatePackService(
     const std::filesystem::path& runtime_root,
     const std::shared_ptr<RouteQualificationService>& qualification_service,
     std::string& error) {
-    auto trust = runtime::BackendPackTrustStore::Load(
-        runtime_root / "trust" / "trusted-keys.json", error);
-    if (!trust) return {};
+    auto verifier = runtime::LoadBackendPackMetadataVerifier(
+        runtime_root / "trust" / "trusted-keys.json", GetVersionString(), error);
+    if (!verifier) return {};
     std::filesystem::path probe = core::WindowManager::GetExecutablePath();
 #ifdef _WIN32
     probe.replace_filename("cyxwiz-route-probe.exe");
@@ -125,12 +120,8 @@ std::shared_ptr<runtime::BackendPackLifecycleService> CreatePackService(
     options.runtime_root = runtime_root;
     options.probe_executable = probe;
     options.cache_path = GetRouteQualificationCachePath();
-    auto verifier = runtime::BackendPackMetadataVerifier(
-        std::move(*trust), GetVersionString(),
-        std::string(runtime::CurrentBackendPackPlatformId()),
-        std::string(runtime::CurrentBackendPackArchitectureId()));
     return std::make_shared<runtime::BackendPackLifecycleService>(
-        runtime_root, std::move(verifier),
+        runtime_root, std::move(*verifier),
         runtime::BackendPackExecutionActiveCheck{},
         CreateBackendPackQualificationHook(
             qualification_service, std::move(options)));
@@ -173,7 +164,7 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
     std::string identity_error;
     const auto identity =
         ReadActiveRuntimeQualificationIdentity(identity_error);
-    const auto runtime_root = ActiveRuntimeRoot();
+    const auto runtime_root = ActiveRuntimeRootFromEnvironment();
     const auto installer_manager = BackendPackManagerPath();
     const bool installer_manager_available =
         !runtime_root.empty() && runtime_root.is_absolute() &&

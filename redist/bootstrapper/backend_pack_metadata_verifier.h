@@ -177,4 +177,12 @@ private:
 
 const char* BackendPackSupportStatusName(BackendPackSupportStatus status);
 
+// A verifier for this platform and architecture from a trusted-keys.json
+// (an installation's runtime/trust/trusted-keys.json), or nothing with
+// `error` when the file cannot be read.
+std::optional<BackendPackMetadataVerifier> LoadBackendPackMetadataVerifier(
+    const std::filesystem::path& trusted_keys,
+    std::string client_version,
+    std::string& error);
+
 }  // namespace cyxwiz::runtime

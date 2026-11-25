@@ -1,8 +1,5 @@
 #include "backend_pack_path.h"
 
-#include <algorithm>
-#include <cctype>
-
 namespace cyxwiz::runtime {
 
 bool IsCanonicalBackendPackRelativePath(std::string_view value) {
@@ -21,14 +18,6 @@ bool IsCanonicalBackendPackRelativePath(std::string_view value) {
         begin = end == std::string_view::npos ? value.size() : end + 1;
     }
     return true;
-}
-
-std::string FoldBackendPackPath(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) {
-                       return static_cast<char>(std::tolower(c));
-                   });
-    return value;
 }
 
 std::filesystem::path BackendPackNativeRelativePath(std::string_view value) {

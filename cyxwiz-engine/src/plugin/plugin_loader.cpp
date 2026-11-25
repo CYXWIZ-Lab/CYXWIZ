@@ -1,6 +1,7 @@
 #include "plugin_loader.h"
 #include "security/plugin_signature.h"
 #include "../core/user_folders.h"
+#include "../../../redist/bootstrapper/backend_pack_path.h"
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -170,17 +171,11 @@ std::filesystem::path ShadowCopyLibrary(const std::string& plugin_id, const std:
 // inventory and held against writes until they are loaded.
 // ---------------------------------------------------------------------------
 
-std::string FoldPackPath(std::string path) {
-    std::transform(path.begin(), path.end(), path.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return path;
-}
-
 const PackComponent* FindPackComponent(const std::vector<PackComponent>& components,
                                        const std::filesystem::path& relative) {
-    const std::string wanted = FoldPackPath(relative.lexically_normal().generic_string());
+    const std::string wanted = runtime::FoldBackendPackPath(relative.lexically_normal().generic_string());
     for (const auto& component : components) {
-        if (FoldPackPath(component.path) == wanted) return &component;
+        if (runtime::FoldBackendPackPath(component.path) == wanted) return &component;
     }
     return nullptr;
 }

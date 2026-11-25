@@ -2,6 +2,7 @@
 #include "backend_pack_hash.h"
 #include "backend_pack_metadata_limits.h"
 #include "backend_pack_path.h"
+#include "backend_pack_platform.h"
 
 #include <openssl/evp.h>
 
@@ -979,6 +980,18 @@ const char* BackendPackSupportStatusName(BackendPackSupportStatus status) {
         case BackendPackSupportStatus::Revoked: return "revoked";
         default: return "unknown";
     }
+}
+
+std::optional<BackendPackMetadataVerifier> LoadBackendPackMetadataVerifier(
+    const std::filesystem::path& trusted_keys,
+    std::string client_version,
+    std::string& error) {
+    auto trust = BackendPackTrustStore::Load(trusted_keys, error);
+    if (!trust) return std::nullopt;
+    return BackendPackMetadataVerifier(
+        std::move(*trust), std::move(client_version),
+        std::string(CurrentBackendPackPlatformId()),
+        std::string(CurrentBackendPackArchitectureId()));
 }
 
 }  // namespace cyxwiz::runtime

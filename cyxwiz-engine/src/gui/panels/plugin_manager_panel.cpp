@@ -8,6 +8,7 @@
 #include "../ui_tokens.h"
 #include "../ui_buttons.h"
 #include "../python_bundle_ui.h"
+#include "../../core/user_folders.h"
 #include "../../core/window_manager.h"
 #include "../../extension/python/python_node_provider.h"
 #include "backend_pack_platform.h"
@@ -17,7 +18,6 @@
 #include <cctype>
 #include <chrono>
 #include <cstdio>
-#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 
@@ -69,13 +69,6 @@ static std::string TrimCopy(std::string value) {
     return value;
 }
 
-// The installed runtime the bootstrapper started this Engine from; empty in
-// a development build.
-static std::filesystem::path ActiveRuntimeRoot() {
-    const char* value = std::getenv("CYXWIZ_ACTIVE_RUNTIME_ROOT");
-    return value && *value ? std::filesystem::path(value) : std::filesystem::path{};
-}
-
 static std::filesystem::path InstallerPath() {
     std::filesystem::path path = core::WindowManager::GetExecutablePath();
     path.replace_filename(std::string(runtime::CurrentInstallerManagerExecutableName()));
@@ -88,7 +81,8 @@ static std::string ShownFolder(const std::filesystem::path& folder) {
     std::error_code ec;
     auto absolute = std::filesystem::absolute(folder, ec).lexically_normal();
     std::vector<std::filesystem::path> bases;
-    if (const auto runtime = ActiveRuntimeRoot(); !runtime.empty()) bases.push_back(runtime.parent_path());
+    if (const auto runtime = ActiveRuntimeRootFromEnvironment(); !runtime.empty())
+        bases.push_back(runtime.parent_path());
     bases.push_back(std::filesystem::path(core::WindowManager::GetExecutablePath()).parent_path());
     for (const auto& base : bases) {
         auto relative = absolute.lexically_relative(std::filesystem::absolute(base, ec).lexically_normal());
@@ -496,7 +490,7 @@ void PluginManagerPanel::RenderRefusedCard(const plugin::PackRefusal& refusal) {
     // Repair opens the CyxWiz Installer with this add-on ticked for repair,
     // the same action as its card in Installed packs.
     ImGui::Spacing();
-    const auto runtime_root = ActiveRuntimeRoot();
+    const auto runtime_root = ActiveRuntimeRootFromEnvironment();
     const auto installer = InstallerPath();
     std::error_code ec;
     const bool can_repair = !runtime_root.empty() && std::filesystem::is_regular_file(installer, ec);
