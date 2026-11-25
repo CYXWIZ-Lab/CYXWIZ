@@ -10,6 +10,7 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <set>
 #include <system_error>
 
 #ifdef _WIN32
@@ -247,10 +248,42 @@ std::string PackContentKey(const std::vector<const PackComponent*>& libraries) {
     return key;
 }
 
+// Removes every entry of `folder` but `keep` (file names), then lists it again:
+// the folder the library loads from (its dependencies are searched there
+// first) holds nothing unverified. False, with the entries, when one stays.
+bool RemoveUnlistedCopies(const std::filesystem::path& folder, const std::set<std::string>& keep,
+                          std::vector<PackFileIssue>& issues, std::string& error) {
+    for (int pass = 0; pass < 2; ++pass) {
+        std::vector<std::filesystem::path> unlisted;
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
+            if (!keep.count(entry.path().filename().string())) unlisted.push_back(entry.path());
+        }
+        if (ec) {
+            error = "cannot list " + folder.string() + ": " + ec.message();
+            return false;
+        }
+        if (unlisted.empty()) return true;
+        for (const auto& path : unlisted) {
+            std::error_code remove_error;
+            std::filesystem::remove_all(path, remove_error);
+            if (pass == 1 || remove_error) {
+                issues.push_back({path.filename().string(), PackFileProblem::NotListed});
+                error = path.filename().string() + " in the library copies is not part of the signed package" +
+                        (remove_error ? " and cannot be removed: " + remove_error.message() : std::string{});
+            }
+        }
+        if (!issues.empty()) return false;
+    }
+    return true;
+}
+
 // Copies an add-on's libraries into the cache, then holds every copy against
 // writes and checks it against its signed size and SHA-256. A copy that
 // differs (changed in the cache) is copied again once; a second difference
-// refuses the load. On success `lock` holds the copies until they are loaded.
+// refuses the load. Any other file in that folder is removed (a library the
+// plugin loads later would be found there first); one that cannot be removed
+// refuses the load. On success `lock` holds the copies.
 std::filesystem::path ShadowCopyPackLibrary(const std::string& plugin_id, const std::filesystem::path& plugin_dir,
                                             const PackLoadCheck& pack, const PackComponent& library,
                                             std::unique_ptr<CopyLock>& lock, std::vector<PackFileIssue>& issues,
@@ -282,7 +315,12 @@ std::filesystem::path ShadowCopyPackLibrary(const std::string& plugin_id, const 
                 error = file_error;
             }
         }
-        if (issues.empty()) return folder / files.front().filename();
+        if (issues.empty()) {
+            std::set<std::string> names;
+            for (const auto& file : files) names.insert(file.filename().string());
+            if (!RemoveUnlistedCopies(folder, names, issues, error)) return {};
+            return folder / files.front().filename();
+        }
         // Changed in the cache: start again from the checked pack folder.
         lock.reset();
         std::error_code ec;

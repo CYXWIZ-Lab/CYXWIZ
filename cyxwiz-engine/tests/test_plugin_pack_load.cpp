@@ -321,6 +321,15 @@ int main() {
               "the copy that loaded is the signed one");
         manager.UnloadPlugin(kPluginId);
 
+        // A library planted in the copies' folder would be found there first
+        // (it is on the DLL search path of the plugin): it is removed.
+        std::ofstream(copy_folder / "planted.dll") << "not signed";
+        const bool loaded_with_planted = manager.LoadPlugin(fixture.pack, &error);
+        Check(loaded_with_planted && !fs::exists(copy_folder / "planted.dll"),
+              "a file planted beside the library copies is removed before the load" +
+                  (error.empty() ? "" : ": " + error));
+        manager.UnloadPlugin(kPluginId);
+
         std::cout << "a changed add-on\n";
         FlipByteInMiddle(fixture.big);
         const fs::path developer = DeveloperFolder(fixture.root);
