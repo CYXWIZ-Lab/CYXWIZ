@@ -5368,6 +5368,10 @@ TrainingConfiguration GraphCompiler::Compile(
             } else if (const auto* fed = source_shape(*node, 0)) {
                 current_shape = *fed;
             }
+            // An Identity (a block's input) passes its shape on, so a merge
+            // fed through it checks that shape (a residual Add of 32 and 64
+            // channels compiled and failed at the first batch).
+            if (node->type == gui::NodeType::Identity) record_outputs(*node, current_shape);
         }
 
         if (node->type == gui::NodeType::CrossAttention && branched) {

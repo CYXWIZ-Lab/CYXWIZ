@@ -413,6 +413,21 @@ int main() {
             CheckPublishedNames(library, *pattern, it->second.first, it->second.second, shape);
     }
     std::cout << graphs << " graphs, " << blocks << " blocks, " << not_ready << " not ready\n";
+
+    // The Residual Block on a feature map with fewer channels than `filters`:
+    // the skip Add reads the block input through its Identity, so the compiler
+    // refuses the two shapes (it used to compile and fail at the first batch).
+    if (const Pattern* residual = library.GetPattern("resnet_block")) {
+        Inserted g = Insert(library, *residual);
+        WrapBlock(g, "[16, 16, 32]");
+        const auto config = cyxwiz::GraphCompiler{}.Compile(g.nodes, g.links, /*allow_unloaded_data=*/true);
+        bool refused = false;
+        for (const auto& issue : config.issues) {
+            refused |= issue.level == cyxwiz::IssueLevel::Error &&
+                       issue.message.find("needs inputs of one shape: [16, 16, 64] and [16, 16, 32]") != std::string::npos;
+        }
+        Check(!config.is_valid && refused, "resnet_block on 32 channels: the skip Add's shapes are refused");
+    }
     if (failures > 0) {
         std::cerr << failures << " failures\n";
         return 1;
