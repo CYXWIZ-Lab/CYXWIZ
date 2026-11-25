@@ -168,6 +168,7 @@ set(ENGINE_SOURCES
     src/auth/auth_client.cpp
     src/core/project_manager.cpp
     src/core/engine_config.cpp
+    src/core/user_folders.cpp
     src/core/python_detector.cpp
     src/core/child_process.cpp
     src/core/python_package_smoke.cpp
@@ -5793,6 +5794,7 @@ set_target_properties(test_runtime_log_export PROPERTIES
 add_executable(test_engine_config_observability
     tests/test_engine_config_observability.cpp
     src/core/engine_config.cpp
+    src/core/executable_directory.cpp
 )
 
 target_include_directories(test_engine_config_observability PRIVATE
@@ -5816,6 +5818,23 @@ set_target_properties(test_engine_config_observability PROPERTIES
     CXX_STANDARD 20
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: where the Engine writes (user folders, run files) =====
+add_executable(test_user_folders
+    tests/test_user_folders.cpp
+    src/core/user_folders.cpp
+    src/core/executable_directory.cpp
+)
+target_include_directories(test_user_folders PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_user_folders PRIVATE cyxwiz-runtime-bootstrap)
+if(WIN32)
+    target_compile_definitions(test_user_folders PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_user_folders PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME test_user_folders COMMAND test_user_folders)
 
 # ===== Test: Runtime Console command registry and bounded log commands =====
 add_executable(test_runtime_console_commands
@@ -6382,7 +6401,7 @@ set_target_properties(test_nas_mutation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${C
 # ===== Test: Nodes panel Favourites and Recent (Engine settings, registry) =====
 add_executable(test_nodes_panel_user_nodes
     tests/test_nodes_panel_user_nodes.cpp
-    src/core/engine_config.cpp
+    src/core/engine_config.cpp src/core/executable_directory.cpp
     src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp
     src/core/extension_node_registry.cpp
 )
@@ -6399,7 +6418,7 @@ add_test(NAME test_nodes_panel_user_nodes COMMAND test_nodes_panel_user_nodes)
 add_executable(test_nodes_panel_presentation
     tests/test_nodes_panel_presentation.cpp
     src/core/nodes_panel_presentation.cpp src/core/node_palette.cpp src/core/preparation_recipe.cpp
-    src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp
+    src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp src/core/executable_directory.cpp
     src/core/extension_node_registry.cpp
 )
 target_include_directories(test_nodes_panel_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -8820,7 +8839,7 @@ set_target_properties(test_html_document_text_unavailable PROPERTIES RUNTIME_OUT
 # Visual subgraph persistence uses the actual node factory, without renderer startup.
 add_executable(test_subgraph_document tests/test_subgraph_document.cpp
     src/gui/subgraph_document.cpp src/gui/node_editor_nodes.cpp src/core/graph_node_factory.cpp
-    src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp
+    src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp src/core/executable_directory.cpp
     src/core/extension_node_registry.cpp src/core/extension_node_document.cpp)
 target_include_directories(test_subgraph_document PRIVATE src external/imnodes)
 target_compile_definitions(test_subgraph_document PRIVATE CYXWIZ_NODE_FACTORY_ONLY NOMINMAX)
@@ -9311,6 +9330,18 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz AND Python3_EXECUTABLE)
         CYXWIZ_HAS_PYTHON
         CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}")
     add_test(NAME python_environment_switch COMMAND test_python_environment_switch)
+
+    # The Engine's Python keeps bytecode in the user's cache folder, never
+    # beside the .py files (an installed base is read-only).
+    add_executable(test_python_pycache_prefix
+        tests/test_python_pycache_prefix.cpp
+        src/scripting/python_environment.cpp
+    )
+    target_link_libraries(test_python_pycache_prefix PRIVATE pybind11::embed)
+    target_compile_definitions(test_python_pycache_prefix PRIVATE
+        CYXWIZ_HAS_PYTHON
+        CYXWIZ_TEST_PYTHONHOME="${_cyxwiz_test_python_home}")
+    add_test(NAME python_pycache_prefix COMMAND test_python_pycache_prefix)
 
     # Cost of a Python node against the C++ plugin's (Part C9). Not a test.
     add_executable(bench_python_node_cost

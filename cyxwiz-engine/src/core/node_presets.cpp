@@ -1,4 +1,5 @@
 #include "node_presets.h"
+#include "user_folders.h"
 
 #include <nlohmann/json.hpp>
 
@@ -160,14 +161,7 @@ std::map<std::string, std::string> ParametersToSave(const gui::MLNode& node) {
 }
 
 std::filesystem::path DefaultStoreFile() {
-#ifdef _WIN32
-    const char* base = std::getenv("APPDATA");
-    if (base && *base) return std::filesystem::path(base) / "CyxWiz" / "node_presets.json";
-    return std::filesystem::path(".") / "node_presets.json";
-#else
-    const char* home = std::getenv("HOME");
-    return std::filesystem::path(home && *home ? home : ".") / ".cyxwiz" / "node_presets.json";
-#endif
+    return UserFile(UserConfigDir(), "node_presets.json");
 }
 
 }  // namespace cyxwiz::node_presets

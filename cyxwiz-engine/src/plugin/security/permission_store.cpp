@@ -1,4 +1,5 @@
 #include "permission_store.h"
+#include "../../core/user_folders.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <fstream>
@@ -15,14 +16,7 @@ std::string PermissionStore::MakeKey(const std::string& id, const std::string& v
 }
 
 std::filesystem::path PermissionStore::GetStorePath() const {
-#ifdef _WIN32
-    if (auto* appdata = std::getenv("APPDATA"))
-        return std::filesystem::path(appdata) / "cyxwiz" / "plugin_permissions.json";
-#else
-    if (auto* home = std::getenv("HOME"))
-        return std::filesystem::path(home) / ".cyxwiz" / "plugin_permissions.json";
-#endif
-    return "plugin_permissions.json";
+    return UserFile(UserConfigDir(), "plugin_permissions.json");
 }
 
 void PermissionStore::Load() {

@@ -1,6 +1,8 @@
 // engine_config.h - Centralized configuration management for CyxWiz Engine
 #pragma once
 
+#include "user_folders.h"  // ExecutableDirectory()
+
 #include <string>
 #include <mutex>
 #include <filesystem>
@@ -9,9 +11,6 @@
 
 namespace cyxwiz::core {
 
-// The folder of the running executable (files that ship next to the Engine,
-// e.g. python_tools/).
-std::filesystem::path ExecutableDirectory();
 
 struct RuntimeLogSavedFilterConfig {
     std::string name;
@@ -190,13 +189,10 @@ struct MonitorConfig {
  * Manages server addresses and other configuration settings.
  * Loads from engine_config.json and supports runtime modifications.
  *
- * Config file search order:
- * 1. <exe_dir>/engine_config.json
- * 2. <exe_dir>/config/engine_config.json
- * 3. User config directory (~/.cyxwiz/engine_config.json on Linux/macOS,
- *    %APPDATA%/CyxWiz/engine_config.json on Windows)
- * If no config is found, a fallback template is used (if present):
- * - <exe_dir>/resources/engine_config.json
+ * The config file is the user's own: engine_config.json in the user config
+ * folder (core/user_folders.h: ~/.cyxwiz on Linux/macOS, %APPDATA%/CyxWiz on
+ * Windows). Nothing beside the executable is read or written. A first run
+ * seeds it from <exe_dir>/resources/engine_config.json when that exists.
  *
  * Usage:
  *   auto& config = EngineConfig::Instance();
@@ -369,7 +365,7 @@ public:
     std::vector<RuntimeLogSavedFilterConfig> GetRuntimeLogSavedFilters() const;
     void SetRuntimeLogSavedFilters(
         const std::vector<RuntimeLogSavedFilterConfig>& filters);
-    // Record Debug messages (the Console's Debug filter, engine_log.txt) in
+    // Record Debug messages (the Console's Debug filter, the Engine log) in
     // every build: the people using the Engine are developers. On by
     // default; Preferences > General turns it off (Info and above only).
     bool RecordDebugLogs() const;

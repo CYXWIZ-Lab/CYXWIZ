@@ -4,6 +4,7 @@
 #include "core/engine_config.h"
 #include "core/child_process.h"
 #include "core/python_detector.h"
+#include "core/user_folders.h"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -15,10 +16,6 @@
 #include <spdlog/spdlog.h>
 
 namespace fs = std::filesystem;
-
-#ifdef _WIN32
-#include <shlobj.h>
-#endif
 
 namespace {
 
@@ -912,25 +909,19 @@ void ProjectManager::ClearRecentProjects() {
 }
 
 std::string ProjectManager::GetRecentProjectsFilePath() const {
-    // Store in user's app data directory
+    // The user's config folder; empty (nothing kept) when none is known.
 #ifdef _WIN32
-    char appdata[MAX_PATH];
-    if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_APPDATA, nullptr, 0, appdata))) {
-        fs::path config_dir = fs::path(appdata) / "CyxWiz";
-        fs::create_directories(config_dir);
-        return (config_dir / "recent_projects.json").string();
-    }
-    return "recent_projects.json";
+    const fs::path config_dir = UserConfigDir();
 #else
-    // Linux/Mac - use ~/.config/cyxwiz/
+    // Linux/Mac - ~/.config/cyxwiz/
     const char* home = std::getenv("HOME");
-    if (home) {
-        fs::path config_dir = fs::path(home) / ".config" / "cyxwiz";
-        fs::create_directories(config_dir);
-        return (config_dir / "recent_projects.json").string();
-    }
-    return "recent_projects.json";
+    const fs::path config_dir =
+        home && fs::path(home).is_absolute() ? fs::path(home) / ".config" / "cyxwiz" : fs::path{};
 #endif
+    if (config_dir.empty()) return {};
+    std::error_code ec;
+    fs::create_directories(config_dir, ec);
+    return (config_dir / "recent_projects.json").string();
 }
 
 void ProjectManager::SetRecentProjectsLimit(size_t limit) {

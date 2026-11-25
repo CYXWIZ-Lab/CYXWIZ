@@ -492,6 +492,13 @@ bool ResolveRuntimeState(
     return true;
 }
 
+bool IsInstalledBaseExecutable(const std::filesystem::path& executable) {
+    std::error_code code;
+    auto actual = std::filesystem::weakly_canonical(executable, code);
+    if (code) actual = executable;
+    return actual.parent_path().parent_path().filename() == "base";
+}
+
 bool ResolveActiveRuntime(
     const std::filesystem::path& runtime_root,
     ActiveRuntime& output,
