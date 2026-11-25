@@ -1,12 +1,11 @@
 #include "plugin_pack_trust.h"
 
 #include "plugin_manager.h"
+#include "plugin_pack_checks.h"
 #include "../core/addon_identity.h"
 
 #include "backend_pack_installed_files.h"
 #include "backend_pack_metadata_verifier.h"
-#include "backend_pack_path.h"
-#include "backend_pack_platform.h"
 #include "runtime_layout.h"
 
 #include <cyxwiz/cyxwiz.h>
@@ -17,18 +16,6 @@
 
 namespace cyxwiz::plugin {
 namespace {
-
-PackFileProblem ProblemOf(runtime::PackFileFault fault) {
-    switch (fault) {
-        case runtime::PackFileFault::Missing: return PackFileProblem::Missing;
-        case runtime::PackFileFault::SizeDiffers: return PackFileProblem::SizeDiffers;
-        case runtime::PackFileFault::Unreadable: return PackFileProblem::Unreadable;
-        case runtime::PackFileFault::NotListed: return PackFileProblem::NotListed;
-        case runtime::PackFileFault::ContentDiffers:
-        case runtime::PackFileFault::None: break;
-    }
-    return PackFileProblem::ContentDiffers;
-}
 
 runtime::VerifiedPackComponent ServiceComponent(const PackComponent& component) {
     return {component.path, component.size, component.sha256};
@@ -41,26 +28,39 @@ std::vector<runtime::VerifiedPackComponent> ServiceComponents(const std::vector<
     return result;
 }
 
+// The add-ons active for the runtime's base; false when the runtime's state
+// cannot be read.
+bool ActivePacks(const std::filesystem::path& runtime_root, std::vector<runtime::ActivePluginPack>& packs,
+                 std::vector<std::string>& skipped, std::string& error) {
+    runtime::ActiveRuntimeState active;
+    return runtime::LoadActiveRuntimeState(runtime_root / "active-runtime.json", active, error) &&
+           runtime::ResolveActivePluginPacks(runtime_root, active.base_pack_id, packs, skipped, error);
+}
+
+PackRefusal RefusalOf(const runtime::ActivePluginPack& active_pack, std::string reason, std::string detail) {
+    PackRefusal refusal;
+    refusal.plugin_id = active_pack.plugin_id;
+    refusal.pack_id = active_pack.pack_id;
+    refusal.title = AddOnTitle(active_pack.plugin_id);
+    refusal.directory = active_pack.directory;
+    refusal.reason = std::move(reason);
+    refusal.detail = std::move(detail);
+    refusal.checked_at = std::chrono::system_clock::now();
+    return refusal;
+}
+
 }  // namespace
 
 PackFileChecks InstalledPackFileChecks() {
     PackFileChecks checks;
     checks.check_folder = [](const std::filesystem::path& folder, const std::vector<PackComponent>& components) {
-        const auto check = runtime::CheckInstalledPackFiles(folder, ServiceComponents(components));
-        PackFolderCheck result;
-        result.files_checked = check.files_checked;
-        result.bytes_checked = check.bytes_checked;
-        for (const auto& finding : check.findings)
-            result.issues.push_back({finding.relative_path, ProblemOf(finding.fault)});
-        // A check that stopped on a link or special file has no file to name.
-        if (!check.error.empty() && check.findings.empty()) result.error = check.error;
-        return result;
+        return PackFolderCheckOf(runtime::CheckInstalledPackFiles(folder, ServiceComponents(components)));
     };
     checks.check_file = [](const std::filesystem::path& file, const PackComponent& component,
                            PackFileProblem& problem, std::string& error) {
         runtime::PackFileFault fault = runtime::PackFileFault::None;
         if (runtime::VerifyPackComponentFile(file, ServiceComponent(component), error, {}, &fault)) return true;
-        problem = ProblemOf(fault);
+        problem = PackFileProblemOf(fault);
         return false;
     };
     return checks;
@@ -70,29 +70,18 @@ bool ReadInstalledPluginPacks(const std::filesystem::path& runtime_root,
                               const runtime::BackendPackMetadataVerifier& verifier,
                               InstalledPluginPacks& output, std::vector<std::string>& skipped,
                               std::string& error) {
-    runtime::ActiveRuntimeState active;
-    std::vector<runtime::ActivePluginPack> active_packs;
-    if (!runtime::LoadActiveRuntimeState(runtime_root / "active-runtime.json", active, error) ||
-        !runtime::ResolveActivePluginPacks(runtime_root, active.base_pack_id, active_packs, skipped, error)) {
-        return false;
-    }
     output = {};
     output.runtime_root = runtime_root;
     output.checks = InstalledPackFileChecks();
+    std::vector<runtime::ActivePluginPack> active_packs;
+    if (!ActivePacks(runtime_root, active_packs, skipped, error)) return false;
     for (const auto& active_pack : active_packs) {
         runtime::VerifiedBackendPackManifest manifest;
         std::string reason;
         if (!runtime::VerifyInstalledPluginPack(runtime_root, active_pack.plugin_id, active_pack.pack_id, verifier,
                                                 manifest, reason)) {
-            PackRefusal refusal;
-            refusal.plugin_id = active_pack.plugin_id;
-            refusal.pack_id = active_pack.pack_id;
-            refusal.title = AddOnTitle(active_pack.plugin_id);
-            refusal.directory = active_pack.directory;
-            refusal.reason = "its signed package record could not be verified";
-            refusal.detail = reason;
-            refusal.checked_at = std::chrono::system_clock::now();
-            output.refusals.push_back(std::move(refusal));
+            output.refusals.push_back(
+                RefusalOf(active_pack, "its signed package record could not be verified", reason));
             continue;
         }
         PackPlugin pack;
@@ -110,20 +99,30 @@ bool ReadInstalledPluginPacks(const std::filesystem::path& runtime_root,
 }
 
 bool ConfigureInstalledPluginPacks(PluginManager& manager, const std::filesystem::path& runtime_root) {
-    std::string error;
-    auto trust = runtime::BackendPackTrustStore::Load(runtime_root / "trust" / "trusted-keys.json", error);
-    if (!trust) {
-        spdlog::warn("Installed add-ons were not loaded: the install's trust file could not be read ({})", error);
-        return false;
-    }
-    const runtime::BackendPackMetadataVerifier verifier(
-        std::move(*trust), GetVersionString(), std::string(runtime::CurrentBackendPackPlatformId()),
-        std::string(runtime::CurrentBackendPackArchitectureId()));
+    // Whatever cannot be read, the manager knows the runtime: no add-on loads
+    // unchecked, and every folder under its plugins/ is refused (fail closed).
     InstalledPluginPacks packs;
+    packs.runtime_root = runtime_root;
+    packs.checks = InstalledPackFileChecks();
     std::vector<std::string> skipped;
-    if (!ReadInstalledPluginPacks(runtime_root, verifier, packs, skipped, error)) {
-        spdlog::warn("Installed plugin packs were not read: {}", error);
-        return false;
+    bool read = false;
+    std::string error;
+    const auto verifier = runtime::LoadBackendPackMetadataVerifier(
+        runtime_root / "trust" / "trusted-keys.json", GetVersionString(), error);
+    if (!verifier) {
+        spdlog::warn("Installed add-ons are not loaded: the install's trust file could not be read ({})", error);
+        std::vector<runtime::ActivePluginPack> active_packs;
+        std::string active_error;
+        if (ActivePacks(runtime_root, active_packs, skipped, active_error)) {
+            for (const auto& active_pack : active_packs) {
+                packs.refusals.push_back(
+                    RefusalOf(active_pack, "the install's trust file could not be read", error));
+            }
+        }
+    } else if (!ReadInstalledPluginPacks(runtime_root, *verifier, packs, skipped, error)) {
+        spdlog::warn("Installed add-ons are not loaded: the installation's state could not be read ({})", error);
+    } else {
+        read = true;
     }
     for (const auto& reason : skipped) spdlog::warn("Plugin pack not loaded: {}", reason);
     for (const auto& refusal : packs.refusals) {
@@ -132,7 +131,7 @@ bool ConfigureInstalledPluginPacks(PluginManager& manager, const std::filesystem
         spdlog::debug("Add-on {} ({}): {}", refusal.title, refusal.pack_id, refusal.detail);
     }
     manager.SetPackPlugins(std::move(packs));
-    return true;
+    return read;
 }
 
 }  // namespace cyxwiz::plugin

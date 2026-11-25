@@ -367,6 +367,31 @@ int main() {
         manager.SetPackPlugins(revoked);
         Check(!manager.LoadPlugin(fixture.pack, &error) && manager.GetPackRefusals().size() == 1,
               "and its folder does not load");
+
+        std::cout << "fail closed\n";
+        // With no trust file, the active add-on is refused, never loaded unchecked.
+        fs::rename(trust, fixture.root / "trust.aside");
+        const bool trusted = ConfigureInstalledPluginPacks(manager, fixture.runtime);
+        const bool loaded_untrusted = manager.LoadPlugin(fixture.pack, &error);
+        auto untrusted = manager.GetPackRefusals();
+        Check(!trusted && !loaded_untrusted && untrusted.size() == 1 &&
+                  untrusted[0].reason.find("trust file") != std::string::npos,
+              "with no trust file the add-on is refused: " + error);
+        fs::rename(fixture.root / "trust.aside", trust);
+        // With an unreadable installation state, every folder under plugins/ is refused.
+        const fs::path active_plugins = fixture.runtime / cyxwiz::runtime::kActivePluginsFileName;
+        const std::string active_text = ReadAll(active_plugins);
+        std::ofstream(active_plugins, std::ios::binary | std::ios::trunc) << "{ damaged";
+        const bool read_damaged = ConfigureInstalledPluginPacks(manager, fixture.runtime);
+        const bool loaded_damaged = manager.LoadPlugin(fixture.pack, &error);
+        Check(!read_damaged && !loaded_damaged && error == "not an active installed add-on",
+              "with an unreadable active state the add-on folder is refused: " + error);
+        std::ofstream(active_plugins, std::ios::binary | std::ios::trunc) << active_text;
+        const bool read_again = ConfigureInstalledPluginPacks(manager, fixture.runtime);
+        const bool loaded_again = manager.LoadPlugin(fixture.pack, &error);
+        Check(read_again && loaded_again, "with both back the add-on loads checked" +
+                                              (error.empty() ? "" : ": " + error));
+        manager.UnloadPlugin(kPluginId);
         manager.SetPackPlugins({});
     } catch (const std::exception& e) {
         std::cout << "  FAIL " << e.what() << "\n";

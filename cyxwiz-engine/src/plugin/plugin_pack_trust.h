@@ -36,7 +36,9 @@ PackFileChecks InstalledPackFileChecks();
 // Start-up of an installed Engine (and of the Python environment host): reads
 // runtime/trust/trusted-keys.json once, verifies every active add-on and hands
 // the result to `manager`. Logs one line per add-on that is not loaded.
-// False, logged, when nothing could be read.
+// False, logged, when the trust file or the installation's state cannot be
+// read: the manager is still told the runtime, so no add-on loads unchecked
+// (the active ones are refused, and any other folder under its plugins/).
 bool ConfigureInstalledPluginPacks(PluginManager& manager, const std::filesystem::path& runtime_root);
 
 }  // namespace cyxwiz::plugin
