@@ -112,7 +112,7 @@ encoder) learns from every row, and the compile report warns about it. See
 ### Where can my datasets live besides my computer?
 
 In CyxCloud: a Data Input can name a file in a CyxCloud dataset. See
-[Datasets that live in CyxCloud](usage/cloud_datasets.md).
+[Datasets that live in CyxCloud](server-and-cloud/cyxcloud/datasets.md).
 
 ## Python
 
@@ -127,7 +127,7 @@ listed as not usable. See [Python for scripting](install/first-launch.md#python-
 Yes, in the project's environment: the Engine creates a virtual
 environment (`python/` in the project folder) from the Python you chose the
 first time a project is created or opened, and you add packages to it. See
-[Notebooks in the Script Editor](usage/notebooks.md) for how projects and
+[Notebooks in the Script Editor](user-guide/scripting/notebooks.md) for how projects and
 their environments switch.
 
 ## Training and results
@@ -166,7 +166,7 @@ Yes, from PyTorch and Safetensors weight files. See
 
 Yes, as a C++ plugin built with the CyxWiz Plugin SDK, or as a Python node
 bundle. See [Your own nodes](usage/extension_nodes.md) and the
-[plugin quickstart](extending/plugin-quickstart.md).
+[plugin quickstart](sdk/get-started/first-cpp-plugin.md).
 
 ### Is it safe to open a graph or plugin someone sent me?
 
@@ -186,7 +186,7 @@ the SDK's interfaces is not a work based on the Engine. See the
 
 Yes. A computer running the CyxWiz Server Node offers its device; from the
 Engine you reserve it, connect and train your graph there. See
-[Server Connection](usage/server-connection.md). Read
+[Server Connection](server-and-cloud/server-address.md). Read
 [Security](security/index.md) before you run a node on a
 network you do not control.
 

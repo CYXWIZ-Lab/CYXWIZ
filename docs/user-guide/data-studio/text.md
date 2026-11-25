@@ -13,7 +13,7 @@ related:
   - explore.md
   - ../../usage/text_vectorizers.md
 redirect_from:
-  - ../../usage/text.md
+  - text.md
 ---
 
 Data Studio's **Explore > Text** tab reads one text column five ways: which

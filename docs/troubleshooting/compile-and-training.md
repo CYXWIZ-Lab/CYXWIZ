@@ -96,7 +96,7 @@ Code `[CW-X-0601]`.
 installed or not approved here.
 
 **Fix:** install and approve the plugin in the **Plugin Manager**, or delete
-the node. See [Troubleshooting extension nodes](../extending/troubleshooting.md).
+the node. See [Troubleshooting extension nodes](../sdk/guides/troubleshooting.md).
 
 ## "The data steps before the Data Split failed: ..."
 

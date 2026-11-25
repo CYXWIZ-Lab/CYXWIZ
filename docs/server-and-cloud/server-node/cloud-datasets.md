@@ -13,7 +13,7 @@ related:
   - ../../distributed-training/cloud-datasets.md
   - ../cyxcloud/datasets.md
 redirect_from:
-  - cyxwiz-server-node/docs/usage/cloud-datasets.md
+  - cloud-datasets.md
 ---
 
 A remote job's Data Inputs reach the node from one of two places:

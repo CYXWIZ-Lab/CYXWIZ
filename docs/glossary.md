@@ -178,7 +178,7 @@ layout, as JSON.
 
 **CyxCloud**: CyxWiz's storage service for datasets, used by remote training
 and Data Inputs that name a cloud file. See
-[Datasets that live in CyxCloud](usage/cloud_datasets.md).
+[Datasets that live in CyxCloud](server-and-cloud/cyxcloud/datasets.md).
 
 **.cyxmodel**: the CyxWiz model package: weights, the graph when included,
 and metadata. See [Model formats](concepts/model-formats.md).
@@ -432,7 +432,7 @@ optimizer, a plot.
 See [Nodes panel](main-window/nodes-panel.md).
 
 **Node contract**: what a node promises: its pins, settings, shapes and
-behaviour in each phase. See [The node contract](extending/node-contract.md).
+behaviour in each phase. See [The node contract](reference/graph-spec/node-contract.md).
 
 **Node dialog**: the window a node opens on double-click, for nodes that
 need a preview or many settings. See [Node dialogs](main-window/node-dialogs.md).
@@ -491,7 +491,7 @@ the Engine. See [Your own nodes](usage/extension_nodes.md).
 bundles (**Apps > Plugin Manager**).
 
 **Plugin SDK**: the headers, libraries and CMake files to build plugins.
-See [SDK contents](extending/sdk-contents.md).
+See [SDK contents](sdk/sdk-contents.md).
 
 **PPO**: Proximal Policy Optimization, the reinforcement learning algorithm
 the Engine trains policies with. See [RL training](usage/rl_training.md).
@@ -550,7 +550,7 @@ Data Studio and the views all read from it.
 overfitting. See [Regularization](usage/regularization.md).
 
 **Reservation**: a block of time on a server node held for you. See
-[Server Connection](usage/server-connection.md).
+[Server Connection](server-and-cloud/server-address.md).
 
 **Resize**: a node that gives every image the same size, needed for
 batches.

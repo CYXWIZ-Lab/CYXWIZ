@@ -13,7 +13,7 @@ related:
   - disk-caches.md
   - ../main-window/table-viewer.md
 redirect_from:
-  - ../usage/loaded_data.md
+  - loaded-data.md
 ---
 
 Loading a dataset (a Data Input's **Apply**, a pipeline run) keeps it in

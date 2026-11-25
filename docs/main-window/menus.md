@@ -14,7 +14,7 @@ related:
   - status-bar.md
   - ../reference/shortcuts.md
 redirect_from:
-  - ../usage/menu_bar.md
+  - menus.md
 ---
 
 The menu bar sits under the window's title: twelve menus on the left, the

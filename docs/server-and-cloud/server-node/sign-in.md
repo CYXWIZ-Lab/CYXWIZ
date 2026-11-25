@@ -13,7 +13,7 @@ related:
   - settings.md
   - ../server-address.md
 redirect_from:
-  - cyxwiz-server-node/docs/usage/sign-in.md
+  - sign-in.md
 ---
 
 The server node GUI opens on a sign-in card. Signing in links the machine to

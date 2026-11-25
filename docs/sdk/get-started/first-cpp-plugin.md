@@ -13,7 +13,7 @@ related:
   - ../plugin-api-reference.md
   - ../guides/troubleshooting.md
 redirect_from:
-  - extending/plugin-quickstart.md
+  - ../../extending/plugin-quickstart.md
 ---
 
 Build the template plugin from an installed CyxWiz, check it, load it, train

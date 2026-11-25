@@ -136,8 +136,8 @@ The remote parts are newer than the desktop app. In this release:
   for Engines you trust. See [Security](../security/index.md).
 
 How to reserve a node and train on it is in
-[Server Connection](../usage/server-connection.md); datasets in CyxCloud are
-in [Datasets that live in CyxCloud](../usage/cloud_datasets.md).
+[Server Connection](../server-and-cloud/server-address.md); datasets in CyxCloud are
+in [Datasets that live in CyxCloud](../server-and-cloud/cyxcloud/datasets.md).
 
 ## Related
 

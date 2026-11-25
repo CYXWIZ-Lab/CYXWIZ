@@ -14,8 +14,8 @@ related:
   - explore.md
   - prepare.md
 redirect_from:
-  - ../../usage/data_studio.md
-  - ../../usage/tool_datasets.md
+  - overview.md
+  - overview.md
 ---
 
 Data Studio is the open graph's data work in one window: bringing data in,

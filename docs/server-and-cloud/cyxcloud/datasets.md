@@ -13,6 +13,8 @@ related:
   - cli.md
   - ../server-node/cloud-datasets.md
   - ../../distributed-training/cloud-datasets.md
+redirect_from:
+  - ../../usage/cloud_datasets.md
 ---
 
 How a CyxWiz account puts files into CyxCloud, makes them a dataset, and

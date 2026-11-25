@@ -13,7 +13,7 @@ related:
   - correlation-and-distribution.md
   - clustering.md
 redirect_from:
-  - ../../usage/statistics.md
+  - statistics.md
 ---
 
 Hypothesis tests and regressions live in Data Studio's **Explore** job, as

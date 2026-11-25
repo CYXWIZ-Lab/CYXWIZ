@@ -17,7 +17,7 @@ related:
 
 This page is the host side of plugins, for contributors who change the
 loader or the registries. To write a plugin, start with the author guides:
-[Plugin quickstart](../../extending/plugin-quickstart.md),
+[Plugin quickstart](../../sdk/get-started/first-cpp-plugin.md),
 [Plugin developer guide](../../extending/plugin-developer-guide.md) and
 [Python nodes](../../extending/python-nodes.md).
 
@@ -165,4 +165,4 @@ approved node runs with the user's rights.
 - [Architecture overview](overview.md)
 - [Threading and background work](threading.md)
 - [Add a node](../add-a-node.md)
-- [Plugin API reference](../../extending/plugin-api-reference.md)
+- [Plugin API reference](../../sdk/plugin-api-reference.md)

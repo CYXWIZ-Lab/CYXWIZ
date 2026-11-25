@@ -9,7 +9,7 @@ since: 1.0.7
 owner: plugins
 last_reviewed: 2026-11-25
 related:
-  - ../extending/troubleshooting.md
+  - ../sdk/guides/troubleshooting.md
   - ../usage/extension_nodes.md
   - install-and-first-launch.md
   - ../security/untrusted-files-and-plugins.md
@@ -24,7 +24,7 @@ plugin from ...: ..." or "Plugin ... did not start: ...".
 
 Messages about plugin and SDK versions, extension nodes in a graph and
 Python node bundles are in
-[Troubleshooting extension nodes](../extending/troubleshooting.md). This
+[Troubleshooting extension nodes](../sdk/guides/troubleshooting.md). This
 page covers the loading steps before them.
 
 ## "plugin.json not found in ..." or "Cannot open ..."
@@ -87,7 +87,7 @@ a runtime library), or the plugin's build for your system.
 SDK's entry points.
 
 **Fix:** plugin authors: export the entry points with the SDK macros. See
-[Plugin quickstart](../extending/plugin-quickstart.md).
+[Plugin quickstart](../sdk/get-started/first-cpp-plugin.md).
 
 ## "CreatePlugin() threw: ...", "CreatePlugin() returned nullptr", "OnLoad() returned false", "OnInitialize() returned false"
 
@@ -135,11 +135,11 @@ Python chip first; if it does not read **Python ... ready**, see
 [Install and first launch problems](install-and-first-launch.md#python-not-found).
 Bundle approval, "Python is starting for the Python nodes" and other Python
 node messages are in
-[Troubleshooting extension nodes](../extending/troubleshooting.md#python-node-bundles).
+[Troubleshooting extension nodes](../sdk/guides/troubleshooting.md#python-node-bundles).
 
 ## Related
 
-- [Troubleshooting extension nodes](../extending/troubleshooting.md)
+- [Troubleshooting extension nodes](../sdk/guides/troubleshooting.md)
 - [Your own nodes](../usage/extension_nodes.md)
 - [Untrusted files and plugins](../security/untrusted-files-and-plugins.md)
 - [Crash dumps and logs](crash-dumps-and-logs.md)

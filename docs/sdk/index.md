@@ -14,7 +14,7 @@ related:
   - ../reference/graph-spec/node-contract.md
   - python-api/index.md
 redirect_from:
-  - extending/README.md
+  - index.md
 ---
 
 CyxWiz lets you add nodes it does not ship and train them next to the

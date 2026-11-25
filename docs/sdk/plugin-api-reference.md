@@ -13,7 +13,7 @@ related:
   - guides/trainable-nodes.md
   - sdk-contents.md
 redirect_from:
-  - extending/plugin-api-reference.md
+  - ../extending/plugin-api-reference.md
 ---
 
 Every type a C++ plugin sees, what the Engine does with it, and what works

@@ -13,7 +13,7 @@ related:
   - python-nodes.md
   - ../../usage/extension_nodes.md
 redirect_from:
-  - extending/troubleshooting.md
+  - ../../extending/troubleshooting.md
 ---
 
 > Checked against plugin API 1.4.0 and pycyxwiz 0.2.0.

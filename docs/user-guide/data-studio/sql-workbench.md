@@ -14,7 +14,7 @@ related:
   - query.md
   - ../../main-window/table-viewer.md
 redirect_from:
-  - ../../usage/sql-workbench.md
+  - sql-workbench.md
 ---
 
 An **SQL step** (node type *SQL Query*) transforms one or more input tables

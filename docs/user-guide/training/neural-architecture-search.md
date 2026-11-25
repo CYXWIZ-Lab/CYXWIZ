@@ -12,7 +12,7 @@ related:
   - hyperparameter-search.md
   - ../../main-window/model-window.md
 redirect_from:
-  - ../../usage/neural_architecture_search.md
+  - neural-architecture-search.md
 ---
 
 **Tools > Model > Neural Architecture Search** proposes changes to the model

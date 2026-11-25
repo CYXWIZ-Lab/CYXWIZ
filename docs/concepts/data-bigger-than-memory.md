@@ -13,7 +13,7 @@ related:
   - steps-learn-from-train-rows.md
   - disk-caches.md
 redirect_from:
-  - ../usage/big_data.md
+  - data-bigger-than-memory.md
 ---
 
 The Engine keeps a table in memory only while it fits a **data budget**. A

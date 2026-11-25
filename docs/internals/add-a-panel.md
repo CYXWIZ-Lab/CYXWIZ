@@ -18,7 +18,7 @@ related:
 
 Use this when: you add a built-in window to the Engine, such as a tool or
 a monitor. A panel that ships in a plugin goes through the plugin panel
-registry instead; see [Plugin API reference](../extending/plugin-api-reference.md).
+registry instead; see [Plugin API reference](../sdk/plugin-api-reference.md).
 
 First decide whether it should be a panel at all. Anything that transforms
 pipeline data during a run is a node; see [Add a built-in node](add-a-node.md).

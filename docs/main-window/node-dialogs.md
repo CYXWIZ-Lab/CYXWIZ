@@ -14,7 +14,7 @@ related:
   - ../user-guide/graph-editor/node-properties.md
   - ../user-guide/graph-editor/compile-and-run.md
 redirect_from:
-  - ../usage/node_dialogs.md
+  - node-dialogs.md
 ---
 
 Nodes that read, preview or prepare data are set up in a dialog of their

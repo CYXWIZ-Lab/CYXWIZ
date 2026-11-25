@@ -13,7 +13,7 @@ related:
   - ../python-api/index.md
   - ../tensor-operations.md
 redirect_from:
-  - extending/python-modules.md
+  - ../../extending/python-modules.md
 ---
 
 A Python class derived from `pycyxwiz.Module` is a real CyxWiz module: the

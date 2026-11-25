@@ -14,7 +14,7 @@ related:
   - ../user-guide/graph-editor/canvas.md
   - ../user-guide/training/studio-debugger.md
 redirect_from:
-  - ../usage/studio_toolbar.md
+  - toolbar.md
 ---
 
 The Studio bar is the toolbar at the top of the CyxWiz Studio canvas. It

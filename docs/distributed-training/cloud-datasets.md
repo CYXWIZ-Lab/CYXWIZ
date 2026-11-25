@@ -14,7 +14,7 @@ related:
   - ../server-and-cloud/cyxcloud/index.md
   - ../server-and-cloud/cyxcloud/cli.md
 redirect_from:
-  - usage/cloud_datasets.md
+  - cloud-datasets.md
 ---
 
 Use this when your project is on your computer but its dataset lives in

@@ -55,4 +55,4 @@ Report security problems privately, as described in
 - [Known issues](../known-issues.md)
 - [Error messages](../reference/error-messages.md)
 - [Frequently asked questions](../faq.md)
-- [Troubleshooting extension nodes](../extending/troubleshooting.md)
+- [Troubleshooting extension nodes](../sdk/guides/troubleshooting.md)

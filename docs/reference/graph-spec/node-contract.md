@@ -12,7 +12,7 @@ related:
   - ../../sdk/guides/trainable-nodes.md
   - ../../sdk/guides/python-nodes.md
 redirect_from:
-  - extending/node-contract.md
+  - ../../extending/node-contract.md
 ---
 
 What every extension node must guarantee, whichever route it comes from: a

@@ -13,7 +13,7 @@ related:
   - dimensionality-reduction.md
   - statistics.md
 redirect_from:
-  - ../../usage/clustering.md
+  - clustering.md
 ---
 
 Data Studio's **Explore > Groups** tab shows which rows group together. The
