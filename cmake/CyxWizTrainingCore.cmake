@@ -147,6 +147,8 @@ add_library(cyxwiz-training-hooks STATIC
     # Here, not in training-core: python_node_bundle hashes the bundle code, and
     # GNU ld resolves a static library only from the libraries after it.
     ${_cyxwiz_engine_src}/core/sha256_digest.cpp
+    # The Engine's folder, for what ships beside it (core/user_folders.h).
+    ${_cyxwiz_engine_src}/core/executable_directory.cpp
 )
 target_include_directories(cyxwiz-training-hooks PUBLIC ${_cyxwiz_engine_src})
 target_link_libraries(cyxwiz-training-hooks PUBLIC spdlog::spdlog OpenSSL::Crypto)

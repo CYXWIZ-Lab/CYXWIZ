@@ -15,6 +15,7 @@ find_package(Stb REQUIRED)
 
 add_library(mujoco_plugin SHARED
     src/mujoco_plugin.cpp
+    src/mj_log.cpp
     src/mj_env_manager.cpp
     src/mj_env_library.cpp
     src/mj_env_browser_panel.cpp
@@ -139,6 +140,15 @@ add_custom_command(TARGET test_mujoco_viewport POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_RUNTIME}" "$<TARGET_FILE_DIR:test_mujoco_viewport>/"
     COMMENT "Copying the MuJoCo runtime next to test_mujoco_viewport")
 add_test(NAME mujoco_viewport COMMAND test_mujoco_viewport)
+
+# MuJoCo's warnings reach the Engine log once each; no MUJOCO_LOG.TXT
+add_executable(test_mujoco_log tests/test_mujoco_log.cpp src/mj_log.cpp)
+target_include_directories(test_mujoco_log PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_mujoco_log PRIVATE cyxwiz-plugin-sdk mujoco::mujoco)
+add_custom_command(TARGET test_mujoco_log POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_RUNTIME}" "$<TARGET_FILE_DIR:test_mujoco_log>/"
+    COMMENT "Copying the MuJoCo runtime next to test_mujoco_log")
+add_test(NAME mujoco_log COMMAND test_mujoco_log)
 # The Gymnasium replay needs CYXWIZ_RL_ORACLE_PYTHON (cyxwiz-engine) to have
 # mujoco of the plugin's version too (the Engine's python-embed does).
 if(CYXWIZ_RL_ORACLE_PYTHON)

@@ -12,12 +12,11 @@ bool AcquirePackagedEngineOwnership(
     error = "Cannot resolve the running Engine executable: " + code.message();
     return false;
   }
-  const auto base_parent = actual_executable.parent_path().parent_path();
   auto root = environment_runtime;
   if (root.empty()) {
-    if (base_parent.filename() != "base")
+    if (!IsInstalledBaseExecutable(actual_executable))
       return true;
-    root = base_parent.parent_path();
+    root = actual_executable.parent_path().parent_path().parent_path();
   }
   if (ownership.AcquireEngineUse(root, error) !=
           RuntimeOperationLockStatus::Acquired ||

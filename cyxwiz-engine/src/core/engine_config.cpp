@@ -1,6 +1,7 @@
 // engine_config.cpp - Centralized configuration management implementation
 #include "core/engine_config.h"
 #include "core/cloud_gateway_address.h"
+#include "core/user_folders.h"
 #include "common/server_address.h"
 
 #include <cmath>
@@ -10,17 +11,6 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
-#ifdef _WIN32
-#include <ShlObj.h>
-#include <windows.h>
-#else
-#include <pwd.h>
-#include <unistd.h>
-#include <limits.h>  // PATH_MAX
-#endif
-#ifdef __APPLE__
-#include <mach-o/dyld.h>
-#endif
 
 namespace cyxwiz::core {
 
@@ -95,31 +85,6 @@ std::filesystem::path ResolveSitePackagesFromInterpreter(const std::filesystem::
 #endif
 }
 
-std::filesystem::path GetExecutableDir() {
-#ifdef _WIN32
-    wchar_t path[MAX_PATH];
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    std::filesystem::path exe_path(path);
-    return exe_path.parent_path();
-#elif defined(__APPLE__)
-    // macOS has no /proc: without this the bundled Python and the
-    // executable-directory config file were never found.
-    char path[PATH_MAX];
-    uint32_t size = sizeof(path);
-    if (_NSGetExecutablePath(path, &size) != 0) {
-        return {};
-    }
-    std::error_code ec;
-    const auto canonical = std::filesystem::weakly_canonical(path, ec);
-    return (ec ? std::filesystem::path(path) : canonical).parent_path();
-#else
-    char path[PATH_MAX];
-    ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
-    std::filesystem::path exe_path(count > 0 ? std::string(path, count) : ".");
-    return exe_path.parent_path();
-#endif
-}
-
 HyperparamSearchDefaults ClampedSearchDefaults(HyperparamSearchDefaults value) {
     if (value.strategy != "grid" && value.strategy != "bayesian") value.strategy = "random";
     if (value.objective != "val_accuracy" && value.objective != "val_mae") value.objective = "val_loss";
@@ -148,8 +113,6 @@ PolicyStressDefaults ClampStressDefaults(PolicyStressDefaults d) {
 
 }  // namespace
 
-std::filesystem::path ExecutableDirectory() { return GetExecutableDir(); }
-
 EngineConfig& EngineConfig::Instance() {
     static EngineConfig instance;
     return instance;
@@ -173,57 +136,13 @@ void EngineConfig::SetDefaults() {
 }
 
 std::filesystem::path EngineConfig::GetUserConfigDir() const {
-#ifdef _WIN32
-    wchar_t* appdata = nullptr;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appdata))) {
-        std::filesystem::path path(appdata);
-        CoTaskMemFree(appdata);
-        return path / "CyxWiz";
-    }
-    // Fallback
-    const char* appdata_env = std::getenv("APPDATA");
-    if (appdata_env) {
-        return std::filesystem::path(appdata_env) / "CyxWiz";
-    }
-    return std::filesystem::path(".");
-#else
-    // Linux/macOS
-    const char* home = std::getenv("HOME");
-    if (!home) {
-        struct passwd* pw = getpwuid(getuid());
-        home = pw ? pw->pw_dir : ".";
-    }
-    return std::filesystem::path(home) / ".cyxwiz";
-#endif
+    return cyxwiz::UserConfigDir();
 }
 
+// The user's config is the only one: nothing beside the executable is read
+// (an installed Engine's folder is never written, and Save writes here).
 std::filesystem::path EngineConfig::FindConfigFile() const {
-    const std::string config_name = "engine_config.json";
-
-    // Prefer the executable directory over the current working directory.
-    std::filesystem::path exe_dir = GetExecutableDir();
-    std::filesystem::path base_dir = exe_dir;
-    if (base_dir.empty()) {
-        base_dir = std::filesystem::current_path();
-    }
-
-    // Search paths in order of priority
-    std::vector<std::filesystem::path> search_paths;
-    if (!base_dir.empty()) {
-        search_paths.push_back(base_dir / config_name);
-        search_paths.push_back(base_dir / "config" / config_name);
-    }
-    search_paths.push_back(GetUserConfigDir() / config_name);
-
-    for (const auto& path : search_paths) {
-        if (std::filesystem::exists(path)) {
-            spdlog::debug("Found config file: {}", path.string());
-            return path;
-        }
-    }
-
-    // Default location for creation
-    return GetUserConfigDir() / config_name;
+    return UserFile(GetUserConfigDir(), "engine_config.json");
 }
 
 bool EngineConfig::Load() {
@@ -270,7 +189,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
 
             // If a packaged template exists, merge it over defaults
             try {
-                auto exe_dir = GetExecutableDir();
+                auto exe_dir = ExecutableDirectory();
                 if (!exe_dir.empty()) {
                     std::filesystem::path template_path = exe_dir / "resources" / "engine_config.json";
                     if (std::filesystem::exists(template_path)) {
@@ -297,42 +216,6 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         } catch (const std::exception& e) {
             spdlog::warn("Failed to create default config: {}", e.what());
-        }
-
-        // Write a template next to the executable for portable installs
-        try {
-            std::filesystem::path exe_dir = GetExecutableDir();
-            std::filesystem::path template_path = exe_dir / "engine_config.template.json";
-            if (!exe_dir.empty() && !std::filesystem::exists(template_path)) {
-                json template_config;
-                template_config["servers"] = {
-                    {"cyxwiz", server_address_},
-                    {"ca_file", server_ca_file_},
-                    {"central", central_server_address_},
-                    {"cloud_gateway", cloud_gateway_address_},
-                    {"deployment", default_deployment_address_},
-                    {"default_p2p_port", default_p2p_port_}
-                };
-                template_config["auth"] = {
-                    {"api_url", auth_api_url_}
-                };
-                template_config["python"] = {
-                    {"system_python_path", system_python_path_},
-                    {"auto_create_venv", auto_create_venv_},
-                    {"default_venv_packages", default_venv_packages_}
-                };
-                template_config["debug"] = {
-                    {"require_debug_before_train", require_debug_before_train_}
-                };
-
-                std::ofstream tmpl(template_path);
-                if (tmpl.is_open()) {
-                    tmpl << template_config.dump(4);
-                    spdlog::info("Wrote config template to: {}", template_path.string());
-                }
-            }
-        } catch (const std::exception& e) {
-            spdlog::debug("Failed to write config template: {}", e.what());
         }
 
         return false;
@@ -1114,7 +997,7 @@ void EngineConfig::SetDetectedPythonPath(const std::string& path) {
 }
 
 std::string EngineConfig::GetBundledPythonPath() const {
-    const std::filesystem::path exe_dir = GetExecutableDir();
+    const std::filesystem::path exe_dir = ExecutableDirectory();
     if (exe_dir.empty()) {
         return "";
     }

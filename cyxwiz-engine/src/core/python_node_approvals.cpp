@@ -1,4 +1,5 @@
 #include "python_node_approvals.h"
+#include "user_folders.h"
 
 #include <nlohmann/json.hpp>
 
@@ -58,14 +59,7 @@ bool ParsePythonNodeApprovals(const std::string& text, std::vector<PythonNodeApp
     return true;
 }
 
-fs::path PythonNodeApprovalsPath() {
-#ifdef _WIN32
-    if (const char* appdata = std::getenv("APPDATA")) return fs::path(appdata) / "cyxwiz" / "node_approvals.json";
-#else
-    if (const char* home = std::getenv("HOME")) return fs::path(home) / ".cyxwiz" / "node_approvals.json";
-#endif
-    return "node_approvals.json";
-}
+fs::path PythonNodeApprovalsPath() { return UserFile(UserConfigDir(), "node_approvals.json"); }
 
 PythonNodeApprovals::PythonNodeApprovals(fs::path file) : file_(std::move(file)) {}
 

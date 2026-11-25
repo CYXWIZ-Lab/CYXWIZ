@@ -31,6 +31,8 @@ std::string RunBundledPythonSmoke(const std::filesystem::path& engine_dir,
 
     PyConfig config;
     PyConfig_InitIsolatedConfig(&config);
+    // A smoke writes nothing: no __pycache__ in the installed base it checks.
+    config.write_bytecode = 0;
     PyStatus status = PyConfig_SetString(&config, &config.home, home.wstring().c_str());
     if (!PyStatus_Exception(status)) {
         status = Py_InitializeFromConfig(&config);

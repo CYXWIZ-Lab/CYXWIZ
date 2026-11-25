@@ -5,6 +5,7 @@
 #include "registries/plugin_data_loader_registry.h"
 #include "registries/plugin_panel_registry.h"
 #include "../core/extension_node_registry.h"
+#include "../core/user_folders.h"
 
 #include <spdlog/spdlog.h>
 
@@ -16,14 +17,7 @@
 namespace cyxwiz::plugin {
 
 std::filesystem::path PluginStartupListPath() {
-#ifdef _WIN32
-    if (auto* appdata = std::getenv("APPDATA"))
-        return std::filesystem::path(appdata) / "cyxwiz" / "plugin_startup.json";
-#else
-    if (auto* home = std::getenv("HOME"))
-        return std::filesystem::path(home) / ".cyxwiz" / "plugin_startup.json";
-#endif
-    return "plugin_startup.json";
+    return UserFile(UserConfigDir(), "plugin_startup.json");
 }
 
 PluginStartupList ReadPluginStartupList() {

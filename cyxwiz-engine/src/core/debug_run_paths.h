@@ -1,5 +1,7 @@
 #pragma once
 
+#include "user_folders.h"
+
 #include <cstdlib>
 #include <filesystem>
 #include <mutex>
@@ -20,49 +22,14 @@ inline std::optional<std::filesystem::path>& TestRootOverride() {
     return root;
 }
 
-inline std::filesystem::path EnvironmentPath(const char* name) {
-    const char* value = std::getenv(name);
-    return value && *value ? std::filesystem::path(value)
-                           : std::filesystem::path{};
-}
-
 inline std::filesystem::path DefaultRoot() {
     // A test run (or anyone) can point run records elsewhere, so tests never
     // write the user's last training trace or debug runs.
-    if (auto overridden = EnvironmentPath("CYXWIZ_DEBUG_RUN_ROOT"); !overridden.empty()) {
-        return overridden;
+    if (const char* overridden = std::getenv("CYXWIZ_DEBUG_RUN_ROOT"); overridden && *overridden) {
+        return std::filesystem::path(overridden);
     }
-#ifdef _WIN32
-    auto base = EnvironmentPath("LOCALAPPDATA");
-    if (base.empty()) {
-        base = EnvironmentPath("APPDATA");
-    }
-    if (!base.empty()) {
-        return base / "CyxWiz" / "Engine" / "debug_runs";
-    }
-#elif defined(__APPLE__)
-    const auto home = EnvironmentPath("HOME");
-    if (!home.empty()) {
-        return home / "Library" / "Application Support" / "CyxWiz" /
-               "Engine" / "debug_runs";
-    }
-#else
-    auto base = EnvironmentPath("XDG_STATE_HOME");
-    if (base.empty()) {
-        const auto home = EnvironmentPath("HOME");
-        if (!home.empty()) {
-            base = home / ".local" / "state";
-        }
-    }
-    if (!base.empty()) {
-        return base / "cyxwiz" / "engine" / "debug_runs";
-    }
-#endif
-
-    std::error_code ec;
-    const auto temp = std::filesystem::temp_directory_path(ec);
-    return (ec ? std::filesystem::path(".") : temp) /
-           "cyxwiz" / "engine" / "debug_runs";
+    // The Engine's state folder (user_folders.h); empty when unknown.
+    return UserFile(EngineStateDir(), "debug_runs");
 }
 
 } // namespace debug_run_paths_detail
@@ -81,7 +48,7 @@ inline std::filesystem::path GetDebugRunRoot() {
 // The Studio Debugger's run store: one folder per run (session.json, layer
 // captures).
 inline std::filesystem::path GetDebugRunStoreRoot() {
-    return GetDebugRunRoot() / "studio";
+    return UserFile(GetDebugRunRoot(), "studio");
 }
 
 class ScopedDebugRunRootOverrideForTesting {

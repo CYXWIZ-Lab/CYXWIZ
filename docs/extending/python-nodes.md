@@ -501,7 +501,8 @@ Extension node 'Snake' (com.example.acts:Snake): forward failed: Snake.forward r
 ```
 
 The full text, with every traceback line, is in the Console (its Logs
-session) and in `engine_log.txt` next to `cyxwiz-engine.exe`. The Engine
+session) and in `engine_log.txt` in your logs folder
+([Where the Engine keeps your files](../usage/user_files.md)). The Engine
 also stops training when a node breaks the contract, with these messages:
 
 | Message | Cause |

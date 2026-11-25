@@ -54,4 +54,5 @@ Data > Augment).
   in the program that opens Markdown files (or selected in the file manager
   when none does).
 - **Help > Open Logs Folder**: `engine_log.txt` selected in the file manager,
-  to attach to a bug report.
+  to attach to a bug report. It is in your logs folder (see
+  [Where the Engine keeps your files](user_files.md)).

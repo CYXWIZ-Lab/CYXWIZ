@@ -67,7 +67,8 @@ like closing its tab; View > Panels (or the sidebar) opens it again, inside.
 ## Between sessions
 
 Where a window is (inside, or outside at which position and size) is kept
-with the layout in `imgui.ini`, next to the dock layout. A window that was
+with the layout in `imgui.ini`, next to the dock layout, in your settings
+folder (see [Where the Engine keeps your files](user_files.md)). A window that was
 outside opens outside again next time, at the same place.
 
 ## Which window comes to the front

@@ -33,6 +33,7 @@
 #include "core/training_manager.h"
 #include "plugin/engine_plugin_context.h"
 #include "core/engine_config.h"
+#include "core/user_folders.h"
 #include "core/project_session.h"
 #include "core/python_detector.h"
 #include "core/texture_manager.h"
@@ -48,13 +49,6 @@
 #include <GLFW/glfw3native.h>
 #include <dwmapi.h>
 #pragma comment(lib, "dwmapi.lib")
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>
-#include <libgen.h>
-#elif defined(__linux__)
-#include <unistd.h>
-#include <limits.h>
-#include <libgen.h>
 #endif
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -146,15 +140,11 @@ static bool load_window_icon(GLFWwindow* window) {
     spdlog::debug("macOS uses the application bundle icon for regular windows");
     return true;
 #else
-    // Try both possible locations. The icon is the mark alone (no wordmark).
-    std::filesystem::path icon_path = "cyxwiz-engine/resources/cyxwiz_icon.png";
-
+    // Beside the Engine. The icon is the mark alone (no wordmark).
+    const auto icon_path = cyxwiz::core::ExecutableDirectory() / "resources" / "cyxwiz_icon.png";
     if (!std::filesystem::exists(icon_path)) {
-        icon_path = "resources/cyxwiz_icon.png";
-        if (!std::filesystem::exists(icon_path)) {
-            spdlog::warn("Window icon not found at either location");
-            return false;
-        }
+        spdlog::warn("Window icon not found: {}", icon_path.string());
+        return false;
     }
 
     int width, height, channels;
@@ -433,15 +423,17 @@ bool CyxWizApp::Initialize() {
     ImNodes::CreateContext();  // Initialize ImNodes for visual node editor
     ImGuiIO& io = ImGui::GetIO();
 
-    // Set persistent ini file path (same directory as executable)
-    // Absolute: Python script runs change the working directory to the
-    // project root, and a relative path then wrote imgui.ini there.
+    // The layout file: the user's config folder for an installed Engine, the
+    // build folder for a development build (core/user_folders.h). Absolute:
+    // Python script runs change the working directory to the project root.
+    // No folder known: the layout is not kept (ImGui writes nothing).
     {
+        const auto ini = cyxwiz::core::CurrentRunFileLocations().imgui_ini;
         std::error_code ec;
-        const auto ini = std::filesystem::absolute("imgui.ini", ec);
-        imgui_ini_path_ = ec ? std::string("imgui.ini") : ini.string();
+        if (!ini.empty()) std::filesystem::create_directories(ini.parent_path(), ec);
+        imgui_ini_path_ = ini.string();
     }
-    io.IniFilename = imgui_ini_path_.c_str();
+    io.IniFilename = imgui_ini_path_.empty() ? nullptr : imgui_ini_path_.c_str();
     // Open panels are kept in imgui.ini next to the layout (TOFIX129 0.6).
     gui::InstallPanelMemory();
 
@@ -1157,40 +1149,16 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     static const ImWchar text_ranges[] = {0x0020, 0x017F, 0x0370, 0x03FF, 0x2000, 0x209F, 0x2190, 0x21FF, 0x2200, 0x22FF, 0};
     font_config.GlyphRanges = text_ranges;
 
-    // Try multiple font paths (running from different directories)
-    std::vector<std::string> font_paths = {
-        "resources/fonts/",
-        "cyxwiz-engine/resources/fonts/",
-        "../resources/fonts/",
-        "../Resources/fonts/"  // macOS app bundle
-    };
-
-#ifdef __APPLE__
-    // On macOS, also check paths relative to the executable
-    char exec_path[PATH_MAX];
-    uint32_t size = sizeof(exec_path);
-    if (_NSGetExecutablePath(exec_path, &size) == 0) {
-        std::string exec_dir = dirname(exec_path);
-        font_paths.insert(font_paths.begin(), exec_dir + "/resources/fonts/");
-        font_paths.insert(font_paths.begin(), exec_dir + "/../Resources/fonts/");  // App bundle
-        font_paths.insert(font_paths.begin(), exec_dir + "/../resources/fonts/");
-        spdlog::debug("macOS executable dir: {}", exec_dir);
+    // The fonts ship beside the Engine; a macOS app bundle keeps them in
+    // Contents/Resources, a Linux build tree in the source folder. Never the
+    // working folder (Python script runs move it to the project).
+    const auto exe_dir = cyxwiz::core::ExecutableDirectory();
+    std::vector<std::string> font_paths;
+    for (const auto& dir : {exe_dir / "resources" / "fonts", exe_dir / ".." / "Resources" / "fonts",
+                            exe_dir / ".." / "resources" / "fonts",
+                            exe_dir / ".." / ".." / ".." / "cyxwiz-engine" / "resources" / "fonts"}) {
+        font_paths.push_back(dir.lexically_normal().string() + "/");
     }
-#elif defined(__linux__)
-    // On Linux, check paths relative to the executable using /proc/self/exe
-    char exec_path[PATH_MAX];
-    ssize_t len = readlink("/proc/self/exe", exec_path, sizeof(exec_path) - 1);
-    if (len != -1) {
-        exec_path[len] = '\0';
-        char* exec_path_copy = strdup(exec_path);
-        std::string exec_dir = dirname(exec_path_copy);
-        free(exec_path_copy);
-        font_paths.insert(font_paths.begin(), exec_dir + "/resources/fonts/");
-        font_paths.insert(font_paths.begin(), exec_dir + "/../resources/fonts/");
-        font_paths.insert(font_paths.begin(), exec_dir + "/../../../cyxwiz-engine/resources/fonts/");  // From build/bin/Release/
-        spdlog::debug("Linux executable dir: {}", exec_dir);
-    }
-#endif
 
     std::string font_base_path;
     if (!resolved_font_base_path_.empty() &&
@@ -1216,8 +1184,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     }
 
     if (font_base_path.empty()) {
-        spdlog::warn("Custom fonts not found in any of the search paths, using default ImGui font");
-        spdlog::warn("Current working directory: {}", std::filesystem::current_path().string());
+        spdlog::warn("Custom fonts not found beside the Engine ({}), using default ImGui font", exe_dir.string());
         io.Fonts->AddFontDefault(&font_config);
         return;
     }

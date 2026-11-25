@@ -1,10 +1,12 @@
 # Console and logs
 
 The **Console** (bottom dock) lists what the Engine logs, newest last. The
-same messages go to `engine_log.txt` beside `cyxwiz-engine.exe`. Each start
-keeps the four before it as `engine_log.1.txt` (the previous launch) to
-`engine_log.4.txt`, so the log of a launch that crashed is still there after
-the restart.
+same messages go to `engine_log.txt` in your logs folder
+(`%LOCALAPPDATA%\CyxWiz\Engine\logs` on Windows; a development build keeps
+it in its build folder; see [Where the Engine keeps your files](user_files.md)).
+Each start keeps the four before it as `engine_log.1.txt` (the previous
+launch) to `engine_log.4.txt`, so the log of a launch that crashed is still
+there after the restart.
 
 ## Levels
 

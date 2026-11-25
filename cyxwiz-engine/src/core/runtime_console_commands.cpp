@@ -791,7 +791,7 @@ RuntimeConsoleCommandService::Registry() {
         {{"clear", "clear", "Clear this Console view",
           "Clears only the visible Console transcript. Runtime event "
           "ingestion continues from a new view watermark; the Logs tab, the "
-          "runtime log and engine_log.txt keep every event.\n"
+          "runtime log and the Engine log keep every event.\n"
           "Usage:\n"
           "  clear  Empty the Commands transcript (same as Ctrl+L)\n"
           "Example:\n"

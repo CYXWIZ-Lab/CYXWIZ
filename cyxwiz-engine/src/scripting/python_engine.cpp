@@ -23,14 +23,6 @@
 #pragma comment(lib, "Shlwapi.lib")
 #else
 #include <stdlib.h>  // setenv
-#ifdef __APPLE__
-#include <mach-o/dyld.h>
-#include <limits.h>
-#include <libgen.h>
-#elif defined(__linux__)
-#include <unistd.h>
-#include <limits.h>
-#endif
 #endif
 
 namespace py = pybind11;
@@ -38,34 +30,6 @@ namespace py = pybind11;
 namespace scripting {
 
 namespace {
-
-std::filesystem::path GetExecutableDir() {
-#ifdef _WIN32
-    wchar_t path[MAX_PATH];
-    DWORD len = GetModuleFileNameW(nullptr, path, MAX_PATH);
-    if (len == 0 || len == MAX_PATH) {
-        return {};
-    }
-    return std::filesystem::path(path).parent_path();
-#elif defined(__APPLE__)
-    char exec_path[PATH_MAX];
-    uint32_t size = sizeof(exec_path);
-    if (_NSGetExecutablePath(exec_path, &size) != 0) {
-        return {};
-    }
-    return std::filesystem::path(exec_path).parent_path();
-#elif defined(__linux__)
-    char exec_path[PATH_MAX];
-    ssize_t len = readlink("/proc/self/exe", exec_path, sizeof(exec_path) - 1);
-    if (len <= 0) {
-        return {};
-    }
-    exec_path[len] = '\0';
-    return std::filesystem::path(exec_path).parent_path();
-#else
-    return {};
-#endif
-}
 
 bool HasPyCyxWizModule(const std::filesystem::path& dir) {
     if (dir.empty() || !std::filesystem::exists(dir) || !std::filesystem::is_directory(dir)) {
@@ -322,6 +286,8 @@ bool PythonEngine::Initialize(std::string* error_out) {
             return false;
         }
 
+        // An installed Engine has set PYTHONPYCACHEPREFIX (main.cpp): bytecode
+        // goes to the user's cache folder, never beside the bundled .py files.
         py::initialize_interpreter();
         initialized_ = true;
         initialized_by_us_ = true;  // We initialized it, so we'll finalize it
@@ -451,7 +417,7 @@ void PythonEngine::ConfigureCustomPythonPath() {
     active_scripts_path_ = scripts_path;
 
     std::string engine_module_dir;
-    auto exe_dir = GetExecutableDir();
+    auto exe_dir = cyxwiz::core::ExecutableDirectory();
     if (!exe_dir.empty() && HasPyCyxWizModule(exe_dir)) {
         engine_module_dir = exe_dir.string();
     }

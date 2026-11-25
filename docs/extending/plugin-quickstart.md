@@ -37,7 +37,10 @@ the macOS app start it. Everything else is in `runtime/base/<base>/`:
 | `cyxwiz-plugin-check` (`.exe`) | Loads a plugin folder the way the Engine does and checks its nodes. Start it with `cyxwiz-cli` in the installation folder ([section 3](#3-check-it)) |
 | `sdk/` | The plugin SDK |
 | `plugins/` | Not created by the installer, but **Refresh** searches it. Do not put your plugins here: CyxWiz replaces the base folder when it updates |
-| `engine_log.txt` | The Engine's log of the current launch (`engine_log.1.txt` to `engine_log.4.txt` are the four launches before) |
+
+The Engine writes nothing into this folder. Its log, `engine_log.txt`, is in
+your logs folder (`%LOCALAPPDATA%\CyxWiz\Engine\logs` on Windows); see
+[Where the Engine keeps your files](../usage/user_files.md).
 
 `<base>` is the active base, named by `base_pack_id` in
 `runtime/active-runtime.json`; usually it is the only folder in

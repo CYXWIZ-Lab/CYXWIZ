@@ -213,14 +213,24 @@ fs::path CyxWizHome() {
 #else
     const char* home = std::getenv("HOME");
 #endif
-    return home ? fs::path(home) / ".cyxwiz" : fs::path(".cyxwiz");
+    if (home && fs::path(home).is_absolute()) return fs::path(home) / ".cyxwiz";
+    // No home folder: the temp folder, never the working folder.
+    std::error_code ec;
+    const auto temp = fs::temp_directory_path(ec);
+    return ec ? fs::path{} : temp / "cyxwiz";
 }
 
 }  // namespace
 
-std::string MjEnvLibrary::GetMenagerieRoot() { return (CyxWizHome() / "menagerie").string(); }
+std::string MjEnvLibrary::GetMenagerieRoot() {
+    const auto home = CyxWizHome();
+    return home.empty() ? std::string() : (home / "menagerie").string();
+}
 
-std::string MjEnvLibrary::GetImportedRoot() { return (CyxWizHome() / "imported").string(); }
+std::string MjEnvLibrary::GetImportedRoot() {
+    const auto home = CyxWizHome();
+    return home.empty() ? std::string() : (home / "imported").string();
+}
 
 MjModelRef MjEnvLibrary::RefFor(const EnvInfo& info) const {
     MjModelRef ref;

@@ -1,6 +1,7 @@
 #pragma once
 
-#include <cstdlib>
+#include "user_folders.h"
+
 #include <filesystem>
 #include <mutex>
 #include <optional>
@@ -20,36 +21,9 @@ inline std::optional<std::filesystem::path>& TestRootOverride() {
     return root;
 }
 
-inline std::filesystem::path EnvironmentPath(const char* name) {
-    const char* value = std::getenv(name);
-    return value && *value ? std::filesystem::path(value)
-                           : std::filesystem::path{};
-}
-
+// The machine-local state folder (user_folders.h); empty when unknown.
 inline std::filesystem::path DefaultRoot() {
-#ifdef _WIN32
-    auto base = EnvironmentPath("LOCALAPPDATA");
-    if (base.empty()) base = EnvironmentPath("APPDATA");
-    if (!base.empty()) return base / "CyxWiz" / "compute";
-#elif defined(__APPLE__)
-    const auto home = EnvironmentPath("HOME");
-    if (!home.empty()) {
-        return home / "Library" / "Application Support" / "CyxWiz" /
-               "compute";
-    }
-#else
-    auto base = EnvironmentPath("XDG_STATE_HOME");
-    if (base.empty()) {
-        const auto home = EnvironmentPath("HOME");
-        if (!home.empty()) base = home / ".local" / "state";
-    }
-    if (!base.empty()) return base / "cyxwiz" / "compute";
-#endif
-
-    std::error_code ec;
-    const auto temp = std::filesystem::temp_directory_path(ec);
-    return (ec ? std::filesystem::path(".") : temp) / "cyxwiz" /
-           "compute";
+    return UserFile(UserStateDir(), "compute");
 }
 
 } // namespace compute_runtime_paths_detail
@@ -66,11 +40,11 @@ inline std::filesystem::path GetComputeRuntimeRoot() {
 }
 
 inline std::filesystem::path GetComputeRuntimeConfigPath() {
-    return GetComputeRuntimeRoot() / "runtime-config.json";
+    return UserFile(GetComputeRuntimeRoot(), "runtime-config.json");
 }
 
 inline std::filesystem::path GetRouteQualificationCachePath() {
-    return GetComputeRuntimeRoot() / "route-qualification.json";
+    return UserFile(GetComputeRuntimeRoot(), "route-qualification.json");
 }
 
 class ScopedComputeRuntimeRootOverrideForTesting {

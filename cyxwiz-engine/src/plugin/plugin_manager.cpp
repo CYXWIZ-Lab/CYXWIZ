@@ -322,6 +322,27 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
         }
     }
 
+    // From here a failure (OnInitialize, a crashing registration) still gives
+    // the plugin its last call, OnUnload, with the context OnLoad got and
+    // while that context lives: a plugin may keep it (MuJoCo's log handlers
+    // do) and must let go of it there. Its registrations go too, and an
+    // earlier start's context with them (OnUnload has run; UnloadPlugin must
+    // not call it again).
+    bool started = false;
+    struct OnUnloadUnlessStarted {
+        PluginManager& manager;
+        LoadedPlugin& plugin;
+        EnginePluginContext& context;
+        const std::string& plugin_id;
+        const bool& started;
+        ~OnUnloadUnlessStarted() {
+            if (started) return;
+            security::SafeExecute(plugin_id, "OnUnload", [&]() { plugin.instance->OnUnload(context); });
+            manager.RemoveRegistrations(plugin_id);
+            manager.contexts_.erase(plugin_id);
+        }
+    } unload_on_failure{*this, *plugin, *ctx, plugin_id, started};
+
     // Call OnInitialize (with crash isolation)
     {
         bool init_ok = false;
@@ -654,6 +675,7 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
 
     plugin->state = PluginState::Initialized;
     plugin->error_message.clear();
+    started = true;
     contexts_[plugin_id] = std::move(ctx);
 
     spdlog::info("PluginManager: Plugin {} initialized successfully", plugin_id);
@@ -761,7 +783,9 @@ void PluginManager::ShutdownPlugin(const std::string& plugin_id) {
     RemoveRegistrations(plugin_id);
 
     plugin->state = PluginState::Loaded;
-    contexts_.erase(ctx_it);
+    // The context stays until UnloadPlugin: OnUnload is the plugin's last call
+    // and gets it (erasing it here skipped OnUnload after a shutdown, as at
+    // every Engine exit). A new InitializePlugin replaces it.
 
     spdlog::info("PluginManager: Plugin {} shut down", plugin_id);
 }

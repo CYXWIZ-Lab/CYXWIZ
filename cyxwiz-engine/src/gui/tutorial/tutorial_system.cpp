@@ -1,6 +1,7 @@
 #include "tutorial_system.h"
 #include "../icons.h"
 #include "../ui_tokens.h"
+#include "../../core/user_folders.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <spdlog/spdlog.h>
@@ -497,7 +498,15 @@ void TutorialSystem::SaveProgress() {
         j["completed"] = completed_tutorials_;
         j["welcome_shown"] = has_shown_welcome_;
 
-        std::ofstream file("tutorial_progress.json");
+        // The user's config folder (an installed Engine) or the build folder.
+        const auto path = ::cyxwiz::core::CurrentRunFileLocations().tutorial_progress;
+        if (path.empty()) {
+            spdlog::debug("Tutorial progress not saved: no user folder is known");
+            return;
+        }
+        std::error_code ec;
+        std::filesystem::create_directories(path.parent_path(), ec);
+        std::ofstream file(path);
         if (file.is_open()) {
             file << j.dump(2);
             file.close();
@@ -510,7 +519,7 @@ void TutorialSystem::SaveProgress() {
 
 void TutorialSystem::LoadProgress() {
     try {
-        std::ifstream file("tutorial_progress.json");
+        std::ifstream file(::cyxwiz::core::CurrentRunFileLocations().tutorial_progress);
         if (file.is_open()) {
             nlohmann::json j;
             file >> j;

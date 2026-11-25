@@ -58,6 +58,11 @@ struct ActiveRuntime {
     std::vector<std::filesystem::path> dll_directories;
 };
 
+// True when `executable` sits in an installed base, <root>/runtime/base/<id>/.
+// The Engine's ownership check and its user-folder choice both ask this, so
+// they never disagree about what an installed run is.
+bool IsInstalledBaseExecutable(const std::filesystem::path& executable);
+
 bool ResolveActiveRuntime(
     const std::filesystem::path& runtime_root,
     ActiveRuntime& output,

@@ -250,5 +250,86 @@ class CpuBasePackageVerifierTests(unittest.TestCase):
             self.assertEqual(5, len(audited))
 
 
+    def test_a_run_that_adds_or_changes_a_base_file_fails(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-cpu-base-") as temporary:
+            base = Path(temporary) / "runtime" / "base" / "base-v1"
+            base.mkdir(parents=True)
+            (base / "cyxwiz-engine.exe").write_bytes(b"engine")
+            before = verify_cpu_base_package.base_inventory(base)
+
+            (base / "engine_log.txt").write_text("log", encoding="utf-8")
+            with self.assertRaisesRegex(
+                verify_cpu_base_package.CpuBaseSmokeError, "added engine_log.txt"
+            ):
+                verify_cpu_base_package.require_base_unchanged(base, before)
+
+            (base / "engine_log.txt").unlink()
+            (base / "cyxwiz-engine.exe").write_bytes(b"patched")
+            with self.assertRaisesRegex(
+                verify_cpu_base_package.CpuBaseSmokeError, "changed cyxwiz-engine.exe"
+            ):
+                verify_cpu_base_package.require_base_unchanged(base, before)
+
+    def test_a_run_that_writes_only_the_user_folders_passes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-cpu-base-") as temporary:
+            install_root = Path(temporary)
+            base = install_root / "runtime" / "base" / "base-v1"
+            base.mkdir(parents=True)
+            (base / "cyxwiz-engine.exe").write_bytes(b"engine")
+            before = verify_cpu_base_package.base_inventory(base)
+
+            profile = verify_cpu_base_package.user_profile(install_root)
+            log = verify_cpu_base_package.expected_engine_log(profile)
+            log.parent.mkdir(parents=True)
+            log.write_text("log", encoding="utf-8")
+
+            verify_cpu_base_package.require_base_unchanged(base, before)
+            self.assertEqual(log, verify_cpu_base_package.require_engine_log(profile))
+
+    def test_the_base_inventory_comes_from_the_package_inventory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-cpu-base-") as temporary:
+            install_root = Path(temporary)
+            base = install_root / "runtime" / "base" / "base-v1"
+            (base / "lib").mkdir(parents=True)
+            (base / "cyxwiz-engine.exe").write_bytes(b"engine")
+            (base / "lib" / "af.dll").write_bytes(b"af")
+            (install_root / "cyxwiz-cli.exe").write_bytes(b"cli")
+            files, _ = verify_cpu_base_package.package_inventory(install_root)
+            self.assertEqual(
+                verify_cpu_base_package.base_inventory(base),
+                verify_cpu_base_package.base_inventory_from_package(files, install_root, base),
+            )
+
+    def test_an_unreadable_base_file_is_a_smoke_failure(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-cpu-base-") as temporary:
+            base = Path(temporary) / "base"
+            base.mkdir()
+            (base / "locked.dll").write_bytes(b"x")
+            with mock.patch.object(
+                verify_cpu_base_package, "sha256_file", side_effect=PermissionError("denied")
+            ), self.assertRaisesRegex(
+                verify_cpu_base_package.CpuBaseSmokeError, "Cannot read the installed base file locked.dll"
+            ):
+                verify_cpu_base_package.base_inventory(base)
+
+    def test_missing_engine_log_in_the_user_folder_fails(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-cpu-base-") as temporary:
+            with self.assertRaisesRegex(
+                verify_cpu_base_package.CpuBaseSmokeError, "no log in the user's log folder"
+            ):
+                verify_cpu_base_package.require_engine_log(Path(temporary))
+
+    def test_user_folders_and_log_stay_inside_the_scratch_profile(self) -> None:
+        profile = Path(tempfile.gettempdir()) / "cyxwiz-profile"
+        environment = verify_cpu_base_package.user_folder_environment(profile)
+        for name in ("APPDATA", "LOCALAPPDATA", "USERPROFILE", "HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+            value = Path(environment[name])
+            self.assertTrue(value == profile or profile in value.parents, name)
+        for system in ("Windows", "Darwin", "Linux"):
+            log = verify_cpu_base_package.expected_engine_log(profile, system)
+            self.assertIn(profile, log.parents)
+            self.assertEqual("engine_log.txt", log.name)
+
+
 if __name__ == "__main__":
     unittest.main()

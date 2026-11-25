@@ -5,6 +5,7 @@
 #include "../core/project_manager.h"
 #include "../core/runtime_console_commands.h"
 #include "../core/runtime_log_store.h"
+#include "../core/user_folders.h"
 #include "panels/agent_llm_session.h"
 #include "panels/python_repl_session.h"
 #include "panels/local_shell_session.h"
@@ -171,12 +172,9 @@ Console::Console()
           cyxwiz::RuntimeLogStore::Instance(), truth_provider_.get())),
       show_copy_notification_(false), copy_notification_time_(0.0f) {
   memset(input_buf_, 0, sizeof(input_buf_));
-  {
-    // main.cpp writes engine_log.txt into the working directory it sets to
-    // the Engine folder before the UI starts.
-    std::error_code ec;
-    log_file_path_ = std::filesystem::absolute("engine_log.txt", ec);
-  }
+  // The log main.cpp writes: the user's log folder (an installed Engine)
+  // or the build folder (core/user_folders.h).
+  log_file_path_ = cyxwiz::core::EngineLogPath();
   LoadSavedInspectorFilters();
   StartInspectorWorker();
 }

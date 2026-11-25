@@ -671,7 +671,7 @@ to your own build.
 
   A file that fails makes the exit code 1, like a node that fails.
 - **Apply** in a Data Input reads it in the Engine. The Engine's log
-  (`engine_log.txt` in the base folder, or the Console panel) has a line per
+  (`engine_log.txt` in your logs folder, or the Console panel) has a line per
   load: *LoadTabularExternal: '&lt;file&gt;' (&lt;format&gt;) streamed 14 rows into
   &lt;cache file&gt;*, or the error.
 - **Errors the user sees:** your `error` from `OpenDataset`

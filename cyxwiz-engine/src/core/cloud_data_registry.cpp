@@ -1,4 +1,5 @@
 #include "cloud_data_registry.h"
+#include "user_folders.h"
 #include <filesystem>
 #include <mutex>
 
@@ -8,19 +9,9 @@ static std::unique_ptr<CloudDataRegistry> g_cloud_registry;
 static std::once_flag g_cloud_registry_flag;
 
 CloudDataRegistry::CloudDataRegistry() {
-    // Default cache directory
-    std::string home;
-#ifdef _WIN32
-    const char* userprofile = std::getenv("USERPROFILE");
-    if (userprofile) home = userprofile;
-#else
-    const char* home_env = std::getenv("HOME");
-    if (home_env) home = home_env;
-#endif
-
-    if (!home.empty()) {
-        cache_directory_ = (std::filesystem::path(home) / ".cyxwiz" / "cloud_cache").string();
-    }
+    // Default cache directory: the user's cache folder (empty when none is
+    // known: nothing is cached, never a path relative to the working folder).
+    cache_directory_ = UserFile(UserCacheDir(), "cloud").string();
 }
 
 CloudDataRegistry::~CloudDataRegistry() {

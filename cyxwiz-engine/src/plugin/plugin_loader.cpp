@@ -1,11 +1,11 @@
 #include "plugin_loader.h"
 #include "security/plugin_signature.h"
+#include "../core/user_folders.h"
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cctype>
 #include <chrono>
-#include <cstdlib>
 #include <fstream>
 #include <system_error>
 
@@ -20,27 +20,10 @@ namespace cyxwiz::plugin {
 
 namespace {
 
-std::filesystem::path EnvPath(const char* name) {
-    const char* value = std::getenv(name);
-    return value && *value ? std::filesystem::path(value) : std::filesystem::path{};
-}
-
-// Per-user folder of the library copies the Engine loads (shadow copies).
+// Per-user folder of the library copies the Engine loads (shadow copies);
+// empty when no user folder is known.
 std::filesystem::path LibraryCacheRoot() {
-#ifdef _WIN32
-    auto base = EnvPath("LOCALAPPDATA");
-    if (!base.empty()) return base / "CyxWiz" / "cache" / "plugins";
-#elif defined(__APPLE__)
-    const auto home = EnvPath("HOME");
-    if (!home.empty()) return home / "Library" / "Caches" / "CyxWiz" / "plugins";
-#else
-    auto base = EnvPath("XDG_CACHE_HOME");
-    if (base.empty() && !EnvPath("HOME").empty()) base = EnvPath("HOME") / ".cache";
-    if (!base.empty()) return base / "cyxwiz" / "plugins";
-#endif
-    std::error_code ec;
-    const auto temp = std::filesystem::temp_directory_path(ec);
-    return (ec ? std::filesystem::path(".") : temp) / "cyxwiz" / "plugins";
+    return UserFile(UserCacheDir(), "plugins");
 }
 
 // .dll, .dylib, and .so with or without a version (libfoo.so.1).
@@ -100,7 +83,12 @@ std::filesystem::path ShadowCopyLibrary(const std::string& plugin_id, const std:
         error = "cannot read " + library.string();
         return {};
     }
-    const auto folder = LibraryCacheRoot() / SafeFolderName(plugin_id) / LibraryContentKey(files);
+    const auto cache_root = LibraryCacheRoot();
+    if (cache_root.empty()) {
+        error = "no user cache folder to copy the library into";
+        return {};
+    }
+    const auto folder = cache_root / SafeFolderName(plugin_id) / LibraryContentKey(files);
     const auto copy = folder / library.filename();
     std::error_code ec;
     if (std::filesystem::is_directory(folder, ec)) {

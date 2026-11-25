@@ -1,4 +1,5 @@
 #include "graph_training_launcher.h"
+#include "../core/user_folders.h"
 
 #include "../core/graph_training_prep.h"
 
@@ -195,8 +196,10 @@ cyxwiz::MaterializationCacheConfig DefaultMaterializationCacheConfig(
     const std::filesystem::path& project_root = {}) {
     cyxwiz::MaterializationCacheConfig config;
     config.mode = cyxwiz::MaterializationCacheMode::Auto;
+    // No project open: the user's no-project folder (empty: no cache, the
+    // data is prepared again), never the working folder.
     config.cache_root = project_root.empty()
-        ? std::filesystem::current_path() / ".cyxwiz"
+        ? cyxwiz::NoProjectRunDir("prepared")
         : project_root.lexically_normal();
     config.artifact_format = "parquet";
     // Keep the prepared-data cache bounded; least recently used entries go.

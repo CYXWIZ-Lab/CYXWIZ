@@ -1,4 +1,5 @@
 #include "node_metadata_registry.h"
+#include "user_folders.h"
 #include "frozen_layers.h"
 #include "data_convert_formats.h"
 #include "pipeline_runtime_capabilities.h"
@@ -331,9 +332,9 @@ void NodeMetadataRegistry::Initialize() {
     spdlog::debug("NodeMetadataRegistry: Initializing node metadata...");
     InitializeBuiltinNodes();
 
-    // Load template nodes from JSON files
-    // Try to find templates in resources directory relative to executable
-    std::filesystem::path templates_path = "resources/node_templates";
+    // Load template nodes from JSON files: resources/ beside the executable
+    // (never the working folder, which a script run moves).
+    const std::filesystem::path templates_path = core::ExecutableDirectory() / "resources" / "node_templates";
     if (std::filesystem::exists(templates_path)) {
         LoadTemplates(templates_path.string());
     }

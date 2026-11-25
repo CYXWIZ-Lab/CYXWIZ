@@ -5,6 +5,7 @@
 // draws the model and maps action ids to the handlers the rest of the Engine
 // already registers on ToolbarPanel.
 #include "../../core/engine_config.h"
+#include "../../core/user_folders.h"
 #include "toolbar.h"
 
 #include "../appearance_settings.h"
@@ -831,7 +832,8 @@ void ToolbarPanel::BuildActionHandlers() {
         if (!ui::OpenUrl(path)) ui::ShowInFileManager(path);
     };
     h["help.open_logs"] = [](const std::string&) {
-        const auto log = core::ExecutableDirectory() / "engine_log.txt";
+        const auto log = core::EngineLogPath();
+        if (log.empty()) return;
         std::error_code ec;
         ui::ShowInFileManager(std::filesystem::exists(log, ec) ? log.string() : log.parent_path().string());
     };

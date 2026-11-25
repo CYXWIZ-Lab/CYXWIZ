@@ -1,4 +1,5 @@
 #include "python_node_bundle.h"
+#include "user_folders.h"
 
 #include "sha256_digest.h"
 
@@ -275,13 +276,6 @@ std::vector<fs::path> FindPythonBundles(const std::vector<fs::path>& roots) {
     return found;
 }
 
-fs::path UserPythonNodesFolder() {
-#ifdef _WIN32
-    if (const char* appdata = std::getenv("APPDATA")) return fs::path(appdata) / "cyxwiz" / "nodes";
-#else
-    if (const char* home = std::getenv("HOME")) return fs::path(home) / ".cyxwiz" / "nodes";
-#endif
-    return "nodes";
-}
+fs::path UserPythonNodesFolder() { return UserFile(UserConfigDir(), "nodes"); }
 
 }  // namespace cyxwiz

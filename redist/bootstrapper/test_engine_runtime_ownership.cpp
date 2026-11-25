@@ -83,6 +83,17 @@ void Run() {
           "Inactive base must not execute against the current activation");
   }
   {
+    // The one installed-layout rule (the Engine's user folders ask it too).
+    Check(IsInstalledBaseExecutable(f.engine),
+          "An Engine in runtime/base/<id> is an installed run");
+    Check(!IsInstalledBaseExecutable(f.parent / "build/bin" /
+                                     CurrentEngineExecutableName()),
+          "A build folder is a development run");
+    Check(!IsInstalledBaseExecutable(f.root / "base" /
+                                     CurrentEngineExecutableName()),
+          "An Engine directly in runtime/base is not in a base folder");
+  }
+  {
     const auto developer =
         f.parent / "build/bin" / CurrentEngineExecutableName();
     Touch(developer);

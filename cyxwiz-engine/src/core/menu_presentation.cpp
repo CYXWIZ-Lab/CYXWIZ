@@ -973,7 +973,7 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         i.push_back(Sep());
         i.push_back(Action(f, "help.report_issue", "Report Issue...", "Opens the issue page in your browser."));
         i.push_back(Action(f, "help.open_logs", "Open Logs Folder",
-                           "Shows engine_log.txt in the file manager, for a bug report."));
+                           "Shows the Engine log in the file manager, for a bug report."));
         i.push_back(Planned(f, "help.check_updates", "Check for Updates...", "Looks for a newer Engine."));
         i.push_back(Sep());
         i.push_back(Action(f, "help.about", "About CyxWiz...", "Shows the version and licence."));
