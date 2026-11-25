@@ -75,7 +75,7 @@ Studio. Every other tool reads what Data Input nodes loaded.
 | **Tools > Statistics** | **Summary Statistics** and **Distribution Fitter** open Distribution, **Hypothesis Testing** opens Tests, **Linear / Polynomial Regression** opens Regression ([Statistics](statistics.md)) |
 | **Tools > Evaluation** | Cross-Validation, Confusion Matrix, ROC Curve / AUC, Precision-Recall Curve and Learning Curves open the Results views ([Read test results](../evaluation/test-results.md)) |
 | **Tools > Clustering and Projection** | Open the Groups view ([Clustering](clustering.md)) or the Projection view ([Dimensionality reduction](dimensionality-reduction.md)) |
-| **Data > Transform** | Adds a scaling, log or power step after that dataset in Prepare ([scaling and transforms](../../usage/data_transforms.md)) |
+| **Data > Transform** | Adds a scaling, log or power step after that dataset in Prepare ([scaling and transforms](../../reference/nodes/categories/preprocessing.md#scaling-and-transforms)) |
 
 These used to be separate windows; each now opens the matching Data Studio
 view. The Data Explorer, which opened files directly, is gone: Data Studio

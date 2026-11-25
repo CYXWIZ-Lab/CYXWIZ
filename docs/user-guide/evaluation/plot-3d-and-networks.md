@@ -118,4 +118,4 @@ open the same plots; see [Plots from Python](plots-from-python.md).
 
 - [Plot data](plotting.md)
 - [Maps, flows and hierarchies](plot-maps-and-flows.md)
-- [Classic machine learning nodes](../../usage/classic_ml.md)
+- [Classic machine learning nodes](../../reference/nodes/categories/analytics.md#classic-models)

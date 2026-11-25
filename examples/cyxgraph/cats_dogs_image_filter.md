@@ -39,4 +39,4 @@ Any folder of labelled images with two classes. It was made for the Kaggle
 - After a Local Debug run, **Studio Debugger > Model > Layers > Filters** on
   **Conv 16** shows the kernels the network learned on top of yours.
 
-Settings and rules: `docs/usage/image_transforms.md`, section Image Filter.
+Settings and rules: `docs/reference/nodes/preprocessing/image-filter.md`, section Kernels.

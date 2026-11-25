@@ -62,9 +62,9 @@ Set up how the model learns:
   task, the optimizers and their schedules.
 - [Train on unbalanced classes](class-imbalance.md): class weights and
   balanced batches.
-- [Learning-rate schedulers](../../usage/lr_schedulers.md),
-  [Gradient clipping](../../usage/gradient_clipping.md) and
-  [Regularization nodes](../../usage/regularization.md).
+- [Learning-rate schedulers](../../reference/nodes/categories/training.md#learning-rate-schedulers),
+  [Gradient clipping](../../reference/nodes/categories/training.md#gradient-clipping) and
+  [Regularization nodes](../../reference/nodes/categories/regularization.md).
 - [Start from pretrained weights](start-from-pretrained-weights.md):
   PyTorch and safetensors weight files.
 

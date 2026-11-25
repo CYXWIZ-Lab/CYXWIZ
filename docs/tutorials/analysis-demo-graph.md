@@ -95,6 +95,6 @@ Close the graph without saving to keep the example as it was.
   Davies-Bouldin, Calinski-Harabasz) and the clustering nodes.
 - [Project rows into two dimensions](../user-guide/data-studio/dimensionality-reduction.md):
   **Explore > Projection**, and the PCA, t-SNE and UMAP nodes.
-- [Scaling and transforms](../usage/data_transforms.md): the scalers, and
+- [Scaling and transforms](../reference/nodes/categories/preprocessing.md#scaling-and-transforms): the scalers, and
   the Power Transform and Quantile Transform nodes.
 - [Plot data on the canvas](../user-guide/evaluation/plot-node.md)

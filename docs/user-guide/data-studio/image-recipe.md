@@ -12,7 +12,7 @@ related:
   - prepare.md
   - explore-images.md
   - profile.md
-  - ../../usage/image_transforms.md
+  - ../../reference/nodes/categories/preprocessing.md
 ---
 
 A graph whose images go through a **Resize** shows its **Image recipe** in
@@ -72,4 +72,4 @@ drag.
 - [Prepare data with a recipe](prepare.md)
 - [Look at an image dataset](explore-images.md)
 - [Profile a dataset](profile.md)
-- [Image transforms](../../usage/image_transforms.md)
+- [Image transforms](../../reference/nodes/categories/preprocessing.md#image-transforms)

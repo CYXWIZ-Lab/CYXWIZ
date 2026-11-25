@@ -1,0 +1,208 @@
+---
+redirect_from:
+  - ../../../usage/data_transforms.md
+  - ../../../usage/image_transforms.md
+related:
+  - ../../../user-guide/data-studio/prepare.md
+  - ../../../user-guide/data-studio/image-recipe.md
+  - ../../../concepts/steps-learn-from-train-rows.md
+  - ../../../concepts/disk-caches.md
+---
+
+## Scaling and transforms
+
+Scaling and shape changes are steps of the graph: nodes in Data Studio's
+**Prepare** job, whose output the pipeline and training use. **Data >
+Transform** adds them after the data in use (the Data Input or node result
+picked in Data Studio's rail):
+
+| Data > Transform | Adds |
+| --- | --- |
+| Normalization (Min-Max) | a Min-Max Scaler step |
+| Standardization (Z-Score) | a Standard Scaler (Z-score) step |
+| Log Transform | a Log Transform step |
+| Box-Cox Transform | a Power Transform step, family Box-Cox |
+| Feature Scaling (All Methods) | a Z-score step, with **Compare methods** open on it |
+
+Prepare's **Add a step** has the same steps under **Scale and transform**.
+They compute on the device selected in the Devices tab (CUDA, OpenCL, or
+ArrayFire's CPU backend), in float64 where the device supports it, otherwise
+float32.
+
+### Which scaler
+
+| Node | Result | Same as |
+| --- | --- | --- |
+| [Standard Scaler](../preprocessing/standard-scaler.md) | `(x - mean) / std`, std dividing by n; a constant column gives 0 | scikit-learn `StandardScaler` |
+| [Min-Max Scaler](../preprocessing/minmax-scaler.md) | `(x - min) / (max - min)` into the typed range (it must rise) | scikit-learn `MinMaxScaler` |
+| [Robust Scaler](../preprocessing/robust-scaler.md) | `(x - median) / (q_max - q_min)`; resists outliers | scikit-learn `RobustScaler` |
+| [Max-Abs Scaler](../preprocessing/max-abs-scaler.md) | `x / max(abs(x))` into -1 .. 1; zeros stay zero (sparse data) | scikit-learn `MaxAbsScaler` |
+| [Quantile Transform](../preprocessing/quantile-transform.md) | each value onto uniform 0 .. 1 or a standard normal through the column's quantiles | scikit-learn `QuantileTransformer` |
+| [Power Transform](../preprocessing/power-transform.md) | Box-Cox `(x^λ - 1) / λ` (values above 0) or Yeo-Johnson (any value), λ per column by maximum likelihood or typed | `scipy.stats.boxcox` / `yeojohnson` |
+| [Log Transform](../preprocessing/log-transform.md) | ln, log10 or log2 of x, or of 1 + x | |
+
+Each takes **Columns** (empty = every number column except the label and the
+excluded columns). A missing value stays missing; the fit uses the values
+present, as scikit-learn does. A zero scale (a constant column or zero
+spread) divides by 1.
+
+**Fitting.** The scalers, Quantile and Power learn values from their input (a
+mean, a range, quantiles, a λ). **Fit here** fits on the rows that reach the
+step each run; **Save the fitted values** writes them to a `.cyxstate.json`
+file, and **Use saved values** reads one, so validation, test and new data
+get the training data's values. A fitting step that reads a validation, test
+or inference Data Input without saved values is refused: it would learn from
+data it should not see. Log Transform fits nothing. See
+[Steps that learn from the training rows](../../../concepts/steps-learn-from-train-rows.md).
+
+**Refusals** say why: Box-Cox on a value of 0 or less (use Yeo-Johnson),
+plain log on a value of 0 or less (turn on log(1 + x)) or log(1 + x) on -1
+or less, a Min-Max range that does not rise, saved values fitted with other
+settings or columns.
+
+### The step in Prepare
+
+Picking one of these steps in Prepare shows:
+
+- its settings as typed fields and switches; switching **Method** replaces
+  the node with the other scaler and keeps its links and columns;
+- after **Run step**, the last run's before and after per column (range,
+  mean, std), with two histograms of the picked column; a Z-score step
+  counts the values beyond |z| 3;
+- for a Power Transform, per column λ, skewness before and after, the
+  normality test's p before and after (D'Agostino-Pearson, at least 20
+  values; p below 0.05 means not normal) and the likelihood curve over
+  λ -5 .. 5. A column that mixes groups (more than one hump) is not made
+  normal by any single power transform, and the view says so;
+- **Compare methods**: one column through every scaling method, as a
+  preview, with histograms and a summary table; **Use this method** switches
+  the step.
+
+The figures read up to the first 200,000 rows of the step's input and output
+and are worked out in the background. Every transform matches the library it
+follows to 1e-8 in float64; on a GPU without float64, to 5e-5 relative (2e-3
+for a searched λ, whose float32 likelihood is flat near its optimum).
+
+## Image transforms
+
+Fifteen nodes change images between the Data Input and the model, following
+`torchvision.transforms` (morphology follows `kornia.morphology`): each
+gives the same pixels as torchvision with the same draws. Nine more run
+OpenCV once, when the images are prepared; node search marks them `once`.
+
+### Where they go
+
+Put them between [Resize](../preprocessing/resize.md) and
+[Normalize](../preprocessing/normalize.md), in the order you want them
+applied:
+
+```text
+Data Input (images) -> Split -> Loader -> Resize 72 -> Random Crop 64
+  -> Horizontal Flip -> Color Jitter -> Normalize -> Conv2D -> ...
+```
+
+Resize comes first (every image is decoded once at its size and mode) and
+Normalize last (the transforms work on pixels in `[0, 1]`). The compiler
+refuses a transform outside that span and names the node. Image transforms
+work on image Data Inputs (folders of image files), not on tabular pixel
+rows.
+
+### Training, validation and test
+
+Random nodes make each training epoch see slightly different images, which
+reduces overfitting. Validation and test always see the same images, so
+their scores compare from epoch to epoch. The draws come from the Data
+Loader's seed, so a run repeats exactly with the same seed.
+
+| Node | Training | Validation and test |
+| --- | --- | --- |
+| Random Crop | random position per image | centre crop of the same size |
+| Random Resized Crop | random box per image, resized | the centred box of the nearest allowed aspect, resized |
+| Horizontal Flip, Vertical Flip, Image Rotate, Random Affine, Random Perspective, Color Jitter, Random Grayscale, Gaussian Noise | random, per image | unchanged |
+| Advanced Augment | patch erased, batch mixed or policy ops, with `probability` | unchanged |
+| Center Crop, Image Gaussian Blur, Grayscale, Morphology Transform, the OpenCV steps | applied | applied |
+
+Choosing: avoid flips for text and digits; Vertical Flip suits images with no
+natural up (satellite, microscopy). The CIFAR recipe is Random Crop 32 with
+`padding` 4 on 32 x 32 images, then Horizontal Flip. Crops and Grayscale
+change the model's input shape; the **As compiled** card shows it.
+
+[Augmentation Preset](../preprocessing/augmentation-preset.md) is a standard
+recipe in one node (`flip`, `cifar`, `cifar_cutout`, `randaugment`). It
+compiles into the nodes it stands for, so it behaves exactly as wiring them
+by hand; to tune a step, replace it with the single nodes.
+
+### Decoded once
+
+When training starts, every image is decoded once, on all CPU cores, at the
+Resize size and mode, and kept as 8-bit RGB in the project's `cache/images`
+folder; the Console counts the progress and **Stop** stops it. The next run
+with the same images, size and mode starts at once. Grey, RGBA and 16-bit
+files become RGB; a file that cannot be read is left out and named in the
+Console. The cache rules are in [Disk caches](../../../concepts/disk-caches.md).
+
+| Resize mode | What you get |
+| --- | --- |
+| `exact` | stretched to the width and height |
+| `fit` | scaled to fit inside, black bars on the short side |
+| `fill` | scaled to cover, the centre kept |
+| `center` | not scaled: the centre cut out |
+
+Center Crop, Grayscale, Image Gaussian Blur and Morphology Transform give
+every image the same result, so when they come before the first random
+transform they are done once too, on the GPU, and kept beside the decoded
+set (exact for crops and morphology, within half a step for Grayscale and
+blur). Keep random transforms after them: a Center Crop after a flip runs on
+every batch. Each batch's transforms and Normalize run on the GPU (or on
+ArrayFire's CPU backend), and the batch stays there for the model.
+
+### OpenCV steps done once
+
+| Node | What it does | Shape |
+| --- | --- | --- |
+| [Image Contrast (CLAHE)](../preprocessing/image-contrast-clahe.md) | contrast-limited adaptive histogram equalization per tile, on lightness or each channel | same |
+| [Image Denoise](../preprocessing/image-denoise.md) | non-local means; slow, so the compiler shows the time, spent once | same |
+| [Image Sharpen](../preprocessing/image-sharpen.md) | unsharp mask, optionally only above a detail threshold | same |
+| [Image Edges](../preprocessing/image-edges.md) | Canny, Sobel, Scharr, Laplacian, LoG or DoG edges of the grey image | `[H, W, 1]`, or one more channel |
+| [Image Smooth](../preprocessing/image-smooth.md) | box, median or bilateral smoothing | same |
+| [Image Warp](../preprocessing/image-warp.md) | the same perspective, affine or polar warp for every image | same, or the typed size |
+| [Image Pyramid](../preprocessing/image-pyramid.md) | Gaussian down, up, or the Laplacian detail level | halves or doubles per level |
+| [Image Filter](../preprocessing/image-filter.md) | one fixed kernel, preset or typed, over every channel | same |
+| [Image Gabor](../preprocessing/image-gabor.md) | a bank of striped kernels, one channel per orientation and wavelength | `[H, W, bank]` |
+
+They run on every CPU core in canvas order with the GPU steps done once, and
+every later run with the same settings reads the result from the cache. The
+prepared images are 8-bit, so each result is stored as 0 to 255 (pyramid
+detail around mid-grey, 128 = no detail). They must come before the first
+random transform; the compiler says which one to move them before, and
+checks each step on the size it receives (pyramid levels, warp points, tile
+grids, kernel sizes). Data Studio's **Explore > Images > What the model
+sees** shows each step on the picked image
+([Explore images](../../../user-guide/data-studio/explore-images.md)).
+
+### More than three channels
+
+Image Edges with **Keep image** and Image Gabor add channels, so the image
+is neither grey nor RGB:
+
+- Steps after it run on each channel alone, with the same crop, flip or
+  warp for every channel.
+- Colour steps need RGB: Color Jitter, Grayscale, Random Grayscale and the
+  Advanced Augment policies do not compile after it, nor does a second Image
+  Edges or Image Gabor. Put them before the step that adds channels.
+- Normalize refuses ImageNet statistics; use the same values for every
+  channel, or Per channel with one row per channel.
+- Wherever such an image is shown it is a sheet: the colour picture, then
+  each further channel as a grey tile with its name.
+
+### Checked against torchvision
+
+Fixtures generated with torchvision are replayed on every ArrayFire backend:
+for the random nodes, torchvision's own transform class runs under a fixed
+seed and records what it drew, and the Engine must give the same pixels
+within 2e-5 for those draws. MixUp and CutMix are compared with
+torchvision's `v2.MixUp` and `v2.CutMix`, every RandAugment op through
+torchvision's own dispatcher, and the OpenCV steps with OpenCV called
+directly. The code exports refuse image transforms and say so; train these
+graphs in Studio. To leave blurry, dark or duplicate images out of training,
+see [Quality Analyzer](../preprocessing/quality-analyzer.md).

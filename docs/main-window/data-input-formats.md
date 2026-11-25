@@ -125,7 +125,7 @@ dialog). When one is missing it offers **Add a Resize**, **Add Normalize**
 
 An image folder holds nothing in memory: when training starts, the images
 are decoded once at the Resize size into `cache/images` (see
-[Image transforms](../usage/image_transforms.md)). The image types the
+[Image transforms](../reference/nodes/categories/preprocessing.md#image-transforms)). The image types the
 Engine reads are listed in
 [Bring data into Data Studio](../user-guide/data-studio/bring-in-data.md).
 

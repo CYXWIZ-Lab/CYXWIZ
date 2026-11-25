@@ -78,7 +78,7 @@ A plugin can also end a run early; Run details then shows
 
 To lower the learning rate when the validation loss stalls, instead of
 stopping, use the **Reduce LR** scheduler node; see
-[Learning-rate schedulers](../../usage/lr_schedulers.md).
+[Learning-rate schedulers](../../reference/nodes/categories/training.md#learning-rate-schedulers).
 
 ## Where the checkpoint files are
 

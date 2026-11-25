@@ -40,4 +40,4 @@ saves no path.
   all four channels.
 
 Rules for images with more than three channels:
-`docs/usage/image_transforms.md`, section More than three channels.
+`docs/reference/nodes/categories/preprocessing.md`, section More than three channels.

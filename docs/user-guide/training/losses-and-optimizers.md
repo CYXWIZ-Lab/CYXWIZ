@@ -12,9 +12,8 @@ related:
   - train-and-watch.md
   - class-imbalance.md
   - checkpoints-and-early-stopping.md
-  - ../../usage/lr_schedulers.md
-  - ../../usage/regularization.md
-  - ../../usage/gradient_clipping.md
+  - ../../reference/nodes/categories/training.md
+  - ../../reference/nodes/categories/regularization.md
 ---
 
 Use this when you wire the end of a model: the loss that scores its output
@@ -39,9 +38,9 @@ Data Loader --Data--> layers ... --> Loss <--Labels-- Data Loader
    (**Labels** or **Targets**).
 3. Link the loss's **Loss** output to the optimizer's **Loss** input.
 4. Optional: put one regularization node between the loss and the
-   optimizer ([Regularization nodes](../../usage/regularization.md)), or a
+   optimizer ([Regularization nodes](../../reference/nodes/categories/regularization.md)), or a
    learning-rate scheduler on the optimizer's **State** output
-   ([Learning-rate schedulers](../../usage/lr_schedulers.md)).
+   ([Learning-rate schedulers](../../reference/nodes/categories/training.md#learning-rate-schedulers)).
 
 The batch size and the epochs are set on the Data Loader, not on the
 optimizer; a batch size on the optimizer is ignored, and a warning says so
@@ -106,7 +105,7 @@ The settings shared by every optimizer, under **Schedule** in Properties:
 | `lr_schedule` | `none` | The learning rate over the optimizer's updates: `none`, `warmup_cosine`, `warmup_linear`, `warmup_constant` or `one_cycle`. |
 | `warmup_ratio` | 0.02 | The share of the updates spent warming up (with `one_cycle`, the share spent rising; 0.3 is usual). |
 | `min_lr_ratio` | 0.1 | Where the decay ends, as a fraction of the learning rate. |
-| `grad_clip_norm` | 0 (off) | Clips the gradients by their global norm before each update; see [Gradient clipping](../../usage/gradient_clipping.md). |
+| `grad_clip_norm` | 0 (off) | Clips the gradients by their global norm before each update; see [Gradient clipping](../../reference/nodes/categories/training.md#gradient-clipping). |
 | `weight_decay_exclude` | `none` | AdamW and SGD: parameters that skip weight decay (`norms_and_biases`; AdamW also `norms_biases_embeddings`). |
 
 An optimizer's `lr_schedule` and a scheduler node both set the learning
@@ -137,6 +136,6 @@ To find a good learning rate or other values automatically, see
 - [Train a model and watch it](train-and-watch.md)
 - [Train on unbalanced classes](class-imbalance.md)
 - [Checkpoints, early stopping and resume](checkpoints-and-early-stopping.md)
-- [Learning-rate schedulers](../../usage/lr_schedulers.md)
-- [Regularization nodes](../../usage/regularization.md)
-- [Gradient clipping](../../usage/gradient_clipping.md)
+- [Learning-rate schedulers](../../reference/nodes/categories/training.md#learning-rate-schedulers)
+- [Regularization nodes](../../reference/nodes/categories/regularization.md)
+- [Gradient clipping](../../reference/nodes/categories/training.md#gradient-clipping)

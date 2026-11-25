@@ -110,4 +110,4 @@ when the graph's image steps change. To change the steps, see
 - [Profile a dataset](profile.md)
 - [Bring data into Data Studio](bring-in-data.md)
 - [Quality Analyzer](quality-analyzer.md)
-- [Image transforms](../../usage/image_transforms.md)
+- [Image transforms](../../reference/nodes/categories/preprocessing.md#image-transforms)

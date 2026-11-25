@@ -52,11 +52,11 @@ To write your own nodes in Python or C++, see
 | [Data bigger than memory](../concepts/data-bigger-than-memory.md) | Tables on disk and the data budget |
 | [Table Viewer](../main-window/table-viewer.md) | Sorting, filtering and formatting a table |
 | [SQL steps and the SQL Workbench](../user-guide/data-studio/sql-workbench.md) | SQL steps and guided steps |
-| [Scaling and transforms](data_transforms.md) | Scaling and shape changes as graph steps |
-| [Image transforms](image_transforms.md) | Image nodes between the Data Input and the model |
+| [Scaling and transforms](../reference/nodes/categories/preprocessing.md#scaling-and-transforms) | Scaling and shape changes as graph steps |
+| [Image transforms](../reference/nodes/categories/preprocessing.md#image-transforms) | Image nodes between the Data Input and the model |
 | [Quality Analyzer](../user-guide/data-studio/quality-analyzer.md) | Leaving poor images out of training |
 | [Splitting images and audio](../user-guide/data-studio/split-images-and-audio.md) | Train, validation and test parts of an image or audio dataset |
-| [Text vectorizers](text_vectorizers.md) | TF-IDF and count vectorizers |
+| [Text vectorizers](../reference/nodes/categories/text.md#text-vectorizers) | TF-IDF and count vectorizers |
 | [Word embeddings](word_embeddings.md) | word2vec, GloVe and fastText vectors |
 
 ## Exploring and analysing
@@ -84,16 +84,16 @@ To write your own nodes in Python or C++, see
 
 | Page | What it covers |
 | --- | --- |
-| [Classic ML models](classic_ml.md) | Naive Bayes, KNN, logistic regression, SVM |
-| [Convolutional layers](cnn_layers.md) | Training image graphs as CNNs |
+| [Classic ML models](../reference/nodes/categories/analytics.md#classic-models) | Naive Bayes, KNN, logistic regression, SVM |
+| [Convolutional layers](../reference/nodes/categories/ml-layers.md#convolutional-networks) | Training image graphs as CNNs |
 | [Starting from published weights](../user-guide/training/start-from-pretrained-weights.md) | Training from a PyTorch or safetensors weight file |
 | [Image classifier: a ResNet from scratch](../tutorials/image-classifier-resnet.md) | The cats vs dogs ResNet example, from data to a test score |
-| [Conv3D](conv3d.md) | Convolution over volumes |
-| [Cross Attention](cross_attention.md) | One sequence attending to another |
-| [Linear Attention](linear_attention.md) | Self-attention with linear cost |
-| [Regularization nodes](regularization.md) | Penalties on the model's parameters |
-| [Learning-rate schedulers](lr_schedulers.md) | Changing the learning rate during training |
-| [Gradient clipping](gradient_clipping.md) | Limiting how far one step can move the weights (as PyTorch's clip_grad_norm_) |
+| [Conv3D](../reference/nodes/ml-layers/conv3d.md) | Convolution over volumes |
+| [Cross Attention](../reference/nodes/attention/cross-attention.md) | One sequence attending to another |
+| [Linear Attention](../reference/nodes/attention/linear-attention.md) | Self-attention with linear cost |
+| [Regularization nodes](../reference/nodes/categories/regularization.md) | Penalties on the model's parameters |
+| [Learning-rate schedulers](../reference/nodes/categories/training.md#learning-rate-schedulers) | Changing the learning rate during training |
+| [Gradient clipping](../reference/nodes/categories/training.md#gradient-clipping) | Limiting how far one step can move the weights (as PyTorch's clip_grad_norm_) |
 | [Metric learning](../user-guide/training/metric-learning.md) | Pairs and triplets |
 | [Sentiment text classification](../tutorials/sentiment-text-classification.md) | The example text classification graphs |
 

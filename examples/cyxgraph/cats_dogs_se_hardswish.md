@@ -50,6 +50,6 @@ saves no path.
 - `reduction` 16 (the paper's value) makes the gate narrower.
 - LR Schedule `warmup_cosine` with Warmup Ratio 0.05, for a gentler curve.
 
-More: `docs/usage/cnn_layers.md` (Squeeze-Excitation),
-`docs/usage/lr_schedulers.md` (the optimizer's own schedule),
-`docs/usage/regularization.md` (SGD's weight decay and Nesterov).
+More: `docs/reference/nodes/normalization/squeeze-excitation.md`,
+`docs/reference/nodes/categories/training.md` (the optimizer's own schedule),
+`docs/reference/nodes/categories/regularization.md` (weight decay on SGD).

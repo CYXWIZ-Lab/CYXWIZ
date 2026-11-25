@@ -22,9 +22,10 @@ left out, as the docs rules require.
 Hand notes: docs/reference/nodes/_notes/<category>.md is added to the end of
 the category page, docs/reference/nodes/_notes/<category>/<node>.md to the end
 of the node page. A note may start with front matter whose related,
-redirect_from, description, area and owner replace the generated ones. Notes
-sit at the same depth as the page they join, so their relative links work as
-written.
+redirect_from, description, area and owner replace the generated ones. A
+note's relative links (and its related and redirect_from paths) are written as
+seen from the page it joins: categories/ for a category note, <category>/ for
+a node note; check_docs.py checks them there.
 
 Each page starts with the docs front matter (generated: true). last_reviewed,
 since and status are kept from the committed page, so regenerating does not

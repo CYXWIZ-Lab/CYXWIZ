@@ -307,7 +307,7 @@ uses float32; some analysis uses float64 where the device has it. See
 uses it to update the weights.
 
 **Gradient clipping**: limiting the size of gradients. See
-[Gradient clipping](usage/gradient_clipping.md).
+[Gradient clipping](reference/nodes/categories/training.md#gradient-clipping).
 
 **Graph**: the nodes and links that describe the data steps, the model and
 how it trains.
@@ -372,7 +372,7 @@ training. See [Layer capture](user-guide/training/layer-capture.md).
 **Learning rate**: the size of each optimizer step.
 
 **Learning-rate scheduler**: a node that changes the learning rate during
-training. See [Learning-rate schedulers](usage/lr_schedulers.md).
+training. See [Learning-rate schedulers](reference/nodes/categories/training.md#learning-rate-schedulers).
 
 **Link**: a connection from an output pin to an input pin.
 
@@ -547,7 +547,7 @@ the rows predicted as a class, the share right (precision).
 Data Studio and the views all read from it.
 
 **Regularization**: methods that keep weights small or sparse to reduce
-overfitting. See [Regularization](usage/regularization.md).
+overfitting. See [Regularization](reference/nodes/categories/regularization.md).
 
 **Reservation**: a block of time on a server node held for you. See
 [Server Connection](server-and-cloud/server-address.md).

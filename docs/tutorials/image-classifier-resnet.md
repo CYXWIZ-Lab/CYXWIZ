@@ -58,7 +58,7 @@ mid-range GPU, much longer on a CPU. For more than two classes see
   Jitter (brightness, contrast, saturation 0.2).
 - Normalize with the ImageNet per-channel mean and standard deviation.
   **Data Studio > Prepare** lists these steps in order (see
-  [Image transforms](../usage/image_transforms.md)).
+  [Image transforms](../reference/nodes/categories/preprocessing.md#image-transforms)).
 
 **Stem + stage 1** (32 channels, 64 x 64)
 
@@ -86,7 +86,7 @@ mid-range GPU, much longer on a CPU. For more than two classes see
 - AdamW (learning rate 0.002, weight decay 0.05) with **lr_schedule**
   *warmup_cosine*: the rate rises over the first 5 % of updates, then
   follows a cosine down to 1 % of 0.002 (see
-  [Learning-rate schedulers](../usage/lr_schedulers.md)).
+  [Learning-rate schedulers](../reference/nodes/categories/training.md#learning-rate-schedulers)).
 
 The model has about 1.2 million weights. The **As compiled** card on each
 node shows its shapes, for example Stage 4's BatchNorm: [8, 8, 256] per
@@ -147,6 +147,6 @@ own set before training.
 - [Leave poor images out with the Quality Analyzer](../user-guide/data-studio/quality-analyzer.md)
 - [Split images and audio](../user-guide/data-studio/split-images-and-audio.md)
 - [Test a trained model](../user-guide/evaluation/test-a-trained-model.md)
-- [Convolutional layers](../usage/cnn_layers.md)
+- [Convolutional layers](../reference/nodes/categories/ml-layers.md#convolutional-networks)
 - [Fine-tune a published ResNet-18](../main-window/pattern-browser.md#starting-from-torchvisions-weights)
   instead of training from scratch

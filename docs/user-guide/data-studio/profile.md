@@ -130,7 +130,7 @@ spread 0.51, 0.50, 0.50*).
    spread 1.00*.
 
 The figures clear when the graph's image steps change. See
-[Normalize per channel](../../usage/image_transforms.md#normalize-per-channel).
+[Normalize per channel](../../reference/nodes/preprocessing/normalize.md#per-channel-statistics).
 
 ### Measure image quality
 

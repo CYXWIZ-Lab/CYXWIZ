@@ -56,7 +56,7 @@ a Quality Analyzer leaves out are taken out first.
 
 - **Train**: the model learns from these. Only they are shuffled each epoch
   and only they get the random transforms (see
-  [image transforms](../../usage/image_transforms.md)).
+  [image transforms](../../reference/nodes/categories/preprocessing.md#image-transforms)).
 - **Validation**: scored after every epoch, in the same order each time.
 - **Test**: kept out of training and scored once at the end of training,
   and by **Train > Test > Run Test** (F8) and **Run Quick Test** (see

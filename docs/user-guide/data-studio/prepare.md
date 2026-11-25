@@ -12,7 +12,7 @@ related:
   - explore.md
   - validate.md
   - sql-workbench.md
-  - ../../usage/data_transforms.md
+  - ../../reference/nodes/categories/preprocessing.md
 ---
 
 The **Prepare** job of Data Studio shows the graph's Preparation Recipe step
@@ -77,7 +77,7 @@ names the step, *SQL Query node* and what it reads.
   another scaler, keeping its links and columns. The view shows the last
   run's before and after per column with two histograms, a power step's λ,
   skewness, normality test and likelihood curve, and **Compare methods**.
-  See [scaling and transforms](../../usage/data_transforms.md#the-step-in-prepare).
+  See [scaling and transforms](../../reference/nodes/categories/preprocessing.md#the-step-in-prepare).
 - **Other steps** (a Check, a step node) show their last outcome, their
   settings as saved in the graph, **Run step**, **Open dialog** and **Show
   on canvas**. Change their settings in the node's dialog.
@@ -131,6 +131,6 @@ Changed in 1.0.8: the scale, power and log step view, and the image recipe.
 
 - [SQL Workbench](sql-workbench.md)
 - [Check a dataset before training](validate.md)
-- [Scaling and transforms](../../usage/data_transforms.md)
+- [Scaling and transforms](../../reference/nodes/categories/preprocessing.md#scaling-and-transforms)
 - [Prepare images with the image recipe](image-recipe.md)
 - [Explore a dataset](explore.md)

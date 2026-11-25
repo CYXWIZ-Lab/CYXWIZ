@@ -11,7 +11,7 @@ last_reviewed: 2026-11-25
 related:
   - text-embeddings.md
   - explore.md
-  - ../../usage/text_vectorizers.md
+  - ../../reference/nodes/categories/text.md
 redirect_from:
   - ../../usage/text.md
 ---
@@ -75,7 +75,7 @@ Vectorizer nodes split it that way too:
   `ENGLISH_STOP_WORDS` (318) and their contractions (54: "don't", "i'm",
   ...). They include "not", "no" and "nor": leave them in when a negation
   matters (see
-  [text vectorizers](../../usage/text_vectorizers.md#n-grams-and-stop-words));
+  [text vectorizers](../../reference/nodes/categories/text.md#n-grams-and-stop-words));
 - a **stem** is the Porter (1980) stem ("feeling" and "feels" count as
   "feel"), NLTK's `PorterStemmer(mode="ORIGINAL_ALGORITHM")`.
 
@@ -163,7 +163,7 @@ copies the row's tokens and ids.
 
 | Look | Node | What it adds |
 | --- | --- | --- |
-| Terms | TF-IDF (`TFIDFVectorizer`) | tfidf_0 .. columns ([text vectorizers](../../usage/text_vectorizers.md)) |
+| Terms | TF-IDF (`TFIDFVectorizer`) | tfidf_0 .. columns ([text vectorizers](../../reference/nodes/categories/text.md#text-vectorizers)) |
 | Sentiment | Sentiment Analysis (`SentimentAnalyzer`) | `<text>_compound`, `_positive`, `_neutral`, `_negative`, `_sentiment` beside the others |
 | Tokens | Tokenizer (`TextTokenizer`) | token id columns |
 | Embeddings | Word Embeddings (`WordEmbeddings`) | word vectors for an Embedding layer ([word embeddings](../../usage/word_embeddings.md)) |
@@ -193,5 +193,5 @@ negation pairs, stems, VADER per review, and where a lexicon misreads):
 ## Related
 
 - [Learn word vectors from a text column](text-embeddings.md)
-- [Text vectorizer nodes](../../usage/text_vectorizers.md)
+- [Text vectorizer nodes](../../reference/nodes/categories/text.md#text-vectorizers)
 - [Explore your data](explore.md)

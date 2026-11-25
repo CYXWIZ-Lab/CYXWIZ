@@ -48,4 +48,4 @@ saves no path.
   Inspector shows the sample as the same sheet.
 
 Rules for images with more than three channels:
-`docs/usage/image_transforms.md`, section More than three channels.
+`docs/reference/nodes/preprocessing/image-gabor.md` and `docs/reference/nodes/categories/preprocessing.md`, section More than three channels.

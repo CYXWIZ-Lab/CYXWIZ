@@ -129,6 +129,7 @@ def check_page(path: Path, rel: Path, docs: Path, errors: list[str]) -> None:
                     errors.append(f"{where}:{n}: {what} in a published page")
     if "templates" in rel.parts:
         return
+    base = note_base(path, rel, docs)
     for n, line in enumerate(text.splitlines(), start=1):
         for target in LINK.findall(line):
             if re.match(r"^[a-z]+:", target) or target.startswith("#"):
@@ -136,8 +137,23 @@ def check_page(path: Path, rel: Path, docs: Path, errors: list[str]) -> None:
             file_part = target.split("#", 1)[0]
             if not file_part:
                 continue
-            if not (path.parent / file_part).resolve().exists():
+            if not (base / file_part).resolve().exists():
                 errors.append(f"{where}:{n}: broken link '{target}'")
+
+
+def note_base(path: Path, rel: Path, docs: Path) -> Path:
+    """The folder a page's relative links start from. A node-reference note is merged into a
+    generated page, so its links start where that page is (generate_node_reference.py):
+    _notes/index.md -> nodes/index.md, _notes/<category>.md -> nodes/categories/<category>.md,
+    _notes/<category>/<node>.md -> nodes/<category>/<node>.md."""
+    parts = rel.parts
+    if parts[:3] != ("reference", "nodes", "_notes"):
+        return path.parent
+    nodes = docs / "reference" / "nodes"
+    inner = parts[3:]
+    if len(inner) == 1:
+        return nodes if inner[0] == "index.md" else nodes / "categories"
+    return nodes.joinpath(*inner[:-1])
 
 
 def main() -> int:

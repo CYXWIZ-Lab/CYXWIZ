@@ -67,7 +67,7 @@ inputs in order (Input 1, or A, first):
 | --- | --- | --- |
 | **Tensor Dot** | A · B, one value per row | `(a * b).sum(-1)` |
 | **Tensor Batch MatMul** | A `[rows, inner]` × B `[inner, columns]` → `[rows, columns]` | `torch.bmm(a, b)` |
-| **Cross Attention** | Query over Key / Value (see [Cross Attention](../../usage/cross_attention.md)) | `nn.MultiheadAttention(q, k, v)` |
+| **Cross Attention** | Query over Key / Value (see [Cross Attention](../../reference/nodes/attention/cross-attention.md)) | `nn.MultiheadAttention(q, k, v)` |
 
 For example, rows of `[5, 3]`, Split size 2, give A `[2, 3]` and B
 `[3, 3]`; Tensor Batch MatMul gives `[2, 3]`; Flatten gives `[6]` for a
@@ -128,7 +128,7 @@ The compiler reports each problem on the node, with the shapes involved:
 - In a CNN, put Split after **Flatten**: before it the tensors are images
   `[H, W, C]` and Split cuts rows. Fan-out and **Add** do work on images:
   that is a residual block (see
-  [Convolutional layers](../../usage/cnn_layers.md#residual-blocks)).
+  [Convolutional layers](../../reference/nodes/categories/ml-layers.md#residual-blocks)).
 
 ## Export a branched graph
 

@@ -12,7 +12,7 @@ related:
   - index.md
   - text-classification.md
   - ../user-guide/data-studio/text.md
-  - ../usage/text_vectorizers.md
+  - ../reference/nodes/categories/text.md
 redirect_from:
   - ../usage/sentiment_text_classification.md
 ---
@@ -121,12 +121,12 @@ vocabulary, the Arrow builders, the labels and the training batches. The
 TF-IDF node checks the memory it needs before it builds the table and
 refuses a run that does not fit. Then lower `max_features`, use fewer
 rows, or set `output_format` to *sparse*, which keeps only the non-zero
-values (see [Text vectorizers](../usage/text_vectorizers.md)).
+values (see [Text vectorizers](../reference/nodes/categories/text.md#text-vectorizers)).
 
 ## Next steps
 
 - [Explore a text column](../user-guide/data-studio/text.md): Data
   Studio's **Explore > Text**.
-- [Text vectorizers](../usage/text_vectorizers.md): every TF-IDF and Count
+- [Text vectorizers](../reference/nodes/categories/text.md#text-vectorizers): every TF-IDF and Count
   setting.
 - [Test a trained model](../user-guide/evaluation/test-a-trained-model.md)
