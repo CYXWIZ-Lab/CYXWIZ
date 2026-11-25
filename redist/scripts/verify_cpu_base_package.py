@@ -176,8 +176,36 @@ def install(archive: Path, manifest: dict[str, Any], install_root: Path) -> Path
     return base
 
 
+def user_profile(install_root: Path) -> Path:
+    """The scratch profile every check runs with: the Engine's user folders."""
+    return install_root / "user-profile"
+
+
+def user_folder_environment(profile: Path) -> dict[str, str]:
+    """Points the user folders the Engine writes to into `profile`."""
+    return {
+        "APPDATA": str(profile / "AppData" / "Roaming"),
+        "LOCALAPPDATA": str(profile / "AppData" / "Local"),
+        "USERPROFILE": str(profile),
+        "HOME": str(profile),
+        "XDG_STATE_HOME": str(profile / ".local" / "state"),
+        "XDG_CACHE_HOME": str(profile / ".cache"),
+    }
+
+
+def expected_engine_log(profile: Path, system: str | None = None) -> Path:
+    """Where an installed Engine writes engine_log.txt with `profile` as its user folders."""
+    system = system or platform.system()
+    if system == "Windows":
+        return profile / "AppData" / "Local" / "CyxWiz" / "Engine" / "logs" / "engine_log.txt"
+    if system == "Darwin":
+        return profile / "Library" / "Logs" / "CyxWiz" / "engine_log.txt"
+    return profile / ".local" / "state" / "cyxwiz" / "engine" / "logs" / "engine_log.txt"
+
+
 def contaminated_environment(install_root: Path) -> dict[str, str]:
     environment = os.environ.copy()
+    environment.update(user_folder_environment(user_profile(install_root)))
     marker = install_root / "cyxwiz-untrusted-marker"
     for name in OVERRIDE_VARIABLES:
         environment[name] = str(marker)
@@ -404,12 +432,46 @@ def package_inventory(install_root: Path) -> tuple[list[dict[str, Any]], int]:
     total = 0
     for path in sorted(item for item in install_root.rglob("*") if item.is_file()):
         relative = path.relative_to(install_root).as_posix()
-        if relative in ("runtime/bootstrapper.log",) or path.name == "engine_log.txt":
+        if relative in ("runtime/bootstrapper.log",):
             continue
         size = path.stat().st_size
         total += size
         files.append({"path": relative, "size_bytes": size, "sha256": sha256_file(path)})
     return files, total
+
+
+def base_inventory(base: Path) -> dict[str, str]:
+    """Every file of the installed base and its digest."""
+    return {
+        path.relative_to(base).as_posix(): sha256_file(path)
+        for path in sorted(item for item in base.rglob("*") if item.is_file())
+    }
+
+
+def require_base_unchanged(base: Path, before: dict[str, str]) -> None:
+    """The base is a signed package: running it must add, change or remove nothing."""
+    after = base_inventory(base)
+    added = sorted(set(after) - set(before))
+    removed = sorted(set(before) - set(after))
+    changed = sorted(path for path in set(before) & set(after) if before[path] != after[path])
+    problems = [
+        *(f"added {path}" for path in added),
+        *(f"changed {path}" for path in changed),
+        *(f"removed {path}" for path in removed),
+    ]
+    if problems:
+        raise CpuBaseSmokeError(
+            "Running the installed base changed it: " + "; ".join(problems[:20])
+            + (f" (and {len(problems) - 20} more)" if len(problems) > 20 else "")
+        )
+
+
+def require_engine_log(profile: Path) -> Path:
+    """The Engine logged to the user's log folder, not into the base."""
+    log = expected_engine_log(profile)
+    if not log.is_file():
+        raise CpuBaseSmokeError(f"The Engine wrote no log in the user's log folder: {log}")
+    return log
 
 
 def verify(
@@ -428,6 +490,9 @@ def verify(
     manifest = load_manifest(manifest_path, archive)
     base = install(archive, manifest, install_root)
     files, installed_size = package_inventory(install_root)
+    base_before = base_inventory(base)
+    profile = user_profile(install_root)
+    profile.mkdir(parents=True, exist_ok=True)
     if platform.system() == "Windows":
         # Hosted runners have the VC++ redistributable, so launching cannot
         # prove the package carries its own MSVC runtime; check the imports.
@@ -506,6 +571,10 @@ def verify(
         module_paths = audit_linux_dependencies(
             base, package_environment(install_root, base)
         )
+    # Nothing the checks ran wrote into the base; the Engine's log is in the
+    # user's log folder.
+    require_base_unchanged(base, base_before)
+    engine_log = require_engine_log(profile)
     signed = manifest["signed"]
     return {
         "schema_version": 1,
@@ -528,6 +597,11 @@ def verify(
             "package_runtime_modules": module_paths,
         },
         "checks": checks,
+        "base_unchanged": {
+            "status": "passed",
+            "file_count": len(base_before),
+            "engine_log": engine_log.relative_to(install_root).as_posix(),
+        },
         "cpu_benchmark": benchmark,
         "accelerator_routes": [
             {"route": route, "status": "not_run", "reason": "physical_supported_hardware_required"}
