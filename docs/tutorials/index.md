@@ -1,6 +1,6 @@
 ---
 title: Tutorials
-description: A six-lesson learning path from the main window to an exported model, then lessons on text, audio, time series and Python.
+description: A six-lesson learning path from the main window to an exported model, then lessons on text, audio, time series, Python and more.
 type: tutorial
 area: general
 audience: user
@@ -59,6 +59,20 @@ what is particular to its data. Take lesson 2 first.
   the digits network of lesson 2, written with `pycyxwiz` and run inside
   the Engine.
 
+## More lessons
+
+These go further than the learning path. Take lessons 1 to 5 first.
+
+- [Find customer segments with analysis nodes](analysis-demo-graph.md)
+  (10 minutes): scale a customer table, project it with PCA, and compare
+  K-Means and DBSCAN with the true segments on three plots.
+- [Train a small ResNet image classifier from scratch](image-classifier-resnet.md):
+  residual blocks, image steps once and per batch, label smoothing and a
+  test score. Needs your own two-class image folder and, in practice, a GPU.
+- [Compare two TF-IDF text classifiers](sentiment-text-classification.md):
+  unigrams against unigrams and bigrams, stop words and negation, and a fair
+  comparison. Needs your own labelled text CSV.
+
 ## What the lessons use
 
 | Lesson | Graph | Data in `examples/datasets` |
@@ -69,6 +83,9 @@ what is particular to its data. Take lesson 2 first.
 | Audio | **Audio classification** (`speech_command_classifier.cyxgraph`) | `spoken_digits/`: 400 clips |
 | Time series | **Time-series forecasting** (`timeseries/airline_passengers_dense.cyxgraph`) | `airline_passengers.csv`: 144 months |
 | Python | `examples/python/digits_mlp.py` | `digits_8x8.csv` |
+| Customer segments | `analysis/customer_segments_analysis.cyxgraph` | `customer_segments.csv` beside the graph: 248 made-up customers |
+| ResNet | `cats_dogs_resnet_scratch.cyxgraph` | Not shipped: a two-class image folder of your own |
+| TF-IDF | The two TF-IDF graphs in `Sentiment analysis/` | Not shipped: a labelled text CSV of your own |
 
 The samples are small so that every lesson trains in seconds to a few
 minutes on a CPU. They are for learning the Engine, not for judging a

@@ -76,7 +76,7 @@ To write your own nodes in Python or C++, see
 | [Feature Importance](../user-guide/evaluation/feature-importance.md) | Which columns matter to a model |
 | [Hyperparameter Search](../user-guide/training/hyperparameter-search.md) | Train the graph with different property values and keep the best |
 | [Neural Architecture Search](../user-guide/training/neural-architecture-search.md) | Score the model, change its layers, search, train the best versions, put one on the canvas |
-| [Analysis demo graph](analysis_demo_graph.md) | Analysis nodes working together on one dataset |
+| [Analysis demo graph](../tutorials/analysis-demo-graph.md) | Analysis nodes working together on one dataset |
 | [Plotting](../user-guide/evaluation/plotting.md) | Plots, the Plot node and Python plotting |
 | [Dashboard node](../reference/nodes/categories/visualization.md) | A summary and grid of the data at a point in the graph |
 
@@ -87,7 +87,7 @@ To write your own nodes in Python or C++, see
 | [Classic ML models](classic_ml.md) | Naive Bayes, KNN, logistic regression, SVM |
 | [Convolutional layers](cnn_layers.md) | Training image graphs as CNNs |
 | [Starting from published weights](../user-guide/training/start-from-pretrained-weights.md) | Training from a PyTorch or safetensors weight file |
-| [Image classifier: a ResNet from scratch](image_classifier_resnet.md) | The cats vs dogs ResNet example, from data to a test score |
+| [Image classifier: a ResNet from scratch](../tutorials/image-classifier-resnet.md) | The cats vs dogs ResNet example, from data to a test score |
 | [Conv3D](conv3d.md) | Convolution over volumes |
 | [Cross Attention](cross_attention.md) | One sequence attending to another |
 | [Linear Attention](linear_attention.md) | Self-attention with linear cost |
@@ -95,7 +95,7 @@ To write your own nodes in Python or C++, see
 | [Learning-rate schedulers](lr_schedulers.md) | Changing the learning rate during training |
 | [Gradient clipping](gradient_clipping.md) | Limiting how far one step can move the weights (as PyTorch's clip_grad_norm_) |
 | [Metric learning](../user-guide/training/metric-learning.md) | Pairs and triplets |
-| [Sentiment text classification](sentiment_text_classification.md) | The example text classification graphs |
+| [Sentiment text classification](../tutorials/sentiment-text-classification.md) | The example text classification graphs |
 
 ## Training, testing and results
 

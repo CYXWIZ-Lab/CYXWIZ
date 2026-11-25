@@ -834,7 +834,7 @@ private Data Studio tickets (`tofix*/track*`).
   `examples/python/text_words_and_sentiment.py`).
 - **Example: cats vs dogs ResNet from scratch**
   (`examples/cyxgraph/cats_dogs_resnet_scratch.cyxgraph`, guide in
-  `docs/usage/image_classifier_resnet.md`): 92.6 % test accuracy on one
+  `docs/tutorials/image-classifier-resnet.md`): 92.6 % test accuracy on one
   GTX 1050 Ti.
 - **Python: `BCEWithLogitsLoss(reduction, pos_weight, label_smoothing)`** and
   a `label_smoothing` property.
