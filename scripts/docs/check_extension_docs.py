@@ -1,14 +1,16 @@
-"""Checks the hand-written SDK docs against the code.
+"""Checks the hand-written SDK and Python library docs against the code.
 
     python check_extension_docs.py <folder holding pycyxwiz> [<folder of its DLLs>]
 
 For every hand-written page in GUIDES (docs/sdk, the node contract and
-docs/usage/extension_nodes.md; the generated reference pages are checked by
-generate_extension_reference.py --check):
+docs/usage/extension_nodes.md) and PYTHON_GUIDES (docs/python; the generated
+reference pages are checked by generate_extension_reference.py --check):
 
 - Python samples run. The ```python blocks of a page run in order, in one
-  namespace, in a fresh scratch folder, with the pycyxwiz under test. A block
-  that must not run is preceded by <!-- not run: <reason> -->.
+  namespace, in a fresh scratch folder, with the pycyxwiz under test. The
+  scratch folder holds a copy of the repository's examples/datasets/*.csv at
+  examples/datasets/, so a sample can read a committed dataset by that path.
+  A block that must not run is preceded by <!-- not run: <reason> -->.
 - C++ and CMake samples are real code. A ```cpp or ```cmake block is
   preceded by <!-- excerpt: <path from the repository root> -->, and every
   line of it appears, in order, in that file (a file the build compiles or
@@ -16,8 +18,9 @@ generate_extension_reference.py --check):
   block that is not an excerpt says <!-- not compiled: <reason> -->.
 - The page says which versions it was checked against:
   "Checked against plugin API <x.y.z> and pycyxwiz <version>." with the
-  versions of this tree. When either changes, every page fails until
-  someone re-reads it against the code and updates the line.
+  versions of this tree ("Checked against pycyxwiz <version>." on the
+  docs/python pages). When either changes, every page fails until someone
+  re-reads it against the code and updates the line.
 - Relative links resolve, in these pages, the generated pages,
   docs/usage/README.md and the root README.md.
 
@@ -37,8 +40,6 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 import generate_extension_reference as reference  # noqa: E402
 
-# The generated pages, from generate_extension_reference.PAGES (paths under docs/).
-GENERATED = sorted(name for name, _ in reference.PAGES.values())
 
 # The hand-written pages whose samples, excerpts, version line and links are checked.
 GUIDES = [
@@ -55,9 +56,31 @@ GUIDES = [
     "usage/extension_nodes.md",
 ]
 
+# The hand-written pages of the Python library section (docs/python), checked
+# the same way; their version line names pycyxwiz only.
+PYTHON_GUIDES = [
+    "python/index.md",
+    "python/quickstart.md",
+    "python/tensors-and-devices.md",
+    "python/layers-models-and-losses.md",
+    "python/training-loops.md",
+    "python/working-with-data.md",
+    "python/evaluation-and-metrics.md",
+    "python/saving-and-loading.md",
+    "python/maths-and-optimization.md",
+    "python/signals-statistics-and-text.md",
+    "python/engine-and-standalone.md",
+    "python/performance.md",
+    "python/examples.md",
+]
+
 
 def guides():
-    return [os.path.join(REPO, "docs", *name.split("/")) for name in GUIDES]
+    return [os.path.join(REPO, "docs", *name.split("/")) for name in GUIDES + PYTHON_GUIDES]
+
+
+def is_python_guide(page):
+    return rel(page)[len("docs/"):] in PYTHON_GUIDES
 
 
 def rel(path):
@@ -110,6 +133,12 @@ def check_excerpt(code, path):
 
 def run_python_blocks(page, python_blocks, problems):
     scratch = tempfile.mkdtemp(prefix="cyxwiz_docs_")
+    datasets = os.path.join(REPO, "examples", "datasets")
+    if os.path.isdir(datasets):
+        os.makedirs(os.path.join(scratch, "examples", "datasets"))
+        for name in os.listdir(datasets):
+            if name.endswith(".csv"):
+                shutil.copy(os.path.join(datasets, name), os.path.join(scratch, "examples", "datasets", name))
     namespace = {"__name__": "__docs__"}
     old_cwd = os.getcwd()
     os.chdir(scratch)
@@ -149,12 +178,14 @@ def main():
         return 2
     folder = os.path.abspath(args[0])
     pc = reference.import_pycyxwiz(folder, os.path.abspath(args[1]) if len(args) > 1 else folder)
-    stamp = "Checked against plugin API {} and pycyxwiz {}.".format(reference.plugin_api_version(),
-                                                                     pc.get_version())
+    sdk_stamp = "Checked against plugin API {} and pycyxwiz {}.".format(reference.plugin_api_version(),
+                                                                         pc.get_version())
+    python_stamp = "Checked against pycyxwiz {}.".format(pc.get_version())
     problems = []
     for page in guides():
         with open(page, encoding="utf-8") as f:
             text = f.read()
+        stamp = python_stamp if is_python_guide(page) else sdk_stamp
         if stamp not in text:
             problems.append("{}: missing or old version line; after re-reading the page against the code, "
                             "it must say: {}".format(rel(page), stamp))
@@ -182,7 +213,7 @@ def main():
     for extra in (os.path.join(REPO, "README.md"), os.path.join(REPO, "docs", "usage", "README.md")):
         with open(extra, encoding="utf-8") as f:
             check_links(extra, f.read(), problems)
-    for name in GENERATED:
+    for name in reference.generated_pages():
         path = os.path.join(REPO, "docs", *name.split("/"))
         with open(path, encoding="utf-8") as f:
             check_links(path, f.read(), problems)

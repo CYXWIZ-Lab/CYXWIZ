@@ -19,7 +19,7 @@ from datetime import date
 from pathlib import Path
 
 NEW_TREE = {
-    "install", "tutorials", "user-guide", "main-window", "concepts", "reference", "sdk",
+    "install", "tutorials", "user-guide", "main-window", "concepts", "reference", "sdk", "python",
     "server-and-cloud", "distributed-training", "troubleshooting", "whats-new",
     "release-notes", "internals", "security", "legal", "about",
 }
@@ -30,7 +30,7 @@ REQUIRED = ["title", "description", "type", "area", "status", "since", "owner", 
 ALLOWED = {
     "type": {"tutorial", "how-to", "reference", "explanation", "landing", "troubleshooting", "release-notes"},
     "area": {"general", "install", "graph-editor", "data-studio", "training", "evaluation", "deployment",
-             "simulation", "scripting", "plugins", "remote", "sdk", "server-and-cloud", "internals",
+             "simulation", "scripting", "plugins", "remote", "sdk", "python", "server-and-cloud", "internals",
              "security", "legal", "about"},
     "audience": {"user", "plugin-developer", "operator", "contributor", "organisation"},
     "status": {"experimental", "beta", "stable", "deprecated", "removed"},

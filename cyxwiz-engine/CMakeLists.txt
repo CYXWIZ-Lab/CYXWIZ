@@ -1400,7 +1400,7 @@ if(TARGET pycyxwiz)
         $<TARGET_FILE_DIR:cyxwiz-engine>/${_cyxwiz_pycyxwiz_name}
         COMMENT "Copying pycyxwiz Python module..."
     )
-    # The SDK docs (docs/sdk) against the code (TOFIX125): the generated reference
+    # The SDK and Python library docs (docs/sdk, docs/python) against the code (TOFIX125): the generated reference
     # pages match pycyxwiz and the SDK headers, and the guides' samples run,
     # their excerpts match, their version line is current and links resolve.
     if(Python3_EXECUTABLE)

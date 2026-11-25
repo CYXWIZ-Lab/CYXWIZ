@@ -109,7 +109,7 @@ namespace {
 // Help > Documentation, API Reference, What's New: the guides online (only
 // KNOWN_ISSUES.md ships beside the Engine).
 constexpr const char* kDocsUrl = "https://github.com/CYXWIZ-Lab/CYXWIZ/blob/HEAD/docs/usage/README.md";
-constexpr const char* kApiUrl = "https://github.com/CYXWIZ-Lab/CYXWIZ/blob/HEAD/docs/sdk/python-api/index.md";
+constexpr const char* kApiUrl = "https://github.com/CYXWIZ-Lab/CYXWIZ/blob/HEAD/docs/python/reference/index.md";
 constexpr const char* kReleaseNotesUrl = "https://github.com/CYXWIZ-Lab/CYXWIZ/blob/HEAD/docs/RELEASE_NOTES.md";
 
 // KNOWN_ISSUES.md beside the Engine (a release), or up its folders (a

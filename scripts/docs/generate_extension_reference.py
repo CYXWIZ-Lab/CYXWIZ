@@ -1,11 +1,15 @@
-"""Generates the SDK reference pages in docs/sdk from the code.
+"""Generates the reference pages of pycyxwiz and the SDK from the code.
 
     python generate_extension_reference.py <folder holding pycyxwiz> [<folder of its DLLs>] [--check]
 
 Writes, from what the build actually provides:
 
-- docs/sdk/python-api/index.md: every public name of pycyxwiz with its
-  signature and docstring, read from the built module.
+- docs/python/reference/: every public name of pycyxwiz with its signature
+  and docstring, read from the built module. One page per submodule
+  (pycyxwiz.linalg, pycyxwiz.signal, ...), one page per group of the
+  top-level names (PYTHON_GROUPS: tensors and devices, modules, layers, ...)
+  and an index. A top-level name no group claims goes to other.md, so a new
+  name is never left out; give it a group.
 - docs/sdk/tensor-operations.md: the tensor operations a node can use,
   side by side for C++ (cyxwiz::Tensor in the SDK headers) and Python
   (pycyxwiz.Tensor and the module functions).
@@ -31,26 +35,76 @@ import types
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DOCS = os.path.join(REPO, "docs")
-# Generated page: its path under docs/ and its front matter.
+# The SDK pages: path under docs/ and front matter. redirect_from entries are
+# relative to the page, as on every page of the docs.
+SDK_META = {"area": "sdk", "audience": "plugin-developer", "owner": "sdk"}
 PAGES = {
-    "python": ("sdk/python-api/index.md", {
-        "title": "pycyxwiz API reference",
-        "description": "Every public name of the pycyxwiz Python module, with its signature and description.",
-        "since": "1.0.8",
-        "redirect_from": ["extending/python-api-reference.md"],
-    }),
-    "tensor": ("sdk/tensor-operations.md", {
+    "tensor": ("sdk/tensor-operations.md", dict(SDK_META, **{
         "title": "Tensor operations for nodes",
         "description": "The tensor operations a node's forward and backward can use, C++ and Python side by side.",
         "since": "1.0.8",
-        "redirect_from": ["extending/tensor-operations.md"],
-    }),
-    "sdk": ("sdk/sdk-contents.md", {
+        "redirect_from": ["../extending/tensor-operations.md"],
+    })),
+    "sdk": ("sdk/sdk-contents.md", dict(SDK_META, **{
         "title": "What the plugin SDK contains",
         "description": "Every header the plugin SDK installs, with its summary and the types it declares.",
         "since": "1.0.8",
-        "redirect_from": ["extending/sdk-contents.md"],
-    }),
+        "redirect_from": ["../extending/sdk-contents.md"],
+    })),
+}
+
+# The pycyxwiz reference: docs/python/reference/<page>.md.
+PYTHON_REFERENCE = "python/reference"
+PYTHON_META = {"area": "python", "audience": "user", "owner": "python", "since": "1.0.8"}
+# Top-level names of pycyxwiz, grouped into pages: (page, title, description,
+# names, base classes whose subclasses belong here, submodule shown on the page).
+# A name is claimed by the first group that names it, then by the first base.
+PYTHON_GROUPS = [
+    ("tensors-and-devices", "Tensors and devices",
+     "The Tensor class, the compute devices and starting the backend.",
+     ["Tensor", "Device", "DeviceInfo", "DeviceActivationResult", "initialize", "shutdown", "get_version",
+      "cuda_available", "opencl_available", "oneapi_available", "metal_available", "get_available_devices",
+      "get_device", "set_device", "DataType", "DeviceType", "DeviceKind", "DeviceActivationStage",
+      "DeviceIdentityConfidence", "DeviceMetadataStatus"], [], None),
+    ("modules-and-models", "Modules and Sequential models",
+     "Module, the built-in modules, the Sequential model and the gradient checks.",
+     ["Module", "Sequential", "create_module", "ModuleType", "gradcheck", "gradcheck_loss",
+      "GradientCheckResult"], ["Module"], None),
+    ("layers", "Layers",
+     "The layer classes: dense, convolution, pooling, normalization, recurrent and attention layers.",
+     ["Layer", "UpsampleMode"], ["Layer"], None),
+    ("activations", "Activations and tensor functions",
+     "The activation classes and the activation, dropout and flatten functions on tensors.",
+     ["Activation", "create_activation", "ActivationType", "relu", "relu6", "sigmoid", "tanh", "softmax", "gelu",
+      "elu", "leaky_relu", "mish", "silu", "swish", "hardsigmoid", "hardswish", "dropout", "flatten"],
+     ["Activation"], None),
+    ("losses", "Losses",
+     "The loss classes and their options.",
+     ["Loss", "Reduction", "TripletDistanceType"], ["Loss"], None),
+    ("optimizers", "Optimizers",
+     "The optimizers, learning rate warmup and the optimizer factory.",
+     ["Optimizer", "LRWarmup", "create_optimizer", "create_lr_warmup", "OptimizerType", "WarmupType"],
+     ["Optimizer"], None),
+    ("data-loading", "Data loading",
+     "The DuckDB data loader: CSV, Parquet and JSON files, SQL queries and batches.",
+     ["DataLoader", "DataLoaderConfig", "ColumnInfo", "BatchIterator", "duckdb_available"], [], None),
+    ("audio", "Audio",
+     "Loading audio, spectrograms, mel spectrograms, MFCCs and audio augmentation.",
+     ["AudioData", "AudioFeatures", "AudioProcessing", "SpectrogramConfig", "MelConfig", "MFCCConfig"], [], None),
+    ("tokenizers", "Tokenizers and vocabularies",
+     "Text tokenizers and vocabularies.",
+     ["Tokenizer", "Vocabulary", "TokenizerType", "BPEInitialUnit", "ByteBPEPiecePolicy",
+      "is_sentencepiece_tokenizer_available", "sentencepiece_tokenizer_unavailable_message"], [], None),
+    ("rl", "Reinforcement learning",
+     "Replay buffers, exploration schedules, RL metrics and plugin environments as Gymnasium environments.",
+     ["RLBatch", "RLTransition", "ReplayBuffer", "EpsilonSchedule", "StepResult", "EnvInfo",
+      "rl_set_metric_callback", "rl_update_metric"], [], "rl"),
+]
+PYTHON_OTHER = ("other", "Other names", "Top-level names of pycyxwiz that no reference page groups yet.")
+PYTHON_INDEX = {
+    "title": "pycyxwiz API reference",
+    "description": "Every public name of the pycyxwiz Python module, with its signature and description, one page per part.",
+    "redirect_from": ["../../sdk/python-api/index.md", "../../extending/python-api-reference.md"],
 }
 BACKEND_HEADERS = os.path.join(REPO, "cyxwiz-backend", "include", "cyxwiz")
 GENERATOR = "scripts/docs/generate_extension_reference.py"
@@ -67,15 +121,17 @@ def front_matter(meta, last_reviewed):
              "title: " + meta["title"],
              "description: " + meta["description"],
              "type: reference",
-             "area: sdk",
-             "audience: plugin-developer",
+             "area: " + meta["area"],
+             "audience: " + meta["audience"],
              "status: experimental",
              "since: " + meta["since"],
-             "owner: sdk",
+             "owner: " + meta["owner"],
              "last_reviewed: " + last_reviewed,
-             "generated: true",
-             "redirect_from:"]
-    lines.extend("  - " + r for r in meta["redirect_from"])
+             "generated: true"]
+    redirects = meta.get("redirect_from") or []
+    if redirects:
+        lines.append("redirect_from:")
+        lines.extend("  - " + r for r in redirects)
     lines.append("---")
     return "\n".join(lines) + "\n\n"
 
@@ -201,8 +257,8 @@ SHOWN_DUNDERS = {
 }
 
 
-def class_section(cls, name, out):
-    out.append("### `{}`\n".format(name))
+def class_section(cls, name, out, level="###"):
+    out.append("{} `{}`\n".format(level, name))
     # The class's own docstring only: inspect.getdoc falls back to a base
     # class's, which would describe Module under every layer.
     own = cls.__dict__.get("__doc__")
@@ -256,11 +312,17 @@ def public_names(module):
     return sorted(n for n in dir(module) if not n.startswith("_"))
 
 
-def module_section(module, title, out, level):
+def module_parts(module):
+    """(functions, enums, classes): the public names of a module that the reference shows."""
     names = public_names(module)
     classes = [n for n in names if inspect.isclass(getattr(module, n)) and not is_pybind_enum(getattr(module, n))]
     enums = [n for n in names if is_pybind_enum(getattr(module, n))]
     functions = [n for n in names if callable(getattr(module, n)) and n not in classes and n not in enums]
+    return functions, enums, classes
+
+
+def module_section(module, title, out, level, class_level="###"):
+    functions, enums, classes = module_parts(module)
     if functions:
         out.append("{} Functions\n".format(level))
         out.append("| Function | What it does |\n|---|---|")
@@ -274,37 +336,135 @@ def module_section(module, title, out, level):
     if classes:
         out.append("{} Classes\n".format(level))
         for n in classes:
-            class_section(getattr(module, n), n, out)
+            class_section(getattr(module, n), n, out, class_level)
+
+
+def anchor(heading):
+    """The anchor GitHub and the docs site give a heading: lower case, no punctuation, spaces as '-'."""
+    return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
+
+
+def python_submodules(pc):
+    return [n for n in public_names(pc) if isinstance(getattr(pc, n), types.ModuleType)]
+
+
+def python_top_level(pc):
+    """{name: object} of the top-level names the reference shows (no submodules, no enum values)."""
+    subs = python_submodules(pc)
+    ns = types.SimpleNamespace(**{n: getattr(pc, n) for n in public_names(pc) if n not in subs})
+    functions, enums, classes = module_parts(ns)
+    return {n: getattr(ns, n) for n in functions + enums + classes}
+
+
+def python_groups(pc):
+    """[(page, title, description, {name: object}, submodule or None)]: the top-level names by page."""
+    top = python_top_level(pc)
+    claimed = {}
+    for page, _, _, names, _, _ in PYTHON_GROUPS:
+        for n in names:
+            if n in top:
+                claimed.setdefault(n, page)
+    for n, obj in top.items():
+        if n in claimed or not inspect.isclass(obj):
+            continue
+        for page, _, _, _, bases, _ in PYTHON_GROUPS:
+            if any(inspect.isclass(getattr(pc, b, None)) and issubclass(obj, getattr(pc, b)) for b in bases):
+                claimed[n] = page
+                break
+    groups = []
+    for page, title, description, _, _, submodule in PYTHON_GROUPS:
+        groups.append((page, title, description, {n: o for n, o in top.items() if claimed.get(n) == page}, submodule))
+    other = {n: o for n, o in top.items() if n not in claimed}
+    if other:
+        groups.append(PYTHON_OTHER + (other, None))
+    return groups
+
+
+def submodule_doc(pc, name):
+    return " ".join((inspect.getdoc(getattr(pc, name)) or "").split())
+
+
+def python_page_intro(version, extra=""):
+    return ("Part of the [pycyxwiz API reference](index.md), pycyxwiz {}: each name with the signature and "
+            "description the module itself reports. Types are shown without the `pycyxwiz.` prefix; "
+            "`Sequence[int]` is any list or tuple of integers.{}\n").format(version, extra)
 
 
 def python_reference(pc):
+    """[(path under docs/, meta, body)]: the index and one page per group and submodule."""
     version = pc.get_version()
-    out = [NOTICE,
-           "Every public name of the `pycyxwiz` module in this build, with the signature and description "
-           "the module itself reports. pycyxwiz {}. Types are shown without the `pycyxwiz.` prefix; "
-           "`Sequence[int]` is any list or tuple of integers.\n".format(version),
-           "Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and the "
-           "[`nodes`](#pycyxwiznodes) module; [Tensor operations for nodes](../tensor-operations.md) lists the "
-           "tensor operations next to their C++ names. How to write a node: "
-           "[Writing a module in Python](../guides/python-modules.md) and "
-           "[Describing a Python module as a node](../guides/python-nodes.md).\n",
-           "## Contents\n"]
-    subs = [n for n in public_names(pc) if isinstance(getattr(pc, n), types.ModuleType)]
-    out.append("- [pycyxwiz](#pycyxwiz)")
-    for n in subs:
-        out.append("- [pycyxwiz.{0}](#pycyxwiz{0})".format(n))
-    out.append("")
-    out.append("## pycyxwiz\n")
-    top = types.SimpleNamespace(**{n: getattr(pc, n) for n in public_names(pc) if n not in subs})
-    module_section(top, "pycyxwiz", out, "###")
-    for n in subs:
-        out.append("## pycyxwiz.{}\n".format(n))
-        doc = " ".join((inspect.getdoc(getattr(pc, n)) or "").split())
+    subs = python_submodules(pc)
+    groups = python_groups(pc)
+    in_groups = {g[4] for g in groups if g[4]}
+    pages = []
+    rows = []  # (page file, title, what it holds, names)
+
+    for page, title, description, members, submodule in groups:
+        out = [NOTICE, python_page_intro(version)]
+        module_section(types.SimpleNamespace(**members), title, out, "##")
+        names = sorted(members, key=str.lower)
+        if submodule:
+            out.append("## pycyxwiz.{}\n".format(submodule))
+            doc = submodule_doc(pc, submodule)
+            if doc:
+                out.append(doc + "\n")
+            module_section(getattr(pc, submodule), "pycyxwiz." + submodule, out, "###", "####")
+            sub_parts = module_parts(getattr(pc, submodule))
+            names += ["{}.{}".format(submodule, n) for n in sorted(sum(sub_parts, []), key=str.lower)]
+        meta = dict(PYTHON_META, title=title, description=description)
+        pages.append(("{}/{}.md".format(PYTHON_REFERENCE, page), meta, "\n".join(out).rstrip() + "\n"))
+        rows.append((page + ".md", title, description, names))
+
+    for sub in subs:
+        if sub in in_groups:
+            continue
+        doc = submodule_doc(pc, sub)
+        out = [NOTICE, python_page_intro(version, " Use it as `pycyxwiz.{}.<name>` after `import pycyxwiz`.".format(sub))]
         if doc:
             out.append(doc + "\n")
-        module_section(getattr(pc, n), "pycyxwiz." + n, out, "###")
-    # Class sections use ### too; keep headings unique enough for anchors.
-    return "\n".join(out).rstrip() + "\n"
+        module_section(getattr(pc, sub), "pycyxwiz." + sub, out, "##")
+        description = drop_tickets(doc.split(". ")[0]).strip().rstrip(".") if doc else ""
+        description = re.sub(r"^pycyxwiz\.{}:\s*".format(sub), "", description)
+        description = (description[:1].upper() + description[1:] + ".") if description else             "The pycyxwiz.{} submodule.".format(sub)
+        if len(description) > 158:
+            description = description[:155].rsplit(" ", 1)[0] + "..."
+        meta = dict(PYTHON_META, title="pycyxwiz." + sub, description=description)
+        pages.append(("{}/{}.md".format(PYTHON_REFERENCE, sub), meta, "\n".join(out).rstrip() + "\n"))
+        rows.append((sub + ".md", "pycyxwiz." + sub, description, sorted(sum(module_parts(getattr(pc, sub)), []),
+                                                                        key=str.lower)))
+
+    out = [NOTICE,
+           "Every public name of the `pycyxwiz` module in this build, pycyxwiz {}, with the signature and "
+           "description the module itself reports. The top-level names (`pycyxwiz.Tensor`, "
+           "`pycyxwiz.Sequential`, ...) are grouped by what they do; each submodule (`pycyxwiz.linalg`, "
+           "`pycyxwiz.signal`, ...) has its own page.\n".format(version),
+           "To learn the library, start with the [Python library guide](../index.md) and the "
+           "[quickstart](../quickstart.md). Python nodes use mainly `Tensor`, `Module`, `gradcheck` and "
+           "[`pycyxwiz.nodes`](nodes.md); [Tensor operations for nodes](../../sdk/tensor-operations.md) lists the "
+           "tensor operations next to their C++ names.\n",
+           "## Pages\n",
+           "| Page | What it holds |\n|---|---|"]
+    for page_file, title, description, _ in rows:
+        out.append("| [{}]({}) | {} |".format(title, page_file, description.replace("|", "\\|")))
+    out.append("")
+    out.append("## Every name\n")
+    out.append("Each name links to its entry; a name with a dot is in a submodule.\n")
+    for page_file, title, _, names in rows:
+        links = []
+        for n in names:
+            short = n.split(".")[-1]
+            obj_is_class = "." not in n and inspect.isclass(getattr(pc, n, None)) and not is_pybind_enum(getattr(pc, n))
+            sub = n.split(".")[0] if "." in n else None
+            is_class = obj_is_class or (sub and inspect.isclass(getattr(getattr(pc, sub), short, None))
+                                        and not is_pybind_enum(getattr(getattr(pc, sub), short)))
+            # Classes have their own heading; functions and enumerations are rows of a table.
+            target = page_file + ("#" + anchor("`{}`".format(short)) if is_class else "")
+            links.append("[`{}`]({})".format(n, target))
+        out.append("- **{}**: {}".format(title, ", ".join(links)))
+    out.append("")
+    meta = dict(PYTHON_META, **PYTHON_INDEX)
+    pages.insert(0, ("{}/index.md".format(PYTHON_REFERENCE), meta, "\n".join(out).rstrip() + "\n"))
+    return pages
 
 
 # ------------------------------------------------------------- C++ headers --
@@ -540,14 +700,11 @@ def main():
     folder = os.path.abspath(args[0])
     pc = import_pycyxwiz(folder, os.path.abspath(args[1]) if len(args) > 1 else folder)
     api = plugin_api_version()
-    bodies = {
-        "python": python_reference(pc),
-        "tensor": tensor_operations(pc, api),
-        "sdk": sdk_contents(api),
-    }
+    pages = python_reference(pc)
+    pages.append(PAGES["tensor"] + (tensor_operations(pc, api),))
+    pages.append(PAGES["sdk"] + (sdk_contents(api),))
     stale = []
-    for key, body in bodies.items():
-        name, meta = PAGES[key]
+    for name, meta, body in pages:
         path = os.path.join(DOCS, *name.split("/"))
         text = front_matter(meta, committed_last_reviewed(path)) + drop_tickets(body)
         current = None
@@ -563,12 +720,45 @@ def main():
             with open(path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(text)
             print("wrote docs/" + name)
+    # A generated reference page the module no longer gives (a group emptied,
+    # a submodule removed) goes, so no page describes names that are gone.
+    written = {os.path.normcase(os.path.join(DOCS, *name.split("/"))) for name, _, _ in pages}
+    for path in generated_python_pages():
+        if os.path.normcase(path) in written:
+            continue
+        rel = os.path.relpath(path, REPO).replace(os.sep, "/")
+        if check:
+            stale.append(rel + " (no longer generated)")
+        else:
+            os.remove(path)
+            print("removed " + rel)
     if stale:
         print("out of date (run python {} <pycyxwiz folder>): {}".format(GENERATOR, ", ".join(stale)))
         return 1
     if check:
-        print("docs/sdk reference pages match the code")
+        print("docs/python/reference and docs/sdk reference pages match the code")
     return 0
+
+
+def generated_python_pages():
+    """The pages in docs/python/reference that say generated: true."""
+    folder = os.path.join(DOCS, *PYTHON_REFERENCE.split("/"))
+    found = []
+    if os.path.isdir(folder):
+        for name in sorted(os.listdir(folder)):
+            path = os.path.join(folder, name)
+            if name.endswith(".md"):
+                with open(path, encoding="utf-8") as f:
+                    if re.search(r"^generated:\s*true\s*$", f.read(2000), flags=re.M):
+                        found.append(path)
+    return found
+
+
+def generated_pages():
+    """Every generated page under docs/ (paths relative to docs/), for the checks."""
+    names = [name for name, _ in PAGES.values()]
+    names += [os.path.relpath(p, DOCS).replace(os.sep, "/") for p in generated_python_pages()]
+    return sorted(names)
 
 
 if __name__ == "__main__":
