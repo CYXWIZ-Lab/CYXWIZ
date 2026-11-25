@@ -41,6 +41,9 @@ struct LoadedPlugin {
     std::uint64_t pack_bytes_checked = 0;
     double pack_check_ms = 0.0;
     std::chrono::system_clock::time_point pack_checked_at{};
+    // A SignedPack's library copies, held against writes and deletion while
+    // the library is loaded (released by Unload or this object).
+    std::shared_ptr<void> copy_lock;
 
     ~LoadedPlugin();
 };

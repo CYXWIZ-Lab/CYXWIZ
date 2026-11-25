@@ -299,6 +299,14 @@ int main() {
                 FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
             Check(library_handle == INVALID_HANDLE_VALUE, "the loaded library copy cannot be written");
             if (library_handle != INVALID_HANDLE_VALUE) ::CloseHandle(library_handle);
+            // A library beside it, not loaded yet (a plugin may load it later),
+            // is held too while the plugin is loaded.
+            const HANDLE beside_handle = ::CreateFileW(
+                (copy_folder / "big_dependency.dll").wstring().c_str(), GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            Check(beside_handle == INVALID_HANDLE_VALUE,
+                  "the copy of a library beside it cannot be written while the plugin is loaded");
+            if (beside_handle != INVALID_HANDLE_VALUE) ::CloseHandle(beside_handle);
         }
 #endif
         manager.UnloadPlugin(kPluginId);

@@ -749,7 +749,9 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
 
     // 4. Load DLL
     loaded->dll_handle = LoadDLL(load_path, error_out);
-    copy_lock.reset();  // mapped now: the system protects the loaded copies
+    // The copies stay held while the plugin is loaded: a library it loads
+    // later (delay-loaded) is read from them then.
+    loaded->copy_lock = std::shared_ptr<void>(std::move(copy_lock));
     if (!loaded->dll_handle) {
         error_out = "Failed to load DLL: " + error_out;
         loaded->state = PluginState::Failed;
@@ -922,6 +924,7 @@ void PluginLoader::Unload(LoadedPlugin& plugin) {
         UnloadDLL(plugin.dll_handle);
         plugin.dll_handle = nullptr;
     }
+    plugin.copy_lock.reset();
 
     plugin.state = PluginState::Unloaded;
 }
