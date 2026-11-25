@@ -299,6 +299,7 @@ jobs:
           cyxwiz-nvidia-provider
           cyxwiz-cli
           pycyxwiz
+          data_formats
 
       - name: Download pinned redistribution inputs
         shell: pwsh
@@ -670,6 +671,7 @@ jobs:
           cyxwiz-plugin-check
           cyxwiz-cli
           pycyxwiz
+          data_formats
 
       - name: Normalize ArrayFire redistribution input
         run: |
