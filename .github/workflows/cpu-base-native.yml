@@ -176,7 +176,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: deps/cuda
-          key: cuda-toolkit-12.6.3-windows-x86_64-cudart-nvcc-cublas-nvrtc
+          key: cuda-toolkit-12.6.3-windows-x86_64-cudart-nvcc-cublas-nvrtc-cccl
 
       - name: Download pinned CUDA Toolkit parts
         if: steps.cuda-cache.outputs.cache-hit != 'true'
@@ -191,7 +191,10 @@ jobs:
             @('libcublas/windows-x86_64/libcublas-windows-x86_64-12.6.4.1-archive.zip',
               '1A87EC80F8C0E5A39BADC87010D479930C5B63ABD788B3A05BD688A5980A3D07'),
             @('cuda_nvrtc/windows-x86_64/cuda_nvrtc-windows-x86_64-12.6.85-archive.zip',
-              'B1221A95A3758561BC73C56905743730F7459CBAFF54A4870AA899FA3489219E')
+              'B1221A95A3758561BC73C56905743730F7459CBAFF54A4870AA899FA3489219E'),
+            # cuda_fp16.h (through cublas_v2.h) includes nv/target, from CCCL
+            @('cuda_cccl/windows-x86_64/cuda_cccl-windows-x86_64-12.6.77-archive.zip',
+              '469B783B6731964170B3D27AE214E97E2A63EC93C57ACE3ED4052E6D01261F2E')
           )
           New-Item -ItemType Directory -Force deps/cuda, deps/cuda-download | Out-Null
           foreach ($part in $parts) {
