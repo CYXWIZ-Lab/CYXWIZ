@@ -215,7 +215,7 @@ Manager**. **No plugins loaded** when there are none. See
 - **Documentation** (F1), **API Reference**, **What's New**: open the user
   guide, the Python API reference and the release notes in your browser,
   from the CyxWiz repository on GitHub.
-- **Known Issues** opens `KNOWN_ISSUES.md`, which ships beside the Engine
+- **Known Issues** opens `KNOWN_ISSUES.md`, which ships beside the Engine: a short list that points to [Known issues](../known-issues.md)
   (greyed out when it is not there).
 - **Report Issue...** opens the GitHub issues page.
 - **Open Logs Folder** shows `engine_log.txt` in the file manager, to

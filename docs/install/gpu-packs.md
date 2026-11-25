@@ -120,7 +120,7 @@ with **Use this device**.
 Which layers run on CyxWiz's own GPU kernels instead of ArrayFire is
 explained in [What runs where on a GPU](../concepts/gpu-providers.md). Known GPU
 runtime problems are listed in
-[KNOWN_ISSUES.md](https://github.com/CYXWIZ-Lab/CYXWIZ/blob/HEAD/KNOWN_ISSUES.md).
+[Known issues](../known-issues.md).
 
 ## Related
 

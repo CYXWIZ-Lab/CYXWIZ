@@ -120,7 +120,7 @@ Select **Cancel installation and close** to stop safely, or
 uninstall defect. Back up `%LOCALAPPDATA%\CyxWiz` before you uninstall them.
 
 Known GPU runtime problems are listed in
-[KNOWN_ISSUES.md](https://github.com/CYXWIZ-Lab/CYXWIZ/blob/HEAD/KNOWN_ISSUES.md),
+[Known issues](../known-issues.md),
 which also ships in your install.
 
 ## Related

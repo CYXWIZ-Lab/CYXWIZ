@@ -260,7 +260,7 @@ The Engine owns interaction and orchestration, the Backend owns computation, the
 | `docs/` | Public technical documentation |
 | `CMakeLists.txt`, `CMakePresets.json`, `cmake/`, `vcpkg.json`, `vcpkg-ports/` | Build definition, presets, package discovery, and project-specific packages |
 
-See [Project structure](docs/project-structure.md) for ownership and dependency boundaries.
+See [Code layout](docs/internals/code-layout.md) for ownership and dependency boundaries.
 
 ## Current capability scope
 
@@ -293,7 +293,7 @@ Keep changes scoped, preserve component boundaries (extend the shared backend in
 
 - [Building from source (detailed)](INSTALL.md)
 - [Contributing](CONTRIBUTING.md)
-- [Project structure](docs/project-structure.md)
+- [Code layout](docs/internals/code-layout.md)
 - [Examples](examples/README.md)
 - [User guide](docs/usage/README.md)
 - [Extending CyxWiz: Python nodes and C++ plugins](docs/sdk/index.md)

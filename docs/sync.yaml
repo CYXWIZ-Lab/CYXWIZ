@@ -51,3 +51,11 @@ server-and-cloud:
 distributed-training:
   code: [cyxwiz-engine/src/network/**, cyxwiz-server-node/src/job_execution_service*, cyxwiz-server-node/src/job_executor*, cyxwiz-server-node/src/node_job_*, cyxwiz-server-node/src/*dataset_fetcher*, cyxwiz-server-node/src/security/**, cyxwiz-protocol/proto/execution.proto, cyxwiz-protocol/proto/job.proto, cyxwiz-protocol/proto/reservation.proto, cyxwiz-protocol/proto/datastream.proto, cyxwiz-protocol/proto/cyxcloud_data.proto]
   synced_at: 202a19691
+
+concepts:
+  code: [cyxwiz-engine/src/core/graph_compiler*, cyxwiz-engine/src/core/pipeline_executor*, cyxwiz-engine/src/core/training_executor*, cyxwiz-engine/src/core/data_registry*, cyxwiz-engine/src/core/error_codes*, cyxwiz-engine/src/data/**, cyxwiz-backend/src/core/**, cyxwiz-backend/include/cyxwiz/**, cyxwiz-engine/tests/computation_truth/**]
+  synced_at: 202a19691
+
+internals:
+  code: [CMakeLists.txt, CMakePresets.json, cmake/**, cyxwiz-engine/CMakeLists.txt, cyxwiz-engine/src/application*, cyxwiz-engine/src/main.cpp, cyxwiz-engine/src/core/async_task*, cyxwiz-engine/src/core/node_metadata_registry*, cyxwiz-engine/src/plugin/**, cyxwiz-protocol/proto/**, redist/**, scripts/**, tests/**, cyxwiz-engine/tests/**]
+  synced_at: 202a19691
