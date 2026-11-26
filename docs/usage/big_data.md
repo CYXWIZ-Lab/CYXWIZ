@@ -111,6 +111,15 @@ A Data Input kept on disk can feed training:
   list of rows kept. Oversample to 560 rows of a 240-row class serves each
   row twice and a different 80 of them a third time each epoch. Not with a
   time-series split (a warning says so).
+- **Shuffled batches mix row groups.** When the Data Loader shuffles, each
+  epoch orders the row groups from its seed and keeps several in memory: as
+  many as fit in a quarter of the data budget, at least 4. Every row of a
+  batch is drawn at random from all the rows left in them, and a row group
+  that runs out is replaced by the next one, so each row is still served
+  once an epoch. The run log names the window ("batches mix rows of 4 of 40
+  row groups at a time"). A file sorted by class mixes only as far as the
+  window reaches: when most row groups hold one class, a warning says so;
+  shuffle the rows before saving the file, or raise the data budget.
 - **Steps learn from the Train rows.** In a training graph with a Data
   Split, the pipeline run marks each Data Input row Train, Validation or
   Test by the same rule (a hidden `__partition__` column), before the first
@@ -160,10 +169,12 @@ A Data Input kept on disk can feed training:
   supplied input does not run for it. Label and Ordinal Encoder
   number the categories of every row (no label is learned). Changing the
   Split's shares, seed, label or Stratified prepares the data again.
-- **Causal-LM token windows** (a `tokens` list column) on disk are read one
-  row group at a time while training: memory holds one row group's windows.
-  The row-group order is shuffled every epoch, and the windows within each
-  group. Validation and Test windows come from datasets of their own (a Data
+- **Causal-LM token windows** (a `tokens` list column) on disk are read a
+  few row groups at a time while training: memory holds those row groups'
+  windows. When shuffling, each epoch orders the row groups from its seed and
+  reads them as many at a time as the data budget allows (as above, at least
+  4), the windows of all of them mixed; without shuffling, one row group at
+  a time in file order. Validation and Test windows come from datasets of their own (a Data
   Split with named inputs). A share left to cut from the training set (for
   example a 10% test share beside a Validation input) is refused on disk with
   the reason; set it to 0 or give it an input of its own.

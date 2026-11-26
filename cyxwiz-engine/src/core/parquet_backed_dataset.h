@@ -183,6 +183,10 @@ public:
     // (no data is read); -1 when a row group has no null count for it.
     // NaN values are not counted: the statistics do not hold them.
     int64_t NullCount(const std::string& column) const;
+    // A row group whose statistics show one value of the column (min equals
+    // max): a label column sorted by class (TOFIX242 2.1d). False when the
+    // file has no statistics for it.
+    bool RowGroupHoldsOneValue(int row_group_idx, const std::string& column) const;
 
 private:
     ParquetBackedDataset(const std::string& name, const std::string& path);
@@ -208,6 +212,7 @@ private:
     // partition work without re-reading metadata every epoch.
     std::vector<int64_t> row_group_sizes_;
     std::vector<std::pair<std::string, int64_t>> null_counts_;  // per leaf column, -1 = unknown
+    std::vector<std::pair<std::string, std::vector<uint8_t>>> one_value_groups_;  // per leaf column, per group
 };
 
 // Adds the distinct values of `column` (as text, nulls skipped) to `seen`,

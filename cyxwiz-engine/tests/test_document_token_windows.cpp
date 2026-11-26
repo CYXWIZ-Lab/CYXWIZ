@@ -248,6 +248,14 @@ void CheckWindowsOnDisk() {
     auto rows = AllRows(*shuffled.batcher), expected = memory_rows;
     std::sort(rows.begin(), rows.end()); std::sort(expected.begin(), expected.end());
     REQUIRE(rows == expected);  // the same windows, another order
+    // Shuffled, the 4 row groups are read as one window (TOFIX242 2.1d): a
+    // batch of 2 mixes windows of 2 row groups (each holds one window), and
+    // the epoch's count says so.
+    shuffled.batcher->BeginEpoch(5);
+    size_t shuffled_batches = 0;
+    while (!shuffled.batcher->IsEpochComplete() && shuffled.batcher->GetNextSequenceBatch().size == 2) ++shuffled_batches;
+    REQUIRE(shuffled_batches == 2);
+    REQUIRE(shuffled.batcher->GetNumBatches() == 2);
     // Validation from a table in memory beside a training set on disk.
     cfg = Config(); cfg.has_data_split = true; cfg.test_ratio = 0.0f;
     SequenceWindowSource dev; dev.table = all->Slice(3, 1);

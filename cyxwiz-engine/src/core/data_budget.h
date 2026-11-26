@@ -95,6 +95,18 @@ inline uint64_t DataBudgetShareBytes() {
 // A table or result larger than this is kept on disk, not in memory (D1).
 inline uint64_t DataResultThresholdBytes() { return DataBudgetBytes() / 4; }
 
+// Parts of a table on disk (row groups) a shuffled training epoch keeps in
+// memory to draw rows from (TOFIX242 2.1d, owner Q2): as many as fit in a
+// quarter of the budget, at least 4, at most `parts`. `part_bytes` is one
+// part's size in memory (0: unknown, all of them).
+inline size_t ShuffleWindowParts(uint64_t budget_bytes, uint64_t part_bytes, size_t parts) {
+    constexpr uint64_t kMinimum = 4;
+    const uint64_t fit = part_bytes > 0 ? (budget_bytes / 4) / part_bytes : parts;
+    const uint64_t wanted = fit > kMinimum ? fit : kMinimum;
+    const uint64_t window = wanted < parts ? wanted : parts;
+    return window > 0 ? static_cast<size_t>(window) : 1;
+}
+
 // Where DuckDB spills sorts, joins and group-bys. The project sets
 // <project>/cache/duckdb_tmp; outside a project, <temp>/cyxwiz/duckdb_tmp.
 inline std::string DataSpillDirectory() {

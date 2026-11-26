@@ -96,14 +96,19 @@ std::shared_ptr<ParquetBackedDataset> ParquetBackedDataset::Open(
     const int num_row_groups = metadata->num_row_groups();
     // Empty cells per column from the statistics the writer stored.
     std::vector<std::pair<std::string, int64_t>> null_counts;
+    // And per row group whether a column holds one value (its min equals its max)
+    std::vector<std::pair<std::string, std::vector<uint8_t>>> one_value_groups;
     for (int c = 0; c < metadata->num_columns(); ++c) {
         int64_t nulls = 0;
-        for (int i = 0; i < num_row_groups && nulls >= 0; ++i) {
+        std::vector<uint8_t> one_value(static_cast<size_t>(num_row_groups), 0);
+        for (int i = 0; i < num_row_groups; ++i) {
             const auto chunk = metadata->RowGroup(i)->ColumnChunk(c);
             const auto stats = chunk ? chunk->statistics() : nullptr;
-            nulls = stats && stats->HasNullCount() ? nulls + stats->null_count() : -1;
+            if (nulls >= 0) nulls = stats && stats->HasNullCount() ? nulls + stats->null_count() : -1;
+            one_value[static_cast<size_t>(i)] = stats && stats->HasMinMax() && stats->EncodeMin() == stats->EncodeMax();
         }
         null_counts.emplace_back(metadata->schema()->Column(c)->name(), nulls);
+        one_value_groups.emplace_back(metadata->schema()->Column(c)->name(), std::move(one_value));
     }
     std::vector<int64_t> row_group_sizes;
     row_group_sizes.reserve(num_row_groups);
@@ -135,6 +140,7 @@ std::shared_ptr<ParquetBackedDataset> ParquetBackedDataset::Open(
     ds->num_columns_ = metadata->num_columns();
     ds->row_group_sizes_ = std::move(row_group_sizes);
     ds->null_counts_ = std::move(null_counts);
+    ds->one_value_groups_ = std::move(one_value_groups);
     ds->file_size_ = file_size;
     ds->uncompressed_bytes_ = uncompressed_bytes;
 
@@ -321,6 +327,14 @@ int64_t ParquetBackedDataset::NullCount(const std::string& column) const {
     for (const auto& [name, nulls] : null_counts_)
         if (name == column) return nulls;
     return -1;
+}
+
+bool ParquetBackedDataset::RowGroupHoldsOneValue(int row_group_idx, const std::string& column) const {
+    for (const auto& [name, groups] : one_value_groups_)
+        if (name == column)
+            return row_group_idx >= 0 && static_cast<size_t>(row_group_idx) < groups.size() &&
+                   groups[static_cast<size_t>(row_group_idx)] != 0;
+    return false;
 }
 
 int64_t ParquetBackedDataset::GetRowGroupSize(int row_group_idx) const {

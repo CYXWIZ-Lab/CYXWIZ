@@ -1,19 +1,24 @@
 #pragma once
 
 // Causal-LM token windows read a row group at a time (TOFIX154 step 6), for
-// a training set kept on disk: memory holds one row group's windows, not the
-// corpus. Each phase (Train / Validation / Test) is a list of units, a row
-// group of a Parquet file or 128K rows of a table in memory. Train shuffles
-// the unit order every epoch and the windows within a unit; the batches come
-// from a SequenceBatcher over the loaded unit, so padding, targets and masks
-// are the in-memory path's.
+// a training set kept on disk: memory holds a few row groups' windows, not
+// the corpus. Each phase (Train / Validation / Test) is a list of units, a row
+// group of a Parquet file or 128K rows of a table in memory. Train orders the
+// units from the epoch's seed and reads them a window at a time (TOFIX242
+// 2.1d: as many units as ShuffleWindowParts allows, at least 4), the windows
+// of all its units mixed; the batches come from a SequenceBatcher over the
+// loaded window, so padding, targets and masks are the in-memory path's.
+// Without shuffle (and for Validation / Test) a window is one unit, in order.
 
+#include "data_budget.h"
 #include "parquet_backed_dataset.h"
 #include "sequence_batcher.h"
 #include "sequence_token_window_input.h"
 #include "cyxwiz/portable_random.h"
 
 #include <arrow/api.h>
+#include <arrow/util/byte_size.h>
+#include <iterator>
 
 #include <algorithm>
 #include <array>
@@ -63,7 +68,7 @@ public:
     SequenceBatch GetNextSequenceBatch() override {
         while (!inner_ || inner_->IsEpochComplete()) {
             if (next_unit_ >= order_.size()) return {};
-            Load(order_[next_unit_++]);
+            LoadWindow();
         }
         // The inner batcher's last is its unit's: the pass ends with the last unit
         SequenceBatch batch = inner_->GetNextSequenceBatch();
@@ -79,7 +84,9 @@ public:
             rng_.seed(static_cast<std::mt19937::result_type>(*pending_seed_));
             pending_seed_.reset();
         }
-        if (phase_ == BatcherPhase::Train && config_.shuffle) cyxwiz::portable::Shuffle(order_.begin(), order_.end(), rng_);
+        const bool shuffled = phase_ == BatcherPhase::Train && config_.shuffle;
+        if (shuffled) cyxwiz::portable::Shuffle(order_.begin(), order_.end(), rng_);
+        window_units_ = shuffled ? ShuffleWindowParts(DataBudgetBytes(), UnitBytes(), order_.size()) : 1;
         next_unit_ = 0;
         inner_.reset();
     }
@@ -94,11 +101,14 @@ public:
         return next_unit_ >= order_.size() && (!inner_ || inner_->IsEpochComplete());
     }
 
+    // The epoch's batches: each window of its unit order batched on its own
     size_t GetNumBatches() const override {
         const auto& source = Source();
         size_t batches = 0;
-        for (int unit = 0; unit < source.Units(); ++unit) {
-            const auto rows = static_cast<size_t>(std::max<int64_t>(0, source.UnitRows(unit)));
+        for (size_t first = 0; first < order_.size(); first += window_units_) {
+            size_t rows = 0;
+            for (size_t i = first; i < std::min(order_.size(), first + window_units_); ++i)
+                rows += static_cast<size_t>(std::max<int64_t>(0, source.UnitRows(order_[i])));
             batches += (rows + config_.batch_size - 1) / config_.batch_size;
         }
         return batches;
@@ -124,16 +134,37 @@ private:
     }
     const SequenceWindowSource& Source() const { return phases_[Index(phase_)]; }
 
-    void Load(int unit) {
-        const auto table = Source().ReadUnit(unit);
-        if (!table) throw std::runtime_error("Token windows: could not read row group " + std::to_string(unit));
-        const int column = table->schema()->GetFieldIndex(token_column_);
+    // One unit's size in memory (0: unknown)
+    uint64_t UnitBytes() const {
+        const auto& source = Source();
+        const int units = source.Units();
+        if (units <= 0) return 0;
+        const uint64_t bytes = source.file    ? source.file->GetInMemoryBytesEstimate()
+                               : source.table ? static_cast<uint64_t>(arrow::util::TotalBufferSize(*source.table))
+                                              : 0;
+        return bytes / static_cast<uint64_t>(units);
+    }
+
+    // The next window of the unit order, its windows in one batcher
+    void LoadWindow() {
         std::vector<SequenceSample> samples;
-        Vocabulary vocabulary;
-        int context = 0;
-        std::string error;
-        if (column < 0 || !ReadTokenWindowSamples(table, column, context_, samples, vocabulary, context, error))
-            throw std::runtime_error(error.empty() ? "Token windows: no token column '" + token_column_ + "'" : error);
+        const size_t end = std::min(order_.size(), next_unit_ + window_units_);
+        for (; next_unit_ < end; ++next_unit_) {
+            const int unit = order_[next_unit_];
+            const auto table = Source().ReadUnit(unit);
+            if (!table) throw std::runtime_error("Token windows: could not read row group " + std::to_string(unit));
+            const int column = table->schema()->GetFieldIndex(token_column_);
+            Vocabulary vocabulary;
+            int context = 0;
+            std::string error;
+            std::vector<SequenceSample> unit_samples;
+            if (column < 0 ||
+                !ReadTokenWindowSamples(table, column, context_, unit_samples, vocabulary, context, error))
+                throw std::runtime_error(error.empty() ? "Token windows: no token column '" + token_column_ + "'"
+                                                       : error);
+            samples.insert(samples.end(), std::make_move_iterator(unit_samples.begin()),
+                           std::make_move_iterator(unit_samples.end()));
+        }
         SequenceBatcherConfig unit_config = config_;
         unit_config.train_indices.clear();
         unit_config.val_indices.clear();
@@ -153,6 +184,7 @@ private:
     BatcherPhase phase_ = BatcherPhase::Train;
     std::vector<int> order_;
     size_t next_unit_ = 0;
+    size_t window_units_ = 1;
     std::unique_ptr<SequenceBatcher> inner_;
 };
 

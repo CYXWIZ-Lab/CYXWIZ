@@ -55,14 +55,13 @@ std::shared_ptr<const ParquetRowSplit> BuildParquetRowSplit(const ParquetBackedD
  *     class when stratified (TOFIX154).
  *   - Without one, row groups are partitioned between train and val splits
  *     by index (first train_split fraction -> train, remainder -> val).
- *   - Shuffling happens at two levels: the *order* of row groups is
- *     permuted at epoch start (Reset()), and when a row group is loaded
- *     its rows are also shuffled into a local order. This keeps memory
- *     access sequential within a loaded group while still giving good
- *     statistical shuffling across an epoch.
- *   - Only one row group is resident at a time. Loading the next one
- *     discards the previous; the OS page cache handles eviction behind
- *     the scenes via the memory-mapped Parquet file.
+ *   - Shuffling (TOFIX242 2.1d, TAB-05): each epoch orders the row groups
+ *     from its seed and keeps a window of them resident (ShuffleWindowParts:
+ *     a quarter of the data budget, at least 4). Every row of a batch is
+ *     drawn at random from all the rows left in the window, and a drained
+ *     group is replaced by the next in the epoch's order, so a file sorted by
+ *     class still gives mixed batches and every row is served once an epoch.
+ *     Without shuffle one group is resident and the rows come in file order.
  *
  * Output matches ArrowDatasetBatcher: float32 feature batches,
  * int-as-float labels (or one-hot if enabled). The per-cell type dispatch
@@ -75,7 +74,7 @@ public:
      * @param dataset         Parquet-backed dataset to iterate over.
      * @param label_column    Name of the label column in the dataset schema.
      * @param batch_size      Samples per batch.
-     * @param shuffle         Shuffle row group order + intra-group rows each epoch.
+     * @param shuffle         Draw each epoch's rows at random from a window of row groups.
      * @param train_split     Fraction (0..1) of row groups assigned to the train split.
      * @param is_training     True for train batcher, false for val batcher.
      *                        Determines which row group range this batcher iterates.
@@ -176,11 +175,20 @@ private:
     std::vector<int> epoch_group_order_;
 
     // Current position within the epoch
-    size_t current_group_position_ = 0;  // index into epoch_group_order_
-    std::shared_ptr<arrow::Table> current_table_;
-    int64_t current_group_first_row_ = 0;      // the file row of the current table's row 0
-    std::vector<size_t> current_row_indices_;  // row order within the current table
-    size_t current_row_cursor_ = 0;            // next row to emit (index into current_row_indices_)
+    size_t current_group_position_ = 0;  // next group of epoch_group_order_ to load
+    // A row group in the shuffle window: its rows of this split, in a seeded
+    // order, and the next one to serve.
+    struct ResidentGroup {
+        std::shared_ptr<arrow::Table> table;
+        int64_t first_row = 0;     // the file row of the table's row 0
+        std::vector<size_t> rows;  // local rows, in serving order
+        size_t cursor = 0;
+        size_t Left() const { return rows.size() - cursor; }
+    };
+    std::vector<ResidentGroup> window_;
+    size_t window_rows_left_ = 0;
+    size_t window_groups_ = 1;  // groups kept resident (1 without shuffle)
+    bool window_logged_ = false;
 
     // Stats
     size_t num_samples_ = 0;    // total samples in this split
@@ -221,13 +229,15 @@ private:
                      const std::vector<int>& batch_labels, const std::vector<float>& batch_labels_float) const;
     bool CountBalanceClasses();        // false: fewer than two classes, or the labels cannot be read
     void StartBalancedEpoch();         // this epoch's draw; sets num_samples_
-    void BalanceCurrentGroupRows();    // repeats current_row_indices_ by the draw
+    void BalanceGroupRows(ResidentGroup& group);  // repeats the group's rows by the draw
 
     // Helpers
     void InitializeColumns();
     void AssignRowGroups();
     void ShuffleEpochGroupOrder();
-    bool LoadNextRowGroup();  // returns false if no more groups
+    bool LoadNextRowGroup();  // adds the next group with rows to the window; false if none is left
+    void FillWindow();
+    void WarnSingleClassGroups() const;
     size_t CountPartitionRowsInGroup(int row_group_idx) const;
     // Text class labels map through this (TOFIX145); nullptr for numeric labels.
     std::shared_ptr<const LabelVocabulary> label_vocabulary_;

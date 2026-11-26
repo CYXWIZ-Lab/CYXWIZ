@@ -1,6 +1,7 @@
 #include "parquet_arrow_batcher.h"
 #include "batch_uploads.h"
 
+#include "data_budget.h"
 #include "label_column_resolver.h"
 #include "class_label_range.h"
 #include "missing_values.h"
@@ -516,14 +517,14 @@ void ParquetArrowBatcher::StartBalancedEpoch() {
     num_samples_ = static_cast<size_t>(served);
 }
 
-void ParquetArrowBatcher::BalanceCurrentGroupRows() {
-    const auto column = current_table_ ? current_table_->GetColumnByName(label_column_) : nullptr;
+void ParquetArrowBatcher::BalanceGroupRows(ResidentGroup& group) {
+    const auto column = group.table ? group.table->GetColumnByName(label_column_) : nullptr;
     if (!column) return;
     std::vector<uint32_t> class_of;
     for (const auto& chunk : column->chunks()) AppendClassIds(*chunk, balance_ids_, class_of);
     std::vector<size_t> repeated;
-    repeated.reserve(current_row_indices_.size());
-    for (const size_t row : current_row_indices_) {
+    repeated.reserve(group.rows.size());
+    for (const size_t row : group.rows) {
         if (row >= class_of.size() || class_of[row] >= balance_classes_.size()) continue;
         auto& entry = balance_classes_[class_of[row]];
         if (entry.rows_left == 0) continue;
@@ -544,7 +545,7 @@ void ParquetArrowBatcher::BalanceCurrentGroupRows() {
         --entry.rows_left;
         repeated.insert(repeated.end(), static_cast<size_t>(copies), row);
     }
-    current_row_indices_ = std::move(repeated);
+    group.rows = std::move(repeated);
 }
 
 // -----------------------------------------------------------------------------
@@ -603,77 +604,75 @@ void ParquetArrowBatcher::ShuffleEpochGroupOrder() {
 }
 
 // -----------------------------------------------------------------------------
-// LoadNextRowGroup - advance to the next row group in epoch order and load it
+// LoadNextRowGroup - load the next row group of the epoch's order into the
+// shuffle window (groups with none of this split's rows are passed over)
 // -----------------------------------------------------------------------------
 
 bool ParquetArrowBatcher::LoadNextRowGroup() {
-    if (current_group_position_ >= epoch_group_order_.size()) {
-        current_table_.reset();
-        return false;
-    }
-
-    const int group_idx = epoch_group_order_[current_group_position_];
-    current_table_ = dataset_->ReadRowGroup(group_idx);
-    if (!current_table_) {
-        // Its rows would vanish from every epoch (TOFIX223 0.3b, TAB-18).
-        throw std::runtime_error("ParquetArrowBatcher: row group " + std::to_string(group_idx) + " of '" +
-                                 dataset_->GetFilePath() + "' could not be read");
-    }
-
-    current_group_first_row_ = 0;
-    for (int g = 0; g < group_idx; ++g) current_group_first_row_ += dataset_->GetRowGroupSize(g);
-
-    // Build a row index for this group and shuffle it if shuffling is enabled.
-    const int64_t rows_in_group = current_table_->num_rows();
-    current_row_indices_.clear();
-    current_row_indices_.reserve(static_cast<size_t>(rows_in_group));
-    if (!partition_column_.empty()) {
-        auto column = current_table_->GetColumnByName(partition_column_);
-        if (!column || column->num_chunks() == 0) {
-            spdlog::warn("ParquetArrowBatcher: partition_column '{}' not found in row group {}",
-                         partition_column_, group_idx);
-        } else {
-            int64_t offset = 0;
-            for (int c = 0; c < column->num_chunks(); ++c) {
-                auto chunk = column->chunk(c);
-                const int64_t chunk_len = chunk->length();
-                if (chunk->type_id() != arrow::Type::INT8) {
-                    spdlog::warn("ParquetArrowBatcher: partition_column '{}' chunk {} has type {} "
-                                 "(expected int8)",
-                                 partition_column_, c, chunk->type()->ToString());
-                    current_row_indices_.clear();
-                    break;
-                }
-                auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
-                const int8_t* data = arr->raw_values();
-                for (int64_t i = 0; i < chunk_len; ++i) {
-                    if (static_cast<int>(data[i]) == partition_value_) {
-                        current_row_indices_.push_back(static_cast<size_t>(offset + i));
-                    }
-                }
-                offset += chunk_len;
-            }
+    while (current_group_position_ < epoch_group_order_.size()) {
+        const int group_idx = epoch_group_order_[current_group_position_++];
+        ResidentGroup group;
+        group.table = dataset_->ReadRowGroup(group_idx);
+        if (!group.table) {
+            // Its rows would vanish from every epoch (TOFIX223 0.3b, TAB-18).
+            throw std::runtime_error("ParquetArrowBatcher: row group " + std::to_string(group_idx) + " of '" +
+                                     dataset_->GetFilePath() + "' could not be read");
         }
-    } else if (row_split_) {
-        const uint8_t phase = split_phase_ == BatcherPhase::Val ? 1 : split_phase_ == BatcherPhase::Test ? 2 : 0;
-        const auto offset = static_cast<size_t>(row_split_->group_offset[static_cast<size_t>(group_idx)]);
-        for (int64_t i = 0; i < rows_in_group; ++i)
-            if (row_split_->bucket[offset + static_cast<size_t>(i)] == phase)
-                current_row_indices_.push_back(static_cast<size_t>(i));
-    } else {
-        current_row_indices_.resize(static_cast<size_t>(rows_in_group));
-        std::iota(current_row_indices_.begin(), current_row_indices_.end(), size_t{0});
+        for (int g = 0; g < group_idx; ++g) group.first_row += dataset_->GetRowGroupSize(g);
+
+        // This split's rows of the group, then in a seeded order when shuffling.
+        const int64_t rows_in_group = group.table->num_rows();
+        group.rows.reserve(static_cast<size_t>(rows_in_group));
+        if (!partition_column_.empty()) {
+            auto column = group.table->GetColumnByName(partition_column_);
+            if (!column || column->num_chunks() == 0) {
+                spdlog::warn("ParquetArrowBatcher: partition_column '{}' not found in row group {}",
+                             partition_column_, group_idx);
+            } else {
+                int64_t offset = 0;
+                for (int c = 0; c < column->num_chunks(); ++c) {
+                    auto chunk = column->chunk(c);
+                    const int64_t chunk_len = chunk->length();
+                    if (chunk->type_id() != arrow::Type::INT8) {
+                        spdlog::warn("ParquetArrowBatcher: partition_column '{}' chunk {} has type {} "
+                                     "(expected int8)",
+                                     partition_column_, c, chunk->type()->ToString());
+                        group.rows.clear();
+                        break;
+                    }
+                    auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
+                    const int8_t* data = arr->raw_values();
+                    for (int64_t i = 0; i < chunk_len; ++i) {
+                        if (static_cast<int>(data[i]) == partition_value_) {
+                            group.rows.push_back(static_cast<size_t>(offset + i));
+                        }
+                    }
+                    offset += chunk_len;
+                }
+            }
+        } else if (row_split_) {
+            const uint8_t phase = split_phase_ == BatcherPhase::Val ? 1 : split_phase_ == BatcherPhase::Test ? 2 : 0;
+            const auto offset = static_cast<size_t>(row_split_->group_offset[static_cast<size_t>(group_idx)]);
+            for (int64_t i = 0; i < rows_in_group; ++i)
+                if (row_split_->bucket[offset + static_cast<size_t>(i)] == phase)
+                    group.rows.push_back(static_cast<size_t>(i));
+        } else {
+            group.rows.resize(static_cast<size_t>(rows_in_group));
+            std::iota(group.rows.begin(), group.rows.end(), size_t{0});
+        }
+        if (balancing_) BalanceGroupRows(group);
+        if (group.rows.empty()) continue;
+        if (shuffle_) cyxwiz::portable::Shuffle(group.rows.begin(), group.rows.end(), rng_);
+        window_rows_left_ += group.rows.size();
+        window_.push_back(std::move(group));
+        return true;
     }
-    if (balancing_) BalanceCurrentGroupRows();
-    if (shuffle_) {
-        cyxwiz::portable::Shuffle(current_row_indices_.begin(), current_row_indices_.end(), rng_);
+    return false;
+}
+
+void ParquetArrowBatcher::FillWindow() {
+    while (window_.size() < window_groups_ && LoadNextRowGroup()) {
     }
-    current_row_cursor_ = 0;
-    current_group_position_++;
-    if (current_row_indices_.empty()) {
-        return LoadNextRowGroup();
-    }
-    return true;
 }
 
 size_t ParquetArrowBatcher::CountPartitionRowsInGroup(int row_group_idx) const {
@@ -709,6 +708,7 @@ size_t ParquetArrowBatcher::CountPartitionRowsInGroup(int row_group_idx) const {
 // -----------------------------------------------------------------------------
 
 void ParquetArrowBatcher::Reset() {
+    const bool training_epoch = pending_epoch_seed_.has_value();  // BeginEpoch, after the split and balancing
     if (pending_epoch_seed_) {
         // The group order restarts from assigned_row_groups_ (canonical); the
         // generator is the only history.
@@ -719,13 +719,37 @@ void ParquetArrowBatcher::Reset() {
     ShuffleEpochGroupOrder();
     if (balancing_) StartBalancedEpoch();
     current_group_position_ = 0;
-    current_table_.reset();
-    current_row_indices_.clear();
-    current_row_cursor_ = 0;
+    window_.clear();
+    window_rows_left_ = 0;
     samples_served_ = 0;
+    const size_t groups = assigned_row_groups_.size();
+    const int file_groups = dataset_->GetNumRowGroups();
+    const uint64_t group_bytes =
+        file_groups > 0 ? dataset_->GetInMemoryBytesEstimate() / static_cast<uint64_t>(file_groups) : 0;
+    window_groups_ = shuffle_ ? ShuffleWindowParts(DataBudgetBytes(), group_bytes, groups) : 1;
+    if (shuffle_ && training_epoch && !window_logged_ && groups > 0) {
+        window_logged_ = true;
+        spdlog::info("ParquetArrowBatcher: batches mix rows of {} of {} row groups at a time (about {} in memory)",
+                     window_groups_, groups, FormatDataBytes(group_bytes * window_groups_));
+        WarnSingleClassGroups();
+    }
 
-    // Pre-load the first row group so the first GetNextBatch call has data ready
-    LoadNextRowGroup();
+    // Load the window so the first GetNextBatch call has data ready
+    FillWindow();
+}
+
+// A file sorted by class mixes only as far as the window reaches: with more
+// groups than the window, groups that hold one class each are said once.
+void ParquetArrowBatcher::WarnSingleClassGroups() const {
+    if (label_col_idx_ < 0 || window_groups_ >= assigned_row_groups_.size()) return;
+    size_t single = 0;
+    for (const int g : assigned_row_groups_)
+        if (dataset_->RowGroupHoldsOneValue(g, label_column_)) ++single;
+    if (single * 2 < assigned_row_groups_.size()) return;
+    spdlog::warn("ParquetArrowBatcher: the label column '{}' holds one class in {} of {} row groups (the file "
+                 "looks sorted by class); batches mix {} row groups at a time, so a class can fill many batches "
+                 "in a row. Shuffle the rows before saving the file, or raise the data budget.",
+                 label_column_, single, assigned_row_groups_.size(), window_groups_);
 }
 
 // -----------------------------------------------------------------------------
@@ -737,9 +761,8 @@ bool ParquetArrowBatcher::IsEpochComplete() const {
         ? (num_samples_ / batch_size_) * batch_size_
         : num_samples_;
     if (samples_served_ >= effective_samples) return true;
-    // Also complete if we have no current table and no more groups to load
-    if (!current_table_ && current_group_position_ >= epoch_group_order_.size()) return true;
-    return false;
+    // Also complete when the window is empty and no group is left to load
+    return window_rows_left_ == 0 && current_group_position_ >= epoch_group_order_.size();
 }
 
 // -----------------------------------------------------------------------------
@@ -815,46 +838,77 @@ Batch ParquetArrowBatcher::GetNextBatch() {
     }
     RefuseMissingValues();
 
-    // We don't yet know the final batch size (the epoch might end mid-batch),
-    // so allocate max capacity and truncate at the end if needed.
+    // Each row of the batch is drawn at random from all the rows left in the
+    // window (without shuffle: the one resident group, in order). A group the
+    // draw drains leaves the window for the next one of the epoch's order; the
+    // batch keeps its table until its rows are read.
+    struct Source {
+        std::shared_ptr<arrow::Table> table;
+        std::vector<size_t> rows;   // local rows, in the order drawn
+        std::vector<size_t> slots;  // each one's place in the batch
+    };
+    std::vector<Source> sources;
     const size_t capacity = batch_size_;
-    std::vector<float> batch_data(capacity * num_features_, 0.0f);
-    std::vector<int> batch_labels(capacity, 0);
-    const size_t regression_target_width =
-        std::max<size_t>(1, label_col_indices_.size());
-    std::vector<float> batch_labels_float(
-        scalar_label_mode_ ? capacity * regression_target_width : 0, 0.0f);
     size_t rows_filled = 0;
-
-    while (rows_filled < capacity) {
-        // Ensure we have a current row group with rows left.
-        if (!current_table_ || current_row_cursor_ >= current_row_indices_.size()) {
-            if (!LoadNextRowGroup()) {
-                break;  // epoch exhausted
-            }
-            continue;   // retry with the freshly loaded group
+    while (rows_filled < capacity && window_rows_left_ > 0) {
+        size_t pick = shuffle_ ? static_cast<size_t>(cyxwiz::portable::Below(rng_, window_rows_left_)) : 0;
+        size_t g = 0;
+        while (pick >= window_[g].Left()) {
+            pick -= window_[g].Left();
+            ++g;
         }
-
-        // How many rows can we take from the current group in one sweep?
-        const size_t rows_available = current_row_indices_.size() - current_row_cursor_;
-        const size_t rows_needed = capacity - rows_filled;
-        const size_t rows_this_sweep = std::min(rows_available, rows_needed);
-        for (size_t b = 0; b < rows_this_sweep; ++b)
-            batch.row_ids.push_back(current_group_first_row_ +
-                                    static_cast<int64_t>(current_row_indices_[current_row_cursor_ + b]));
-
-        FillRows(*current_table_, current_row_indices_.data() + current_row_cursor_, rows_this_sweep,
-                 rows_filled, batch_data, batch_labels, batch_labels_float);
-
-        rows_filled += rows_this_sweep;
-        current_row_cursor_ += rows_this_sweep;
-        samples_served_ += rows_this_sweep;
+        ResidentGroup& group = window_[g];
+        const size_t local = group.rows[group.cursor++];
+        --window_rows_left_;
+        auto source = std::find_if(sources.begin(), sources.end(),
+                                   [&](const Source& s) { return s.table == group.table; });
+        if (source == sources.end()) {
+            sources.push_back({group.table, {}, {}});
+            source = sources.end() - 1;
+        }
+        source->rows.push_back(local);
+        source->slots.push_back(rows_filled);
+        batch.row_ids.push_back(group.first_row + static_cast<int64_t>(local));
+        ++rows_filled;
+        if (group.Left() == 0) {
+            window_.erase(window_.begin() + static_cast<std::ptrdiff_t>(g));
+            LoadNextRowGroup();
+        }
     }
 
     // If we filled zero rows, the epoch is over and there's no partial batch
     // to return.
     if (rows_filled == 0) {
         return batch;
+    }
+    samples_served_ += rows_filled;
+
+    // The rows are read a group at a time (one typed pass per column), then
+    // put in the order they were drawn.
+    const size_t regression_target_width = std::max<size_t>(1, label_col_indices_.size());
+    std::vector<float> batch_data(rows_filled * num_features_, 0.0f);
+    std::vector<int> batch_labels(rows_filled, 0);
+    std::vector<float> batch_labels_float(scalar_label_mode_ ? rows_filled * regression_target_width : 0, 0.0f);
+    std::vector<size_t> slot_of;  // read position -> place in the batch
+    slot_of.reserve(rows_filled);
+    for (const Source& source : sources) {
+        FillRows(*source.table, source.rows.data(), source.rows.size(), slot_of.size(), batch_data, batch_labels,
+                 batch_labels_float);
+        slot_of.insert(slot_of.end(), source.slots.begin(), source.slots.end());
+    }
+    bool in_order = true;
+    for (size_t i = 0; i < slot_of.size() && in_order; ++i) in_order = slot_of[i] == i;
+    if (!in_order) {
+        const auto place = [&](auto& values, size_t width) {
+            auto placed = values;
+            for (size_t i = 0; i < slot_of.size(); ++i)
+                std::copy_n(values.begin() + static_cast<std::ptrdiff_t>(i * width), width,
+                            placed.begin() + static_cast<std::ptrdiff_t>(slot_of[i] * width));
+            values = std::move(placed);
+        };
+        place(batch_data, num_features_);
+        place(batch_labels, 1);
+        if (scalar_label_mode_) place(batch_labels_float, regression_target_width);
     }
 
     FinishBatch(batch, rows_filled, batch_data, batch_labels, batch_labels_float);

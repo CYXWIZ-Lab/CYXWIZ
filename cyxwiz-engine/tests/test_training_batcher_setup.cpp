@@ -2,6 +2,7 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/split_partitioning.h"
 #include "../src/core/classification_decision.h"
+#include "../src/core/data_budget.h"
 #include "../src/core/label_vocabulary.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/parquet_backed_dataset.h"
@@ -773,6 +774,76 @@ void CheckBalancedEpochReplays(const std::string& kind, const std::function<cyxw
     Check(!third.empty() && replayed == third,
           kind + ": a run resumed at epoch 3 serves epoch 3's balanced rows, in its order");
     Check(RowsOfEpoch(*resumed, 9004) != replayed, kind + ": the next epoch draws other rows");
+}
+
+// A file on disk sorted by class gives mixed batches (TOFIX242 2.1d, TAB-05):
+// 40 row groups of 50 rows, each one class (group g holds class g % 4). Rows
+// drawn from a window of 4 groups: few batches hold one class; read a group at
+// a time, as before, most did. Every row is still served once an epoch.
+void TestParquetShuffleWindow(const std::filesystem::path& work_dir) {
+    Check(cyxwiz::ShuffleWindowParts(1ull << 30, 10ull << 20, 1000) == 25, "a quarter of 1 GB holds 25 parts of 10 MB");
+    Check(cyxwiz::ShuffleWindowParts(1ull << 20, 10ull << 20, 1000) == 4, "a window holds at least 4 parts");
+    Check(cyxwiz::ShuffleWindowParts(1ull << 30, 10ull << 20, 3) == 3, "a window holds at most the parts there are");
+    Check(cyxwiz::ShuffleWindowParts(1ull << 30, 0, 7) == 7, "parts of unknown size: all of them");
+
+    constexpr int kRows = 2000, kGroup = 50;
+    const auto class_of = [](int64_t row) { return static_cast<int>((row / kGroup) % 4); };
+    std::vector<float> ids, noise;
+    std::vector<int32_t> labels;
+    for (int i = 0; i < kRows; ++i) {
+        ids.push_back(static_cast<float>(i));
+        noise.push_back(static_cast<float>(i % 5));
+        labels.push_back(class_of(i));
+    }
+    auto schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("x1", arrow::float32()),
+                                 arrow::field("label", arrow::int32())});
+    auto table = arrow::Table::Make(schema, {FinishFloatArray(ids), FinishFloatArray(noise), FinishIntArray(labels)},
+                                    kRows);
+    cyxwiz::ArrowDataset source(table, "sorted_source");
+    const auto path = work_dir / "cyxwiz_parquet_sorted_by_class.parquet";
+    WriteParquetWithRowGroupSize(source, path.string(), kGroup);
+    auto dataset = cyxwiz::ParquetBackedDataset::Open(path.string(), "sorted_by_class");
+    Check(dataset != nullptr && dataset->GetNumRowGroups() == kRows / kGroup, "the sorted fixture has 40 row groups");
+    Check(dataset->RowGroupHoldsOneValue(7, "label") && !dataset->RowGroupHoldsOneValue(7, "x0"),
+          "row-group statistics show a group of one class, and a feature column of many values");
+
+    cyxwiz::SetDataBudgetBytes(1);  // the smallest window: 4 groups
+    auto config = MakeConfig();
+    config.output_size = 4;
+    config.shuffle = true;
+    config.has_data_split = true;
+    config.train_ratio = 0.9f;
+    config.val_ratio = 0.1f;
+    config.test_ratio = 0.0f;
+    config.split_seed = 3;
+    auto built = cyxwiz::BuildParquetTrainingBatchers(config, dataset, "label", /*batch_size=*/20);
+    Check(built.train != nullptr, "the sorted fixture's train batcher is built");
+    for (const uint64_t seed : {77u, 78u}) {
+        built.train->BeginEpoch(seed);
+        size_t batches = 0, one_class = 0;
+        std::vector<int> served(kRows, 0);
+        while (!built.train->IsEpochComplete()) {
+            const auto batch = built.train->GetNextBatch();
+            if (!batch.IsValid()) break;
+            ++batches;
+            bool same = true;
+            for (const int64_t row : batch.row_ids) {
+                ++served[static_cast<size_t>(row)];
+                same = same && class_of(row) == class_of(batch.row_ids.front());
+            }
+            one_class += same ? 1 : 0;
+        }
+        size_t rows = 0, repeated = 0;
+        for (const int times : served) {
+            rows += times > 0 ? 1 : 0;
+            repeated += times > 1 ? 1 : 0;
+        }
+        Check(rows == built.num_train_samples && repeated == 0, "each train row of the sorted file is served once");
+        Check(batches > 50 && one_class * 10 <= batches,
+              "batches of a file sorted by class mix classes (" + std::to_string(one_class) + " of " +
+                  std::to_string(batches) + " hold one class)");
+    }
+    cyxwiz::SetDataBudgetBytes(0);
 }
 
 void TestParquetClassBalancing(const std::filesystem::path& work_dir) {
@@ -2169,6 +2240,9 @@ int main(int argc, char** argv) {
     TestSplitCountsAcrossClasses();
     TestParquetRowSplit(fs::temp_directory_path());
     TestParquetClassBalancing(fs::temp_directory_path());
+    TestParquetShuffleWindow(fs::temp_directory_path());
+    std::error_code ignored_error;  // the file stays when it is still mapped
+    fs::remove(fs::temp_directory_path() / "cyxwiz_parquet_sorted_by_class.parquet", ignored_error);
     fs::remove_all(work_dir);
 
     std::cout << "Training batcher setup passed\n";
