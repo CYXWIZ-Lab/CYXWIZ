@@ -22,6 +22,7 @@ cmake_install.cmake
 !cmake/*.cmake
 !cmake/sdk/*.cmake
 !tests/smoke/run_oneapi_operation_matrix.cmake
+!vcpkg-ports/**/*.cmake
 
 # Compiled files
 *.o
