@@ -23,12 +23,17 @@ inline int ParseModelRandomSeed(const std::string& value) {
 struct TrainingRandomness {
     int model_seed = -1;
     int dataloader_seed = -1; // Unknown for historical checkpoints.
+    // The run drew the seed itself (none was set), and recorded it, so it can
+    // resume exactly as a seeded run does (TOFIX242 2.1b)
+    bool model_seed_drawn = false;
+    bool dataloader_seed_drawn = false;
     std::string generator;
     std::string execution_device;
 };
 
 inline void to_json(nlohmann::json& j, const TrainingRandomness& value) {
     j = {{"model_seed", value.model_seed}, {"dataloader_seed", value.dataloader_seed},
+         {"model_seed_drawn", value.model_seed_drawn}, {"dataloader_seed_drawn", value.dataloader_seed_drawn},
          {"generator", value.generator}, {"execution_device", value.execution_device},
          {"scope", value.model_seed < 0 ? "model_rng_unset" :
              "fresh_run_same_runtime_device_and_random_operation_order_arrayfire_only"},
@@ -50,6 +55,8 @@ inline void from_json(const nlohmann::json& j, TrainingRandomness& value) {
         throw std::invalid_argument("Checkpoint seed provenance is out of range");
     value.model_seed = static_cast<int>(seed);
     value.dataloader_seed = static_cast<int>(data_seed);
+    value.model_seed_drawn = j.value("model_seed_drawn", false);
+    value.dataloader_seed_drawn = j.value("dataloader_seed_drawn", false);
     value.generator = j.value("generator", std::string{});
     value.execution_device = j.value("execution_device", std::string{});
     // This record is provenance only; it never restores a random stream.

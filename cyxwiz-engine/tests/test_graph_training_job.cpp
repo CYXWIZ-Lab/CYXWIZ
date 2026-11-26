@@ -464,6 +464,40 @@ int main() {
                              std::to_string(resumed_steps.size()) + " batches)");
         Check(resumed.metrics.loss_history.size() == 3, "the loss history spans all three epochs");
 
+        // An unseeded run draws its seeds at its start and records them; its
+        // resume adopts them, so it is exact too (TOFIX242 2.1b: unseeded runs
+        // recorded -1 and could not resume exactly).
+        {
+            const nlohmann::json seeded_graph = graph;
+            for (auto& node : graph["nodes"]) {
+                auto& params = node["parameters"];
+                if (params.contains("batch_size")) {
+                    params.erase("model_seed");
+                    params.erase("seed");
+                }
+            }
+            std::vector<Step> unseeded_first;
+            const auto unseeded = run("resume_unseeded", "", 2, unseeded_first);
+            Check(unseeded.cancelled, "the unseeded run stops during epoch 2");
+            // A graph's DataLoader always has a data seed (the compiler's 42
+            // without one); the model seed is the one left unset
+            Check(unseeded.metrics.randomness.model_seed >= 0 && unseeded.metrics.randomness.model_seed_drawn &&
+                      unseeded.metrics.randomness.dataloader_seed == 42 &&
+                      !unseeded.metrics.randomness.dataloader_seed_drawn,
+                  "a run without a model seed draws and records one (model " +
+                      std::to_string(unseeded.metrics.randomness.model_seed) + ", DataLoader " +
+                      std::to_string(unseeded.metrics.randomness.dataloader_seed) + ")");
+            std::vector<Step> unseeded_resumed_steps;
+            const auto unseeded_resumed = run("resume_unseeded", "latest", 0, unseeded_resumed_steps);
+            Check(unseeded_resumed.ok && unseeded_resumed.metrics.resume_exact,
+                  "an unseeded run's resume is exact" +
+                      (unseeded_resumed.error.empty() ? "" : " (" + unseeded_resumed.error + ")"));
+            Check(unseeded_resumed.metrics.randomness.model_seed == unseeded.metrics.randomness.model_seed &&
+                      unseeded_resumed.metrics.randomness.dataloader_seed == unseeded.metrics.randomness.dataloader_seed,
+                  "the resumed run continues with the seeds the first run drew");
+            graph = seeded_graph;
+        }
+
         std::cout << "resumes exactly from inside an epoch\n";
         {
             std::vector<Step> every_step;

@@ -3336,9 +3336,9 @@ MetricCadenceRunResult RunMetricCadenceCase(
     config.save_best_checkpoint = false;
     config.early_stopping_patience = 0;
 
-    // Model construction happens inside Train. Reset the ArrayFire RNG before
-    // each case so reporting cadence is the only changed input.
-    af::setSeed(390039);
+    // The same model seed for each case, so reporting cadence is the only
+    // changed input (an unseeded run draws its own seed, TOFIX242 2.1b).
+    config.model_seed = 390039;
     cyxwiz::TrainingExecutor executor(config, dataset, "label");
     MetricCadenceRunResult result;
     executor.Train(

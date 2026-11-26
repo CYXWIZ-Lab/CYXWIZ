@@ -486,7 +486,7 @@ struct TrainingConfiguration {
     int prefetch_factor = 0;            // bounded async batch queue depth; 0 disables prefetch
     int log_interval = 10;              // batch metric/log cadence; 0 samples first/final only
     int validation_freq = 1;            // epoch-based validation cadence; final epoch always validates
-    int model_seed = -1;               // optional model initialization/dropout seed; -1 leaves RNG unchanged
+    int model_seed = -1;               // optional model initialization/dropout seed; -1: the run draws one and records it
     int dataloader_seed = 42;           // deterministic DataLoader split/shuffle seed
     int grad_accum_steps = training_contract::kGradientAccumulationStepsDefault;
     TrainingGenerationPreviewSettings generation_preview;

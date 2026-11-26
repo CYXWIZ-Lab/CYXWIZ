@@ -18,10 +18,13 @@ Each epoch reseeds the model draws from the model seed, and the batch order,
 the class balancing (under- and oversampling, the weighted sampler) and image
 and audio augmentation from the DataLoader seed, each with the epoch number, so
 a run resumed from a checkpoint draws what the full run would have drawn, for
-tables in memory and on disk, sparse features, images, audio and sequences. A
-run without a DataLoader seed is the exception: its data order after a resume
-differs from the full run's, and the run says so (its data order is marked not
-exact).
+tables in memory and on disk, sparse features, images, audio and sequences.
+
+The DataLoader seed is 42 when you set none. A run without a model seed draws
+one at its start and records it (in the run's trace, marked as drawn), so it
+resumes exactly as a seeded run does: the resumed run continues
+with the seed the first run drew. Set the model seed yourself to repeat a run
+from its start.
 
 ## How close is "the same"
 

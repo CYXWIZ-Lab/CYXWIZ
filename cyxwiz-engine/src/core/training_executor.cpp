@@ -44,6 +44,7 @@
 #include <filesystem>
 #include <limits>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <cstdio>
@@ -936,7 +937,19 @@ void TrainingExecutor::Train(
 
     try {
         // Bind/reset only here on the execution worker, before randomized construction.
+        // A run without a model or DataLoader seed draws one here, before
+        // anything draws from it, and records it, so it can resume exactly
+        // as a seeded run does (TOFIX242 2.1b, owner Q3).
         TrainingRandomness randomness;
+        const auto draw_seed = [] { return static_cast<int>(std::random_device{}() & 0x7FFFFFFF); };
+        if (config_.model_seed < 0) {
+            config_.model_seed = draw_seed();
+            randomness.model_seed_drawn = true;
+        }
+        if (config_.dataloader_seed < 0) {
+            config_.dataloader_seed = draw_seed();
+            randomness.dataloader_seed_drawn = true;
+        }
         randomness.model_seed = ParseModelRandomSeed(std::to_string(config_.model_seed));
         randomness.dataloader_seed = config_.dataloader_seed;
         randomness.execution_device = execution_context.Describe();
@@ -1459,7 +1472,7 @@ void TrainingExecutor::Train(
     // Resume (TOFIX118 P4e): restore the checkpoint into the model and
     // optimizer just built, and continue at the epoch after it.
     int start_epoch = 1;
-    const int run_model_seed = GetMetrics().randomness.model_seed;
+    int run_model_seed = GetMetrics().randomness.model_seed;
     resume_total_epochs_ = epochs;
     resume_model_seed_ = run_model_seed;
     resume_best_val_loss_ = best_val_loss;
@@ -1497,6 +1510,28 @@ void TrainingExecutor::Train(
             UpdateMetrics([resumed_lr](TrainingMetrics& m) { m.learning_rate = resumed_lr; });
         } else {
             graph_schedule_resume_ = restored.scheduler;
+        }
+        // A run that drew its own seeds continues the checkpoint's, so the
+        // resumed epochs draw what the original run would have (TOFIX242 2.1b)
+        {
+            const TrainingRandomness drawn = GetMetrics().randomness;
+            TrainingRandomness adopted = drawn;
+            if (drawn.model_seed_drawn && restored.model_seed >= 0) {
+                run_model_seed = static_cast<int>(restored.model_seed);
+                config_.model_seed = run_model_seed;
+                adopted.model_seed = run_model_seed;
+                resume_model_seed_ = run_model_seed;
+            }
+            if (drawn.dataloader_seed_drawn && restored.dataloader_seed >= 0) {
+                config_.dataloader_seed = static_cast<int>(restored.dataloader_seed);
+                adopted.dataloader_seed = config_.dataloader_seed;
+            }
+            if (adopted.model_seed != drawn.model_seed || adopted.dataloader_seed != drawn.dataloader_seed) {
+                UpdateMetrics([&](TrainingMetrics& m) { m.randomness = adopted; });
+                TrainingTraceCollector::Instance().RecordTrainingRandomness(adopted);
+                spdlog::info("TrainingExecutor: resumed with the checkpoint's seeds (model {}, DataLoader {})",
+                             adopted.model_seed, adopted.dataloader_seed);
+            }
         }
         start_epoch = restored.completed_epoch + 1;
         if (restored.in_epoch) {
