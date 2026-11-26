@@ -56,7 +56,8 @@ void SparseFeatureDatasetBatcher::RebuildBalancedIndices() {
         }
     }
 
-    balance_rng_.seed(balance_seed_ + balance_epoch_++);
+    // balance_rng_: the epoch's (BeginEpoch) or the constructor's draw
+    // continued, never a count of rebuilds (TAB-20)
     std::vector<int64_t> balanced;
     if (balance_mode_ == "undersample") {
         for (auto& entry : by_label) {

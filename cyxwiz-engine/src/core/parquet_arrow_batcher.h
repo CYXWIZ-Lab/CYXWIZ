@@ -101,8 +101,9 @@ public:
     // IBatcher interface
     Batch GetNextBatch() override;
     void Reset() override;
-    bool SetEpochShuffleSeed(uint64_t seed) override {
+    bool BeginEpoch(uint64_t seed) override {
         pending_epoch_seed_ = seed;
+        Reset();
         return true;
     }
     bool IsEpochComplete() const override;
@@ -196,7 +197,7 @@ private:
     bool class_index_label_mode_ = false;
 
     std::mt19937 rng_;
-    std::optional<uint64_t> pending_epoch_seed_;  // see SetEpochShuffleSeed
+    std::optional<uint64_t> pending_epoch_seed_;  // BeginEpoch's seed, for its Reset
 
     // Class balancing (SetClassBalancing). Per class: its rows in this
     // split, and this epoch's draw state.
@@ -210,7 +211,6 @@ private:
     std::string balance_mode_;
     std::string balance_target_;
     uint32_t balance_seed_ = 0;
-    uint32_t balance_epoch_ = 0;
     std::unordered_map<std::string, uint32_t> balance_ids_;  // label value -> class
     std::vector<BalanceClass> balance_classes_;
     std::mt19937_64 balance_rng_;

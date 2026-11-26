@@ -109,9 +109,14 @@ MetricBatchSampler::MetricBatchSampler(IBatcher& source, MetricSampling sampling
     }
 }
 
-bool MetricBatchSampler::SetEpochShuffleSeed(uint64_t seed) {
+bool MetricBatchSampler::BeginEpoch(uint64_t seed) {
     epoch_key_ = seed;
-    return source_->SetEpochShuffleSeed(seed);
+    const bool exact = source_->BeginEpoch(seed);
+    batch_index_ = 0;
+    skipped_batches_ = 0;
+    rows_seen_ = 0;
+    rows_left_out_ = 0;
+    return exact;
 }
 
 void MetricBatchSampler::Reset() {

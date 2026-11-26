@@ -908,7 +908,9 @@ void ArrowDatasetBatcher::RebuildBalancedIndices() {
         return;
     }
 
-    balance_rng_.seed(balance_seed_ + balance_epoch_++);
+    // balance_rng_ is the epoch's (BeginEpoch seeds it) or, between epochs, the
+    // constructor's draw continued: never a count of rebuilds, which a resumed
+    // run could not replay (TAB-20)
 
     std::ostringstream original_dist;
     bool first = true;

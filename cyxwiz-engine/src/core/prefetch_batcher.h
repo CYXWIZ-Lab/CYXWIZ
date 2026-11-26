@@ -63,17 +63,17 @@ public:
         return batch;
     }
 
-    bool SetEpochShuffleSeed(uint64_t seed) override { return source_->SetEpochShuffleSeed(seed); }
+    bool BeginEpoch(uint64_t seed) override {
+        StopWorker();
+        const bool exact = source_->BeginEpoch(seed);
+        ClearState();
+        return exact;
+    }
 
     void Reset() override {
         StopWorker();
         source_->Reset();
-
-        std::lock_guard<std::mutex> lock(mutex_);
-        source_complete_ = false;
-        started_ = false;
-        worker_error_ = nullptr;
-        ClearQueue();
+        ClearState();
     }
 
     bool IsEpochComplete() const override {
@@ -150,6 +150,15 @@ public:
     }
 
 private:
+    // After the source started a pass: nothing queued, the worker not started
+    void ClearState() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        source_complete_ = false;
+        started_ = false;
+        worker_error_ = nullptr;
+        ClearQueue();
+    }
+
     void StartWorker() {
         std::lock_guard<std::mutex> lock(mutex_);
         if (started_) {

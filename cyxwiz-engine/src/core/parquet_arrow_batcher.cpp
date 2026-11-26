@@ -438,7 +438,7 @@ void ParquetArrowBatcher::SetClassBalancing(const std::string& mode, const std::
     balance_mode_ = mode == "undersample" || mode == "weighted_sampler" ? mode : "oversample";
     balance_target_ = target;
     balance_seed_ = seed;
-    balance_epoch_ = 0;
+    balance_rng_.seed(static_cast<uint64_t>(seed));
     balancing_ = CountBalanceClasses();
     Reset();
 }
@@ -476,8 +476,9 @@ bool ParquetArrowBatcher::CountBalanceClasses() {
 }
 
 void ParquetArrowBatcher::StartBalancedEpoch() {
-    // A new draw each epoch, as the in-memory batcher reseeds per rebuild.
-    balance_rng_.seed(static_cast<uint64_t>(balance_seed_) + balance_epoch_++);
+    // A new draw each epoch: from the epoch's seed (BeginEpoch), or the draw
+    // continued between epochs; never a count of epochs, which a resumed run
+    // could not replay (TAB-20)
     std::vector<size_t> counts;
     uint64_t rows = 0;
     size_t present = 0;
@@ -712,6 +713,7 @@ void ParquetArrowBatcher::Reset() {
         // The group order restarts from assigned_row_groups_ (canonical); the
         // generator is the only history.
         rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_));
+        balance_rng_.seed(*pending_epoch_seed_ ^ 0x9E3779B97F4A7C15ull);
         pending_epoch_seed_.reset();
     }
     ShuffleEpochGroupOrder();

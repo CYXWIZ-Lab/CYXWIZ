@@ -11,6 +11,7 @@
 #include "../src/core/training_executor.h"
 #include "../src/core/worker_defaults.h"
 
+#include <functional>
 #include <arrow/api.h>
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
@@ -746,6 +747,32 @@ void TestParquetRowSplit(const std::filesystem::path& work_dir) {
 // Class balancing on disk (TOFIX157 A3): the in-memory rules on a table
 // that stays on disk. The row-split fixture's train split holds 560 rows of
 // class 0 and 240 of class 1 (rows 0-559 and 700-939, unshuffled).
+// The rows of one epoch, in the order served, from BeginEpoch(seed)
+std::vector<int64_t> RowsOfEpoch(cyxwiz::IBatcher& batcher, uint64_t seed) {
+    batcher.BeginEpoch(seed);
+    std::vector<int64_t> rows;
+    while (!batcher.IsEpochComplete()) {
+        auto batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) break;
+        rows.insert(rows.end(), batch.row_ids.begin(), batch.row_ids.end());
+    }
+    return rows;
+}
+
+// A resumed run replays a class-balanced epoch (TOFIX242 2.1a, TAB-20): a
+// fresh batcher begun at epoch 3 serves the rows and order epoch 3 of an
+// uninterrupted run served. The balance draw followed a count of rebuilds.
+void CheckBalancedEpochReplays(const std::string& kind, const std::function<cyxwiz::IBatcher*()>& make) {
+    cyxwiz::IBatcher* run = make();
+    std::vector<int64_t> third;
+    for (uint64_t epoch = 1; epoch <= 3; ++epoch) third = RowsOfEpoch(*run, 9000 + epoch);
+    cyxwiz::IBatcher* resumed = make();
+    const auto replayed = RowsOfEpoch(*resumed, 9003);
+    Check(!third.empty() && replayed == third,
+          kind + ": a run resumed at epoch 3 serves epoch 3's balanced rows, in its order");
+    Check(RowsOfEpoch(*resumed, 9004) != replayed, kind + ": the next epoch draws other rows");
+}
+
 void TestParquetClassBalancing(const std::filesystem::path& work_dir) {
     constexpr int kRows = 1000;
     std::vector<float> ids, noise;
@@ -832,6 +859,13 @@ void TestParquetClassBalancing(const std::filesystem::path& work_dir) {
           "weighted sampler: about half the draws class 1 (" + std::to_string(weighted_one) + ")");
     auto weighted_again = balanced("weighted_sampler", "max", 19);
     Check(served(*weighted_again.train) == weighted_times, "weighted sampler: the same seed, the same rows");
+
+    std::vector<cyxwiz::TrainingBatcherSet> kept;
+    kept.reserve(2);
+    CheckBalancedEpochReplays("Parquet weighted sampler", [&]() {
+        kept.push_back(balanced("weighted_sampler", "max", 19));
+        return kept.back().train;
+    });
 
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
@@ -1210,6 +1244,36 @@ int main(int argc, char** argv) {
         CountOneHotLabels(*balanced_batchers.train, 2, "balanced train");
     Check(balanced_train_counts == std::vector<size_t>({8, 8}),
           "balanced Arrow oversampling should equalize train class counts");
+    {
+        auto replay_config = balanced_loader_config;
+        replay_config.shuffle = true;
+        replay_config.balance_mode = "weighted_sampler";
+        std::vector<cyxwiz::TrainingBatcherSet> kept;
+        kept.reserve(2);
+        CheckBalancedEpochReplays("Arrow weighted sampler", [&]() {
+            kept.push_back(cyxwiz::BuildArrowTrainingBatchers(replay_config, MakeStratifiedDataset(), "label", 4));
+            return kept.back().train;
+        });
+        auto sparse_replay = MakeConfig();
+        sparse_replay.has_data_split = true;
+        sparse_replay.train_ratio = 2.0f / 3.0f;
+        sparse_replay.val_ratio = 1.0f / 6.0f;
+        sparse_replay.test_ratio = 1.0f / 6.0f;
+        sparse_replay.stratified = true;  // Train holds both classes, so the sampler draws
+        sparse_replay.split_seed = 5;
+        sparse_replay.shuffle = true;
+        sparse_replay.balance_classes = true;
+        sparse_replay.balance_mode = "weighted_sampler";
+        sparse_replay.balance_target = "max";
+        sparse_replay.balance_seed = 11;
+        std::vector<cyxwiz::TrainingBatcherSet> sparse_kept;
+        sparse_kept.reserve(2);
+        CheckBalancedEpochReplays("sparse weighted sampler", [&]() {
+            sparse_kept.push_back(
+                cyxwiz::BuildSparseTrainingBatchers(sparse_replay, MakeSparseDataset("sparse_replay"), 2));
+            return sparse_kept.back().train;
+        });
+    }
 
     auto stale_target_config = balanced_loader_config;
     stale_target_config.target.required_by_objective = true;

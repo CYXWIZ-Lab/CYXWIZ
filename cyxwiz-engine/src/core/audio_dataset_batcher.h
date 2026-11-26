@@ -56,8 +56,9 @@ public:
     // The next Train Reset orders the epoch from `seed` alone (the epoch's
     // seed from the executor), so a resumed run replays its order (TOFIX228
     // 1.6, ORA-28: the order followed how many Resets had run).
-    bool SetEpochShuffleSeed(uint64_t seed) override {
+    bool BeginEpoch(uint64_t seed) override {
         pending_epoch_seed_ = seed;
+        Reset();
         return true;
     }
     bool IsEpochComplete() const override;
@@ -126,7 +127,7 @@ private:
     size_t current_idx_ = 0;
 
     std::mt19937 rng_;
-    std::optional<uint64_t> pending_epoch_seed_;  // see SetEpochShuffleSeed
+    std::optional<uint64_t> pending_epoch_seed_;  // BeginEpoch's seed, for its Reset
     uint32_t augmentation_round_ = 0;  // training epochs begun (augmentation draws)
 };
 

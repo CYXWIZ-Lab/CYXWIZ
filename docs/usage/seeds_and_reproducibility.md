@@ -14,11 +14,13 @@ OpenCL devices.
 | Cross-validation seed | Results > Cross-validation | Fold membership (k-fold and stratified) and learning-curve subsets |
 | Tool seeds | Explore tabs (Groups, Text), Tools > Utilities > Random, word embeddings, k-means, GMM, Random Forest, hyperparameter search, text generation | Each tool's own sample or start |
 
-Each epoch reseeds the model draws from the model seed and the batch order from
-the DataLoader seed, each with the epoch number, so a run resumed from a
-checkpoint draws what the full run would have drawn. Image and audio datasets
-are the exception for now: their batch order and augmentation after a resume
-differ from the full run's, and the run says so (its data order is marked not
+Each epoch reseeds the model draws from the model seed, and the batch order,
+the class balancing (under- and oversampling, the weighted sampler) and image
+and audio augmentation from the DataLoader seed, each with the epoch number, so
+a run resumed from a checkpoint draws what the full run would have drawn, for
+tables in memory and on disk, sparse features, images, audio and sequences. A
+run without a DataLoader seed is the exception: its data order after a resume
+differs from the full run's, and the run says so (its data order is marked not
 exact).
 
 ## How close is "the same"

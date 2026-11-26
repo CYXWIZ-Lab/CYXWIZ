@@ -143,8 +143,9 @@ public:
         current_index_ = std::min(ActiveIndices().size(), current_index_ + batches * config_.batch_size);
     }
 
-    bool SetEpochShuffleSeed(uint64_t seed) override {
+    bool BeginEpoch(uint64_t seed) override {
         pending_epoch_seed_ = seed;
+        Reset();
         return true;
     }
 
@@ -314,7 +315,7 @@ private:
     BatcherPhase current_phase_ = BatcherPhase::Train;
     size_t current_index_ = 0;
     std::mt19937 rng_;
-    std::optional<uint64_t> pending_epoch_seed_;  // see SetEpochShuffleSeed
+    std::optional<uint64_t> pending_epoch_seed_;  // BeginEpoch's seed, for its Reset
 };
 
 } // namespace cyxwiz

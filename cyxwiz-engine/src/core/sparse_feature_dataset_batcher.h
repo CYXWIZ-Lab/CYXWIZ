@@ -63,8 +63,9 @@ public:
     // The next Reset orders the epoch from `seed` alone (the epoch's seed
     // from the executor), so a resumed run replays its order, as the Arrow
     // batcher does (TOFIX228 1.6, ORA-28).
-    bool SetEpochShuffleSeed(uint64_t seed) override {
+    bool BeginEpoch(uint64_t seed) override {
         pending_epoch_seed_ = seed;
+        Reset();
         return true;
     }
     bool IsEpochComplete() const override;
@@ -122,9 +123,8 @@ private:
     size_t current_index_ = 0;
     std::mt19937 rng_;
     std::mt19937 balance_rng_;
-    std::optional<uint64_t> pending_epoch_seed_;  // see SetEpochShuffleSeed
+    std::optional<uint64_t> pending_epoch_seed_;  // BeginEpoch's seed, for its Reset
     uint32_t balance_seed_ = 42;
-    uint32_t balance_epoch_ = 0;
     bool balance_classes_ = false;
     std::string balance_mode_;
     std::string balance_target_;

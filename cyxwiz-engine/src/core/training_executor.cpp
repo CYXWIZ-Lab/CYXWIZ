@@ -1513,6 +1513,8 @@ void TrainingExecutor::Train(
         resume_epochs_without_improvement_ = epochs_without_improvement;
         const bool exact = restored.model_seed >= 0 && restored.model_seed == run_model_seed &&
                            restored.data_order_exact;
+        // A run whose first epochs were not order-exact stays so after a resume
+        data_order_exact_ = data_order_exact_ && restored.data_order_exact;
         UpdateMetrics([&](TrainingMetrics& m) {
             m.loss_history = restored.loss_history;
             m.accuracy_history = restored.accuracy_history;
@@ -1577,16 +1579,22 @@ void TrainingExecutor::Train(
             SeedCurrentArrayFireRandomEngine(TrainingEpochSeed(static_cast<std::uint64_t>(run_model_seed), epoch));
         }
         {
-            bool seeded = config_.dataloader_seed >= 0;
-            if (seeded) {
-                const auto shuffle_seed = TrainingEpochSeed(static_cast<std::uint64_t>(config_.dataloader_seed), epoch);
-                if (mode_ == DatasetMode::SequenceExternal && active_sequence_batcher) {
-                    seeded = active_sequence_batcher->SetEpochShuffleSeed(shuffle_seed);
-                } else if (active_train_ibatcher) {
-                    seeded = active_train_ibatcher->SetEpochShuffleSeed(shuffle_seed);
-                }
+            // The Train batcher's epoch begins here with that seed (TOFIX242
+            // 2.1a): its order, balancing and augmentation come from it, and
+            // the epoch's batch count is read after it (an Image or Audio
+            // batcher still held validation's part before, N1).
+            const bool seeded = config_.dataloader_seed >= 0;
+            const auto shuffle_seed =
+                seeded ? TrainingEpochSeed(static_cast<std::uint64_t>(config_.dataloader_seed), epoch) : 0;
+            bool exact = false;
+            if (mode_ == DatasetMode::SequenceExternal && active_sequence_batcher) {
+                if (seeded) exact = active_sequence_batcher->BeginEpoch(shuffle_seed);
+                else active_sequence_batcher->Reset();
+            } else if (active_train_ibatcher) {
+                if (seeded) exact = active_train_ibatcher->BeginEpoch(shuffle_seed);
+                else active_train_ibatcher->Reset();
             }
-            data_order_exact_ = data_order_exact_ && seeded;
+            data_order_exact_ = data_order_exact_ && exact;
         }
 
         auto epoch_start = std::chrono::steady_clock::now();
@@ -1908,7 +1916,7 @@ void TrainingExecutor::Train(
         {
             if (mode_ == DatasetMode::SequenceExternal &&
                 active_sequence_batcher) {
-                active_sequence_batcher->Reset();
+                // The next epoch begins with its own seed (BeginEpoch).
             } else {
                 // Batch coverage (TOFIX140 A5): the training sampler is the
                 // first one; rows whose class had no partner in their batch
@@ -1923,8 +1931,8 @@ void TrainingExecutor::Train(
                         100.0 * static_cast<double>(sampler.RowsLeftOut()) /
                             static_cast<double>(std::max<size_t>(sampler.RowsSeen(), 1)));
                 }
-                // The Train batcher is reset at the start of the next epoch
-                // (RunTrainingEpochArrow), with that epoch's seed.
+                // The Train batcher's next epoch begins with its own seed
+                // (BeginEpoch, at the epoch's start).
                 if (active_val_ibatcher != active_train_ibatcher) {
                     active_val_ibatcher->Reset();
                 }
@@ -2870,7 +2878,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
     });
 
     const auto epoch_start_time = std::chrono::steady_clock::now();
-    batcher.Reset();
+    // The epoch began in Train (BeginEpoch with its seed).
     // Resumed inside this epoch (TOFIX118 P4e-2): same order, so skip what
     // the checkpoint already trained and continue its running sums.
     if (pending_epoch_resume_ && pending_epoch_resume_->epoch == epoch) {
@@ -3307,12 +3315,9 @@ void TrainingExecutor::RunTrainingEpochArrow(
     // the fix for the tofix.md entry "Training logs silent mid-epoch".
     const auto epoch_start_time = std::chrono::steady_clock::now();
 
-    // The epoch's order comes from its own seed (set just before, from
-    // (run seed, epoch)), as in RunTrainingEpochSequence. Without this Reset
-    // the seed took effect only at the epoch's end: epoch 1 trained in the
-    // batcher's construction order and epoch k in epoch k-1's, so a resumed
-    // run did not replay its data order (TOFIX228 1.6, the level 3 oracle).
-    batcher.Reset();
+    // The epoch began in Train (BeginEpoch with its seed, TOFIX242 2.1a): its
+    // order comes from (run seed, epoch) alone, so a resumed run replays it
+    // (TOFIX228 1.6, the level 3 oracle).
 
     spdlog::debug("RunTrainingEpochArrow: Entering batch loop");
     while (!batcher.IsEpochComplete()) {

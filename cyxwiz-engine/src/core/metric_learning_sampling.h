@@ -54,7 +54,7 @@ public:
 
     Batch GetNextBatch() override;
     void Reset() override;
-    bool SetEpochShuffleSeed(uint64_t seed) override;
+    bool BeginEpoch(uint64_t seed) override;
     bool IsEpochComplete() const override { return source_->IsEpochComplete(); }
     size_t GetNumBatches() const override { return source_->GetNumBatches(); }
     size_t GetNumSamples() const override { return source_->GetNumSamples(); }
@@ -81,7 +81,7 @@ private:
     IBatcher* source_;
     MetricSampling sampling_;
     MetricMining mining_;
-    uint64_t epoch_key_;  // the constructor's seed, then each epoch's (SetEpochShuffleSeed)
+    uint64_t epoch_key_;  // the constructor's seed, then each epoch's (BeginEpoch)
     uint64_t batch_index_ = 0;
     size_t skipped_batches_ = 0;
     size_t rows_seen_ = 0;

@@ -537,6 +537,77 @@ FullBatchMetricOracle EvaluateCurrentModelAsOneBatch(
 // graph (loss read every batch); it does not finish "completed" with NaN
 // weights (TOFIX223 0.6). One feature value is infinite (a NaN cell is a
 // missing value, refused before the first batch: TOFIX223 0.3).
+// One instance serving Train (8 rows) and Validation (2 rows) by phase, as the
+// Image and Audio batchers do
+class TwoPartBatcher final : public cyxwiz::IBatcher {
+public:
+    cyxwiz::Batch GetNextBatch() override {
+        cyxwiz::Batch batch;
+        const size_t rows = Rows();
+        if (cursor_ >= rows) return batch;
+        const size_t take = std::min<size_t>(2, rows - cursor_);
+        std::vector<float> x, y;
+        for (size_t r = 0; r < take; ++r) {
+            const size_t row = cursor_ + r;
+            x.push_back(static_cast<float>(row % 3));
+            x.push_back(static_cast<float>(row % 2));
+            y.push_back(row % 2 == 0 ? 1.0f : 0.0f);
+            y.push_back(row % 2 == 0 ? 0.0f : 1.0f);
+        }
+        batch.data = cyxwiz::Tensor({take, 2}, x.data());
+        batch.labels = cyxwiz::Tensor({take, 2}, y.data());
+        batch.size = take;
+        cursor_ += take;
+        return batch;
+    }
+    // As Image and Audio: Reset loads the phase's part; the counts are the
+    // loaded part's until the next Reset
+    void Reset() override {
+        cursor_ = 0;
+        loaded_ = phase_ == cyxwiz::BatcherPhase::Train ? 8 : 2;
+    }
+    void SetPhase(cyxwiz::BatcherPhase phase) override { phase_ = phase; }
+    bool IsEpochComplete() const override { return cursor_ >= Rows(); }
+    size_t GetNumBatches() const override { return (Rows() + 1) / 2; }
+    size_t GetNumSamples() const override { return Rows(); }
+    void SetNormalization(float, float) override {}
+    void SetOneHotEncoding(size_t) override {}
+    void SetFlatten(bool) override {}
+
+private:
+    size_t Rows() const { return loaded_; }
+    cyxwiz::BatcherPhase phase_ = cyxwiz::BatcherPhase::Train;
+    size_t loaded_ = 8;
+    size_t cursor_ = 0;
+};
+
+// The epoch's progress total is the Train part's batch count every epoch
+// (TOFIX242 2.1a, N1): a batcher serving both parts still held validation's
+// part when the next epoch read its count, so epoch 2 said 1 of 1 batches.
+void TestSharedPartBatcherEpochTotal(const std::filesystem::path& work_dir) {
+    auto shared = std::make_shared<TwoPartBatcher>();
+    cyxwiz::ExternalBatcherFactory factory = [shared](const cyxwiz::TrainingConfiguration&, int) {
+        cyxwiz::ResolvedExternalBatchers batchers;
+        batchers.train = shared;
+        batchers.dev = shared;
+        batchers.dev_phase = cyxwiz::BatcherPhase::Val;
+        return batchers;
+    };
+    auto config = MakeConfig(work_dir / "shared-part-total");
+    config.log_interval = 0;
+    cyxwiz::TrainingExecutor executor(config, factory);
+    std::map<int, int> total_of_epoch;
+    executor.Train(
+        2, config.batch_size, [&](int epoch, int, int total, float, float) { total_of_epoch[epoch] = total; }, nullptr,
+        nullptr);
+    const auto metrics = executor.GetMetrics();
+    Check(metrics.terminal_status == "completed" && total_of_epoch.size() == 2 && total_of_epoch.begin()->second == 4 &&
+              total_of_epoch.rbegin()->second == 4,
+          "a batcher serving Train and Validation: every epoch's progress total is Train's 4 batches (epoch 2: " +
+              std::to_string(total_of_epoch.empty() ? -1 : total_of_epoch.rbegin()->second) + ", " +
+              metrics.terminal_status + ")");
+}
+
 void TestNonFiniteLossFailsTheRun(const std::filesystem::path& work_dir) {
     auto schema = arrow::schema({
         arrow::field("x0", arrow::float32()),
@@ -5151,6 +5222,7 @@ int main(int argc, char** argv) {
     TestMetricReportingCadenceInvariance(dataset, work_dir);
     TestUnevenFinalBatchMetricAggregation(work_dir);
     TestNonFiniteLossFailsTheRun(work_dir);
+    TestSharedPartBatcherEpochTotal(work_dir);
     TestBalancedClassWeightsOnEveryPath(work_dir);
     TestMissingValuesRefusalKeepsColumns(work_dir);
     const auto training_core_fixture = LoadTrainingCoreFixture(

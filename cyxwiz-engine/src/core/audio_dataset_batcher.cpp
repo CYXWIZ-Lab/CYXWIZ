@@ -338,11 +338,16 @@ void AudioDatasetBatcher::Reset() {
     // The current phase's part; only train batches are shuffled, so
     // validation and test metrics are reproducible across epochs.
     epoch_order_ = Part(current_phase_);
-    if (current_phase_ == BatcherPhase::Train && dataset_) dataset_->SetAugmentationRound(++augmentation_round_);
     if (current_phase_ == BatcherPhase::Train && pending_epoch_seed_) {
         rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_));
+        // The clips' augmentation draws from the epoch's seed too, so a
+        // resumed run replays them (a running round count could not)
+        augmentation_round_ = static_cast<uint32_t>(*pending_epoch_seed_ ^ (*pending_epoch_seed_ >> 32));
         pending_epoch_seed_.reset();
+    } else if (current_phase_ == BatcherPhase::Train) {
+        ++augmentation_round_;
     }
+    if (current_phase_ == BatcherPhase::Train && dataset_) dataset_->SetAugmentationRound(augmentation_round_);
     if (current_phase_ == BatcherPhase::Train && shuffle_) cyxwiz::portable::Shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
     current_idx_ = 0;
 }

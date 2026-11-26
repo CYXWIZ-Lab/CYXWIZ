@@ -242,12 +242,12 @@ public:
     void Reset() override {
         inner_->Reset();
         epochs_.emplace_back();
-        epochs_.back().seed = pending_seed_;
-        pending_seed_.reset();
     }
-    bool SetEpochShuffleSeed(uint64_t seed) override {
-        pending_seed_ = seed;
-        return inner_->SetEpochShuffleSeed(seed);
+    bool BeginEpoch(uint64_t seed) override {
+        const bool exact = inner_->BeginEpoch(seed);
+        epochs_.emplace_back();
+        epochs_.back().seed = seed;
+        return exact;
     }
     bool IsEpochComplete() const override { return inner_->IsEpochComplete(); }
     size_t GetNumBatches() const override { return inner_->GetNumBatches(); }
@@ -283,7 +283,6 @@ public:
 private:
     std::shared_ptr<cyxwiz::IBatcher> inner_;
     std::vector<Epoch> epochs_;
-    std::optional<uint64_t> pending_seed_;
 };
 
 // A training run against a fixture's "steps" (each step's running loss) and
@@ -704,9 +703,7 @@ PartRead ReadTrain(cyxwiz::IBatcher& batcher, int epochs, int loader_seed, bool&
     PartRead out;
     seeded = true;
     for (int epoch = 1; epoch <= epochs; ++epoch) {
-        seeded = batcher.SetEpochShuffleSeed(cyxwiz::TrainingEpochSeed(static_cast<uint64_t>(loader_seed), epoch)) &&
-                 seeded;
-        batcher.Reset();
+        seeded = batcher.BeginEpoch(cyxwiz::TrainingEpochSeed(static_cast<uint64_t>(loader_seed), epoch)) && seeded;
         out.epochs.emplace_back();
         ReadInto(batcher, out, out.epochs.back());
     }
@@ -725,7 +722,7 @@ PartRead ReadOnce(cyxwiz::IBatcher* batcher) {
 // "test_rows", "values" (row -> its values) and "labels" (row -> its label).
 void CheckParts(const std::string& kind, const json& f, const PartRead& train, const PartRead& val,
                 const PartRead& test, bool seeded) {
-    Check(seeded, kind + ": the Train batcher takes the epoch's seed (SetEpochShuffleSeed), so a resumed run "
+    Check(seeded, kind + ": the Train batcher takes the epoch's seed (BeginEpoch), so a resumed run "
                          "replays its order");
     const auto& epochs = f.at("epochs");
     for (size_t e = 0; e < epochs.size(); ++e) {

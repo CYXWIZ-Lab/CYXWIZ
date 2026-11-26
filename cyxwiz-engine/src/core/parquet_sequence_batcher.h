@@ -81,8 +81,9 @@ public:
         inner_.reset();
     }
 
-    bool SetEpochShuffleSeed(uint64_t seed) override {
+    bool BeginEpoch(uint64_t seed) override {
         pending_seed_ = seed;
+        Reset();
         return true;
     }
 
