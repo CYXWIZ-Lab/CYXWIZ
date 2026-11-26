@@ -349,6 +349,7 @@ Batch SparseFeatureDatasetBatcher::GetNextBatch() {
     const size_t actual_batch_size = std::min(batch_size_, remaining);
     Batch batch = AssembleBatch(indices_.data() + current_index_, actual_batch_size);
     current_index_ += actual_batch_size;
+    batch.last = IsEpochComplete();
     return batch;
 }
 

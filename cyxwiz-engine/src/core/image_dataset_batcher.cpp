@@ -167,6 +167,7 @@ Batch ImageDatasetBatcher::GetNextBatch() {
     Batch batch = AssembleBatch(epoch_order_.data() + current_idx_, actual_size,
                                 current_phase_ == BatcherPhase::Train);
     current_idx_ += actual_size;
+    batch.last = IsEpochComplete();
     return batch;
 }
 

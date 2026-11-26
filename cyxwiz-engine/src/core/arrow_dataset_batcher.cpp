@@ -470,6 +470,7 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
     const size_t batch_end = std::min(current_index_ + batch_size_, indices_.size());
     Batch batch = AssembleBatch(indices_.data() + batch_start, batch_end - batch_start);
     current_index_ = batch_end;
+    batch.last = IsEpochComplete();
     return batch;
 }
 

@@ -532,11 +532,6 @@ FullBatchMetricOracle EvaluateCurrentModelAsOneBatch(
     return oracle;
 }
 
-// A NaN or infinite loss fails the run with the reason, for a classification
-// graph (loss summed on the device, checked where it is read) and a regression
-// graph (loss read every batch); it does not finish "completed" with NaN
-// weights (TOFIX223 0.6). One feature value is infinite (a NaN cell is a
-// missing value, refused before the first batch: TOFIX223 0.3).
 // One instance serving Train (8 rows) and Validation (2 rows) by phase, as the
 // Image and Audio batchers do
 class TwoPartBatcher final : public cyxwiz::IBatcher {
@@ -608,6 +603,86 @@ void TestSharedPartBatcherEpochTotal(const std::filesystem::path& work_dir) {
               metrics.terminal_status + ")");
 }
 
+// 8 rows in 4 batches whose pass is known to be over only after one more fetch,
+// as a prefetch queue whose worker has not reached the end yet; its final batch
+// is marked last or not (a wrapper that skipped the source's last batch).
+class LateEndBatcher final : public cyxwiz::IBatcher {
+public:
+    explicit LateEndBatcher(bool mark_last) : mark_last_(mark_last) {}
+    cyxwiz::Batch GetNextBatch() override {
+        cyxwiz::Batch batch;
+        if (cursor_ >= 8) {
+            ended_ = true;
+            return batch;
+        }
+        std::vector<float> x, y;
+        for (size_t row = cursor_; row < cursor_ + 2; ++row) {
+            x.push_back(static_cast<float>(row % 3));
+            x.push_back(static_cast<float>(row % 2));
+            y.push_back(row % 2 == 0 ? 1.0f : 0.0f);
+            y.push_back(row % 2 == 0 ? 0.0f : 1.0f);
+        }
+        batch.data = cyxwiz::Tensor({2, 2}, x.data());
+        batch.labels = cyxwiz::Tensor({2, 2}, y.data());
+        batch.size = 2;
+        cursor_ += 2;
+        batch.last = mark_last_ && cursor_ >= 8;
+        return batch;
+    }
+    void Reset() override {
+        cursor_ = 0;
+        ended_ = false;
+    }
+    bool IsEpochComplete() const override { return ended_; }
+    size_t GetNumBatches() const override { return 4; }
+    size_t GetNumSamples() const override { return 8; }
+    void SetNormalization(float, float) override {}
+    void SetOneHotEncoding(size_t) override {}
+    void SetFlatten(bool) override {}
+
+private:
+    bool mark_last_;
+    size_t cursor_ = 0;
+    bool ended_ = false;
+};
+
+// Gradient accumulation closes its window at each epoch's end (TOFIX242 2.1c,
+// TRN-16): with 3 batches a step and 4 batches an epoch, every epoch takes 2
+// steps, whether its last batch is marked or the pass ends on an unmarked one.
+// The window was closed only when the batcher already said the epoch was over,
+// so epoch 1's last batch went into epoch 2's first step.
+void TestGradientWindowClosesAtEpochEnd(const std::filesystem::path& work_dir) {
+    for (const bool mark_last : {true, false}) {
+        auto batcher = std::make_shared<LateEndBatcher>(mark_last);
+        cyxwiz::ExternalBatcherFactory factory = [batcher](const cyxwiz::TrainingConfiguration&, int) {
+            cyxwiz::ResolvedExternalBatchers batchers;
+            batchers.train = batcher;
+            return batchers;
+        };
+        auto config = MakeConfig(work_dir / (mark_last ? "window-marked" : "window-unmarked"));
+        config.log_interval = 0;
+        config.grad_accum_steps = 3;
+        cyxwiz::TrainingExecutor executor(config, factory);
+        int steps_at_epoch_2 = -1;
+        executor.Train(
+            2, 2,
+            [&](int epoch, int batch, int, float, float) {
+                if (epoch == 2 && batch == 1) steps_at_epoch_2 = executor.GetMetrics().optimizer_step_count;
+            },
+            nullptr, nullptr);
+        const auto metrics = executor.GetMetrics();
+        const std::string kind = mark_last ? "a marked last batch" : "an unmarked last batch";
+        Check(metrics.terminal_status == "completed" && steps_at_epoch_2 == 2 && metrics.optimizer_step_count == 4,
+              kind + ": every epoch takes its 2 steps (" + std::to_string(steps_at_epoch_2) + " after epoch 1, " +
+                  std::to_string(metrics.optimizer_step_count) + " in all, " + metrics.terminal_status + ")");
+    }
+}
+
+// A NaN or infinite loss fails the run with the reason, for a classification
+// graph (loss summed on the device, checked where it is read) and a regression
+// graph (loss read every batch); it does not finish "completed" with NaN
+// weights (TOFIX223 0.6). One feature value is infinite (a NaN cell is a
+// missing value, refused before the first batch: TOFIX223 0.3).
 void TestNonFiniteLossFailsTheRun(const std::filesystem::path& work_dir) {
     auto schema = arrow::schema({
         arrow::field("x0", arrow::float32()),
@@ -5223,6 +5298,7 @@ int main(int argc, char** argv) {
     TestUnevenFinalBatchMetricAggregation(work_dir);
     TestNonFiniteLossFailsTheRun(work_dir);
     TestSharedPartBatcherEpochTotal(work_dir);
+    TestGradientWindowClosesAtEpochEnd(work_dir);
     TestBalancedClassWeightsOnEveryPath(work_dir);
     TestMissingValuesRefusalKeepsColumns(work_dir);
     const auto training_core_fixture = LoadTrainingCoreFixture(

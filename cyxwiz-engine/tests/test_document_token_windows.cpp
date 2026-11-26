@@ -210,6 +210,7 @@ static std::vector<std::vector<int64_t>> AllRows(ISequenceBatcher& batcher) {
     while (!batcher.IsEpochComplete()) {
         auto batch = batcher.GetNextSequenceBatch();
         if (batch.size == 0) break;
+        REQUIRE(batch.last == batcher.IsEpochComplete());  // only the pass's final batch (TOFIX242 2.1c)
         const auto* ids = static_cast<const Tensor&>(batch.word_ids).Data<int64_t>();
         for (size_t r = 0; r < batch.size; ++r)
             rows.emplace_back(ids + r * batch.sequence_length, ids + (r + 1) * batch.sequence_length);

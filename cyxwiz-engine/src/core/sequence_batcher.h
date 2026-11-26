@@ -136,6 +136,10 @@ public:
         }
         batch.size = actual_size;
         batch.sequence_length = sequence_length_;
+        // Last when nothing is left, or only a remainder drop_last leaves out
+        const size_t left = active_indices.size() - current_index_;
+        batch.last = left == 0 ||
+                     (config_.drop_last && current_phase_ == BatcherPhase::Train && left < config_.batch_size);
         return batch;
     }
 

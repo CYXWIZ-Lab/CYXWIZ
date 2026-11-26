@@ -196,6 +196,9 @@ int main() {
                 const cyxwiz::Batch h = host->GetNextBatch();
                 const std::string what = "prefetched epoch " + std::to_string(epoch) + " batch " + std::to_string(batches++);
                 Check(r.row_ids == h.row_ids, what + ": rows and order");
+                // The queue passes on the source's mark (TOFIX242 2.1c): the
+                // worker may not have reached the end when the last one is taken.
+                Check(r.last == h.last && h.last == host->IsEpochComplete(), what + ": only the final batch is last");
                 CompareTensors(r.data, h.data, what + " data");
                 CompareTensors(r.labels, h.labels, what + " labels");
             }

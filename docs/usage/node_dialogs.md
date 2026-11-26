@@ -224,6 +224,10 @@ see [Generation previews](generation_previews.md)) and **Advanced** (worker
 threads, pin memory, report interval). The Data Loader is the one place
 batching is set.
 
+With gradient accumulation set to N, the optimizer takes a step after every
+N batches, and once more at the end of each epoch for the batches left over,
+so an epoch's gradients never reach the next epoch's first step.
+
 ## Row Filter
 
 **Keep the rows where** lists the conditions as rows: a column, an operator

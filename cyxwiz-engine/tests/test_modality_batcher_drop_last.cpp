@@ -127,6 +127,8 @@ std::vector<size_t> CollectBatchSizes(cyxwiz::IBatcher& batcher) {
     while (!batcher.IsEpochComplete()) {
         auto batch = batcher.GetNextBatch();
         Check(batch.IsValid(), "incomplete modality batch should be valid");
+        // The pass's final batch, and only it, says so (TOFIX242 2.1c)
+        Check(batch.last == batcher.IsEpochComplete(), "only the pass's final modality batch is marked last");
         sizes.push_back(batch.size);
     }
     return sizes;

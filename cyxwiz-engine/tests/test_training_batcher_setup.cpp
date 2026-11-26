@@ -754,6 +754,8 @@ std::vector<int64_t> RowsOfEpoch(cyxwiz::IBatcher& batcher, uint64_t seed) {
     while (!batcher.IsEpochComplete()) {
         auto batch = batcher.GetNextBatch();
         if (!batch.IsValid()) break;
+        // The pass's final batch, and only it, says so (TOFIX242 2.1c)
+        Check(batch.last == batcher.IsEpochComplete(), "only an epoch's final batch is marked last");
         rows.insert(rows.end(), batch.row_ids.begin(), batch.row_ids.end());
     }
     return rows;

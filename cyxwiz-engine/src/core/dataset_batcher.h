@@ -72,6 +72,10 @@ struct Batch {
     // sample; empty when the batcher does not know its rows. A test run keeps
     // them in test_predictions so results join back to the data.
     std::vector<int64_t> row_ids;
+    // The pass's final batch (TOFIX242 2.1c): set by the batcher that made it,
+    // so a wrapper that queues batches (PrefetchBatcher) passes it on as it was
+    // when the batch was made.
+    bool last = false;
 
     bool IsValid() const { return size > 0; }
     bool HasSparseFeatures() const {
@@ -94,6 +98,7 @@ struct SequenceBatch {
     Tensor target_ids;      // [batch, seq] next-token ids for causal LM training
     size_t size = 0;        // Actual batch size
     size_t sequence_length = 0;
+    bool last = false;      // The pass's final batch, as Batch::last
 
     bool HasWordIds() const {
         return !word_ids.Shape().empty() && word_ids.NumElements() > 0;
@@ -151,7 +156,7 @@ struct AnnotatedBatch {
  * Implementations must be safe to call GetNextBatch repeatedly until it
  * returns an invalid (size=0) Batch, at which point Reset starts a new
  * epoch. IsEpochComplete should become true after the last batch has
- * been consumed.
+ * been consumed, and that batch carries `last`.
  *
  * Preprocessing setters (SetNormalization, SetOneHotEncoding, SetFlatten)
  * are exposed via this interface so the training executor can configure

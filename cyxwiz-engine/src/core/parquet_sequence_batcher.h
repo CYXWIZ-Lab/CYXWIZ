@@ -65,7 +65,10 @@ public:
             if (next_unit_ >= order_.size()) return {};
             Load(order_[next_unit_++]);
         }
-        return inner_->GetNextSequenceBatch();
+        // The inner batcher's last is its unit's: the pass ends with the last unit
+        SequenceBatch batch = inner_->GetNextSequenceBatch();
+        batch.last = batch.last && next_unit_ >= order_.size();
+        return batch;
     }
 
     void Reset() override {

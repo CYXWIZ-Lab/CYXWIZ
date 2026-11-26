@@ -858,6 +858,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
     }
 
     FinishBatch(batch, rows_filled, batch_data, batch_labels, batch_labels_float);
+    batch.last = IsEpochComplete();
     return batch;
 }
 

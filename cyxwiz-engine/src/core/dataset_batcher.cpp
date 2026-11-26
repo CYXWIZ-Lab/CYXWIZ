@@ -189,6 +189,7 @@ Batch DatasetBatcher::GetNextBatch() {
     // Advance position
     current_index_ = batch_end;
     current_batch_++;
+    batch.last = IsEpochComplete();
 
     return batch;
 }

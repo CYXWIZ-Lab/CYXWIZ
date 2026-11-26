@@ -2479,7 +2479,13 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     if (!force_step && gradient_accumulated_batches_ < grad_accum_steps) {
         return false;
     }
+    StepGradientWindow(epoch, batch_num, total_batches, batch_loss, current_acc);
+    return true;
+}
 
+void TrainingExecutor::StepGradientWindow(int epoch, int batch_num, int total_batches,
+                                          float batch_loss, float current_acc) {
+    const bool mean_reduction = loss_->GetReduction() == Reduction::Mean;
     std::map<std::string, Tensor> averaged_grads;
     const float host_scale = mean_reduction &&
                              !gradient_accumulation_device_weight_initialized_
@@ -2540,12 +2546,30 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
         else optimizer_->SetLearningRate(next);
     }
 
+    ClearGradientWindow();
+}
+
+void TrainingExecutor::ClearGradientWindow() {
     gradient_accumulator_.clear();
     gradient_accumulated_batches_ = 0;
     gradient_accumulation_weight_ = 0.0f;
     gradient_accumulation_device_weight_ = Tensor();
     gradient_accumulation_device_weight_initialized_ = false;
-    return true;
+}
+
+void TrainingExecutor::CloseGradientWindow(int epoch, int batch_num, int total_batches,
+                                           float batch_loss, float current_acc) {
+    if (gradient_accumulated_batches_ == 0) return;
+    if (ShouldStop()) {
+        // The run ends here: a part window is not a step it took
+        ClearGradientWindow();
+        return;
+    }
+    // The pass ended on a batch not marked last (a wrapper skipped the source's
+    // last batch, or trailing empty units): its window is still this epoch's.
+    spdlog::debug("TrainingExecutor: epoch {} ended with {} batch(es) of gradients pending; stepping them",
+                  epoch, gradient_accumulated_batches_);
+    StepGradientWindow(epoch, batch_num, total_batches, batch_loss, current_acc);
 }
 
 void TrainingExecutor::EnableLayerSnapshots(LayerSnapshotSchedule schedule) {
@@ -3076,7 +3100,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
         AccumulateGradientsAndMaybeStep(
             epoch, batch_num, static_cast<int>(total_batches),
             batch_loss, current_acc, loss_weight, nullptr,
-            batcher.IsEpochComplete());
+            batch.last);
 
         UpdateMetrics([batch_num,
                        current_loss,
@@ -3147,7 +3171,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
         // steps, only on a completed step (no accumulated gradients pending)
         // and not on the epoch's last batch (the epoch-end checkpoint covers it).
         if (resume_every_steps_ > 0 && !resume_root_.empty() && gradient_accumulated_batches_ == 0 &&
-            !batcher.IsEpochComplete() && !ShouldStop()) {
+            !batch.last && !ShouldStop()) {
             const int steps = GetMetrics().optimizer_step_count;
             if (steps > 0 && steps % resume_every_steps_ == 0 && steps != last_mid_epoch_checkpoint_step_) {
                 last_mid_epoch_checkpoint_step_ = steps;
@@ -3165,7 +3189,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
         // Generation previews every N optimizer steps (TOFIX159), on a
         // completed step; the epoch's last batch is covered by the epoch end.
         if (generation_preview_ && gradient_accumulated_batches_ == 0 &&
-            !batcher.IsEpochComplete() && !ShouldStop()) {
+            !batch.last && !ShouldStop()) {
             const long long steps = GetMetrics().optimizer_step_count;
             if (steps != last_generation_preview_step_ &&
                 ShouldRunPreviewAfterStep(config_.generation_preview, steps)) {
@@ -3187,6 +3211,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
         static_cast<float>(aggregate_metrics.token_accuracy);
     const float final_f1 =
         static_cast<float>(aggregate_metrics.entity_f1);
+    CloseGradientWindow(epoch, batch_num, static_cast<int>(total_batches), final_loss, final_acc);
 
     UpdateMetrics([final_loss,
                    final_acc,
@@ -3331,6 +3356,22 @@ void TrainingExecutor::RunTrainingEpochArrow(
     ReportWindow report_window;
     double fetch_total_ms = 0.0;
     double fetch_max_ms = 0.0;
+    // The epoch's running loss and accuracy, read from the device sums (one
+    // sync): on a report batch, and after the loop when its last batch was not
+    // one (a pass that ended on an unmarked batch, TOFIX242 2.1c).
+    bool last_batch_reported = false;
+    const auto read_epoch_sums = [&]() {
+        current_loss = ReadAccumulatedLoss(
+            device_loss_sum, *loss_, loss_weight_sum,
+            device_loss_weight_sum_initialized ? &device_loss_weight_sum : nullptr);
+        const auto accuracy_count = ReadClassificationDecisionScalar(
+            ClassificationDecisionScalar{device_accuracy_counts},
+            "TrainingExecutor::ReadAccumulatedAccuracy");
+        current_acc = accuracy_count.total > 0
+            ? static_cast<float>(accuracy_count.correct) / static_cast<float>(accuracy_count.total)
+            : 0.0f;
+        return accuracy_count;
+    };
 
     spdlog::debug("RunTrainingEpochArrow: Getting num batches");
     size_t total_batches = batcher.GetNumBatches();
@@ -3554,21 +3595,10 @@ void TrainingExecutor::RunTrainingEpochArrow(
             static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
 
         const bool should_report = ShouldReportTrainingBatch(
-            config_, batch_num, static_cast<int>(total_batches),
-            batcher.IsEpochComplete());
+            config_, batch_num, static_cast<int>(total_batches), batch.last);
+        last_batch_reported = should_report;
         if (!regression_metrics && should_report) {
-            current_loss = ReadAccumulatedLoss(
-                device_loss_sum, *loss_, loss_weight_sum,
-                device_loss_weight_sum_initialized
-                    ? &device_loss_weight_sum
-                    : nullptr);
-            const auto accuracy_count = ReadClassificationDecisionScalar(
-                ClassificationDecisionScalar{device_accuracy_counts},
-                "TrainingExecutor::ReadAccumulatedAccuracy");
-            current_acc = accuracy_count.total > 0
-                ? static_cast<float>(accuracy_count.correct) /
-                      static_cast<float>(accuracy_count.total)
-                : 0.0f;
+            const auto accuracy_count = read_epoch_sums();
             batch_loss = current_loss;
             if (ReportWindow::Ends(epoch, batch_num)) {
                 double weight = loss_weight_sum;
@@ -3619,7 +3649,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
         AccumulateGradientsAndMaybeStep(
             epoch, batch_num, static_cast<int>(total_batches),
             batch_loss, current_acc, loss_weight.host, loss_weight.device,
-            batcher.IsEpochComplete());
+            batch.last);
 
         UpdateMetrics([batch_num, current_loss, current_acc,
                        current_mae, current_rmse](TrainingMetrics& m) {
@@ -3671,6 +3701,8 @@ void TrainingExecutor::RunTrainingEpochArrow(
             batch_cb(epoch, batch_num, static_cast<int>(total_batches), current_loss, current_acc);
         }
     }
+    if (!regression_metrics && batch_num > 0 && !last_batch_reported) (void)read_epoch_sums();
+    CloseGradientWindow(epoch, batch_num, static_cast<int>(total_batches), current_loss, current_acc);
 
     // Final epoch metrics
     float final_loss = current_loss;

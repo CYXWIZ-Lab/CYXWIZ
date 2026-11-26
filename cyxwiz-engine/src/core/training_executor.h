@@ -601,6 +601,16 @@ private:
         const Tensor* device_gradient_weight,
         bool force_step
     );
+    // One optimizer step from the accumulated window, which it then empties.
+    void StepGradientWindow(int epoch, int batch_num, int total_batches,
+                            float batch_loss, float current_acc);
+    void ClearGradientWindow();
+    // After an epoch's batch loop (TOFIX242 2.1c): a window its last batch did
+    // not close is stepped when the epoch ran to its end and dropped when the
+    // run stopped, so no epoch's gradients reach the next epoch's first step
+    // or its epoch-end checkpoint.
+    void CloseGradientWindow(int epoch, int batch_num, int total_batches,
+                             float batch_loss, float current_acc);
 
     void ApplySchedulerAdvance(
         const TrainingSchedulerAdvanceResult& result);

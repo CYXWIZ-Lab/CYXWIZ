@@ -172,6 +172,9 @@ Batch MetricBatchSampler::GetNextBatch() {
         }
         stacked.size = count;
         stacked.inspection = std::move(batch.inspection);
+        // A source's last batch without a pair or triplet is skipped above, so
+        // the pass can end on an unmarked batch: the loop closes its window.
+        stacked.last = batch.last;
         return stacked;
     }
 }
