@@ -10,6 +10,7 @@ static void Require(bool value,const char* expression) { ++checks; if(!value) th
 #include "core/gcc_diagnostics.h"
 #include "core/sequence_arrow_batcher.h"
 #include "core/arrow_dataset.h"
+#include "core/split_partitioning.h"
 #include <arrow/api.h>
 #include <arrow/util/key_value_metadata.h>
 #include <arrow/io/file.h>
@@ -43,6 +44,9 @@ static TrainingConfiguration Config() {
     cfg.sequence_batch.enabled=true; cfg.sequence_batch.create_causal_lm_targets=true;
     cfg.sequence_batch.create_attention_mask=true; cfg.sequence_batch.max_sequence_length=3;
     cfg.sequence_batch.token_column="token_ids"; cfg.shuffle=false;
+    // Every window trains unless a check sets shares: without a Data Split the
+    // shares cut Train, Validation and Test (TOFIX242 2.1e)
+    cfg.train_ratio=1.0f; cfg.val_ratio=0.0f; cfg.test_ratio=0.0f;
     return cfg;
 }
 
@@ -85,7 +89,7 @@ void CheckReloadAndTargets() {
     REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(loaded,cfg,4).success());
     auto no_metadata=std::make_shared<ArrowDataset>(table->ReplaceSchemaMetadata(nullptr),"bad");
     REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(no_metadata,Config(),4).success());
-    cfg=Config(); cfg.has_data_split=true; cfg.train_ratio=0.5f; cfg.val_ratio=0.0f;
+    cfg=Config(); cfg.has_data_split=true; cfg.train_ratio=0.5f; cfg.val_ratio=0.0f; cfg.test_ratio=0.5f;
     REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(loaded,cfg,4).success());
     cfg.sequence_batch.sentence_id_column="document_id";
     auto grouped=BuildSequenceBatcherFromArrowDataset(loaded,cfg,4);
@@ -202,6 +206,69 @@ void CheckExternalRolesAndMetadata() {
     external_test.batcher->SetPhase(BatcherPhase::Test);REQUIRE(external_test.batcher->GetNumSamples()==1);
 }
 
+static std::vector<std::vector<int64_t>> AllRows(ISequenceBatcher& batcher);
+
+// The sequence split is the shared split (TOFIX242 2.1e, TXT-16): a seeded,
+// shuffled Data Split puts each window in the part the rule every other path
+// uses gives its row (it took floor slices in file order); without a Data
+// Split, Validation reads the rows after Train (it read every row, Train's
+// too).
+void CheckSequenceSplitIsShared() {
+    // A window is named by its first token (distinct for the 4 windows)
+    auto all = Windows();
+    const auto tokens = std::static_pointer_cast<arrow::ListArray>(all->GetColumnByName("token_ids")->chunk(0));
+    const auto ids = std::static_pointer_cast<arrow::Int64Array>(tokens->values());
+    const auto first_token = [&](int64_t row) { return ids->Value(tokens->value_offset(row)); };
+    const auto part_rows = [&](ISequenceBatcher& batcher, BatcherPhase phase) {
+        batcher.SetPhase(phase);
+        std::vector<int64_t> rows;
+        for (const auto& row : AllRows(batcher)) rows.push_back(row.at(0));
+        std::sort(rows.begin(), rows.end());
+        return rows;
+    };
+    const auto expected_rows = [&](const std::vector<int8_t>& partitions, int8_t part) {
+        std::vector<int64_t> rows;
+        for (int64_t row = 0; row < all->num_rows(); ++row)
+            if (partitions[static_cast<size_t>(row)] == part) rows.push_back(first_token(row));
+        std::sort(rows.begin(), rows.end());
+        return rows;
+    };
+    const auto named = expected_rows({0, 0, 0, 0}, 0);
+    REQUIRE(named.size() == 4 && std::adjacent_find(named.begin(), named.end()) == named.end());
+    // Windows split by document (a ratio split needs the column): A holds
+    // windows 0-2, B window 3. A seed whose draw differs from file order
+    // (A Train, B Test).
+    const std::vector<int8_t> in_order = {0, 2};
+    uint32_t seed = 1;
+    while (AssignSplitPartitions(2, {}, 0.5f, 0.0f, 0.5f, true, seed) == in_order) ++seed;
+    const auto documents = AssignSplitPartitions(2, {}, 0.5f, 0.0f, 0.5f, true, seed);
+    const std::vector<int8_t> partitions = {documents[0], documents[0], documents[0], documents[1]};
+    auto cfg = Config();
+    cfg.sequence_batch.sentence_id_column = "document_id";
+    cfg.has_data_split = true; cfg.shuffle = true; cfg.split_seed = static_cast<int>(seed);
+    cfg.train_ratio = 0.5f; cfg.val_ratio = 0.0f; cfg.test_ratio = 0.5f;
+    auto split = BuildSequenceBatcherFromArrowDataset(std::make_shared<ArrowDataset>(all, "split"), cfg, 1);
+    INFO(split.error_message); REQUIRE(split.success());
+    REQUIRE(part_rows(*split.batcher, BatcherPhase::Train) == expected_rows(partitions, 0));
+    REQUIRE(part_rows(*split.batcher, BatcherPhase::Test) == expected_rows(partitions, 2));
+    // No Data Split, by document: Train the first half (A), Validation the rest (B)
+    auto unsplit_cfg = Config();
+    unsplit_cfg.sequence_batch.sentence_id_column = "document_id";
+    unsplit_cfg.train_ratio = 0.5f;
+    auto unsplit = BuildSequenceBatcherFromArrowDataset(std::make_shared<ArrowDataset>(all, "unsplit"), unsplit_cfg, 1);
+    REQUIRE(unsplit.success());
+    REQUIRE(part_rows(*unsplit.batcher, BatcherPhase::Train) == expected_rows({0, 0, 0, 1}, 0));
+    REQUIRE(part_rows(*unsplit.batcher, BatcherPhase::Val) == expected_rows({0, 0, 0, 1}, 1));
+    // Without a document column a cut would split a document: every window
+    // trains and there is no validation part
+    auto whole_cfg = Config();
+    whole_cfg.train_ratio = 0.5f;
+    auto whole = BuildSequenceBatcherFromArrowDataset(std::make_shared<ArrowDataset>(all, "whole"), whole_cfg, 1);
+    REQUIRE(whole.success());
+    REQUIRE(part_rows(*whole.batcher, BatcherPhase::Train) == named);
+    REQUIRE_FALSE(whole.batcher->HasPhase(BatcherPhase::Val));
+}
+
 // Token windows kept on disk (TOFIX154 step 6): read a row group at a time,
 // they give the samples the in-memory path gives.
 static std::vector<std::vector<int64_t>> AllRows(ISequenceBatcher& batcher) {
@@ -257,7 +324,7 @@ void CheckWindowsOnDisk() {
     REQUIRE(shuffled_batches == 2);
     REQUIRE(shuffled.batcher->GetNumBatches() == 2);
     // Validation from a table in memory beside a training set on disk.
-    cfg = Config(); cfg.has_data_split = true; cfg.test_ratio = 0.0f;
+    cfg = Config(); cfg.has_data_split = true; cfg.train_ratio = 0.9f; cfg.val_ratio = 0.1f; cfg.test_ratio = 0.0f;
     SequenceWindowSource dev; dev.table = all->Slice(3, 1);
     auto with_dev = BuildSequenceBatcherFromWindowSources(train, cfg, 2, dev);
     INFO(with_dev.error_message); REQUIRE(with_dev.success());
@@ -371,7 +438,7 @@ void CheckSupervisedWindows() {
 int main() {
     try {
         CheckCoverage(); CheckReloadAndTargets(); CheckInvalidInput(); CheckExternalRolesAndMetadata(); CheckSupervisedWindows();
-        CheckWindowsOnDisk();
+        CheckWindowsOnDisk(); CheckSequenceSplitIsShared();
         std::cout << "Document token windows passed: " << checks << " checks\n";
         return 0;
     } catch(const std::exception& e) {

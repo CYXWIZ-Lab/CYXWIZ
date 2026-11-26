@@ -4,10 +4,13 @@
 #include "ner_sequence_builder.h"
 #include "sequence_model_input.h"
 #include "sequence_token_window_input.h"
+#include "split_partitioning.h"
 
 #include <arrow/api.h>
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <numeric>
 #include <cmath>
 #include <cctype>
 #include <sstream>
@@ -129,38 +132,36 @@ std::string DefaultColumn(const std::string& value,
     return value.empty() ? std::string(fallback) : value;
 }
 
-void SplitByRatios(size_t total_units,
-                   float train_ratio,
-                   float val_ratio,
-                   std::vector<size_t>& train_units,
-                   std::vector<size_t>& val_units,
-                   std::vector<size_t>& test_units) {
-    size_t train_count = static_cast<size_t>(std::floor(total_units * train_ratio));
-    size_t val_count = static_cast<size_t>(std::floor(total_units * val_ratio));
-    if (train_count > total_units) {
-        train_count = total_units;
-    }
-    if (train_count + val_count > total_units) {
-        val_count = (train_count >= total_units) ? 0 : (total_units - train_count);
-    }
-    const size_t test_count = total_units - train_count - val_count;
-
+// The Train, Validation and Test units (rows, or sentence groups) by the rule
+// the other training paths use (TOFIX242 2.1e, TXT-16). With a Data Split: the
+// shared rule (split_partitioning.h), its seeded draw when shuffling, else
+// contiguous shares with its largest-remainder counts. Without one: the
+// batchers' two-way slices, Train the first floor(units * train), Validation
+// the next floor(units * validation) or, with no validation share, the rest.
+// Before, a Data Split took floor slices in file order whatever its shuffle
+// and seed, and without one every phase read every row: validation scored
+// the Train rows.
+void SplitUnits(size_t total_units, bool shared_rule, float train_ratio, float val_ratio, float test_ratio,
+                bool shuffle, uint32_t seed, std::vector<size_t>& train_units, std::vector<size_t>& val_units,
+                std::vector<size_t>& test_units) {
     train_units.clear();
     val_units.clear();
     test_units.clear();
-    train_units.reserve(train_count);
-    val_units.reserve(val_count);
-    test_units.reserve(test_count);
-
-    for (size_t i = 0; i < train_count; ++i) {
-        train_units.push_back(i);
+    if (shared_rule) {
+        const auto partitions =
+            AssignSplitPartitions(total_units, {}, train_ratio, val_ratio, test_ratio, shuffle, seed);
+        for (size_t unit = 0; unit < total_units; ++unit)
+            (partitions[unit] == 0 ? train_units : partitions[unit] == 1 ? val_units : test_units).push_back(unit);
+        return;
     }
-    for (size_t i = train_count; i < train_count + val_count; ++i) {
-        val_units.push_back(i);
-    }
-    for (size_t i = train_count + val_count; i < total_units; ++i) {
-        test_units.push_back(i);
-    }
+    const size_t train_count =
+        std::min(total_units, static_cast<size_t>(std::floor(total_units * std::clamp(train_ratio, 0.0f, 1.0f))));
+    const size_t val_count =
+        val_ratio > 0.0f
+            ? std::min(total_units - train_count, static_cast<size_t>(std::floor(total_units * val_ratio)))
+            : total_units - train_count;
+    for (size_t unit = 0; unit < total_units; ++unit)
+        (unit < train_count ? train_units : unit < train_count + val_count ? val_units : test_units).push_back(unit);
 }
 
 void AppendGroupsToFlat(const std::vector<std::vector<size_t>>& groups,
@@ -369,8 +370,8 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
         return result;
     }
 
-    if (config.has_data_split &&
-        !config.sequence_batch.sentence_id_column.empty()) {
+    // Every run splits (2.1e), so the groups count with or without a Data Split
+    if (!config.sequence_batch.sentence_id_column.empty()) {
         sentence_index = table->schema()->GetFieldIndex(
             config.sequence_batch.sentence_id_column);
         if (sentence_index < 0) {
@@ -532,18 +533,23 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
         const float dev_ratio = validation ? 0.0f : config.val_ratio;
         const float test_ratio = test ? 0.0f : config.test_ratio;
         const float train_ratio = (validation || test) ? 1.0f - dev_ratio - test_ratio : config.train_ratio;
-        if (config.has_data_split || validation || test) {
+        {
+            // Every run splits: validation never reads the Train rows. A
+            // sequence has no one class, so a stratified Data Split splits
+            // the sequences without it.
+            if (config.stratified)
+                spdlog::warn("Sequence training: the Data Split's Stratified does not apply to sequences (a "
+                             "sequence has no one class); the sequences are split without it");
+            const bool shared_rule = config.has_data_split || validation || test;
+            const bool shuffle = config.shuffle;
+            const auto seed = static_cast<uint32_t>(std::max(0, config.split_seed));
             std::vector<size_t> train_units;
             std::vector<size_t> val_units;
             std::vector<size_t> test_units;
 
             if (sentence_index >= 0 && !sentence_groups.empty()) {
-                SplitByRatios(sentence_groups.size(),
-                              train_ratio,
-                              dev_ratio,
-                              train_units,
-                              val_units,
-                              test_units);
+                SplitUnits(sentence_groups.size(), shared_rule, train_ratio, dev_ratio, test_ratio, shuffle, seed,
+                           train_units, val_units, test_units);
 
                 AppendGroupsToFlat(sentence_groups, train_units,
                                    builder_config.batcher.train_indices);
@@ -551,13 +557,17 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
                                    builder_config.batcher.val_indices);
                 AppendGroupsToFlat(sentence_groups, test_units,
                                    builder_config.batcher.test_indices);
+            } else if (encoded_windows && !shared_rule) {
+                // Token windows without a document column: a cut would put one
+                // document's windows in two parts, so without a Data Split
+                // every window trains and there is no validation part (as on
+                // disk); a Data Split needs the column (refused above).
+                train_units.resize(static_cast<size_t>(table->num_rows()));
+                std::iota(train_units.begin(), train_units.end(), size_t{0});
+                builder_config.batcher.train_indices = std::move(train_units);
             } else {
-                SplitByRatios(static_cast<size_t>(table->num_rows()),
-                              train_ratio,
-                              dev_ratio,
-                              train_units,
-                              val_units,
-                              test_units);
+                SplitUnits(static_cast<size_t>(table->num_rows()), shared_rule, train_ratio, dev_ratio, test_ratio,
+                           shuffle, seed, train_units, val_units, test_units);
 
                 builder_config.batcher.train_indices = std::move(train_units);
                 builder_config.batcher.val_indices = std::move(val_units);

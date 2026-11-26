@@ -220,8 +220,11 @@ cyxwiz::TrainingConfiguration MakePosFusedSequenceTrainingConfig(
     compiled.epochs = 1;
     compiled.shuffle = false;
     compiled.drop_last = false;
+    // Without a Data Split, Train the first 2 of the 3 sentences and, with no
+    // validation share, Validation the rest (TOFIX242 2.1e): this smoke once
+    // trained on every row with validation reading the same rows.
     compiled.has_data_split = false;
-    compiled.train_ratio = 1.0f;
+    compiled.train_ratio = 0.67f;
     compiled.val_ratio = 0.0f;
     compiled.test_ratio = 0.0f;
     compiled.num_workers = 0;

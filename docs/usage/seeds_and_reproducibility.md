@@ -14,6 +14,15 @@ OpenCL devices.
 | Cross-validation seed | Results > Cross-validation | Fold membership (k-fold and stratified) and learning-curve subsets |
 | Tool seeds | Explore tabs (Groups, Text), Tools > Utilities > Random, word embeddings, k-means, GMM, Random Forest, hyperparameter search, text generation | Each tool's own sample or start |
 
+Text sequences (token tagging and causal-LM windows) split by the same rule as
+tables: with a Data Split, its shares, seed and shuffle decide each sequence's
+part (a sentence or document id keeps its rows together); without one, Train
+is the first share of the sequences, Validation the next and Test the rest.
+Causal-LM windows without a document column all train, with no validation
+part, since a cut could put one document in two parts.
+**Stratified** does not apply to sequences (a sequence has no one class), and
+a warning says so.
+
 Each epoch reseeds the model draws from the model seed, and the batch order,
 the class balancing (under- and oversampling, the weighted sampler) and image
 and audio augmentation from the DataLoader seed, each with the epoch number, so

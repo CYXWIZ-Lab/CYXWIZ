@@ -10,6 +10,7 @@
 #include "../src/core/node_executors/text_column_utils.h"
 #include "../src/core/parquet_arrow_batcher.h"
 #include "../src/core/parquet_backed_dataset.h"
+#include "../src/core/split_partitioning.h"
 #include "../src/core/data_budget.h"
 #include "../src/core/pipeline_executor.h"
 #include "../src/core/prepared_data_cache.h"
@@ -1793,22 +1794,17 @@ int main(int argc, char** argv) {
         const auto saved_ner_train_samples = sequence_build.batcher->GetNumSamples();
         const size_t total_ner_samples =
             static_cast<size_t>(ner_dataset->num_rows());
-        const size_t expected_train_samples = std::min<size_t>(
-            total_ner_samples,
-            static_cast<size_t>(std::floor(
-                total_ner_samples * dispatch_config.train_ratio)));
-        size_t expected_val_samples = std::min<size_t>(
-            total_ner_samples,
-            static_cast<size_t>(std::floor(
-                total_ner_samples * dispatch_config.val_ratio)));
-        if (expected_train_samples + expected_val_samples > total_ner_samples) {
-            expected_val_samples =
-                expected_train_samples >= total_ner_samples
-                    ? 0
-                    : total_ner_samples - expected_train_samples;
-        }
-        const size_t expected_test_samples =
-            total_ner_samples - expected_train_samples - expected_val_samples;
+        // The shared split rule over the rows (TOFIX242 2.1e), as every path
+        Check(dispatch_config.has_data_split, "the saved NER graph has a Data Split");
+        size_t part_counts[3] = {0, 0, 0};
+        for (const int8_t part : cyxwiz::AssignSplitPartitions(
+                 total_ner_samples, {}, dispatch_config.train_ratio, dispatch_config.val_ratio,
+                 dispatch_config.test_ratio, dispatch_config.shuffle,
+                 static_cast<uint32_t>(std::max(0, dispatch_config.split_seed))))
+            ++part_counts[part];
+        const size_t expected_train_samples = part_counts[0];
+        const size_t expected_val_samples = part_counts[1];
+        const size_t expected_test_samples = part_counts[2];
 
         Check(saved_ner_train_samples == expected_train_samples,
               "saved NER split should allocate expected train samples");
@@ -1834,6 +1830,9 @@ int main(int argc, char** argv) {
                   saved_ner_test_samples ==
                   total_ner_samples,
               "saved NER split should partition all rows across phases");
+        // A Train batch (the Test part may be empty under the shared rule)
+        sequence_build.batcher->SetPhase(cyxwiz::BatcherPhase::Train);
+        sequence_build.batcher->Reset();
         auto batch = sequence_build.batcher->GetNextSequenceBatch();
         Check(batch.IsSupervised(),
               "saved NER launch should build supervised sequence batches");

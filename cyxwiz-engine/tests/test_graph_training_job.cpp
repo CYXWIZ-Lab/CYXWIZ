@@ -168,6 +168,14 @@ int main() {
     std::cout << "trains the causal-LM example from Parquet\n";
     {
         nlohmann::json graph = LoadTokenWindowGraph(root);
+        // No validation share: the run has no validation window (the shared
+        // split gives 80/10/10 of these documents one, TOFIX242 2.1e)
+        for (auto& node : graph["nodes"])
+            if (node.value("type", 0) == static_cast<int>(gui::NodeType::DataSplit)) {
+                node["parameters"]["train_ratio"] = "0.8";
+                node["parameters"]["val_ratio"] = "0";
+                node["parameters"]["test_ratio"] = "0.2";
+            }
         cyxwiz::GraphTrainingJobRequest request;
         request.graph_json = graph.dump();
         request.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
@@ -180,7 +188,7 @@ int main() {
         bool fake_validation = false;
         callbacks.on_epoch = [&epochs, &fake_validation](int, float, float, float val_loss, float, float) {
             ++epochs;
-            // 80/10/10 of 8 windows leaves no validation window: no metric, not 0.
+            // No validation window: no metric, not 0.
             fake_validation = fake_validation || val_loss >= 0.0f;
         };
         const auto result = cyxwiz::RunGraphTrainingJob(request, callbacks);
