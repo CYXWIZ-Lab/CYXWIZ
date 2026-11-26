@@ -48,6 +48,13 @@ struct SequenceWindowSource {
         if (file) return file->GetRowGroupSize(unit);
         return std::min(kTableUnitRows, table->num_rows() - static_cast<int64_t>(unit) * kTableUnitRows);
     }
+    // The unit's first row in its file or table
+    int64_t UnitFirstRow(int unit) const {
+        if (!file) return static_cast<int64_t>(unit) * kTableUnitRows;
+        int64_t first = 0;
+        for (int group = 0; group < unit; ++group) first += file->GetRowGroupSize(group);
+        return first;
+    }
     std::shared_ptr<arrow::Table> ReadUnit(int unit) const {
         if (file) return file->ReadRowGroup(unit);
         return table->Slice(static_cast<int64_t>(unit) * kTableUnitRows, kTableUnitRows);
@@ -159,7 +166,8 @@ private:
             std::string error;
             std::vector<SequenceSample> unit_samples;
             if (column < 0 ||
-                !ReadTokenWindowSamples(table, column, context_, unit_samples, vocabulary, context, error))
+                !ReadTokenWindowSamples(table, column, context_, unit_samples, vocabulary, context, error,
+                                        Source().UnitFirstRow(unit)))
                 throw std::runtime_error(error.empty() ? "Token windows: no token column '" + token_column_ + "'"
                                                        : error);
             samples.insert(samples.end(), std::make_move_iterator(unit_samples.begin()),

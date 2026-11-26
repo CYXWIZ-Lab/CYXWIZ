@@ -171,6 +171,10 @@ Batch MetricBatchSampler::GetNextBatch() {
             stacked.labels = Tensor({count}, similar.data(), DataType::Float32);
         }
         stacked.size = count;
+        if (batch.row_ids.size() == batch.size) {
+            stacked.row_ids.reserve(rows.size());
+            for (const int row : rows) stacked.row_ids.push_back(batch.row_ids[static_cast<size_t>(row)]);
+        }
         stacked.inspection = std::move(batch.inspection);
         // A source's last batch without a pair or triplet is skipped above, so
         // the pass can end on an unmarked batch: the loop closes its window.

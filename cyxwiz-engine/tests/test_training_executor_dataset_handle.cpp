@@ -11,6 +11,7 @@
 
 #include <cyxwiz/device.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -310,6 +311,29 @@ void CheckRuntimeFailureLifecycle(
           "legacy runtime failure should record one terminal event");
 }
 
+// Each sample names its dataset row (TOFIX242 2.1f): a shuffled pass serves
+// every row once, and the features of a batch row are that row's sample.
+void CheckLegacyRowIds(const cyxwiz::DatasetHandle& dataset) {
+    cyxwiz::DatasetBatcherAdapter batcher(std::make_unique<cyxwiz::DatasetBatcher>(
+        dataset, 4, cyxwiz::DatasetSplit::Train, /*shuffle=*/true, false, 0, 7));
+    batcher.SetFlatten(true);
+    batcher.Reset();
+    std::vector<int64_t> rows;
+    while (!batcher.IsEpochComplete()) {
+        const auto batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) break;
+        Check(batch.row_ids.size() == batch.size, "a legacy batch names one row per sample");
+        const float* data = batch.data.ReadData<float>();
+        for (size_t i = 0; i < batch.size && i < batch.row_ids.size(); ++i) {
+            const auto sample = dataset.GetSample(static_cast<size_t>(batch.row_ids[i])).first;
+            Check(data[i * 2] == sample[0] && data[i * 2 + 1] == sample[1], "a legacy batch row is its named row");
+        }
+        rows.insert(rows.end(), batch.row_ids.begin(), batch.row_ids.end());
+    }
+    std::sort(rows.begin(), rows.end());
+    Check(rows == std::vector<int64_t>({0, 1, 2, 3, 4, 5}), "a legacy pass names every row once");
+}
+
 } // namespace
 
 int main() {
@@ -335,6 +359,7 @@ int main() {
     Check(dataset.IsValid() && dataset.Size(cyxwiz::DatasetSplit::Train) == 6,
           "legacy lifecycle fixture must expose six training samples");
 
+    CheckLegacyRowIds(dataset);
     CheckPausedLifecycle(dataset, work_dir, PausedAction::Resume);
     CheckPausedLifecycle(dataset, work_dir, PausedAction::Cancel);
     CheckRuntimeFailureLifecycle(dataset, work_dir);

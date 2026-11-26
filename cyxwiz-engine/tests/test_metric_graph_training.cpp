@@ -372,6 +372,51 @@ void CheckSampler(const json& fixture) {
     Check(cyxwiz::SelectBatchPairs({7}, key, 0).empty(), "one row: no pair");
 }
 
+// One batch of rows 10..15 (feature = the row, classes 0, 0, 1, 1, 2, 2).
+class OneBatchSource final : public cyxwiz::IBatcher {
+public:
+    cyxwiz::Batch GetNextBatch() override {
+        if (served_) return {};
+        served_ = true;
+        const float features[] = {10, 11, 12, 13, 14, 15};
+        const float classes[] = {0, 0, 1, 1, 2, 2};
+        cyxwiz::Batch batch;
+        batch.data = cyxwiz::Tensor({6, 1}, features, cyxwiz::DataType::Float32);
+        batch.labels = cyxwiz::Tensor({6}, classes, cyxwiz::DataType::Float32);
+        batch.size = 6;
+        batch.row_ids = {10, 11, 12, 13, 14, 15};
+        batch.last = true;
+        return batch;
+    }
+    void Reset() override { served_ = false; }
+    bool IsEpochComplete() const override { return served_; }
+    size_t GetNumBatches() const override { return 1; }
+    size_t GetNumSamples() const override { return 6; }
+    void SetNormalization(float, float) override {}
+    void SetOneHotEncoding(size_t) override {}
+    void SetFlatten(bool) override {}
+
+private:
+    bool served_ = false;
+};
+
+// A stacked pair / triplet batch names the row of each stacked row (TOFIX242
+// 2.1f): anchors, then positives, then negatives (or firsts, then seconds).
+void CheckStackedRowIds() {
+    for (const auto sampling : {cyxwiz::MetricSampling::Triplets, cyxwiz::MetricSampling::Pairs}) {
+        OneBatchSource source;
+        cyxwiz::MetricBatchSampler sampler(source, sampling, cyxwiz::MetricMining::Random, 7);
+        sampler.Reset();
+        const auto batch = sampler.GetNextBatch();
+        const size_t rows = batch.data.Shape()[0];
+        Check(batch.IsValid() && rows > batch.size && batch.row_ids.size() == rows,
+              "a stacked batch names one row per stacked row");
+        const float* features = batch.data.ReadData<float>();
+        for (size_t r = 0; r < rows && r < batch.row_ids.size(); ++r)
+            Check(batch.row_ids[r] == static_cast<int64_t>(features[r]), "a stacked row is its named row");
+    }
+}
+
 void CheckStackedLoss() {
     // T = 1, D = 2: a = (0, 0), p = (3, 4) -> d_ap = 5; n = (0, 1) -> d_an = 1.
     const float values[] = {0, 0, 3, 4, 0, 1};
@@ -565,6 +610,7 @@ int RunChecks(char** argv) {
     const int epochs = fixture.at("epochs").get<int>();
 
     CheckSampler(fixture);
+    CheckStackedRowIds();
     CheckStackedLoss();
     CheckRefusals();
     CheckMining();

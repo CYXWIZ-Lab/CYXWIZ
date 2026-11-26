@@ -166,6 +166,8 @@ void CheckInvalidInput() {
 }
 
 
+static void CheckRowsNamed(ISequenceBatcher& batcher, const std::shared_ptr<arrow::Table>& table);
+
 void CheckExternalRolesAndMetadata() {
     auto all = Windows();
     auto train = std::make_shared<ArrowDataset>(all->Slice(0,3), "train");
@@ -189,6 +191,9 @@ void CheckExternalRolesAndMetadata() {
         REQUIRE(target[0]==93 && target[1]==3 && target[2]==-100);
         REQUIRE(built.batcher->IsEpochComplete());
     }
+    // A supplied role's windows by their row in its own table (TOFIX242 2.1f)
+    built.batcher->SetPhase(BatcherPhase::Val);
+    CheckRowsNamed(*built.batcher, all->Slice(3, 1));
     REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(train,cfg,2,train,test).success());
     auto missing=std::make_shared<ArrowDataset>(test_table->ReplaceSchemaMetadata(nullptr),"missing");
     REQUIRE_FALSE(BuildSequenceBatcherFromArrowDataset(train,cfg,2,missing).success());
@@ -285,6 +290,29 @@ static std::vector<std::vector<int64_t>> AllRows(ISequenceBatcher& batcher) {
     return rows;
 }
 
+// Each window names its row in the table it was read from (TOFIX242 2.1f): the
+// batch row starts with that row's first token, and no row is named twice.
+static void CheckRowsNamed(ISequenceBatcher& batcher, const std::shared_ptr<arrow::Table>& table) {
+    const auto tokens = std::static_pointer_cast<arrow::ListArray>(table->GetColumnByName("token_ids")->chunk(0));
+    const auto ids = std::static_pointer_cast<arrow::Int64Array>(tokens->values());
+    std::vector<int64_t> named;
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        auto batch = batcher.GetNextSequenceBatch();
+        if (batch.size == 0) break;
+        REQUIRE(batch.row_ids.size() == batch.size);
+        const auto* words = static_cast<const Tensor&>(batch.word_ids).Data<int64_t>();
+        for (size_t r = 0; r < batch.size && r < batch.row_ids.size(); ++r) {
+            const int64_t row = batch.row_ids[r];
+            REQUIRE((row >= 0 && row < table->num_rows()));
+            REQUIRE(words[r * batch.sequence_length] == ids->Value(tokens->value_offset(row)));
+            named.push_back(row);
+        }
+    }
+    std::sort(named.begin(), named.end());
+    REQUIRE(std::adjacent_find(named.begin(), named.end()) == named.end());
+}
+
 void CheckWindowsOnDisk() {
     auto all = Windows();
     auto path = std::filesystem::temp_directory_path() / "cyxwiz_windows_on_disk.parquet";
@@ -323,6 +351,8 @@ void CheckWindowsOnDisk() {
     while (!shuffled.batcher->IsEpochComplete() && shuffled.batcher->GetNextSequenceBatch().size == 2) ++shuffled_batches;
     REQUIRE(shuffled_batches == 2);
     REQUIRE(shuffled.batcher->GetNumBatches() == 2);
+    CheckRowsNamed(*memory.batcher, all);
+    CheckRowsNamed(*shuffled.batcher, all);  // a row group's windows by their row in the file
     // Validation from a table in memory beside a training set on disk.
     cfg = Config(); cfg.has_data_split = true; cfg.train_ratio = 0.9f; cfg.val_ratio = 0.1f; cfg.test_ratio = 0.0f;
     SequenceWindowSource dev; dev.table = all->Slice(3, 1);
@@ -330,6 +360,7 @@ void CheckWindowsOnDisk() {
     INFO(with_dev.error_message); REQUIRE(with_dev.success());
     REQUIRE(with_dev.batcher->HasPhase(BatcherPhase::Val)); REQUIRE_FALSE(with_dev.batcher->HasPhase(BatcherPhase::Test));
     with_dev.batcher->SetPhase(BatcherPhase::Val); REQUIRE(AllRows(*with_dev.batcher).size() == 1);
+    CheckRowsNamed(*with_dev.batcher, dev.table);
     // A ratio split of a file is refused (also a test share left to cut from
     // Train beside a supplied validation set); a role with other metadata too.
     REQUIRE_FALSE(BuildSequenceBatcherFromWindowSources(train, cfg, 2).success());

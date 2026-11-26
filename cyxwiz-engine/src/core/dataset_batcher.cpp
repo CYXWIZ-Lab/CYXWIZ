@@ -185,6 +185,8 @@ Batch DatasetBatcher::GetNextBatch() {
     }
 
     batch.size = actual_batch_size;
+    batch.row_ids.assign(indices_.begin() + static_cast<std::ptrdiff_t>(batch_start),
+                         indices_.begin() + static_cast<std::ptrdiff_t>(batch_end));
 
     // Advance position
     current_index_ = batch_end;

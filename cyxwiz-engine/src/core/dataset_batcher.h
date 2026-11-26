@@ -68,9 +68,11 @@ struct Batch {
     Tensor labels;        // [batch_size] or [batch_size, num_classes] if one-hot
     size_t size = 0;      // Actual batch size (may be < requested for last batch)
     BatchInspectionMetadata inspection;
-    // The dataset row (0-based, in the table the batcher reads) of each
-    // sample; empty when the batcher does not know its rows. A test run keeps
-    // them in test_predictions so results join back to the data.
+    // The dataset row (0-based, in the table the batcher reads) of each row of
+    // `data`: one per sample, or per stacked row of a pair / triplet batch
+    // (anchors, then positives, then negatives). Every training batcher fills
+    // it (TOFIX242 2.1f); a test run keeps them in test_predictions so results
+    // join back to the data.
     std::vector<int64_t> row_ids;
     // The pass's final batch (TOFIX242 2.1c): set by the batcher that made it,
     // so a wrapper that queues batches (PrefetchBatcher) passes it on as it was
@@ -98,6 +100,9 @@ struct SequenceBatch {
     Tensor target_ids;      // [batch, seq] next-token ids for causal LM training
     size_t size = 0;        // Actual batch size
     size_t sequence_length = 0;
+    // Each sequence's row (0-based) in the table it was read from: a tagged
+    // sentence's row, a token window's row (TOFIX242 2.1f), as Batch::row_ids
+    std::vector<int64_t> row_ids;
     bool last = false;      // The pass's final batch, as Batch::last
 
     bool HasWordIds() const {

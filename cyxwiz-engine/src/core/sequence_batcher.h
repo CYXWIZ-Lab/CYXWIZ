@@ -21,6 +21,9 @@ struct SequenceSample {
     // Causal LM only, optional: one entry per target (word_ids.size() - 1);
     // 0 excludes that target from the loss (prompt tokens in supervised windows).
     std::vector<uint8_t> target_mask{};
+    // The row of the table this sequence was read from (SequenceBatch::row_ids);
+    // -1: none given, the batch names the sample's place in the batcher's list.
+    int64_t row = -1;
 };
 
 struct SequenceBatcherConfig {
@@ -89,8 +92,11 @@ public:
 
         bool has_pos = false;
         bool has_tags = false;
+        std::vector<int64_t> row_ids(actual_size);
         for (size_t row = 0; row < actual_size; ++row) {
-            const auto& sample = samples_[active_indices[current_index_ + row]];
+            const size_t index = active_indices[current_index_ + row];
+            const auto& sample = samples_[index];
+            row_ids[row] = sample.row >= 0 ? sample.row : static_cast<int64_t>(index);
             if (config_.create_causal_lm_targets) {
                 CopyCausalLmSequence(sample.word_ids, sample.target_mask,
                                      word_data, target_data, mask_data, row);
@@ -136,6 +142,7 @@ public:
         }
         batch.size = actual_size;
         batch.sequence_length = sequence_length_;
+        batch.row_ids = std::move(row_ids);
         // Last when nothing is left, or only a remainder drop_last leaves out
         const size_t left = active_indices.size() - current_index_;
         batch.last = left == 0 ||

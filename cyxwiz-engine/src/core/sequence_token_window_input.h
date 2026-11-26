@@ -10,11 +10,13 @@
 namespace cyxwiz {
 // Typed host ingress only. Target shifting and mask construction remain in
 // SequenceBatcher; integer IDs must never be fitted as string vocabulary items.
+// Each window's SequenceSample::row is first_row + its row in `table` (a row
+// group read alone passes the group's first row in its file).
 inline bool ReadTokenWindowSamples(const std::shared_ptr<arrow::Table>& table,
                                   int token_column, int configured_context,
                                   std::vector<SequenceSample>& samples,
                                   Vocabulary& vocabulary, int& context,
-                                  std::string& error) {
+                                  std::string& error, int64_t first_row = 0) {
     auto fail=[&](const std::string& message) { error="Token windows: "+message; return false; };
     auto metadata=table->schema()->metadata();
     if(!metadata) return fail("missing schema metadata; use Parquet/Arrow with the saved schema");
@@ -84,6 +86,7 @@ inline bool ReadTokenWindowSamples(const std::shared_ptr<arrow::Table>& table,
                 return fail("invalid, null or padded token ID in an unpadded window");
             sample.word_ids.push_back(id);
         }
+        sample.row = first_row + row;
         samples.push_back(std::move(sample));
     }
     if(samples.empty()) return fail("no supervised windows");
