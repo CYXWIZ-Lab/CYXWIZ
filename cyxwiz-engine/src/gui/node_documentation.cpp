@@ -1718,7 +1718,7 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Consumes one Partitions Dataset contract and emits model-facing batched Data/Labels.",
         {
             {"batch_size", "Samples per batch"},
-            {"shuffle", "Randomize training order each epoch"},
+            {"shuffle", "Randomize training order each epoch (a table on disk mixes several row groups)"},
             {"drop_last", "Drop incomplete final training batch"}
         },
         {
@@ -1739,7 +1739,7 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"train_ratio", "Fraction for training when a role is derived (e.g., 0.8)"},
             {"val_ratio", "Fraction for validation when derived from Train (e.g., 0.1)"},
             {"test_ratio", "Fraction for test when derived from Train (e.g., 0.1)"},
-            {"stratified", "Preserve class distribution when supported"},
+            {"stratified", "Preserve class distribution when labels allow (not for text sequences)"},
             {"seed", "Deterministic split seed"}
         },
         {

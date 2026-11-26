@@ -182,7 +182,7 @@ void AddConfig(Report& r, const ConfigFacts& c) {
     if (c.prefetch_factor > 0)
         loop.rows.emplace_back("Prefetch", std::to_string(c.prefetch_factor) +
                                                " (a bounded queue for Arrow and Parquet batchers)");
-    loop.rows.emplace_back("Seed", std::to_string(c.seed) + " (split and shuffle order)");
+    loop.rows.emplace_back("Seed", std::to_string(c.seed) + " (batch order, class balancing and augmentation each epoch)");
     loop.rows.emplace_back("Gradient accumulation", std::to_string(c.grad_accum_steps) +
                                                         (c.grad_accum_steps == 1 ? " (an optimizer step every backward pass)"
                                                                                  : " backward passes per optimizer step"));

@@ -1449,12 +1449,12 @@ void DataLoaderDialog::RenderContent() {
             has_changes_ = true;
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("split and shuffle order");
+        ImGui::TextDisabled("batch order, balancing, augmentation");
         Field("Model seed");
         ImGui::SetNextItemWidth(120);
         if (ImGui::InputInt("##model_rng_seed", &model_seed_)) has_changes_ = true;
         ImGui::SameLine();
-        ImGui::TextDisabled("weights and dropout of a fresh run; -1 unset");
+        ImGui::TextDisabled("weights and dropout; -1 draws one and records it");
         if (model_seed_ < -1) ImGui::TextColored(t.error, "The model seed must be -1 or nonnegative.");
         if (ImGui::Checkbox("Shuffle every epoch", &shuffle_)) has_changes_ = true;
         if (ImGui::Checkbox("Drop the last short batch", &drop_last_)) has_changes_ = true;
@@ -1471,7 +1471,7 @@ void DataLoaderDialog::RenderContent() {
             has_changes_ = true;
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("batches per optimizer step");
+        ImGui::TextDisabled("batches per optimizer step (one more at each epoch's end)");
         Field("Prefetch");
         ImGui::SetNextItemWidth(120);
         if (ImGui::InputInt("##prefetch_factor", &prefetch_factor_)) {
@@ -1757,7 +1757,7 @@ void DataSplitDialog::RenderContent() {
     if (ImGui::InputInt("##seed", &seed_)) has_changes_ = true;
     ImGui::SameLine();
     ImGui::TextDisabled("the shuffled order the parts are cut from");
-    if (ImGui::Checkbox("Stratified: keep each class's share in every part", &stratified_)) has_changes_ = true;
+    if (ImGui::Checkbox("Stratified: keep each class's share in every part (not for text sequences)", &stratified_)) has_changes_ = true;
 
     ImGui::Spacing();
     if (!resolution_attempted_) RefreshResolvedManifest();

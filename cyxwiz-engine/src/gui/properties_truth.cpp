@@ -3134,7 +3134,7 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
     if (node.type == NodeType::DataLoader) {
         auto seed = ResolveStringProperty(node, "Model RNG seed", "model_seed", "-1",
             TruthOwner::Runtime, false, true, false,
-            "-1 leaves unset. Seeds fresh-run ArrayFire weights/dropout; DataLoader seed controls data order. Not checkpoint continuation.");
+            "-1 draws a seed when the run starts and records it; a resumed run continues with it. Seeds weights, dropout and noise layers; the DataLoader seed controls data order.");
         try {
             if (const auto* configured = FindParameter(node, "model_seed"))
                 (void)cyxwiz::ParseModelRandomSeed(*configured);
