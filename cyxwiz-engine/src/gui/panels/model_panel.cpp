@@ -999,8 +999,8 @@ void ModelPanel::RenderHealth() {
             ImGui::EndTable();
         }
         Paragraph(std::string(live ? "Live: the training running now, " : "The last training, ") + view.epochs +
-                      ". Recorded once an epoch: the steps' mean gradient size (no extra pass), the weights at the "
-                      "epoch's end, dead units on the validation pass.",
+                      ". Recorded once an epoch: the mean gradient size over the report steps (the Data Loader's "
+                      "Report every), the weights at the epoch's end, dead units on the validation pass.",
                   &t.text_faint);
     };
     const auto side_column = [&]() {
