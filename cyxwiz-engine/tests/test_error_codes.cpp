@@ -32,7 +32,9 @@ int main() {
     Check(std::string(errors::Gpu::KernelExecutionFailed) == "CW-G-0501",
           "GPU kernel failure code should be stable");
 
-    Check(errors::DiagnosticCodeCatalog.size() == 73,
+    Check(std::string(errors::Compiler::WeightColumnUnused) == "CW-C-0208",
+          "unused Weight column code should be stable");
+    Check(errors::DiagnosticCodeCatalog.size() == 74,
           "diagnostic catalog should expose every registered stable code");
     std::set<std::string> catalog_codes;
     for (const auto& descriptor : errors::DiagnosticCodeCatalog) {

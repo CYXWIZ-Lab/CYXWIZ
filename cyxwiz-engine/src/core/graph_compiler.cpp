@@ -4750,6 +4750,14 @@ TrainingConfiguration GraphCompiler::Compile(
                     if (id != "id" && id != "group" && id != "weight" && id != "ignore") continue;
                     config.excluded_feature_columns.push_back(column);
                     kept_out.push_back(column + " (" + id + ")");
+                    // Training weighs no rows by it yet (TOFIX242 2.1g; the
+                    // weighting itself is its follow-up F1): say so, not only
+                    // that it is kept out of the features.
+                    if (id == "weight")
+                        AddIssue(config, IssueLevel::Warning,
+                                 "The Weight column '" + column + "' is not used in training yet: it is kept out of "
+                                 "the features and every row counts the same in the loss and the metrics",
+                                 dataset_node->id, dataset_node->name, errors::Compiler::WeightColumnUnused);
                 }
                 if (!kept_out.empty()) {
                     std::string list;

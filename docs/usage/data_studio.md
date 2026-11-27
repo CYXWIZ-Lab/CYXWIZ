@@ -144,7 +144,9 @@ Detector) learn from the Train rows only. So:
   Profile on a Data Input's table is written into that node (`column_roles`),
   and training keeps ID, Group, Weight and Ignore columns out of the features
   (the compile report says which). Group is not used to split and Weight not
-  to weigh rows yet. *Treat as missing* counts in Explore only until **Make
+  to weigh rows yet: every row counts the same, and Compile warns about each
+  Weight column (*CW-C-0208*, "The Weight column ... is not used in training
+  yet"). *Treat as missing* counts in Explore only until **Make
   them empty in Prepare** adds the step that turns the texts into empty cells.
 - **Nothing else changes training.** Query's **Save as Dataset**, every
   **Export CSV...**, ML readiness and Validate's table change no step (a

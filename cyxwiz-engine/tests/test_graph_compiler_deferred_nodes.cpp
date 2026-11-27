@@ -248,6 +248,32 @@ void CheckLabelMadeBySteps(const gui::MLNode& source,
           "without a pipeline-run step a missing label is reported as before");
 }
 
+// A Weight column weighs no rows yet (TOFIX242 2.1g): Compile warns, on the
+// Data Input, naming the column; an ID column (also kept out) is not warned.
+// Its own function: main's frame is near the stack limit.
+void CheckWeightColumnWarned(const gui::MLNode& source, const std::vector<gui::MLNode>& to_model,
+                             const std::vector<gui::NodeLink>& links) {
+    cyxwiz::GraphCompiler compiler;
+    const auto compile = [&](const std::string& roles) {
+        auto data = source;
+        data.parameters["column_roles"] = roles;
+        std::vector<gui::MLNode> nodes{data};
+        nodes.insert(nodes.end(), to_model.begin(), to_model.end());
+        return compiler.Compile(nodes, links, true);
+    };
+    auto config = compile(R"({"sensor_b": "weight"})");
+    bool warned = false;
+    for (const auto& issue : config.issues)
+        warned |= issue.level == cyxwiz::IssueLevel::Warning && issue.node_id == source.id &&
+                  issue.error_code == std::string(cyxwiz::errors::Compiler::WeightColumnUnused) &&
+                  issue.message.find("The Weight column 'sensor_b' is not used in training yet") != std::string::npos;
+    Check(warned, "a Weight column is warned as not used in training yet (CW-C-0208)");
+    Check(config.is_valid && config.input_size == 1, "a Weight column still compiles, kept out of the features");
+    config = compile(R"({"sensor_b": "id"})");
+    Check(config.is_valid && !HasIssueCode(config, cyxwiz::errors::Compiler::WeightColumnUnused),
+          "an ID column is kept out without the Weight warning");
+}
+
 // A series with only its date and its value (the airline starter: Month,
 // Passengers): the Time Series Window builds the features from the value, so
 // the tabular "no numeric feature columns" check must not refuse it; the same
@@ -2327,6 +2353,7 @@ int main() {
     Check(!HasIssueText(config, cyxwiz::IssueLevel::Warning,
                         "No label column selected"),
           "an auto-resolved schema label should not emit the missing-label warning");
+    CheckWeightColumnWarned(schema_data, {binary_dense, binary_loss, optimizer}, links);
 
     auto generated_target_table = arrow::Table::Make(
         arrow::schema({arrow::field("MT_320", arrow::float32())}),
