@@ -58,7 +58,8 @@ void TestExecutor::TestCausalSequence(int batch_size,
     const auto start = std::chrono::steady_clock::now();
     double loss_sum = 0.0, denominator_sum = 0.0;
     size_t correct = 0, valid = 0;
-    int windows = 0, batches = 0;
+    int64_t windows = 0;
+    int batches = 0;
     while (!built.batcher->IsEpochComplete() && !ShouldStop()) {
         auto batch = built.batcher->GetNextSequenceBatch();
         if (!batch.IsValid() || !batch.HasTargetIds())
@@ -82,13 +83,13 @@ void TestExecutor::TestCausalSequence(int batch_size,
         }
         correct += counts.correct;
         valid += counts.valid;
-        windows += static_cast<int>(batch.word_ids.Shape()[0]);
+        windows += static_cast<int64_t>(batch.word_ids.Shape()[0]);
         ++batches;
         UpdateMetrics([&](TestingMetrics& m) {
             m.current_batch = batches;
             m.total_samples = windows;
             m.total_target_values = valid;
-            m.correct_predictions = static_cast<int>(correct);
+            m.correct_predictions = static_cast<int64_t>(correct);
             m.test_accuracy = valid ? static_cast<float>(double(correct) / valid) : 0.0f;
             m.test_loss = static_cast<float>(loss_->GetReduction() == Reduction::Sum
                 ? loss_sum : (denominator_sum > 0 ? loss_sum / denominator_sum : 0.0));

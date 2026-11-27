@@ -558,6 +558,7 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
     ConfigureWeightDecayExclusions();
     graph_schedule_pending_ = false;
     range_test_.reset();
+    range_test_done_ = false;
     health_.reset();
     health_sample_pending_ = false;
     if (config_.learning_rate_range.enabled) {
@@ -1211,6 +1212,7 @@ void TrainingExecutor::Train(
         m.train_sample_count = num_train_samples;
         m.val_sample_count = num_val_samples;
         m.test_sample_count = num_test_samples;
+        m.samples_trained = 0;
     });
     FinalizePartitionManifest(
         config_.dataset_roles,
@@ -1593,13 +1595,17 @@ void TrainingExecutor::Train(
         }
 
         // One epoch loop for every kind of batch (TOFIX242 2.2c)
+        size_t pass_samples = 0;
         if (mode_ == DatasetMode::SequenceExternal && active_sequence_batcher) {
             TrainingPassBatches batches(*active_sequence_batcher);
-            RunTrainingEpoch(batches, epoch, batch_cb);
+            pass_samples = RunTrainingEpoch(batches, epoch, batch_cb);
         } else if (active_train_ibatcher) {
             TrainingPassBatches batches(*active_train_ibatcher);
-            RunTrainingEpoch(batches, epoch, batch_cb);
+            pass_samples = RunTrainingEpoch(batches, epoch, batch_cb);
         }
+        // The training pass alone, for samples per second (validation came into it: TRN-23)
+        const float pass_seconds =
+            std::chrono::duration<float>(std::chrono::steady_clock::now() - epoch_start).count();
 
         if (ShouldStop()) break;
 
@@ -1685,7 +1691,8 @@ void TrainingExecutor::Train(
         TrainingRunLive current = GetLiveMetrics();
 
         // Compute samples per second
-        float samples_per_sec = static_cast<float>(num_train_samples) / epoch_time;
+        const float samples_per_sec =
+            pass_seconds > 0.0f ? static_cast<float>(pass_samples) / pass_seconds : 0.0f;
 
         // Update history
         UpdateMetrics([&](TrainingMetrics& m) {
@@ -1929,12 +1936,13 @@ void TrainingExecutor::Train(
 
     TrainingMetrics final_metrics = GetMetrics();
 
-    // Mark complete
+    // Mark complete. A range test that has its curve completed (TOFIX242
+    // 2.2e, TRN-23: it ended as a stop, "cancelled / user_cancelled").
     if (terminal_status.empty()) {
         terminal_status = stop_requested_.load() ? "cancelled" : "completed";
-        terminal_reason = stop_requested_.load()
-            ? "user_cancelled"
-            : "completed_all_epochs";
+        terminal_reason = stop_requested_.load() ? "user_cancelled"
+                          : range_test_done_      ? "range_test_finished"
+                                                  : "completed_all_epochs";
     }
     UpdateMetrics([&](TrainingMetrics& m) {
         m.is_training = false;
@@ -1946,6 +1954,8 @@ void TrainingExecutor::Train(
             m.status_message = "Training early-stopped: " + terminal_reason;
         } else if (terminal_status == "cancelled") {
             m.status_message = "Training cancelled";
+        } else if (range_test_) {
+            m.status_message = "Learning rate range test finished";
         } else {
             m.status_message = "Training complete";
         }
@@ -1958,7 +1968,10 @@ void TrainingExecutor::Train(
         final_metrics.train_loss,
         final_metrics.train_accuracy);
 
-    if (!stop_requested_.load() && checkpoint_manager && save_best_checkpoint) {
+    // The best restore and the held-out test follow a training run; a stop
+    // skips them, and a range test (which trains a throwaway copy) by intent.
+    const bool after_training = !stop_requested_.load() && !range_test_;
+    if (after_training && checkpoint_manager && save_best_checkpoint) {
         const std::string best_checkpoint = checkpoint_manager->GetBestCheckpoint();
         if (!best_checkpoint.empty()) {
             const std::optional<CheckpointMetadata> restored =
@@ -2011,7 +2024,7 @@ void TrainingExecutor::Train(
         }
     }
 
-    if (!stop_requested_.load() && mode_ == DatasetMode::SequenceExternal &&
+    if (after_training && mode_ == DatasetMode::SequenceExternal &&
         active_sequence_batcher) {
         if (!active_sequence_batcher->HasPhase(BatcherPhase::Test)) {
             spdlog::debug(
@@ -2061,7 +2074,7 @@ void TrainingExecutor::Train(
                 "TrainingExecutor: configured Sequence test split produced "
                 "0 held-out samples; test metrics were skipped");
         }
-    } else if (!stop_requested_.load() && active_test_ibatcher && num_test_samples > 0) {
+    } else if (after_training && active_test_ibatcher && num_test_samples > 0) {
         // num_test_samples: counted in the test phase (a batcher's count
         // follows its phase; out of it, a wired test set reads 0).
         model_->SetTraining(false);
@@ -2119,7 +2132,7 @@ void TrainingExecutor::Train(
                 m.test_retrieval_metrics = evaluation.retrieval;
             });
         }
-    } else if (!stop_requested_.load() && active_test_ibatcher) {
+    } else if (after_training && active_test_ibatcher) {
         spdlog::warn("TrainingExecutor: configured test split produced 0 held-out samples; "
                      "test metrics were skipped");
     }
@@ -2518,7 +2531,8 @@ void TrainingExecutor::StepWith(std::map<std::string, Tensor> gradients, int epo
             m.range_stop_reason = range_test_->StopReason();
             m.learning_rate = next;
         });
-        if (done) Stop();
+        // The test has its curve: the run's own end, not a stop asked for
+        if (done) range_test_done_ = true;
         else optimizer_->SetLearningRate(next);
     }
 
@@ -3041,14 +3055,15 @@ void TrainingExecutor::StepBackward(const Tensor& predictions, const TrainingSte
     else Backward(predictions, *step.targets);
 }
 
-void TrainingExecutor::RunTrainingEpoch(TrainingPassBatches& batches, int epoch, BatchCallback batch_cb) {
+size_t TrainingExecutor::RunTrainingEpoch(TrainingPassBatches& batches, int epoch, BatchCallback batch_cb) {
     // The epoch's loss and metrics summed on the device (TOFIX242 2.2a): no
     // batch waits for the device; they are read on a report batch, and after
     // the loop when its last batch was not one (a pass that ended on an
     // unmarked batch, 2.1c).
     PassMetrics metrics(config_, sequence_id_to_label_, batches.Sequences());
     int batch_num = 0;
-    size_t sample_count = 0;
+    size_t sample_count = 0;  // the epoch's (a resumed epoch's continue the checkpoint's)
+    size_t pass_samples = 0;  // this pass's
     float current_loss = 0.0f;
     float current_acc = 0.0f;
     ReportWindow report_window;
@@ -3171,6 +3186,7 @@ void TrainingExecutor::RunTrainingEpoch(TrainingPassBatches& batches, int epoch,
                         static_cast<float>(fetch_ms));
         ++batch_num;
         sample_count += step.size;
+        pass_samples += step.size;
         fetch_total_ms += fetch_ms;
         fetch_max_ms = std::max(fetch_max_ms, fetch_ms);
         NotifyPluginBatch(true, epoch, batch_num, total, 0.0f, 0.0f);
@@ -3249,6 +3265,7 @@ void TrainingExecutor::RunTrainingEpoch(TrainingPassBatches& batches, int epoch,
 
         UpdateMetrics([&](TrainingMetrics& m) {
             m.current_batch = batch_num;
+            m.samples_trained += static_cast<int64_t>(step.size);
             publish(m);
         });
 
@@ -3334,6 +3351,7 @@ void TrainingExecutor::RunTrainingEpoch(TrainingPassBatches& batches, int epoch,
                                            current_acc);
     TrainingTraceCollector::Instance().RecordStage(TrainingTraceStage::EpochComplete, epoch, batch_num, total,
                                                    current_loss, current_acc);
+    return pass_samples;
 }
 
 ObjectiveEvaluationMetrics TrainingExecutor::Evaluate(TrainingPassBatches& batches) {

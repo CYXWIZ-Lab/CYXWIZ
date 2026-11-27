@@ -30,9 +30,9 @@ struct ClassRow {
     int index = 0;
     std::string name;
     float precision = 0.0f, recall = 0.0f, f1 = 0.0f;
-    int found = 0;          // true positives
-    int false_alarms = 0;   // false positives
-    int support = 0;
+    int64_t found = 0;          // true positives (64-bit counts, as TestingMetrics')
+    int64_t false_alarms = 0;   // false positives
+    int64_t support = 0;
     bool never_predicted = false;
 };
 
@@ -40,9 +40,9 @@ enum class ClassSort { Name, Precision, Recall, F1, Found, FalseAlarms, Support 
 
 struct MatrixView {
     std::vector<std::string> names;
-    std::vector<std::vector<int>> counts;   // [actual][predicted]
-    std::vector<int> row_totals;            // support of each actual class
-    int max_count = 0;
+    std::vector<std::vector<int64_t>> counts;   // [actual][predicted]
+    std::vector<int64_t> row_totals;            // support of each actual class
+    int64_t max_count = 0;
     std::string largest_confusion;          // "true Depression predicted as Suicidal (641)"
 };
 

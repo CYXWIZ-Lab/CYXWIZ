@@ -255,8 +255,11 @@ int main(int argc, char** argv) {
     // health warning stayed empty during training.
     {
         std::atomic<int> health_epochs{-1};
+        std::atomic<float> samples_per_second{-1.0f};
         manager.SetOnProgress([&](int epoch, float, float) {
-            if (epoch == 2) health_epochs.store(static_cast<int>(manager.GetCurrentMetrics().health.epochs.size()));
+            if (epoch != 2) return;
+            health_epochs.store(static_cast<int>(manager.GetCurrentMetrics().health.epochs.size()));
+            samples_per_second.store(manager.GetLiveMetrics().samples_per_second);
         });
         Check(StartArrow(manager, MakeConfig(work_dir / "live_series"), MakeDataset(), "label", 3, 2, {}),
               "the live-series run should start");
@@ -265,6 +268,10 @@ int main(int argc, char** argv) {
         manager.ClearTrainedModel();
         Check(health_epochs.load() == 2, "during the run the manager's metrics hold the Health of the 2 epochs done (" +
                                              std::to_string(health_epochs.load()) + ")");
+        // The Dashboard's samples per second (TOFIX242 2.2e): the manager's
+        // figure was never set, so it read 0 during every run.
+        Check(samples_per_second.load() > 0.0f, "during the run the manager reports the samples per second (" +
+                                                     std::to_string(samples_per_second.load()) + ")");
         std::cout << "PASS: the manager's metrics hold the run's series while it trains\n";
     }
 

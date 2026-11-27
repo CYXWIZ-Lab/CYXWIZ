@@ -81,7 +81,8 @@ validation loss and accuracy, each with its change since the epoch before and
 its best epoch. While the next epoch runs, the training cards add the latest
 batches as a second figure. The validation loss card says how far it is from
 the training loss at the same epoch. The last card is the time left while the
-run trains (with the samples per second) and the total time once it is done.
+run trains (with the samples per second, timed over the training pass without
+its validation) and the total time once it is done.
 
 ## The charts
 

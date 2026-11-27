@@ -42,7 +42,7 @@ bool Contains(const std::string& text, const std::string& part) {
 }
 
 // The 7-class matrix of the run (rows actual, columns predicted).
-const std::vector<std::vector<int>> kMatrix = {
+const std::vector<std::vector<int64_t>> kMatrix = {
     {173, 60, 143, 6, 0, 8, 0},   {7, 1532, 91, 6, 0, 0, 0},   {15, 79, 801, 641, 0, 5, 0},
     {2, 39, 299, 726, 0, 0, 0},   {44, 28, 184, 6, 0, 6, 0},   {91, 18, 168, 2, 0, 10, 0},
     {9, 15, 90, 5, 0, 2, 0}};
@@ -67,7 +67,7 @@ TestingMetrics SentimentRun(bool with_names) {
         ClassMetrics cm;
         cm.class_id = c;
         if (with_names) cm.class_name = kNames[static_cast<size_t>(c)];
-        int column = 0, row = 0;
+        int64_t column = 0, row = 0;
         for (int i = 0; i < 7; ++i) column += kMatrix[static_cast<size_t>(i)][static_cast<size_t>(c)];
         for (int j = 0; j < 7; ++j) row += kMatrix[static_cast<size_t>(c)][static_cast<size_t>(j)];
         cm.true_positives = kMatrix[static_cast<size_t>(c)][static_cast<size_t>(c)];
@@ -175,6 +175,24 @@ void CheckRegressionRows() {
     m.regression_truth.clear();
     m.regression_predictions.clear();
     Check(BuildView(m, nullptr).largest_errors.empty(), "no kept rows: no largest errors");
+}
+
+// A test set past 2^31 rows: its counts are 64-bit, as training's are
+// (TOFIX242 2.2e, TRN-23); an int wrapped them negative.
+void CheckLargeCounts() {
+    TestingMetrics m;
+    m.is_complete = true;
+    m.total_samples = 3000000000LL;
+    m.correct_predictions = 2400000000LL;
+    m.test_accuracy = 0.8f;
+    m.total_time_seconds = 1.5f;
+    const View v = BuildView(m, nullptr);
+    Check(v.subtitle.rfind("3,000,000,000 test samples", 0) == 0, "3 billion test samples counted: " + v.subtitle);
+    cyxwiz::ConfusionMatrix confusion;
+    confusion.Resize(2);
+    confusion.matrix[0][0] = 3000000000LL;
+    confusion.matrix[1][0] = 5;
+    Check(confusion.GetTotal() == 3000000005LL, "a confusion matrix counts past 2^31: " + std::to_string(confusion.GetTotal()));
 }
 
 // ---- Results > Test (TOFIX129 D4), against scikit-learn (generate_evaluation_fixtures.py) ----
@@ -597,6 +615,7 @@ int main() {
     CheckOverview();
     CheckSorting();
     CheckRegressionRows();
+    CheckLargeCounts();
     CheckThresholds();
     CheckEstablishedThresholdCases();
     CheckTableAsTest();

@@ -507,23 +507,27 @@ void TestView::RenderMatrix() {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::TextColored(t.text_dim, "%s", mx.names[static_cast<size_t>(i)].c_str());
-        const int total = mx.row_totals[static_cast<size_t>(i)];
+        const int64_t total = mx.row_totals[static_cast<size_t>(i)];
         for (int j = 0; j < n; ++j) {
             ImGui::TableNextColumn();
             const auto& row = mx.counts[static_cast<size_t>(i)];
-            const int value = static_cast<size_t>(j) < row.size() ? row[static_cast<size_t>(j)] : 0;
+            const int64_t value = static_cast<size_t>(j) < row.size() ? row[static_cast<size_t>(j)] : 0;
             const float intensity = mx.max_count > 0 ? static_cast<float>(value) / static_cast<float>(mx.max_count) : 0.0f;
             const ImVec4 cell = i == j ? ui::Mix(t.bg_raised, t.success, 0.25f + 0.55f * intensity)
                                        : ui::Mix(t.bg_raised, t.error, value > 0 ? 0.15f + 0.6f * intensity : 0.0f);
             ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ImGui::GetColorU32(cell));
             char label[32];
-            if (matrix_mode_ == 1) std::snprintf(label, sizeof(label), "%.2f", total > 0 ? static_cast<double>(value) / total : 0.0);
-            else std::snprintf(label, sizeof(label), "%d", value);
+            if (matrix_mode_ == 1)
+                std::snprintf(label, sizeof(label), "%.2f",
+                              total > 0 ? static_cast<double>(value) / static_cast<double>(total) : 0.0);
+            else std::snprintf(label, sizeof(label), "%lld", static_cast<long long>(value));
             ImGui::TextColored(ui::ReadableOn(t, cell), "%s", label);
             if (ImGui::IsItemHovered()) {
                 ImGui::BeginTooltip();
                 ImGui::Text("True %s, predicted %s", mx.names[static_cast<size_t>(i)].c_str(), mx.names[static_cast<size_t>(j)].c_str());
-                ImGui::Text("%d of %d (%.1f%% of the true class)", value, total, total > 0 ? 100.0 * value / total : 0.0);
+                ImGui::Text("%lld of %lld (%.1f%% of the true class)", static_cast<long long>(value),
+                            static_cast<long long>(total),
+                            total > 0 ? 100.0 * static_cast<double>(value) / static_cast<double>(total) : 0.0);
                 ImGui::EndTooltip();
             }
         }
@@ -568,11 +572,11 @@ void TestView::RenderClasses() {
         ImGui::TableNextColumn();
         ImGui::TextColored(MetricColour(row.f1), "%.4f", row.f1);
         ImGui::TableNextColumn();
-        ImGui::Text("%d", row.found);
+        ImGui::Text("%lld", static_cast<long long>(row.found));
         ImGui::TableNextColumn();
-        ImGui::Text("%d", row.false_alarms);
+        ImGui::Text("%lld", static_cast<long long>(row.false_alarms));
         ImGui::TableNextColumn();
-        ImGui::Text("%d", row.support);
+        ImGui::Text("%lld", static_cast<long long>(row.support));
     }
     ImGui::EndTable();
 }

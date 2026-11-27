@@ -199,14 +199,14 @@ bool MetricsFromPredictionsTable(const arrow::Table& table, TestingMetrics& out,
     const bool classifier = table.GetColumnByName("true_class") != nullptr;
     if (!(classifier ? ReadClassifier(table, out, error) : ReadRegression(table, out, error))) return false;
 
-    out.total_samples = static_cast<int>(table.num_rows());
+    out.total_samples = static_cast<int64_t>(table.num_rows());
     out.source_dataset = MetadataValue(table, kTestPredictionsSourceKey);
     if (table.GetColumnByName("row_id") && !Whole(table, "row_id", out.row_ids)) out.row_ids.clear();
     const std::string loss = MetadataValue(table, kTestPredictionsLossKey);
     if (!loss.empty()) out.test_loss = std::strtof(loss.c_str(), nullptr);
     const std::string seconds = MetadataValue(table, kTestPredictionsSecondsKey);
     if (!seconds.empty()) out.total_time_seconds = std::strtof(seconds.c_str(), nullptr);
-    if (out.total_time_seconds > 0.0f) out.samples_per_second = static_cast<float>(out.total_samples) / out.total_time_seconds;
+    if (out.total_time_seconds > 0.0f) out.samples_per_second = static_cast<float>(static_cast<double>(out.total_samples) / out.total_time_seconds);
     out.partial = MetadataValue(table, kTestPredictionsPartialKey) == "true";
     out.is_complete = true;
     out.status_message = "Testing complete";

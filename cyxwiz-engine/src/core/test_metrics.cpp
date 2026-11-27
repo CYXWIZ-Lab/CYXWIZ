@@ -16,7 +16,7 @@ namespace cyxwiz {
 void ConfusionMatrix::Resize(int n) {
     num_classes = n;
     matrix.clear();
-    matrix.resize(n, std::vector<int>(n, 0));
+    matrix.resize(n, std::vector<int64_t>(n, 0));
 }
 
 void ConfusionMatrix::Add(int actual, int predicted) {
@@ -28,19 +28,19 @@ void ConfusionMatrix::Add(int actual, int predicted) {
 float ConfusionMatrix::GetAccuracy() const {
     if (num_classes == 0) return 0.0f;
 
-    int correct = 0;
-    int total = 0;
+    int64_t correct = 0;
+    int64_t total = 0;
     for (int i = 0; i < num_classes; ++i) {
         for (int j = 0; j < num_classes; ++j) {
             total += matrix[i][j];
             if (i == j) correct += matrix[i][j];
         }
     }
-    return total > 0 ? static_cast<float>(correct) / total : 0.0f;
+    return total > 0 ? static_cast<float>(static_cast<double>(correct) / static_cast<double>(total)) : 0.0f;
 }
 
-int ConfusionMatrix::GetTotal() const {
-    int total = 0;
+int64_t ConfusionMatrix::GetTotal() const {
+    int64_t total = 0;
     for (int i = 0; i < num_classes; ++i) {
         for (int j = 0; j < num_classes; ++j) {
             total += matrix[i][j];
@@ -73,29 +73,34 @@ void FinishClassifierMetrics(TestingMetrics& m) {
             }
             cm.support += matrix[c][i];
         }
-        const int pred_positives = cm.true_positives + cm.false_positives;
-        cm.precision = pred_positives > 0 ? static_cast<float>(cm.true_positives) / pred_positives : 0.0f;
-        const int actual_positives = cm.true_positives + cm.false_negatives;
-        cm.recall = actual_positives > 0 ? static_cast<float>(cm.true_positives) / actual_positives : 0.0f;
+        const int64_t pred_positives = cm.true_positives + cm.false_positives;
+        cm.precision = pred_positives > 0 ? static_cast<float>(static_cast<double>(cm.true_positives) /
+                                                               static_cast<double>(pred_positives))
+                                          : 0.0f;
+        const int64_t actual_positives = cm.true_positives + cm.false_negatives;
+        cm.recall = actual_positives > 0 ? static_cast<float>(static_cast<double>(cm.true_positives) /
+                                                              static_cast<double>(actual_positives))
+                                         : 0.0f;
         const float pr_sum = cm.precision + cm.recall;
         cm.f1_score = pr_sum > 0 ? 2.0f * cm.precision * cm.recall / pr_sum : 0.0f;
     }
 
     // Macro (unweighted mean over classes) and support-weighted averages.
     if (num_classes > 0) {
-        float sum_precision = 0.0f, sum_recall = 0.0f, sum_f1 = 0.0f, weighted_f1 = 0.0f;
-        int total_support = 0;
+        float sum_precision = 0.0f, sum_recall = 0.0f, sum_f1 = 0.0f;
+        double weighted_f1 = 0.0;
+        int64_t total_support = 0;
         for (const auto& cm : m.per_class_metrics) {
             sum_precision += cm.precision;
             sum_recall += cm.recall;
             sum_f1 += cm.f1_score;
-            weighted_f1 += cm.f1_score * cm.support;
+            weighted_f1 += static_cast<double>(cm.f1_score) * static_cast<double>(cm.support);
             total_support += cm.support;
         }
         m.macro_precision = sum_precision / num_classes;
         m.macro_recall = sum_recall / num_classes;
         m.macro_f1 = sum_f1 / num_classes;
-        m.weighted_f1 = total_support > 0 ? weighted_f1 / total_support : 0.0f;
+        m.weighted_f1 = total_support > 0 ? static_cast<float>(weighted_f1 / static_cast<double>(total_support)) : 0.0f;
         m.test_accuracy = m.confusion_matrix.GetAccuracy();
     }
 

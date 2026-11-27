@@ -179,8 +179,8 @@ cyxwiz::TrainingConfiguration CompileGraph() {
     config.dataset_name = "range_rows";
     config.batch_size = 8;
     config.train_ratio = 0.75f;
-    config.val_ratio = 0.25f;
-    config.test_ratio = 0.0f;
+    config.val_ratio = 0.125f;
+    config.test_ratio = 0.125f;  // a test part a range test leaves alone
     config.shuffle = false;
     config.num_workers = 0;
     config.log_interval = 0;
@@ -246,6 +246,15 @@ void CheckExecutor() {
               all.range_stop_reason + ")");
     Check(Near(all.range_points.back().learning_rate, 1e-2), "the last step trains at To");
     Check(validations == 0, "still no validation pass");
+    // A finished range test is a completed run of its own (TOFIX242 2.2e,
+    // TRN-23): it ended as a user's stop, "cancelled / user_cancelled", and
+    // the manager worked out from the stop reason that it had not been.
+    for (const auto* run : {&diverged, &all}) {
+        Check(run->terminal_status == "completed" && run->terminal_reason == "range_test_finished",
+              "a finished range test completes: " + run->terminal_status + " / " + run->terminal_reason);
+        Check(!run->has_test_metrics && run->checkpoint_used.empty(),
+              "a range test runs no held-out test and restores no checkpoint");
+    }
 
     // A rate so high that the loss overflows on the next step: the test ends
     // there with its curve, as a range test should, not as a failed run (the

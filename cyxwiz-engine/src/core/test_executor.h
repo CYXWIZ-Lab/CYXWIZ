@@ -35,13 +35,14 @@ class ParquetBackedDataset;
 struct ClassMetrics {
     int class_id = 0;
     std::string class_name;
-    int true_positives = 0;
-    int false_positives = 0;
-    int false_negatives = 0;
+    // 64-bit counts (TOFIX242 2.2e): a test set may pass 2^31 rows
+    int64_t true_positives = 0;
+    int64_t false_positives = 0;
+    int64_t false_negatives = 0;
     float precision = 0.0f;
     float recall = 0.0f;
     float f1_score = 0.0f;
-    int support = 0;  // Number of actual samples in this class
+    int64_t support = 0;  // Number of actual samples in this class
 };
 
 /**
@@ -49,13 +50,13 @@ struct ClassMetrics {
  */
 struct ConfusionMatrix {
     int num_classes = 0;
-    std::vector<std::vector<int>> matrix;  // [actual][predicted]
+    std::vector<std::vector<int64_t>> matrix;  // [actual][predicted]
     std::vector<std::string> class_names;
 
     void Resize(int n);
     void Add(int actual, int predicted);
     float GetAccuracy() const;
-    int GetTotal() const;
+    int64_t GetTotal() const;
 };
 
 /**
@@ -65,10 +66,10 @@ struct TestingMetrics {
     // Progress
     int current_batch = 0;
     int total_batches = 0;
-    int total_samples = 0;
+    int64_t total_samples = 0;
     int batch_limit = 0;      // > 0: a quick test that stops after this many batches
     bool partial = false;     // true when the quick test stopped before the end
-    int correct_predictions = 0;
+    int64_t correct_predictions = 0;
 
     // Overall metrics
     float test_loss = 0.0f;
@@ -131,7 +132,7 @@ struct TestingMetrics {
     // while they fit in kKeptInputBytes. Each is one row as the model reads
     // it (an image model's [H, W, C] row, before the batch wrap).
     struct KeptInput {
-        int sample = 0;  // index into predictions / ground_truth
+        int sample = 0;  // index into predictions / ground_truth (a sample past INT_MAX is not kept)
         std::vector<float> values;
     };
     static constexpr int kKeptFirstSamples = 64;

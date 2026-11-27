@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <spdlog/spdlog.h>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace cyxwiz {
@@ -455,8 +456,10 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
 
         // Update running metrics
         TestingMetrics current = GetMetrics();
-        float running_accuracy = current.total_samples > 0 ?
-            static_cast<float>(current.correct_predictions) / current.total_samples : 0.0f;
+        float running_accuracy = current.total_samples > 0
+            ? static_cast<float>(static_cast<double>(current.correct_predictions) /
+                                 static_cast<double>(current.total_samples))
+            : 0.0f;
 
         UpdateMetrics([batch_num, total_loss, running_accuracy](TestingMetrics& m) {
             m.current_batch = batch_num;
@@ -481,7 +484,7 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
 
     TestingMetrics final_metrics = GetMetrics();
     float samples_per_sec = final_metrics.total_samples > 0 ?
-        final_metrics.total_samples / total_time : 0.0f;
+        static_cast<float>(static_cast<double>(final_metrics.total_samples) / total_time) : 0.0f;
 
     // Update final state
     UpdateMetrics([total_time, samples_per_sec](TestingMetrics& m) {
@@ -612,7 +615,7 @@ Tensor TestExecutor::ProcessBatch(const Batch& batch) {
         regression_metrics_.Add(
             pred_data, target_data, value_count, output_width);
         UpdateMetrics([this, &batch, value_count, pred_data, target_data, output_width](TestingMetrics& m) {
-            m.total_samples += static_cast<int>(batch.size);
+            m.total_samples += static_cast<int64_t>(batch.size);
             m.total_target_values += value_count;
             m.test_mae = regression_metrics_.Mae();
             m.test_rmse = regression_metrics_.Rmse();
@@ -688,13 +691,16 @@ Tensor TestExecutor::ProcessBatch(const Batch& batch) {
                                                  probabilities.end());
                 }
             }
-            const int sample = m.total_samples;
-            if (keep_inputs && (pred_class != true_class || sample < TestingMetrics::kKeptFirstSamples) &&
+            // An index into the kept per-sample lists: int (a sample past
+            // INT_MAX is counted but not kept)
+            const int64_t sample = m.total_samples;
+            if (keep_inputs && sample <= std::numeric_limits<int>::max() &&
+                (pred_class != true_class || sample < TestingMetrics::kKeptFirstSamples) &&
                 m.kept_input_bytes + sample_width * sizeof(float) <= TestingMetrics::kKeptInputBytes) {
                 if (!input_data) input_data = batch.data.ReadData<float>();
                 if (input_data) {
                     const float* row = input_data + b * sample_width;
-                    m.kept_inputs.push_back({sample, std::vector<float>(row, row + sample_width)});
+                    m.kept_inputs.push_back({static_cast<int>(sample), std::vector<float>(row, row + sample_width)});
                     m.kept_input_bytes += sample_width * sizeof(float);
                 }
             }

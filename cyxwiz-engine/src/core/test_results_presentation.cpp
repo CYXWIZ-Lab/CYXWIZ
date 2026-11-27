@@ -193,13 +193,14 @@ View BuildView(const TestingMetrics& m, const TestingMetrics* previous) {
         const auto& conf = m.confusion_matrix;
         const int n = conf.num_classes;
         if (n > 0 && conf.matrix.size() == static_cast<size_t>(n)) {
-            int largest = 0, li = -1, lj = -1;
+            int64_t largest = 0;
+            int li = -1, lj = -1;
             for (int i = 0; i < n; ++i) {
                 v.matrix.names.push_back(ClassName(m, i));
                 v.matrix.counts.push_back(conf.matrix[static_cast<size_t>(i)]);
-                int total = 0;
+                int64_t total = 0;
                 for (int j = 0; j < n && static_cast<size_t>(j) < conf.matrix[static_cast<size_t>(i)].size(); ++j) {
-                    const int value = conf.matrix[static_cast<size_t>(i)][static_cast<size_t>(j)];
+                    const int64_t value = conf.matrix[static_cast<size_t>(i)][static_cast<size_t>(j)];
                     total += value;
                     v.matrix.max_count = std::max(v.matrix.max_count, value);
                     if (i != j && value > largest) {
@@ -307,9 +308,9 @@ std::vector<ClassRow> SortClasses(std::vector<ClassRow> rows, ClassSort by, bool
             case ClassSort::Precision: return r.precision;
             case ClassSort::Recall: return r.recall;
             case ClassSort::F1: return r.f1;
-            case ClassSort::Found: return r.found;
-            case ClassSort::FalseAlarms: return r.false_alarms;
-            case ClassSort::Support: return r.support;
+            case ClassSort::Found: return static_cast<double>(r.found);
+            case ClassSort::FalseAlarms: return static_cast<double>(r.false_alarms);
+            case ClassSort::Support: return static_cast<double>(r.support);
         }
         return r.index;
     };

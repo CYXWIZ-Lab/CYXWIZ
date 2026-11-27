@@ -322,6 +322,13 @@ int main() {
         const auto result = cyxwiz::RunGraphTrainingJob(request);
         Check(result.ok, "job with a validation role succeeded" +
                              (result.error.empty() ? "" : " (" + result.error + ")"));
+        // Samples trained are the batches' sizes summed (TOFIX242 2.2e,
+        // TRN-23): one epoch trains each training sample once. Batches x the
+        // batch size counted a short last batch as full.
+        Check(result.timing.samples_trained == static_cast<long long>(result.metrics.train_sample_count),
+              "one epoch trains its " + std::to_string(result.metrics.train_sample_count) + " samples (" +
+                  std::to_string(result.timing.samples_trained) + " counted, " +
+                  std::to_string(result.timing.batches_trained) + " batches)");
     }
 
     std::cout << "keeps inputs over the data budget on disk\n";

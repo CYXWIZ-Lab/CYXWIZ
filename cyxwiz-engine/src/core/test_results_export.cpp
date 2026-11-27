@@ -90,7 +90,7 @@ bool WriteTestResultsCsv(const TestingMetrics& m, const std::string& path, std::
         out << "\n";
         for (int i = 0; i < conf.num_classes && static_cast<size_t>(i) < conf.matrix.size(); ++i) {
             out << Field(test_report::ClassName(m, i));
-            for (const int value : conf.matrix[static_cast<size_t>(i)]) out << "," << value;
+            for (const int64_t value : conf.matrix[static_cast<size_t>(i)]) out << "," << value;
             out << "\n";
         }
         const size_t samples = std::min(m.predictions.size(), m.ground_truth.size());

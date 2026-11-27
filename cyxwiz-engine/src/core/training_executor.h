@@ -114,8 +114,9 @@ struct TrainingRunLive {
     size_t test_token_count = 0;
 
     // Timing
-    float epoch_time_seconds = 0.0f;
-    float samples_per_second = 0.0f;
+    float epoch_time_seconds = 0.0f;   // the epoch's training and validation
+    float samples_per_second = 0.0f;   // over the training pass alone (TOFIX242 2.2e)
+    int64_t samples_trained = 0;       // by this run: its batches' sizes summed
 
     // State
     bool is_training = false;
@@ -513,6 +514,7 @@ private:
     // The range test of a learning_rate_range run; the loss of the batch
     // just computed, which it records after the optimizer step.
     std::unique_ptr<LearningRateRangeTest> range_test_;
+    bool range_test_done_ = false;
     std::unique_ptr<TrainingHealthRecorder> health_;
     double range_batch_loss_ = 0.0;
     std::filesystem::path generation_preview_dir_;
@@ -545,7 +547,8 @@ private:
     // One training epoch over any batches (TOFIX242 2.2c: rows and sequences
     // had a loop each): fetch, forward, loss, metrics on the device, backward,
     // the step, the report cadence.
-    void RunTrainingEpoch(TrainingPassBatches& batches, int epoch, BatchCallback batch_cb);
+    // Returns the samples this pass trained (its batches' sizes summed).
+    size_t RunTrainingEpoch(TrainingPassBatches& batches, int epoch, BatchCallback batch_cb);
     // One evaluation pass (forward only), read once at its end.
     ObjectiveEvaluationMetrics Evaluate(TrainingPassBatches& batches);
     // Validation into the metrics; false when nothing was evaluated (an empty
@@ -638,7 +641,9 @@ private:
     /**
      * Check if we should stop (for cooperative cancellation)
      */
-    bool ShouldStop() const { return stop_requested_.load(); }
+    // A stop asked for, or a learning rate range test that has its curve (the
+    // run's own end, not a stop: TOFIX242 2.2e).
+    bool ShouldStop() const { return stop_requested_.load() || range_test_done_; }
 
     /**
      * Wait while paused and report whether execution may continue.

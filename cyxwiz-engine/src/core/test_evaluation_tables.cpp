@@ -63,7 +63,7 @@ bool BuildTestEvaluationTables(const TestingMetrics& m, size_t worst_rows, TestE
         if (m.roc && m.roc->success) add("auc", m.roc->auc);
     }
     add("loss", m.test_loss);
-    add("rows", m.total_samples);
+    add("rows", static_cast<double>(m.total_samples));
     out.metrics = Make({arrow::field("metric", arrow::utf8()), arrow::field("value", arrow::float64())},
                        {Finish(metric), Finish(value)}, error);
     if (!out.metrics) return false;

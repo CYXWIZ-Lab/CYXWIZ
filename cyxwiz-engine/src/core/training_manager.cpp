@@ -683,10 +683,10 @@ void TrainingManager::TrainingThreadFunc(
                 cached_metrics_.has_validation_metrics = true;
             }
 
-            // Calculate samples/sec from cached metrics
-            if (epoch_time > 0) {
-                samples_per_sec = cached_metrics_.samples_per_second;
-            }
+            // The executor's rate over the training pass (TOFIX242 2.2e). The
+            // cache's own was never set, so the Dashboard read 0 samples/s.
+            cached_metrics_.samples_per_second = objective_metrics.samples_per_second;
+            samples_per_sec = objective_metrics.samples_per_second;
         }
 
         if (sequence_mode) {
@@ -1041,7 +1041,9 @@ void TrainingManager::TrainingThreadFunc(
             outcome.stop_reason = final_metrics.range_stop_reason.empty() ? executor_metrics.range_stop_reason
                                                                           : final_metrics.range_stop_reason;
             if (failed) outcome.failure = final_metrics.terminal_reason;
-            outcome.cancelled = !failed && outcome.stop_reason.empty();
+            // The run says so (TOFIX242 2.2e): a finished test completes; it
+            // ended as "cancelled" and the stop reason told them apart.
+            outcome.cancelled = final_metrics.terminal_status == "cancelled";
             last_range_test_ = std::move(outcome);
             spdlog::info("TrainingManager: learning rate range test finished with {} steps ({})",
                          last_range_test_.points.size(),

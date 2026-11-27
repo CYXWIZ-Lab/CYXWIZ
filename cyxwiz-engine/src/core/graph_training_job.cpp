@@ -435,14 +435,16 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
         failed.timing = result.timing;
         failed.timing.train_seconds = seconds_since(train_start);
         failed.timing.batches_trained = batches.load();
-        failed.timing.samples_trained = batches.load() * batch_size;
+        failed.timing.samples_trained = executor->GetLiveMetrics().samples_trained;
         return failed;
     }
     finished.store(true);
     if (watcher.joinable()) watcher.join();
     result.timing.train_seconds = seconds_since(train_start);
     result.timing.batches_trained = batches.load();
-    result.timing.samples_trained = batches.load() * batch_size;
+    // The batches' sizes summed (TOFIX242 2.2e): batches x batch size
+    // counted an epoch's short last batch as full.
+    result.timing.samples_trained = executor->GetLiveMetrics().samples_trained;
 
     result.metrics = executor->GetMetrics();
     if (result.metrics.terminal_status == "failed") {

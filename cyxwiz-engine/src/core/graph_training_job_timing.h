@@ -10,8 +10,7 @@ struct GraphTrainingJobTiming {
     double prepare_seconds = 0.0;  // load inputs, compile, build the batcher
     double train_seconds = 0.0;    // training and validation until the run ends
     long long batches_trained = 0;
-    // batches x batch size (an epoch's last batch may be partial).
-    long long samples_trained = 0;
+    long long samples_trained = 0;  // the batches' sizes summed
     int tokens_per_sample = 0;     // sequence jobs: the window length; 0 otherwise
 };
 
