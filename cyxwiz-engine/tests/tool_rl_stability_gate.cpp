@@ -8,22 +8,30 @@
 //
 //   cyxwiz-rl-stability-gate [--sac | --td3 | --dqn] <task> <seed> <output.json> [<environment plugin folder>]
 //
-// The plugin folder is the MuJoCo plugin's, or another plugin's that offers the same task ids (its id
-// is read from its plugin.json): CyxSim's gates run its environments this way.
+// With a plugin folder the task is that plugin's (its id is read from its plugin.json): the MuJoCo
+// plugin's, or another plugin's that offers the same task ids, as CyxSim's gates run its environments.
+// Without one the task is a built-in environment; a task no built-in offers needs the folder.
 //
-// PPO: task CartPole-v1 (built in), InvertedPendulum-v5 or HalfCheetah-v5 (the
-// MuJoCo plugin). CartPole and InvertedPendulum stop at their target return;
-// HalfCheetah runs its 1,000,000 steps with RL Zoo's two layers of 256 and ReLU.
-// --sac: InvertedPendulum-v5 (SB3's SAC defaults, one copy, 150,000 steps, stops at a
-// mean return of 950) or HalfCheetah-v5 (RL Zoo, 1,000,000 steps); both with
-// SAC's two layers of 256 and ReLU.
+// A learner's tasks, each task's target return and its step budget are the ones its SB3 reference
+// file records ("target", "total_timesteps" of the task), found as the Engine finds the file
+// (rl_reference.h, ReadReferenceFile): they are written nowhere else.
+//
+// PPO: task CartPole-v1, InvertedPendulum-v5 or HalfCheetah-v5. CartPole and
+// InvertedPendulum stop at their target return within their budget;
+// HalfCheetah runs all its steps with RL Zoo's two layers of 256 and ReLU.
+// --sac: InvertedPendulum-v5 (SB3's SAC defaults, one copy, stops at its target)
+// or HalfCheetah-v5 (RL Zoo, all its steps: its file records no target); both
+// with SAC's two layers of 256 and ReLU.
 // --td3: the same tasks and budgets with the TD3 node's defaults (SB3's, RL
 // Zoo's noise 0.1) on InvertedPendulum and RL Zoo's settings on HalfCheetah;
 // both with TD3's layers of 400 and 300 and ReLU.
-// --dqn: CartPole-v1 (built in) with the DQN node's Tuned for (RL Zoo's
-// settings, 50,000 steps) and RL Zoo's Q layers of 256 and 256 and ReLU; it
-// runs all its steps, recording when the mean return of the last 100
-// episodes first reaches 475.
+// --dqn: CartPole-v1 with the DQN node's Tuned for (RL Zoo's settings and
+// steps) and RL Zoo's Q layers of 256 and 256 and ReLU; it runs all its
+// steps, recording when the mean return of the last 100 episodes first
+// reaches the target.
+// The report's "target" is the mark "reached_target_at" is measured against.
+// Where the learner's file records none (SAC's and TD3's HalfCheetah) it is
+// PPO's recorded target for the same task, and a note says so.
 // CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu picks the device (default
 // CPU). The run takes it the Engine's way (TOFIX206): the pending device
 // selection and a Strict next-run policy, as Preferences > Devices sets them,
@@ -31,11 +39,15 @@
 // the run actually trained on. CYXWIZ_GATE_NO_PROVIDERS=1 turns the neural
 // providers off (the networks run as ArrayFire operations) for comparisons;
 // CYXWIZ_GATE_STEPS=<n> caps the run at n steps for measurements.
+// CYXWIZ_GATE_PRINT_CONFIG=1 prints the run's configuration as JSON (the
+// graph with every node's settings, the compiled budget, stop and layers) and
+// trains nothing: to check that a change leaves the gate's protocol as it was.
 
 #include "../src/core/backend_placement_capabilities.h"
 #include "../src/core/execution_device_preferences.h"
 #include "../src/core/graph_compiler.h"
 #include <cyxwiz/neural_provider.h>
+#include "../src/core/rl/rl_reference.h"
 #include "../src/core/rl/rl_training_run.h"
 #include "../src/core/rl_graph_compile.h"
 #include "../src/core/rl_graph_presentation.h"
@@ -52,6 +64,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -87,6 +101,56 @@ bool SelectRequestedRoute() {
     return true;
 }
 
+// What a learner's SB3 reference file records for a task
+struct GateReference {
+    std::optional<float> target;    // none: the file records no target (null)
+    long long total_timesteps = 0;  // the recorded runs' step budget
+};
+
+// The task's entry in the reference file `file` of the Engine's
+// resources/rl_reference; nullopt with the reason when the file is not found,
+// is not a reference file, or does not record the task (not_recorded)
+std::optional<GateReference> ReadGateReference(const std::string& file, const std::string& task, std::string& error,
+                                               bool* not_recorded = nullptr) {
+    if (not_recorded) *not_recorded = false;
+    const std::string text = cyxwiz::rl::ReadReferenceFile(file);
+    if (text.empty()) {
+        error = "the SB3 reference " + file + " is not in the Engine's resources/rl_reference";
+        return std::nullopt;
+    }
+    try {
+        const auto document = nlohmann::json::parse(text);
+        for (const auto& entry : document.at("tasks")) {
+            if (entry.at("id").get<std::string>() != task) continue;
+            GateReference reference;
+            reference.total_timesteps = entry.at("total_timesteps").get<long long>();
+            if (reference.total_timesteps <= 0) throw std::runtime_error("total_timesteps is not positive");
+            const auto& target = entry.at("target");
+            if (!target.is_null()) reference.target = target.get<float>();
+            return reference;
+        }
+    } catch (const std::exception& e) {
+        error = "the SB3 reference " + file + " cannot be read for " + task + ": " + e.what();
+        return std::nullopt;
+    }
+    if (not_recorded) *not_recorded = true;
+    error = file + " records no task " + task;
+    return std::nullopt;
+}
+
+// A whole number as the nodes' settings write it ("950"), else its shortest form
+std::string SettingText(float value) {
+    if (value == std::floor(value) && std::abs(value) < 1e9f) return std::to_string(static_cast<long long>(value));
+    char text[32];
+    std::snprintf(text, sizeof(text), "%.9g", static_cast<double>(value));
+    return text;
+}
+
+// A difference between the gate's run and its reference file: said, never applied silently
+void Note(const std::string& what) {
+    std::fprintf(stderr, "cyxwiz-rl-stability-gate: note: %s\n", what.c_str());
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -108,7 +172,16 @@ int main(int argc, char** argv) {
     // CYXWIZ_GATE_NO_PROVIDERS=1: no neural provider (the networks as ArrayFire operations), to compare
     if (const char* off = std::getenv("CYXWIZ_GATE_NO_PROVIDERS"); off && off[0] == '1')
         cyxwiz::SetNeuralProvidersDisabledForTesting(true);
-    const bool mujoco = task != "CartPole-v1";
+    // The learner's gate tasks, targets and budgets are its reference file's
+    const std::string learner_name = sac ? "SAC" : td3 ? "TD3" : dqn ? "DQN" : "PPO";
+    const std::string reference_file =
+        sac ? "sac_sb3_curves.json" : td3 ? "td3_sb3_curves.json" : dqn ? "dqn_sb3_curves.json" : "ppo_sb3_curves.json";
+    std::string reference_error;
+    bool not_recorded = false;
+    const auto reference = ReadGateReference(reference_file, task, reference_error, &not_recorded);
+    if (!reference) return Fail(not_recorded ? "no " + learner_name + " gate task " + task : reference_error);
+    // A plugin folder given: the task is that plugin's; none: a built-in environment
+    const bool from_plugin = argc >= 5;
     cyxwiz::SetRLEnvironmentLookup([](const std::string& key, const std::map<std::string, std::string>&,
                                       cyxwiz::plugin::PluginEnvironmentInfo& info, std::string&) {
         cyxwiz::plugin::PluginEnvironmentRegistry::Environment e;
@@ -117,11 +190,14 @@ int main(int argc, char** argv) {
         return true;
     });
     auto& manager = cyxwiz::plugin::PluginManager::Instance();
-    // The plugin that offers the MuJoCo tasks: the Engine's MuJoCo plugin, or any plugin offering the
-    // same task ids (CyxSim); its id is read from the folder's plugin.json
+    // The plugin that offers the task: the Engine's MuJoCo plugin, or any plugin offering the same
+    // task ids (CyxSim); its id is read from the folder's plugin.json
     std::string plugin_id;
-    if (mujoco) {
-        if (argc < 5) return Fail(task + " needs the folder of a plugin that offers it (the MuJoCo plugin's)");
+    if (!from_plugin) {
+        cyxwiz::plugin::PluginEnvironmentRegistry::Environment builtin;
+        if (!cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find("cyxwiz.builtin:" + task, builtin))
+            return Fail(task + " needs the folder of a plugin that offers it (the MuJoCo plugin's)");
+    } else {
         const std::filesystem::path folder = std::filesystem::absolute(argv[4]);
         std::ifstream manifest(folder / "plugin.json");
         const nlohmann::json info = nlohmann::json::parse(manifest, nullptr, false);
@@ -131,12 +207,15 @@ int main(int argc, char** argv) {
         std::string error;
         if (!manager.LoadPlugin(folder, &error)) return Fail("the plugin " + plugin_id + ": " + error);
         if (!manager.InitializePlugin(plugin_id)) return Fail("the plugin " + plugin_id + " did not start");
+        cyxwiz::plugin::PluginEnvironmentRegistry::Environment offered;
+        if (!cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(plugin_id + ":" + task, offered)) {
+            manager.UnloadPlugin(plugin_id);
+            return Fail("the plugin " + plugin_id + " offers no " + task +
+                        " (without a plugin folder the task is a built-in environment)");
+        }
     }
 
     const bool cheetah = task == "HalfCheetah-v5";
-    if (dqn && task != "CartPole-v1") return Fail("no DQN gate task " + task);
-    if ((sac || td3) && task != "InvertedPendulum-v5" && !cheetah)
-        return Fail(std::string("no ") + (sac ? "SAC" : "TD3") + " gate task " + task);
     // SAC's and TD3's InvertedPendulum have no RL Zoo entry: the node's defaults
     const auto preset = sac   ? cyxwiz::rl_graph::TunedSacSettings(task)
                         : td3 ? cyxwiz::rl_graph::TunedTd3Settings(task)
@@ -152,31 +231,89 @@ int main(int argc, char** argv) {
     if (td3)  // TD3's second layer is 300 (SB3's and RL Zoo's [400, 300])
         for (const int dense : {id.p2, id.v2}) g.At(dense).parameters["units"] = "300";
     g.At(id.env).parameters["environment"] =
-        (mujoco ? plugin_id + ":" : std::string("cyxwiz.builtin:")) + task;
+        (from_plugin ? plugin_id + ":" : std::string("cyxwiz.builtin:")) + task;
     if (preset) {
         for (const auto& [k, v] : preset->environment) g.At(id.env).parameters[k] = v;
         for (const auto& [k, v] : preset->learner) g.At(id.ppo).parameters[k] = v;
         for (const auto& [k, v] : preset->policy_head) g.At(id.phead).parameters[k] = v;
     }
     g.At(id.ppo).parameters["seed"] = seed;
-    const float target = cheetah ? 4800.0f : (task == "CartPole-v1" ? 475.0f : 950.0f);
-    if (dqn) {  // RL Zoo's 50,000 steps, all of them (the reach of 475 is recorded, not a stop)
+    // The mark the report's "reached_target_at" is measured against: the
+    // learner's recorded target, else (its file records none) PPO's for the task
+    float target = std::numeric_limits<float>::quiet_NaN();
+    if (reference->target) {
+        target = *reference->target;
+    } else {
+        std::string ppo_error;
+        const auto ppo = ReadGateReference("ppo_sb3_curves.json", task, ppo_error);
+        if (ppo && ppo->target) {
+            target = *ppo->target;
+            Note(reference_file + " records no target for " + task + ": the run goes its whole budget, and the "
+                 "report marks the reach of PPO's recorded target " + SettingText(target));
+        } else {
+            Note(reference_file + " records no target for " + task + ": the run goes its whole budget, and the "
+                 "report marks no reach");
+        }
+    }
+    if (dqn) {  // RL Zoo's steps, all of them (the reach of the target is recorded, not a stop)
         g.At(id.ppo).parameters["stop_at_return"] = "false";
-    } else if (!cheetah) {  // the budgets of the SB3 reference
-        g.At(id.ppo).parameters["total_timesteps"] = off_policy ? "150000" : task == "CartPole-v1" ? "200000" : "300000";
+    } else if (!cheetah) {  // the budget of the SB3 reference; HalfCheetah keeps its tuned settings' steps
+        g.At(id.ppo).parameters["total_timesteps"] = std::to_string(reference->total_timesteps);
         g.At(id.ppo).parameters["stop_at_return"] = "true";
         if (off_policy) {  // one copy, as the SB3 reference (the Environment node's default is more)
             g.At(id.env).parameters["copies"] = "1";
-            g.At(id.ppo).parameters["target_return"] = "950";  // the nodes' own default is 4000
+            if (!reference->target) return Fail(reference_file + " records no target for " + task + " to stop at");
+            g.At(id.ppo).parameters["target_return"] = SettingText(*reference->target);  // the nodes' own default is 4000
         }
     }
     // CYXWIZ_GATE_STEPS=<n>: a shorter run, for measurements (not the gate)
-    if (const char* steps = std::getenv("CYXWIZ_GATE_STEPS"); steps && std::atoll(steps) > 0)
-        g.At(id.ppo).parameters["total_timesteps"] = steps;
+    const char* step_cap = std::getenv("CYXWIZ_GATE_STEPS");
+    const bool capped = step_cap && std::atoll(step_cap) > 0;
+    if (capped) g.At(id.ppo).parameters["total_timesteps"] = step_cap;
     cyxwiz::GraphCompiler compiler;
     const auto compiled = compiler.Compile(g.nodes, g.links, true);
     if (!compiled.rl) return Fail("the graph does not compile: " + compiled.error_message);
     const auto& config = *compiled.rl;
+    // Where the tuned settings, not this tool, set the budget or the stop (HalfCheetah's and DQN's
+    // steps, PPO's target): a value other than the reference file's is said, and the run keeps its own
+    const long long budget = sac   ? config.sac.total_timesteps
+                             : td3 ? config.td3.total_timesteps
+                             : dqn ? config.dqn.total_timesteps
+                                   : config.ppo.total_timesteps;
+    const float stops_at = sac   ? config.sac.target_return
+                           : td3 ? config.td3.target_return
+                           : dqn ? config.dqn.target_return
+                                 : config.ppo.target_return;
+    if (!capped && budget != reference->total_timesteps)
+        Note("the run's " + std::to_string(budget) + " steps differ from the " +
+             std::to_string(reference->total_timesteps) + " that " + reference_file + " records for " + task);
+    if (std::isfinite(stops_at) && (!reference->target || stops_at != *reference->target))
+        Note("the run stops at a mean return of " + SettingText(stops_at) + ", but " + reference_file + " records " +
+             (reference->target ? "a target of " + SettingText(*reference->target) : std::string("no target")) +
+             " for " + task);
+
+    // The policy's hidden layers as compiled: "64 Tanh-64 Tanh"
+    std::string layers;
+    for (const auto& layer : config.policy_layers) {
+        if (layer.units > 0) layers += (layers.empty() ? "" : "-") + std::to_string(layer.units);
+        else layers += std::string(" ") + cyxwiz::backend_placement::LayerTypeName(layer.type);
+    }
+    if (const char* print = std::getenv("CYXWIZ_GATE_PRINT_CONFIG"); print && print[0] == '1') {
+        const nlohmann::json configuration = {
+            {"task", task},
+            {"learner", cyxwiz::RLAlgorithmName(config.algorithm)},
+            {"copies", config.copies},
+            {"total_timesteps", budget},
+            {"stops_at_return", Number(stops_at)},  // null: the run goes its whole budget
+            {"target", Number(target)},
+            {"layers", layers},
+            {"graph", nlohmann::json::parse(rl_graph_test::Json(g))},
+        };
+        std::printf("%s\n", configuration.dump(2).c_str());
+        std::fflush(stdout);  // before the plugin's unload writes its log lines
+        if (from_plugin) manager.UnloadPlugin(plugin_id);
+        return EXIT_SUCCESS;
+    }
 
     cyxwiz::rl::RLTrainingRun run;
     std::string error;
@@ -185,12 +322,6 @@ int main(int argc, char** argv) {
     nlohmann::json rows = nlohmann::json::array();
     std::string device;        // where the run trains, once its preflight is done
     std::string compute_path;  // how the last update ran (fused kernels or ArrayFire)
-    // The policy's hidden layers as compiled: "64 Tanh-64 Tanh"
-    std::string layers;
-    for (const auto& layer : config.policy_layers) {
-        if (layer.units > 0) layers += (layers.empty() ? "" : "-") + std::to_string(layer.units);
-        else layers += std::string(" ") + cyxwiz::backend_placement::LayerTypeName(layer.type);
-    }
     long long reached = -1;
     float last_return = std::numeric_limits<float>::quiet_NaN();
     // The report as it stands: written every few updates as well as at the end,
@@ -204,11 +335,8 @@ int main(int argc, char** argv) {
             {"copies", config.copies},
             {"learner", cyxwiz::RLAlgorithmName(config.algorithm)},
             {"environment", g.At(id.env).parameters["environment"]},  // which plugin's task ran
-            {"total_timesteps", sac   ? config.sac.total_timesteps
-                                : td3 ? config.td3.total_timesteps
-                                : dqn ? config.dqn.total_timesteps
-                                      : config.ppo.total_timesteps},
-            {"target", target},
+            {"total_timesteps", budget},
+            {"target", Number(target)},
             {"layers", layers},
             {"device", device},
             {"compute_path", compute_path},
@@ -284,6 +412,6 @@ int main(int argc, char** argv) {
     std::printf("%s seed %s: %s, target %.0f reached at %lld steps, final mean return %.1f after %lld steps (%.0f s)\n",
                 task.c_str(), seed.c_str(), run.Message().c_str(), target, reached, last_return, steps, seconds);
     write(run.Message());
-    if (mujoco) manager.UnloadPlugin(plugin_id);
+    if (from_plugin) manager.UnloadPlugin(plugin_id);
     return finished ? EXIT_SUCCESS : EXIT_FAILURE;
 }
