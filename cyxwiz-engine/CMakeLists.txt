@@ -8247,6 +8247,20 @@ endif()
 if(MSVC)
     target_link_options(cyxwiz-rl-stability-gate PRIVATE /STACK:4194304)
 endif()
+# The gate's protocol does not drift: what the tool would run for every task
+# and learner (it prints it and trains nothing, so no GPU is needed) against
+# the stored copy. The MuJoCo tasks are checked when the plugin is built.
+if(Python3_EXECUTABLE)
+    set(_cyxwiz_rl_gate_plugin_args)
+    if(CYXWIZ_BUILD_MUJOCO_PLUGIN)
+        set(_cyxwiz_rl_gate_plugin_args --plugin-dir "${CMAKE_SOURCE_DIR}/plugins/simulation/mujoco")
+    endif()
+    add_test(NAME rl_gate_configs
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_rl_gate_configs.py"
+                "$<TARGET_FILE:cyxwiz-rl-stability-gate>"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/rl_gate_configs.json"
+                ${_cyxwiz_rl_gate_plugin_args})
+endif()
 
 # ===== Test: what the RL surfaces say about a PPO run's device (TOFIX206) =====
 add_executable(test_rl_device_presentation

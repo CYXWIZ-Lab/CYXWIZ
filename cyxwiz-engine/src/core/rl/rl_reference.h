@@ -15,6 +15,7 @@
 #include "td3_config.h"
 #include "dqn_config.h"
 
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -72,5 +73,9 @@ bool DefaultEnvironmentSettings(const plugin::PluginEnvironmentInfo& environment
 // "dqn_sb3_curves.json") in the
 // Engine's resources/rl_reference, empty if none
 std::string ReadReferenceFile(const std::string& name);
+// The folders ReadReferenceFile looks in, in order: rl_reference under the
+// resources beside the executable (an installation, a macOS app bundle) and
+// under the source tree's resources next to a build tree
+std::vector<std::filesystem::path> ReferenceFileFolders();
 
 }  // namespace cyxwiz::rl

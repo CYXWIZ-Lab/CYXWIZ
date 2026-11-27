@@ -15,6 +15,10 @@
 // A learner's tasks, each task's target return and its step budget are the ones its SB3 reference
 // file records ("target", "total_timesteps" of the task), found as the Engine finds the file
 // (rl_reference.h, ReadReferenceFile): they are written nowhere else.
+// So the tool needs those files: resources/rl_reference beside the executable,
+// or the source tree's cyxwiz-engine/resources/rl_reference three folders
+// above it, as in a build tree (<build>/bin/Release). A copy of the
+// executable alone, elsewhere, stops and names the folders it looked in.
 //
 // PPO: task CartPole-v1, InvertedPendulum-v5 or HalfCheetah-v5. CartPole and
 // InvertedPendulum stop at their target return within their budget;
@@ -42,6 +46,9 @@
 // CYXWIZ_GATE_PRINT_CONFIG=1 prints the run's configuration as JSON (the
 // graph with every node's settings, the compiled budget, stop and layers) and
 // trains nothing: to check that a change leaves the gate's protocol as it was.
+// Standard output then carries that JSON alone; every log line goes to
+// standard error. tests/check_rl_gate_configs.py (ctest rl_gate_configs)
+// compares it, for every task and learner, with tests/data/rl_gate_configs.json.
 
 #include "../src/core/backend_placement_capabilities.h"
 #include "../src/core/execution_device_preferences.h"
@@ -68,6 +75,12 @@
 #include <optional>
 #include <string>
 #include <thread>
+
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -115,7 +128,10 @@ std::optional<GateReference> ReadGateReference(const std::string& file, const st
     if (not_recorded) *not_recorded = false;
     const std::string text = cyxwiz::rl::ReadReferenceFile(file);
     if (text.empty()) {
-        error = "the SB3 reference " + file + " is not in the Engine's resources/rl_reference";
+        error = "the SB3 reference " + file + " was not found; the gate takes its tasks, targets and step budgets "
+                "from it. It looked in:";
+        for (const auto& folder : cyxwiz::rl::ReferenceFileFolders()) error += "\n  " + folder.string();
+        error += "\nRun the tool from its build tree, or put the Engine's resources/rl_reference beside it.";
         return std::nullopt;
     }
     try {
@@ -146,6 +162,36 @@ std::string SettingText(float value) {
     return text;
 }
 
+// CYXWIZ_GATE_PRINT_CONFIG: standard output is kept for the configuration.
+// Whatever else writes to it (the Engine's and the plugins' log lines, from
+// any library) goes to standard error from here on; the returned descriptor
+// is the real standard output, or -1 if it could not be kept.
+int KeepStandardOutputForTheConfiguration() {
+    std::fflush(stdout);
+#ifdef _WIN32
+    const int kept = _dup(_fileno(stdout));
+    if (kept < 0 || _dup2(_fileno(stderr), _fileno(stdout)) != 0) return -1;
+#else
+    const int kept = dup(fileno(stdout));
+    if (kept < 0 || dup2(fileno(stderr), fileno(stdout)) < 0) return -1;
+#endif
+    return kept;
+}
+
+bool WriteToDescriptor(int descriptor, const std::string& text) {
+    std::size_t done = 0;
+    while (done < text.size()) {
+#ifdef _WIN32
+        const auto written = _write(descriptor, text.data() + done, static_cast<unsigned int>(text.size() - done));
+#else
+        const auto written = write(descriptor, text.data() + done, text.size() - done);
+#endif
+        if (written <= 0) return false;
+        done += static_cast<std::size_t>(written);
+    }
+    return true;
+}
+
 // A difference between the gate's run and its reference file: said, never applied silently
 void Note(const std::string& what) {
     std::fprintf(stderr, "cyxwiz-rl-stability-gate: note: %s\n", what.c_str());
@@ -165,6 +211,13 @@ int main(int argc, char** argv) {
     if (argc < 4)
         return Fail("usage: cyxwiz-rl-stability-gate [--sac | --td3 | --dqn] <task> <seed> <output.json> "
                     "[<environment plugin folder>]");
+    const char* print = std::getenv("CYXWIZ_GATE_PRINT_CONFIG");
+    const bool print_configuration = print && print[0] == '1';
+    int configuration_output = -1;
+    if (print_configuration) {  // before anything logs
+        configuration_output = KeepStandardOutputForTheConfiguration();
+        if (configuration_output < 0) return Fail("standard output could not be kept for the configuration");
+    }
     const std::string task = argv[1];
     const std::string seed = argv[2];
     const std::filesystem::path output = argv[3];
@@ -298,7 +351,7 @@ int main(int argc, char** argv) {
         if (layer.units > 0) layers += (layers.empty() ? "" : "-") + std::to_string(layer.units);
         else layers += std::string(" ") + cyxwiz::backend_placement::LayerTypeName(layer.type);
     }
-    if (const char* print = std::getenv("CYXWIZ_GATE_PRINT_CONFIG"); print && print[0] == '1') {
+    if (print_configuration) {
         const nlohmann::json configuration = {
             {"task", task},
             {"learner", cyxwiz::RLAlgorithmName(config.algorithm)},
@@ -309,10 +362,9 @@ int main(int argc, char** argv) {
             {"layers", layers},
             {"graph", nlohmann::json::parse(rl_graph_test::Json(g))},
         };
-        std::printf("%s\n", configuration.dump(2).c_str());
-        std::fflush(stdout);  // before the plugin's unload writes its log lines
+        const bool written = WriteToDescriptor(configuration_output, configuration.dump(2) + "\n");
         if (from_plugin) manager.UnloadPlugin(plugin_id);
-        return EXIT_SUCCESS;
+        return written ? EXIT_SUCCESS : Fail("the configuration could not be written to standard output");
     }
 
     cyxwiz::rl::RLTrainingRun run;

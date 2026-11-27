@@ -226,14 +226,21 @@ bool DefaultEnvironmentSettings(const plugin::PluginEnvironmentInfo& environment
     return true;
 }
 
-std::string ReadReferenceFile(const std::string& name) {
+std::vector<std::filesystem::path> ReferenceFileFolders() {
     // Beside the executable, as the pattern library looks for its resources
     // (a macOS app bundle, a build tree); never the working folder.
     const auto exe_dir = core::ExecutableDirectory();
+    std::vector<std::filesystem::path> folders;
     for (const auto& dir : {exe_dir / "resources", exe_dir / ".." / "Resources", exe_dir / ".." / "resources",
                             exe_dir / ".." / ".." / "resources",
-                            exe_dir / ".." / ".." / ".." / "cyxwiz-engine" / "resources"}) {
-        std::ifstream in(dir / "rl_reference" / name, std::ios::binary);
+                            exe_dir / ".." / ".." / ".." / "cyxwiz-engine" / "resources"})
+        folders.push_back((dir / "rl_reference").lexically_normal());
+    return folders;
+}
+
+std::string ReadReferenceFile(const std::string& name) {
+    for (const auto& folder : ReferenceFileFolders()) {
+        std::ifstream in(folder / name, std::ios::binary);
         if (!in) continue;
         std::ostringstream text;
         text << in.rdbuf();
