@@ -1,5 +1,5 @@
 {
-  "csv_file": "D:\\demo\\mrcj\\datasets\\sentiment analysis\\sentiment_mental_health.csv",
+  "csv_file": "D:\\demo\\datasets\\sentiment analysis\\sentiment_mental_health.csv",
   "vocab_file": "D:\\Dev\\CyxWiz_Claude\\examples\\data\\sentiment_analysis_demo\\sentiment_analysis_vocab.txt",
   "text_column": "statement",
   "label_column": "status",

@@ -167,7 +167,7 @@
                                          "enable_streaming":  "false",
                                          "feature_columns":  "*",
                                          "file_category":  "text",
-                                         "file_path":  "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+                                         "file_path":  "D:/demo/datasets/sentiment analysis/sentiment_mental_health.csv",
                                          "file_type":  "csv",
                                          "hdf5_key":  "",
                                          "header":  "true",

@@ -5,7 +5,7 @@
   "engine_graph_training": false,
   "oracle": {"name": "scikit-learn", "version": "1.8.0"},
   "dataset": {
-    "source_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+    "source_path": "D:/demo/datasets/sentiment analysis/sentiment_mental_health.csv",
     "sha256": "67274f52dec3b0155aec4d7d1ff31d2a92b0e9b383ab917614591cd168cc2474",
     "rows": 52681,
     "class_counts": {

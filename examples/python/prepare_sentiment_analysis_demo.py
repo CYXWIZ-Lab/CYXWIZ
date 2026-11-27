@@ -23,8 +23,8 @@ from pathlib import Path
 
 
 SPECIAL_TOKENS = ["[PAD]", "[UNK]", "[BOS]", "[EOS]"]
-DEFAULT_SOURCE = r"D:\demo\mrcj\datasets\sentiment analysis\sentiment_mental_health.csv"
-DEFAULT_OUT_DIR = r"D:\demo\mrcj\datasets\sentiment analysis"
+DEFAULT_SOURCE = r"D:\demo\datasets\sentiment analysis\sentiment_mental_health.csv"
+DEFAULT_OUT_DIR = r"D:\demo\datasets\sentiment analysis"
 
 
 def parse_args() -> argparse.Namespace:

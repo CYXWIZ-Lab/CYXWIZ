@@ -1,7 +1,7 @@
 {
   "id": "mental_health_sentiment_lstm",
   "name": "Mental Health Sentiment - LSTM Classifier (smoke test)",
-  "description": "End-to-end text plus LSTM smoke test. This graph exercises the current Arrow text path: DataInput raw text is materialized through TextTokenizer fold their params into the tokenizer, and the tokenized sequence feeds Embedding -> LSTM -> Dense. Dataset file unchanged: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv.",
+  "description": "End-to-end text plus LSTM smoke test. This graph exercises the current Arrow text path: DataInput raw text is materialized through TextTokenizer fold their params into the tokenizer, and the tokenized sequence feeds Embedding -> LSTM -> Dense. Dataset file unchanged: D:/demo/datasets/sentiment analysis/sentiment_mental_health.csv.",
   "category": "Training Pipeline",
   "tags": [
     "text",
@@ -108,7 +108,7 @@
         "params": {
           "source_type": "file",
           "file_category": "text",
-          "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+          "file_path": "D:/demo/datasets/sentiment analysis/sentiment_mental_health.csv",
           "text_column": "statement",
           "text_label_column": "status",
           "text_tokenizer_type": "1",

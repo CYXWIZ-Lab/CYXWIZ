@@ -40,9 +40,9 @@
         "params": {
           "source_type": "file",
           "file_category": "image",
-          "folder_path": "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog",
+          "folder_path": "D:/demo/datasets/Cats_Dogs/cat_dog",
           "image_layout": "1",
-          "labels_csv": "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog.csv",
+          "labels_csv": "D:/demo/datasets/Cats_Dogs/cat_dog.csv",
           "target_width": "64",
           "target_height": "64",
           "rgb": "true",

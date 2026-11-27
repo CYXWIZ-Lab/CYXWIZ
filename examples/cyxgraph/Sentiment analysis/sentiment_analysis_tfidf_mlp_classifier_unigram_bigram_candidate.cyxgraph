@@ -169,7 +169,7 @@
                 "encoding": "0",
                 "feature_columns": "*",
                 "file_category": "text",
-                "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+                "file_path": "D:/demo/datasets/sentiment analysis/sentiment_mental_health.csv",
                 "file_type": "csv",
                 "folder_path": "",
                 "force_disk_backed": "false",

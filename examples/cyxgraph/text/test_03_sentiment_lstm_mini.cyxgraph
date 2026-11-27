@@ -1,7 +1,7 @@
 {
   "id": "mental_health_sentiment_lstm_mini",
   "name": "Sentiment LSTM — Mini (CPU BPTT correctness smoke test)",
-  "description": "Tiny LSTM smoke test for validating the 2026-04-16 CPU BPTT implementation. All dimensions cranked down from the full test_02_sentiment_lstm graph to make CPU BPTT tractable: max_length 128→32, embedding_dim 64→16, lstm_hidden 128→32, vocab 10000→2000, batch 64→32. Goal is 'does loss drop over a few batches / epoch' — not 'good accuracy'. The full graph should be revisited once either (a) AF path is fixed or (b) BLAS is wired into the BPTT inner loop. Dataset file unchanged: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv — full 52k samples but small graph means ~100x fewer flops per batch than the full smoke test.",
+  "description": "Tiny LSTM smoke test for validating the 2026-04-16 CPU BPTT implementation. All dimensions cranked down from the full test_02_sentiment_lstm graph to make CPU BPTT tractable: max_length 128→32, embedding_dim 64→16, lstm_hidden 128→32, vocab 10000→2000, batch 64→32. Goal is 'does loss drop over a few batches / epoch' — not 'good accuracy'. The full graph should be revisited once either (a) AF path is fixed or (b) BLAS is wired into the BPTT inner loop. Dataset file unchanged: D:/demo/datasets/sentiment analysis/sentiment_mental_health.csv — full 52k samples but small graph means ~100x fewer flops per batch than the full smoke test.",
   "category": "Training Pipeline",
   "tags": [
     "text",
@@ -25,7 +25,7 @@
         "params": {
           "source_type": "file",
           "file_category": "text",
-          "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+          "file_path": "D:/demo/datasets/sentiment analysis/sentiment_mental_health.csv",
           "text_column": "statement",
           "text_label_column": "status",
           "text_tokenizer_type": "1",

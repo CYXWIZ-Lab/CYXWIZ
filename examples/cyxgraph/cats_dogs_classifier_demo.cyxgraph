@@ -1,7 +1,7 @@
 {
   "id": "cats_dogs_classifier_demo",
   "name": "Cats vs Dogs Image Classifier Demo",
-  "description": "Video-ready binary image classification pipeline for the Cats_Dogs demo dataset. Preconfigured for FlatWithCSV layout at D:/demo/mrcj/datasets/Cats_Dogs. Includes a required Resize node set to 64x64 for fast training.",
+  "description": "Video-ready binary image classification pipeline for the Cats_Dogs demo dataset. Preconfigured for FlatWithCSV layout at D:/demo/datasets/Cats_Dogs. Includes a required Resize node set to 64x64 for fast training.",
   "category": "Training Pipeline",
   "tags": ["cats", "dogs", "binary", "classification", "image", "training", "demo"],
   "parameters": [
@@ -40,9 +40,9 @@
         "params": {
           "source_type": "file",
           "file_category": "image",
-          "folder_path": "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog",
+          "folder_path": "D:/demo/datasets/Cats_Dogs/cat_dog",
           "image_layout": "1",
-          "labels_csv": "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog.csv",
+          "labels_csv": "D:/demo/datasets/Cats_Dogs/cat_dog.csv",
           "target_width": "64",
           "target_height": "64",
           "rgb": "true",

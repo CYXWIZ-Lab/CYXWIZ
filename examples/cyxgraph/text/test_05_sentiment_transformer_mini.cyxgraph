@@ -97,7 +97,7 @@
         "params": {
           "source_type": "file",
           "file_category": "text",
-          "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+          "file_path": "D:/demo/datasets/sentiment analysis/sentiment_mental_health.csv",
           "text_column": "statement",
           "text_label_column": "status",
           "text_tokenizer_type": "1",

@@ -1,7 +1,7 @@
 {
   "id": "mental_health_sentiment_classifier",
   "name": "Mental Health Sentiment Classifier",
-  "description": "Multi-class mental health text classification from first-person statements. Classifies short self-reported text into 7 mental health categories: Normal, Depression, Suicidal, Anxiety, Bipolar, Stress, Personality disorder. The Data Input loads the text and its label; the Text Tokenizer turns each statement into word ids (20,000-word vocabulary, words seen at least twice), then Data Split and DataLoader feed an Embedding and a dense classifier, with DataLoader.Labels as the loss targets. Target file: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv, columns statement and status.",
+  "description": "Multi-class mental health text classification from first-person statements. Classifies short self-reported text into 7 mental health categories: Normal, Depression, Suicidal, Anxiety, Bipolar, Stress, Personality disorder. The Data Input loads the text and its label; the Text Tokenizer turns each statement into word ids (20,000-word vocabulary, words seen at least twice), then Data Split and DataLoader feed an Embedding and a dense classifier, with DataLoader.Labels as the loss targets. Target file: D:/demo/datasets/sentiment analysis/sentiment_mental_health.csv, columns statement and status.",
   "category": "Training Pipeline",
   "tags": [
     "text",
@@ -83,7 +83,7 @@
         "params": {
           "source_type": "file",
           "file_category": "text",
-          "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+          "file_path": "D:/demo/datasets/sentiment analysis/sentiment_mental_health.csv",
           "text_column": "statement",
           "text_label_column": "status"
         }

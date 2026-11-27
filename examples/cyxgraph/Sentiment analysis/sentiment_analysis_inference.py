@@ -26,8 +26,8 @@ from collections import Counter
 from pathlib import Path
 
 
-DEFAULT_DATASET = r"D:\demo\mrcj\datasets\sentiment analysis\sentiment_mental_health.csv"
-DEFAULT_METADATA = r"D:\demo\mrcj\datasets\sentiment analysis\sentiment_analysis_metadata.json"
+DEFAULT_DATASET = r"D:\demo\datasets\sentiment analysis\sentiment_mental_health.csv"
+DEFAULT_METADATA = r"D:\demo\datasets\sentiment analysis\sentiment_analysis_metadata.json"
 DEFAULT_ENDPOINT = "http://localhost:8080/v1/predict"
 DEFAULT_HEALTH_URL = "http://localhost:8080/health"
 

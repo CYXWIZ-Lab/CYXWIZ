@@ -25,7 +25,7 @@ from sklearn.model_selection import train_test_split
 
 
 DEFAULT_DATASET = Path(
-    "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv"
+    "D:/demo/datasets/sentiment analysis/sentiment_mental_health.csv"
 )
 SEED = 42
 

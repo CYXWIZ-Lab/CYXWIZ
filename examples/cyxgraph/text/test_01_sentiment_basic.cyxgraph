@@ -1,7 +1,7 @@
 {
   "id": "text_test_01_sentiment_basic",
   "name": "Text Test 1 - Sentiment Classification (Basic)",
-  "description": "Text pipeline smoke test: Data Input (text and label) -> Text Tokenizer (word ids, 128 per statement) -> Data Split -> DataLoader -> a dense classifier, with loss targets from DataLoader.Labels. Target dataset: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv with statement as text and status as label.",
+  "description": "Text pipeline smoke test: Data Input (text and label) -> Text Tokenizer (word ids, 128 per statement) -> Data Split -> DataLoader -> a dense classifier, with loss targets from DataLoader.Labels. Target dataset: D:/demo/datasets/sentiment analysis/sentiment_mental_health.csv with statement as text and status as label.",
   "category": "Training Pipeline",
   "tags": [
     "text",
