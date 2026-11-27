@@ -13,6 +13,11 @@ Environment Library) lists the models you can load into the
   folder.
 - **Imported**: models imported from a URL while no project was open.
 
+Every model here loads and runs in the viewport. Only Inverted
+Pendulum and Half Cheetah also have a task the Engine can train (see
+[Training a policy](rl_training.md#not-yet)); for the others, write the task
+in Python ([Your own task in Python](rl_environments.md#your-own-task-in-python)).
+
 ## Where downloads go
 
 A downloaded robot is **shared by every project**: it is saved once in your

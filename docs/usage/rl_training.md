@@ -461,5 +461,14 @@ its last 5,000 steps).
   dueling DQN and prioritised replay, are not offered);
   learning-rate schedules (RL Zoo's CartPole settings use linear ones, the
   preset uses them as constants).
-- Training on a MuJoCo Plant model with a reward graph (the environments are
-  the plugin's fixed tasks).
+- Training a model that has no task. The Engine trains CartPole-v1 (built
+  in), Inverted Pendulum and Half Cheetah (the Simulation (MuJoCo) add-on).
+  Cart-Pole Swing-Up (the MuJoCo model, not CartPole-v1), Hopper, Walker 2D,
+  Reacher 2D, Pusher and every Menagerie robot (the Google Robot, the Unitree
+  humanoids, ...) load and run in the [MuJoCo Viewport](mujoco_viewport.md),
+  but have no task: nothing says what the policy observes, what earns reward
+  and when an episode ends.
+- Building a task from the MuJoCo Plant, Observation Filter and Reward
+  Function nodes, or writing one in Python, for these learners. Meanwhile you
+  can train such a model from a script: see
+  [Your own task in Python](rl_environments.md#your-own-task-in-python).

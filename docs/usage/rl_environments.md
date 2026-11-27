@@ -89,6 +89,65 @@ model = PPO("MlpPolicy", rl.Env("InvertedPendulum-v5"), seed=0)
 model.learn(total_timesteps=100_000)
 ```
 
+## Your own task in Python
+
+An environment the Engine trains needs a task: what the policy observes, the
+reward, when an episode ends and how it starts. Only the environments above
+have one. For any other MuJoCo model (a Menagerie robot you downloaded, your
+own MJCF file) you can write the task yourself as a Gymnasium environment with
+the `mujoco` Python package and train it with Stable-Baselines3 in the Script
+Editor. Install `mujoco`, `gymnasium` and `stable-baselines3` in the Python the
+Script Editor uses first.
+
+```python
+import gymnasium as gym
+import mujoco
+import numpy as np
+from stable_baselines3 import SAC
+
+
+class Reach(gym.Env):
+    """Move a site of the robot (its gripper, say) to a fixed target."""
+
+    def __init__(self, model_path, tip_site, target):
+        self.model = mujoco.MjModel.from_xml_path(model_path)
+        self.data = mujoco.MjData(self.model)
+        self.tip_site = tip_site
+        self.target = np.asarray(target, dtype=np.float64)
+        low, high = self.model.actuator_ctrlrange.T
+        self.action_space = gym.spaces.Box(low.astype(np.float32), high.astype(np.float32))
+        size = self.model.nq + self.model.nv
+        self.observation_space = gym.spaces.Box(-np.inf, np.inf, (size,), np.float64)
+
+    def _observe(self):
+        return np.concatenate([self.data.qpos, self.data.qvel])
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+        mujoco.mj_resetData(self.model, self.data)
+        mujoco.mj_forward(self.model, self.data)
+        return self._observe(), {}
+
+    def step(self, action):
+        self.data.ctrl[:] = action
+        for _ in range(5):
+            mujoco.mj_step(self.model, self.data)
+        distance = np.linalg.norm(self.data.site(self.tip_site).xpos - self.target)
+        reward = -distance - 0.01 * float(np.square(action).sum())
+        return self._observe(), reward, bool(distance < 0.02), False, {}
+
+
+env = gym.wrappers.TimeLimit(Reach("path/to/scene.xml", "your_tip_site", [0.5, 0.0, 0.8]), 500)
+SAC("MlpPolicy", env, seed=0).learn(total_timesteps=200_000)
+```
+
+Name a site your model has (turn on **Labels > sites** in the MuJoCo Viewport
+to see them) and a target it can reach. Every actuator needs a `ctrlrange`: one
+without gets the range 0 to 0 and never moves. This runs in Python, outside the Engine's
+own learners: no RL Training Dashboard, viewport playback or `.cyxmodel`
+policy. Tasks built from nodes, for the Engine's learners and any model, are
+planned.
+
 ## Checks
 
 - `cyxwiz-plugin-check <plugin folder>` creates two copies of each
