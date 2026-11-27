@@ -68,9 +68,9 @@ void InitializeLikeTorchLinear(IExecutableModel& model) {
         const float bound = 1.0f / std::sqrt(static_cast<float>(it->second));
         af::array u = (af::randu(af::dim4(static_cast<dim_t>(tensor.NumElements())), f32) * 2.0f - 1.0f) * bound;
         u.eval();
-        std::vector<float> host(tensor.NumElements());
-        u.host(host.data());
-        tensor = Tensor(tensor.Shape(), host.data());
+        // On the device, in the draws' row-major order (a copy to the host and back
+        // was an unattributed host read)
+        tensor = Tensor::FromRowMajorFlatArray(u, tensor.Shape());
     }
     model.SetParameters(params);
 }
