@@ -7,7 +7,7 @@
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}")
 
-execute_process(COMMAND "${CHECK}" --open "${PLUGIN}/weather.arff" "${PLUGIN}"
+execute_process(COMMAND "${CHECK}" --scratch --open "${PLUGIN}/weather.arff" "${PLUGIN}"
                 RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE output)
 message("${output}")
 if(NOT result EQUAL 0)
@@ -27,7 +27,7 @@ endforeach()
 file(WRITE "${WORK}/bad.arff" "@relation bad\n@attribute a numeric\n@attribute b numeric\n@data\n1,2\n3\n")
 file(WRITE "${WORK}/data.csv" "x,y\n1,2\n")
 file(WRITE "${WORK}/fake.arff" "not an arff file\n")
-execute_process(COMMAND "${CHECK}" --open "${WORK}/bad.arff" --open "${WORK}/data.csv" --open "${WORK}/fake.arff"
+execute_process(COMMAND "${CHECK}" --scratch --open "${WORK}/bad.arff" --open "${WORK}/data.csv" --open "${WORK}/fake.arff"
                         "${PLUGIN}"
                 RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE output)
 message("${output}")

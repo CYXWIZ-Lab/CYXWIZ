@@ -108,7 +108,8 @@ for folder in "$work/build/my_nodes/my_nodes" "$work/build/my_nodes_debug/my_nod
     if [ -f "$folder/plugin.json" ]; then folders+=("$folder"); else fail "no plugin folder $folder"; fi
 done
 if [ ${#folders[@]} -gt 0 ]; then
-    "$check" --open "$data_example/weather.arff" "${folders[@]}" > "$work/check.log" 2>&1
+    # --scratch: the check's plugin copies and settings go to a profile of its own, not the user's.
+    "$check" --scratch --open "$data_example/weather.arff" "${folders[@]}" > "$work/check.log" 2>&1
     rc=$?
     grep -v "\] \[info\]" "$work/check.log"
     [ $rc -eq 0 ] || fail "cyxwiz-plugin-check"

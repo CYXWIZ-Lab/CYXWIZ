@@ -15,7 +15,7 @@ if(NOT manifest MATCHES "\"FileSystem\"")
 endif()
 file(WRITE "${WORK}/activation_nodes/plugin.json" "${manifest}")
 
-execute_process(COMMAND "${CHECK}" "${WORK}/activation_nodes"
+execute_process(COMMAND "${CHECK}" --scratch "${WORK}/activation_nodes"
                 RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE output)
 message("${output}")
 if(NOT result EQUAL 0)

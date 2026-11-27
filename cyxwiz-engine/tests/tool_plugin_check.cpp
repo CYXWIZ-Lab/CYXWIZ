@@ -17,10 +17,13 @@
 // Input's Apply does (the format its extension and CanLoad pick, every batch,
 // the data validated), and run each of its analytics on the columns that
 // analytic reads, as Explore > Plugins does.
+// With --scratch, the run uses a user profile of its own (the plugin cache,
+// settings and permissions), removed at the end: scripts and CI pass it.
 // Exit code 0 when every folder loads, registers something (a panel counts), every node and
 // environment passes, and every file opens and every analytic answers.
 #include <cyxwiz/gradient_check.h>
 #include "../src/core/extension_node_registry.h"
+#include "../src/core/user_folders.h"
 #include "../src/plugin/plugin_loader.h"
 #include "../src/plugin/plugin_manager.h"
 #include "../src/plugin/registries/plugin_analytics_registry.h"
@@ -39,13 +42,28 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
 
 namespace fs = std::filesystem;
 
+#if defined(_WIN32)
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace {
+
+long CurrentProcessId() {
+#if defined(_WIN32)
+    return static_cast<long>(::_getpid());
+#else
+    return static_cast<long>(::getpid());
+#endif
+}
 
 std::string ShapeText(const std::vector<size_t>& shape) {
     std::string text;
@@ -381,10 +399,13 @@ bool CheckFolder(const fs::path& folder, const std::vector<fs::path>& files) {
 int main(int argc, char** argv) {
     std::vector<fs::path> folders;
     std::vector<fs::path> files;
+    bool scratch = false;
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
         if (argument == "--open" && i + 1 < argc) {
             files.push_back(fs::absolute(argv[++i]));
+        } else if (argument == "--scratch") {
+            scratch = true;
         } else if (argument.rfind("--", 0) == 0) {
             folders.clear();
             break;
@@ -393,12 +414,31 @@ int main(int argc, char** argv) {
         }
     }
     if (folders.empty()) {
-        std::cout << "usage: cyxwiz-plugin-check [--open <file>]... <plugin folder> [<plugin folder> ...]\n"
-                     "  --open <file>  read the file through the plugin's dataset format and run its analytics\n";
+        std::cout << "usage: cyxwiz-plugin-check [--scratch] [--open <file>]... <plugin folder> [<plugin folder> ...]\n"
+                     "  --open <file>  read the file through the plugin's dataset format and run its analytics\n"
+                     "  --scratch      use a user profile of its own for this run (removed at the end), so the\n"
+                     "                 user's plugin cache, settings and permissions are not touched\n";
         return 2;
+    }
+    // Loading a plugin copies its library into the user's plugin cache and
+    // reads and writes plugin settings. A scripted check (the SDK check, CI)
+    // must leave the user's folders as they were.
+    std::optional<cyxwiz::ScopedUserFoldersOverrideForTesting> scratch_profile;
+    fs::path scratch_root;
+    if (scratch) {
+        std::error_code ec;
+        scratch_root = fs::temp_directory_path(ec) / ("cyxwiz-plugin-check-" + std::to_string(CurrentProcessId()));
+        fs::create_directories(scratch_root, ec);
+        scratch_profile.emplace(scratch_root);
+        std::cout << "user profile for this run: " << scratch_root.string() << "\n";
     }
     bool ok = true;
     for (const auto& folder : folders) ok = CheckFolder(folder, files) && ok;
     std::cout << (ok ? "cyxwiz-plugin-check: all plugins pass\n" : "cyxwiz-plugin-check: FAILED\n");
+    if (scratch) {
+        scratch_profile.reset();
+        std::error_code ec;
+        fs::remove_all(scratch_root, ec);  // a copy still held is left for the next run's cleanup
+    }
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
