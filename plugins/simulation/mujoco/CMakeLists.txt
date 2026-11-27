@@ -83,7 +83,7 @@ set_target_properties(mujoco_plugin PROPERTIES
 add_custom_command(TARGET mujoco_plugin POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_RUNTIME}" "${CMAKE_CURRENT_SOURCE_DIR}/bin/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_SDK_DIR}/LICENSE" "${CMAKE_CURRENT_SOURCE_DIR}/bin/MUJOCO_LICENSE.txt"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_SDK_DIR}/THIRD_PARTY_NOTICES.txt" "${CMAKE_CURRENT_SOURCE_DIR}/bin/MUJOCO_THIRD_PARTY_NOTICES.txt"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_NOTICES}" "${CMAKE_CURRENT_SOURCE_DIR}/bin/MUJOCO_THIRD_PARTY_NOTICES.txt"
     COMMENT "Copying MuJoCo ${CYXWIZ_MUJOCO_VERSION} runtime and licence")
 
 # =============================================================================
