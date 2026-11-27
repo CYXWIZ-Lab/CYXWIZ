@@ -2203,6 +2203,15 @@ set_target_properties(test_dataset_audit PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: a pass's loss and metrics summed on the device (TOFIX242 2.2a) =====
+add_executable(test_metric_accumulator tests/test_metric_accumulator.cpp)
+target_link_libraries(test_metric_accumulator PRIVATE cyxwiz-training-core cyxwiz-backend)
+target_compile_features(test_metric_accumulator PRIVATE cxx_std_20)
+target_include_directories(test_metric_accumulator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_definitions(test_metric_accumulator PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+set_target_properties(test_metric_accumulator PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME metric_accumulator COMMAND test_metric_accumulator)
+
 # ===== Test: typed document token windows and Parquet/causal ingress =====
 add_executable(test_document_token_windows
     tests/test_document_token_windows.cpp

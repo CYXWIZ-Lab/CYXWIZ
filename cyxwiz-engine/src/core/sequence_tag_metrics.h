@@ -288,7 +288,10 @@ struct NextTokenAccuracyCount {
     size_t valid = 0;
 };
 
-inline NextTokenAccuracyCount CountNextTokenAccuracyFromLogits(
+// The counts on the device, not read (TOFIX242 2.2a: MetricAccumulator sums
+// them): s64 [correct, valid targets, targets outside the vocabulary,
+// non-finite logits].
+inline af::array NextTokenAccuracyCountsOnDevice(
     const Tensor& logits,
     const Tensor& target_ids,
     int64_t ignore_index) {
@@ -318,18 +321,27 @@ inline NextTokenAccuracyCount CountNextTokenAccuracyFromLogits(
         const auto count = [](const af::array& mask) {
             return af::sum(af::flat(mask).as(s64), 0).as(s64);
         };
-        const af::array counts = af::join(0, count(valid), count(valid && (predicted == targets)),
+        af::array counts = af::join(0, count(valid && (predicted == targets)), count(valid),
             count(invalid), count(af::isNaN(values) || af::isInf(values)));
-        const Tensor output = Tensor::FromSemanticArray(counts, {4});
-        const ScopedArrayFireHostSyncAttribution attribution(
-            ArrayFireHostSyncCategory::MetricScalarReadback, "CountNextTokenAccuracyFromLogits");
-        const auto* host = output.ReadData<int64_t>();
-        if (host[2] != 0) throw std::runtime_error("language-model target id is outside the vocabulary range");
-        if (host[3] != 0) throw std::runtime_error("language-model accuracy requires finite logits");
-        return {static_cast<size_t>(host[1]), static_cast<size_t>(host[0])};
+        counts.eval();
+        return counts;
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("CountNextTokenAccuracyFromLogits failed on the ArrayFire device: ") + e.what());
     }
+}
+
+inline NextTokenAccuracyCount CountNextTokenAccuracyFromLogits(
+    const Tensor& logits,
+    const Tensor& target_ids,
+    int64_t ignore_index) {
+    const Tensor output =
+        Tensor::FromSemanticArray(NextTokenAccuracyCountsOnDevice(logits, target_ids, ignore_index), {4});
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::MetricScalarReadback, "CountNextTokenAccuracyFromLogits");
+    const auto* host = output.ReadData<int64_t>();
+    if (host[2] != 0) throw std::runtime_error("language-model target id is outside the vocabulary range");
+    if (host[3] != 0) throw std::runtime_error("language-model accuracy requires finite logits");
+    return {static_cast<size_t>(host[0]), static_cast<size_t>(host[1])};
 }
 
 } // namespace cyxwiz

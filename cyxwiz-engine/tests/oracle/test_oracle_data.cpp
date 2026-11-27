@@ -395,6 +395,39 @@ CopyCount CountCopies(const cyxwiz::TrainingConfiguration& config, const std::sh
     return out;
 }
 
+// The loss and metrics are summed on the device and read on the report
+// cadence and at each pass's end (TOFIX242 2.2a, TRN-08): with a report every
+// 1000 batches and batches of 1 row, a run reads a few values per epoch,
+// whatever its batch count (the epoch health's own reads aside). Regression
+// read 3 values per batch and evaluation the counts per batch.
+void CheckReadBudget(const std::string& kind, cyxwiz::TrainingConfiguration config,
+                     const std::function<cyxwiz::ResolvedExternalBatchers(const cyxwiz::TrainingConfiguration&)>& make) {
+    config.batch_size = 1;
+    config.log_interval = 1000;
+    config.validation_freq = 1;
+    const fs::path work = fs::temp_directory_path() / "cyxwiz_oracle_read_budget";
+    fs::remove_all(work);
+    config.checkpoint_dir = (work / "checkpoints").string();
+    cyxwiz::test::PinTrainingDevice();
+    cyxwiz::TrainingExecutor executor(config, make(config));
+    size_t batches = 0;
+    executor.Train(kEpochs, config.batch_size, [&](int, int, int, float, float) { ++batches; });
+    uint64_t reads = 0;
+    for (const auto& group : cyxwiz::TrainingTraceCollector::Instance().Snapshot().arrayfire_host_sync_groups) {
+        const bool loss_or_metric = group.category == "loss_scalar_readback" || group.category == "metric_scalar_readback";
+        if (!loss_or_metric || group.operation.rfind("TrainingHealth::", 0) == 0) continue;
+        reads += group.event_count;
+        std::cout << "      " << group.event_count << "  " << GroupName(group) << "\n";
+    }
+    // Per epoch: 2 report reads of 2 values (batch 1, the last) and the
+    // validation pass's 2, with room for 2 more; then the held-out pass.
+    const uint64_t budget = static_cast<uint64_t>(kEpochs) * 8 + 4;
+    Check(batches >= 20 && reads <= budget, kind + ": loss and metric reads stay within the report budget (" +
+                                                std::to_string(reads) + " over " + std::to_string(batches) +
+                                                " batches, budget " + std::to_string(budget) + ")");
+    fs::remove_all(work);
+}
+
 std::string PipelineJson(const fs::path& csv) {
     json j;
     j["nodes"] = json::array(
@@ -849,6 +882,9 @@ void Run(const json& fixture) {
     // histograms were read without one).
     Check(copies.unknown == 0, "copy budget: every device-to-host read is named (" + std::to_string(copies.unknown) +
                                    " are not)");
+    CheckReadBudget("tabular (classification)", config, [&](const cyxwiz::TrainingConfiguration& c) {
+        return cyxwiz::TakeResolvedExternalBatchers(cyxwiz::BuildArrowTrainingBatchers(c, scaled, "segment", c.batch_size));
+    });
     RunTabularReplays(config, scaled, work);
     fs::remove_all(work);
 }
@@ -1028,10 +1064,11 @@ void CheckParts(const std::string& kind, const json& f, const PartRead& train, c
 // `make` builds for the model's configuration; every step's running loss and
 // each epoch's validation loss and weights against PyTorch running the
 // model's export on the same rows in the same order (generate_data_parity_kinds.py).
-void TrainKind(const std::string& kind, const json& f, const cyxwiz::test::TrainGraph& graph,
-               const std::string& model_name,
-               const std::function<void(cyxwiz::TrainingConfiguration&)>& data_settings,
-               const std::function<cyxwiz::ResolvedExternalBatchers(const cyxwiz::TrainingConfiguration&)>& make) {
+// Returns the run's configuration (nullopt when the model does not compile).
+std::optional<cyxwiz::TrainingConfiguration> TrainKind(
+    const std::string& kind, const json& f, const cyxwiz::test::TrainGraph& graph, const std::string& model_name,
+    const std::function<void(cyxwiz::TrainingConfiguration&)>& data_settings,
+    const std::function<cyxwiz::ResolvedExternalBatchers(const cyxwiz::TrainingConfiguration&)>& make) {
     const json& run = f.at("training");
     const auto exported = cyxwiz::test::UnstampedPyTorchExport(graph);
     const std::string committed = cyxwiz::test::ReadText(ModelDir() / (model_name + ".py"));
@@ -1043,7 +1080,7 @@ void TrainKind(const std::string& kind, const json& f, const cyxwiz::test::Train
     for (const auto& issue : config.issues)
         if (issue.level == cyxwiz::IssueLevel::Error) std::cout << "    compile: " << issue.message << "\n";
     Check(config.is_valid, kind + ": the model compiles");
-    if (!config.is_valid) return;
+    if (!config.is_valid) return std::nullopt;
     const fs::path work = fs::temp_directory_path() / ("cyxwiz_oracle_data_" + kind);
     fs::remove_all(work);
     fs::create_directories(work);
@@ -1070,6 +1107,7 @@ void TrainKind(const std::string& kind, const json& f, const cyxwiz::test::Train
     Check(check.epoch.excess <= 1.0, kind + ": every epoch's validation loss and weights are PyTorch's (worst " +
                                          std::to_string(check.epoch.excess) + " tolerances at " + check.epoch.where + ")");
     fs::remove_all(work);
+    return config;
 }
 
 // The split a kind's Data Split asks for (ratios, stratified, shuffled).
@@ -1166,16 +1204,17 @@ void RunSeries() {
     bool seeded = false;
     const PartRead train = ReadTrain(*set.train, 2, kLoaderSeed, seeded);
     CheckParts("series", f, train, ReadOnce(set.val), ReadOnce(set.test), seeded);
-    TrainKind("series", f, SeriesModel(), "series_model",
-              [](cyxwiz::TrainingConfiguration& c) {
-                  c.is_time_series = true;
-                  c.has_data_split = true;
-                  c.shuffle = true;
-              },
-              [&](const cyxwiz::TrainingConfiguration& c) {
-                  return cyxwiz::TakeResolvedExternalBatchers(
-                      cyxwiz::BuildArrowTrainingBatchers(c, windows, "y", c.batch_size));
-              });
+    const auto make = [&](const cyxwiz::TrainingConfiguration& c) {
+        return cyxwiz::TakeResolvedExternalBatchers(cyxwiz::BuildArrowTrainingBatchers(c, windows, "y", c.batch_size));
+    };
+    const auto trained = TrainKind("series", f, SeriesModel(), "series_model",
+                                   [](cyxwiz::TrainingConfiguration& c) {
+                                       c.is_time_series = true;
+                                       c.has_data_split = true;
+                                       c.shuffle = true;
+                                   },
+                                   make);
+    if (trained) CheckReadBudget("series (regression)", *trained, make);
 }
 
 // One batcher serves an image / audio set's three parts (SetPhase), as the

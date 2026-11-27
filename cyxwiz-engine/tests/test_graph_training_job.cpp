@@ -8,6 +8,7 @@
 #include "../src/core/graph_job_memory_probe.h"
 #include "../src/core/graph_training_job.h"
 #include "../src/core/graph_node_factory.h"
+#include "../src/core/training_trace_collector.h"
 #include "causal_lm_token_window_fixture.h"
 #include "route_qualification_test_fixture.h"
 
@@ -200,6 +201,51 @@ int main() {
         Check(batches > 0, "batches reported");
         Check(!fake_validation, "an empty validation partition reports no validation loss");
         Check(result.metrics.terminal_status != "failed", "metrics not failed");
+    }
+
+    // The loss and metrics are summed on the device and read on the report
+    // cadence and at each pass's end (TOFIX242 2.2a, TRN-08): with a report
+    // every 1000 batches, a run of one-window batches reads a few values per
+    // epoch, not one or more per batch (the epoch health's reads aside).
+    std::cout << "reads the loss and metrics per report, not per batch\n";
+    {
+        nlohmann::json graph = LoadTokenWindowGraph(root);
+        for (auto& node : graph["nodes"]) {
+            const int type = node.value("type", 0);
+            if (type == static_cast<int>(gui::NodeType::DataSplit)) {
+                node["parameters"]["train_ratio"] = "0.75";
+                node["parameters"]["val_ratio"] = "0.25";
+                node["parameters"]["test_ratio"] = "0";
+            } else if (type == static_cast<int>(gui::NodeType::DataLoader)) {
+                node["parameters"]["batch_size"] = "1";
+                node["parameters"]["log_interval"] = "1000";
+            }
+        }
+        cyxwiz::GraphTrainingJobRequest request;
+        request.graph_json = graph.dump();
+        request.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
+        request.epochs_override = 2;
+        request.checkpoint_dir_override = (work / "checkpoints_reads").string();
+        int batches = 0;
+        cyxwiz::GraphTrainingJobCallbacks callbacks;
+        callbacks.on_batch = [&batches](int, int, int, float, float) { ++batches; };
+        const auto result = cyxwiz::RunGraphTrainingJob(request, callbacks);
+        Check(result.ok, "the read-budget job succeeded" + (result.error.empty() ? "" : " (" + result.error + ")"));
+        uint64_t reads = 0;
+        for (const auto& group : cyxwiz::TrainingTraceCollector::Instance().Snapshot().arrayfire_host_sync_groups) {
+            const bool loss_or_metric =
+                group.category == "loss_scalar_readback" || group.category == "metric_scalar_readback";
+            if (loss_or_metric && group.operation.rfind("TrainingHealth::", 0) != 0) {
+                reads += group.event_count;
+                std::cout << "  " << group.event_count << "  " << group.category << " / " << group.operation << "\n";
+            }
+        }
+        // Per epoch: 2 report reads of 2 values (batch 1, the last) and the
+        // validation pass's 2, with room for 2 more; then the held-out pass.
+        const uint64_t budget = 2 * 8 + 4;
+        Check(batches >= 10 && reads <= budget, "loss and metric reads stay within the report budget (" +
+                                                    std::to_string(reads) + " over " + std::to_string(batches) +
+                                                    " batches, budget " + std::to_string(budget) + ")");
     }
 
     const auto host_now = cyxwiz::GetGraphDatasetCatalog();

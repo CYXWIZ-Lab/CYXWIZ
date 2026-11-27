@@ -1585,7 +1585,7 @@ void DataLoaderDialog::RenderContent() {
             has_changes_ = true;
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("batches; 0 = only the first and the last");
+        ImGui::TextDisabled("batches between loss and metric reads (a NaN loss stops at the next); 0 = first and last");
         ImGui::EndTabItem();
     }
     ImGui::EndTabBar();

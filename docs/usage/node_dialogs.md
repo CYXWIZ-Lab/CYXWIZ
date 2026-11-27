@@ -228,6 +228,15 @@ With gradient accumulation set to N, the optimizer takes a step after every
 N batches, and once more at the end of each epoch for the batches left over,
 so an epoch's gradients never reach the next epoch's first step.
 
+**Report every** (Advanced) is how many batches pass between the training
+loss and metrics the dashboard and the log show; 0 reports the first and the
+last batch of each epoch only. Between reports the loss, accuracy, MAE and
+RMSE are summed on the device, so training does not wait for them batch by
+batch; validation and the final test read their sums once, at the end of the
+pass. A loss that becomes NaN or infinite stops the run at the next report
+(or the epoch's end), and the error names the batches since the report
+before it; with **Report every** set to 1 it names the batch.
+
 ## Row Filter
 
 **Keep the rows where** lists the conditions as rows: a column, an operator
