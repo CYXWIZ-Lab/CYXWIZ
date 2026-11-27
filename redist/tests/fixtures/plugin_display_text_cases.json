@@ -1,0 +1,237 @@
+{
+  "note": "A plugin pack's signed name and description: the cases the Python contract (display_text) and the bootstrapper's verifier (IsPluginDisplayText) must judge alike. Each text is 'text' repeated 'repeat' times (1 if absent) followed by 'suffix'.",
+  "cases": [
+    {
+      "why": "a plain name",
+      "text": "Fluid Lab",
+      "maximum_bytes": 128,
+      "accepted": true
+    },
+    {
+      "why": "non-ASCII letters",
+      "text": "Simulaci\u00f3n \u00fc",
+      "maximum_bytes": 128,
+      "accepted": true
+    },
+    {
+      "why": "CJK, and an emoji outside the BMP",
+      "text": "\u6d41\u4f53 \ud83c\udf0a",
+      "maximum_bytes": 128,
+      "accepted": true
+    },
+    {
+      "why": "spaces inside and around are kept",
+      "text": " Fluid\u00a0Lab ",
+      "maximum_bytes": 128,
+      "accepted": true
+    },
+    {
+      "why": "exactly 128 bytes of ASCII",
+      "text": "x",
+      "repeat": 128,
+      "maximum_bytes": 128,
+      "accepted": true
+    },
+    {
+      "why": "129 bytes of ASCII",
+      "text": "x",
+      "repeat": 129,
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "exactly 128 bytes of two-byte letters",
+      "text": "\u00e9",
+      "repeat": 64,
+      "maximum_bytes": 128,
+      "accepted": true
+    },
+    {
+      "why": "130 bytes of two-byte letters (65 characters)",
+      "text": "\u00e9",
+      "repeat": 65,
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "128 characters but 256 bytes",
+      "text": "\u00e9",
+      "repeat": 128,
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "exactly 512 bytes of four-byte characters",
+      "text": "\ud83c\udf0a",
+      "repeat": 128,
+      "maximum_bytes": 512,
+      "accepted": true
+    },
+    {
+      "why": "513 bytes: 170 three-byte characters and three ASCII",
+      "text": "\u6d41",
+      "repeat": 170,
+      "suffix": "abc",
+      "maximum_bytes": 512,
+      "accepted": false
+    },
+    {
+      "why": "exactly 512 bytes: 170 three-byte characters and two ASCII",
+      "text": "\u6d41",
+      "repeat": 170,
+      "suffix": "ab",
+      "maximum_bytes": 512,
+      "accepted": true
+    },
+    {
+      "why": "empty",
+      "text": "",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "one space",
+      "text": " ",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "spaces only",
+      "text": "   ",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "no-break and ideographic spaces only",
+      "text": "\u00a0\u3000\u2003",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a line feed",
+      "text": "Fluid\nLab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a tab",
+      "text": "Fluid\tLab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "NUL",
+      "text": "Fluid\u0000Lab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "DEL",
+      "text": "Fluid\u007fLab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a C1 control (U+0080)",
+      "text": "Fluid\u0080Lab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a C1 control (NEL, U+0085)",
+      "text": "Fluid\u0085Lab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a C1 control (U+009F)",
+      "text": "Fluid\u009fLab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "U+00A0 is a space, not a C1 control",
+      "text": "Fluid\u00a0Lab",
+      "maximum_bytes": 128,
+      "accepted": true
+    },
+    {
+      "why": "a right-to-left override",
+      "text": "Fluid\u202eLab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a left-to-right isolate",
+      "text": "\u2066Fluid Lab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a right-to-left mark",
+      "text": "Fluid Lab\u200f",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a zero-width space",
+      "text": "Fluid\u200bLab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a zero-width joiner",
+      "text": "Fluid\u200dLab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a zero-width space alone",
+      "text": "\u200b",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a word joiner",
+      "text": "Fluid\u2060Lab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a byte-order mark",
+      "text": "\ufeffFluid Lab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a soft hyphen",
+      "text": "Flu\u00adid",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a line separator",
+      "text": "Fluid\u2028Lab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a paragraph separator",
+      "text": "Fluid\u2029Lab",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "a tag character outside the BMP",
+      "text": "Fluid\udb40\udc41",
+      "maximum_bytes": 128,
+      "accepted": false
+    },
+    {
+      "why": "an Arabic letter mark",
+      "text": "Fluid\u061cLab",
+      "maximum_bytes": 128,
+      "accepted": false
+    }
+  ]
+}

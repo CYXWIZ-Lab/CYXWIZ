@@ -488,11 +488,45 @@ Engine's log call the add-on by them, so any plugin pack shows under its own
 words without the Engine knowing it. Each is optional on its own (a
 `plugin.json` without one, or a pack made before these fields): the add-on is
 then called by the wording the release has for an add-on it expects, else by
-its plugin ID. When present, each is a non-empty UTF-8 string without control
-characters, at most 128 bytes for the name and 512 for the description;
-anything else fails closed, in packaging and in the verifier. They are the only
+its plugin ID. Every screen names an add-on by the same words: those of the
+plugin's newest pack that carries a name (by the signed `generated_utc`), from
+the catalog's packs and the installed one together.
+
+When present, each is well-formed UTF-8 of at most 128 bytes for the name and
+512 for the description, and not blank (something other than spaces). It has
+no control character (U+0000-U+001F, U+007F, U+0080-U+009F), no format
+character (Unicode category Cf: soft hyphen, zero-width characters, direction
+marks, embeddings, overrides and isolates, tags) and no line or paragraph
+separator: such characters do not show and can make one name read as another.
+A lone surrogate is not text. Anything else fails closed, in packaging and in
+the verifier, which apply one fixed list of code points
+(`display_text` in `redist/scripts/backend_pack_contract.py`,
+`IsPluginDisplayText` in the bootstrapper) and run the same cases
+(`redist/tests/fixtures/plugin_display_text_cases.json`). They are the only
 optional fields: every other field is required and no further field is
 accepted.
+
+### Adding a signed field
+
+A reader checks the signed body against an exact set of keys, so a manifest
+with a field the reader does not know is refused by that reader. This is what
+makes a later field safe to rely on, and it sets a rule for adding one:
+
+- `plugin_name` and `plugin_description` are the last fields added to
+  envelope schema 2 without a schema change. That was possible only because
+  no release had shipped a reader of plugin packs before them.
+- From the first release that ships plugin packs, envelope schema 2 is
+  closed. A new signed field, optional or not, needs a new envelope
+  `schema_version`, so that every older client refuses the manifest as a
+  format it does not know rather than half reading it.
+- A client that refuses one manifest keeps the rest of the catalog: the entry
+  is listed without delivery (see the Refresh rules above and the local
+  catalog read). A release may also keep new-format manifests out of the
+  catalogs older clients read, by its release range and by publishing one
+  catalog per release line; that is in addition to the schema change, not
+  instead of it.
+- The same holds for schema 1 (base and backend packs) and for the catalog
+  body, which are exact as well.
 
 There is no `backend`, `arrayfire`, `runtime_set_id` or device compatibility
 object; any of them fails closed. A schema-1 manifest cannot declare

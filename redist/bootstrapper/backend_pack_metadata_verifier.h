@@ -71,6 +71,19 @@ struct BackendPackCompatibility {
         BackendPackSupportStatus::Blocked;
 };
 
+// The limits of a plugin pack's signed name and description, in UTF-8 bytes.
+inline constexpr std::size_t kMaximumPluginNameBytes = 128;
+inline constexpr std::size_t kMaximumPluginDescriptionBytes = 512;
+
+// Whether `text` may be a plugin's signed name or description: well-formed
+// UTF-8 of 1 to maximum_bytes bytes, not blank (something other than spaces),
+// with no control character (C0, DEL, C1), no format character (Unicode Cf:
+// zero-width, direction marks and overrides, tags) and no line or paragraph
+// separator. The rules are a fixed list shared with packaging
+// (display_text in redist/scripts/backend_pack_contract.py); both suites run
+// redist/tests/fixtures/plugin_display_text_cases.json.
+bool IsPluginDisplayText(std::string_view text, std::size_t maximum_bytes);
+
 struct BackendPackArchiveIdentity {
     std::string file_name;
     std::uint64_t size = 0;

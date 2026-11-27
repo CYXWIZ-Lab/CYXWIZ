@@ -57,10 +57,12 @@ struct BackendPackManagerRecord {
   std::string backend;     // empty for a plugin pack
   std::string plugin_id;   // set for a plugin pack only
   // A plugin pack's own name and description, from its signed manifest;
-  // empty for a pack made before manifests carried them (AddOnTitle and
-  // AddOnDescription then fall back).
+  // empty for a pack made before manifests carried them. No screen reads
+  // them from one record: AddOnWordsFor chooses the add-on's words once.
   std::string plugin_name;
   std::string plugin_description;
+  // When that manifest was generated (signed, UTC): which pack is newest.
+  std::string plugin_words_utc;
   std::string pack_id;
   std::string installed_pack_id;
   std::string package_version;
@@ -176,6 +178,19 @@ bool IsBackendPackRecommended(const BackendPackManagerRecord &record);
 const BackendPackManagerRecord *
 FindBaseUpdate(const std::vector<BackendPackManagerRecord> &records,
                CyxWizInstallerMode mode);
+
+// What an add-on is called, everywhere: on its cards, in the summaries and
+// plans, in the uninstall confirmation. One choice per plugin from all its
+// records, so two screens never name it differently: the signed name and
+// description of its newest pack that carries a name (by the manifest's signed
+// generation time; a pack for this CPU Engine before one left from another),
+// then this release's wording for an add-on it expects, then the plugin id.
+struct AddOnWords {
+  std::string title;
+  std::string description;
+};
+AddOnWords AddOnWordsFor(const std::vector<BackendPackManagerRecord> &records,
+                         const std::string &plugin_id);
 
 // The catalog's pack of an add-on built for a CPU base, as a base update
 // installs it (supported, with verified metadata). nullptr when there is none.

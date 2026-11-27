@@ -316,20 +316,12 @@ AddOnCardView BuildCard(const std::string& plugin_id,
     AddOnCardView card;
     card.key = plugin_id;
     if (!record) record = stale;
-    // The add-on's own words: the shown pack's, else those of another pack of
-    // the same plugin (a pack made before manifests carried them has none).
-    const BackendPackManagerRecord* worded =
-        record && !record->plugin_name.empty() ? record : nullptr;
-    for (const auto& candidate : records) {
-        if (worded) break;
-        if (IsAddOn(candidate) && candidate.plugin_id == plugin_id &&
-            !candidate.plugin_name.empty()) {
-            worded = &candidate;
-        }
-    }
-    card.title = AddOnTitle(plugin_id, worded ? worded->plugin_name : std::string{});
-    card.description = AddOnDescription(
-        plugin_id, worded ? worded->plugin_description : std::string{});
+    // The add-on's words, as every screen has them (AddOnWordsFor): not the
+    // shown pack's own, so a card for an update or a CPU Engine update and
+    // the plan beside it name the add-on alike.
+    auto words = AddOnWordsFor(records, plugin_id);
+    card.title = std::move(words.title);
+    card.description = std::move(words.description);
     AddDetail(card.details, "Plugin", plugin_id);
 
     if (!record) {
@@ -567,7 +559,7 @@ std::vector<std::string> PlannedAddOnLines(
             lines.push_back(pack_id);
             continue;
         }
-        std::string line = AddOnTitle(record->plugin_id, record->plugin_name);
+        std::string line = AddOnWordsFor(records, record->plugin_id).title;
         const auto installed = std::find_if(
             records.begin(), records.end(), [&](const auto& candidate) {
                 return IsAddOn(candidate) &&
@@ -603,7 +595,7 @@ std::vector<std::string> SummaryAddOnLines(
                 return IsAddOn(candidate) && candidate.pack_id == pack_id;
             });
         if (record != records.end()) {
-            lines.push_back(AddOnTitle(record->plugin_id, record->plugin_name));
+            lines.push_back(AddOnWordsFor(records, record->plugin_id).title);
         }
     }
     return lines;
@@ -645,7 +637,7 @@ PackRemovalWording BuildPackRemovalWording(
                 "CyxWiz removes this add-on's files and its downloaded "
                 "package. The Engine stops loading it at its next start; your "
                 "projects are not changed.",
-                "Add-on: " + AddOnTitle(add_on->plugin_id, add_on->plugin_name),
+                "Add-on: " + AddOnWordsFor(records, add_on->plugin_id).title,
                 "Uninstall add-on", "Keep add-on"};
     }
     return {"Uninstall backend component",

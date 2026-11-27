@@ -1,0 +1,88 @@
+{
+  "schema_version": 2,
+  "kind": "cyxwiz-backend-pack-manifest",
+  "signed": {
+    "pack_id": "cyxwiz-plugin-simulacion-1.0.0-1-win64-x86_64",
+    "pack_kind": "plugin_pack",
+    "plugin_id": "org.example.simulacion",
+    "plugin_name": "Simulaci\u00f3n \u00fc",
+    "plugin_description": "F\u00edsica para rob\u00f3tica: p\u00e9ndulos, \u6d41\u4f53 \ud83c\udf0a.",
+    "package_version": "1",
+    "platform": "win64",
+    "architecture": "x86_64",
+    "cyxwiz_release": {
+      "minimum": "1.2.3",
+      "maximum": "1.2.3"
+    },
+    "companion_base_id": "cyxwiz-base-1.2.3-1-windows-x86_64",
+    "conflicts": [],
+    "support_status": "diagnostic",
+    "components": [
+      {
+        "path": "assets/cartpole.xml",
+        "size": 9,
+        "sha256": "99b1fb09f39f8f962d2ce0d1053dd87c73db18311575a4acab6f9a32eef77cd8",
+        "source": "cyxwiz-plugin",
+        "executable": false
+      },
+      {
+        "path": "bin/mujoco.dll",
+        "size": 10,
+        "sha256": "ec4675f3900b6e24f569585252226037b97aac6839fc65d11b9e8f92f4480ae8",
+        "source": "plugin-runtime",
+        "executable": true
+      },
+      {
+        "path": "bin/mujoco_plugin.dll",
+        "size": 17,
+        "sha256": "16e9b94be3c5d2f32482e406e1a744bacf40749bf96c64b1a0d10beed3b0818d",
+        "source": "cyxwiz-plugin",
+        "executable": true
+      },
+      {
+        "path": "LICENSE",
+        "size": 24,
+        "sha256": "b9676684b90cce5b82b874ab7b6ad9d3bc7a7a1a38a5b9e7368b5cd0cadbaa0c",
+        "source": "plugin-license",
+        "executable": false
+      },
+      {
+        "path": "plugin.json",
+        "size": 242,
+        "sha256": "1d1112b407e1dea5a9508bd5aba64e06b1af6e2f436e69de859f40c98afa13ee",
+        "source": "cyxwiz-plugin",
+        "executable": false
+      },
+      {
+        "path": "THIRD_PARTY_LICENSES/MuJoCo/MUJOCO_LICENSE.txt",
+        "size": 6,
+        "sha256": "d7e04cba6a8ba148c966860632ef3636c77935984791f36ce5457016d7c313da",
+        "source": "mujoco",
+        "executable": false
+      }
+    ],
+    "licenses": [
+      {
+        "component": "plugin-license",
+        "path": "LICENSE"
+      },
+      {
+        "component": "mujoco",
+        "path": "THIRD_PARTY_LICENSES/MuJoCo/MUJOCO_LICENSE.txt"
+      }
+    ],
+    "archive": {
+      "file_name": "cyxwiz-plugin-simulacion-1.0.0-1-win64-x86_64.zip",
+      "size": 967,
+      "sha256": "87efd9a84f16d985898be1886f0fa8984459c6cf4ffb7e03281fca29f12c828e"
+    },
+    "generated_utc": "2026-11-06T12:00:00Z"
+  },
+  "signatures": [
+    {
+      "key_id": "pack-fixture",
+      "algorithm": "ed25519",
+      "value": "IgkhdrfiiFUvco0Ze_nx983VkWYKFP2Z9--3YcVZ1CZr0RNHCH60FuUwUO6fkymaT1hG305draB2WJvejC8vDA"
+    }
+  ]
+}

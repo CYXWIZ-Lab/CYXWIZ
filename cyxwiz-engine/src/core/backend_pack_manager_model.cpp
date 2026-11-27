@@ -292,6 +292,28 @@ bool IsBackendPackRecommended(const BackendPackManagerRecord &record) {
              runtime::BackendPackInstallRecommendation::Recommended;
 }
 
+AddOnWords AddOnWordsFor(const std::vector<BackendPackManagerRecord> &records,
+                         const std::string &plugin_id) {
+  const BackendPackManagerRecord *newest = nullptr;
+  for (const auto &record : records) {
+    if (!IsPluginRecord(record) || record.plugin_id != plugin_id ||
+        record.plugin_name.empty()) {
+      continue;
+    }
+    // Signed UTC times of one format compare as text. On a tie a pack for
+    // this CPU Engine wins over one left from another, then the first listed.
+    if (newest == nullptr ||
+        record.plugin_words_utc > newest->plugin_words_utc ||
+        (record.plugin_words_utc == newest->plugin_words_utc &&
+         newest->installed_for_other_base && !record.installed_for_other_base)) {
+      newest = &record;
+    }
+  }
+  return {AddOnTitle(plugin_id, newest ? newest->plugin_name : std::string{}),
+          AddOnDescription(plugin_id, newest ? newest->plugin_description
+                                             : std::string{})};
+}
+
 const BackendPackManagerRecord *
 FindBaseUpdate(const std::vector<BackendPackManagerRecord> &records,
                CyxWizInstallerMode mode) {
@@ -516,7 +538,7 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     plan.message =
         plan.repair_plugin_pack_ids.size() == 1 && record != catalog_records.end()
             ? "Repair the " +
-                  AddOnTitle(record->plugin_id, record->plugin_name) +
+                  AddOnWordsFor(catalog_records, record->plugin_id).title +
                   " add-on from its signed package"
             : "Repair " + AddOnCount(plan.repair_plugin_pack_ids.size()) +
                   " from their signed packages";

@@ -702,6 +702,114 @@ int main() {
             return 1;
     }
 
+    // A plugin's name and description: the cases packaging's display_text
+    // runs too (redist/tests/test_backend_pack_contract.py), judged alike.
+    {
+        const std::filesystem::path fixtures = CYXWIZ_REDIST_TEST_FIXTURES;
+        std::ifstream input(fixtures / "plugin_display_text_cases.json", std::ios::binary);
+        const Json document = Json::parse(input, nullptr, false);
+        if (!Expect(document.is_object() && document.contains("cases") && document["cases"].size() > 30,
+                    "the shared display-text cases could not be read"))
+            return 1;
+        WriteJson(trust_path, TrustRoot(catalog_key, pack_key));
+        BackendPackMetadataVerifier case_verifier(
+            *BackendPackTrustStore::Load(trust_path, error), "0.2.0", "win64", "x86_64");
+        for (const auto& item : document["cases"]) {
+            std::string text;
+            const auto piece = item["text"].get<std::string>();
+            for (std::size_t count = item.value("repeat", std::size_t{1}); count > 0; --count) text += piece;
+            text += item.value("suffix", std::string{});
+            const auto maximum = item["maximum_bytes"].get<std::size_t>();
+            if (!Expect(IsPluginDisplayText(text, maximum) == item["accepted"].get<bool>(),
+                        ("display text judged unlike packaging: " + item["why"].get<std::string>()).c_str()))
+                return 1;
+            // The verifier applies the same rule to the signed manifest
+            if (maximum != kMaximumPluginNameBytes && maximum != kMaximumPluginDescriptionBytes) continue;
+            auto body = PluginBody(pack_key);
+            body[maximum == kMaximumPluginNameBytes ? "plugin_name" : "plugin_description"] = text;
+            const auto path = temporary.Path() / "plugin-display-text.json";
+            const auto bytes = WriteJson(
+                path, Envelope("cyxwiz-backend-pack-manifest", body, "pack-2026", pack_key, 2));
+            BackendPackCatalogEntry entry;
+            entry.pack_id = "mujoco-v1";
+            entry.manifest_url = "https://downloads.cyxwiz.com/mujoco-v1.json";
+            entry.manifest_sha256 = Sha256(bytes);
+            entry.signing_key_id = "pack-2026";
+            entry.support_status = BackendPackSupportStatus::Supported;
+            VerifiedBackendPackManifest verified;
+            const bool accepted = case_verifier.VerifyManifest(
+                path, entry, verified, error, BackendPackManifestKind::PluginPack);
+            if (!Expect(accepted == item["accepted"].get<bool>(),
+                        ("signed manifest judged unlike packaging: " + item["why"].get<std::string>() +
+                         (accepted ? "" : " (" + error + ")")).c_str()) ||
+                !Expect(!accepted || (maximum == kMaximumPluginNameBytes ? verified.plugin_name
+                                                                         : verified.plugin_description) == text,
+                        "an accepted name or description was not kept as signed"))
+                return 1;
+        }
+        // Bytes that are not UTF-8 never reach a signed manifest (the JSON
+        // reader refuses them); the rule refuses them as well.
+        for (const std::string text : {std::string("Fluid\xFFLab"), std::string("Fluid\xC3"),
+                                       std::string("\xC0\xAF"), std::string("\xE0\x80\xAF"),
+                                       std::string("\xED\xA0\x80"), std::string("\xF4\x90\x80\x80"),
+                                       std::string("\x80"), std::string("\xF8\x88\x80\x80\x80")}) {
+            if (!Expect(!IsPluginDisplayText(text, kMaximumPluginNameBytes),
+                        "text that is not well-formed UTF-8 was accepted"))
+                return 1;
+        }
+    }
+
+    // The cross-language round trip: a plugin manifest that Python packaging
+    // built and the release signing step signed, with a name and description
+    // that are not ASCII (redist/tests/test_package_release.py writes it).
+    // The verifier re-serialises the signed body before checking the
+    // signature, so acceptance means both sides agree on the canonical bytes.
+    {
+        const std::filesystem::path fixture =
+            std::filesystem::path(CYXWIZ_REDIST_TEST_FIXTURES) / "plugin-manifest-non-ascii";
+        const auto read = [](const std::filesystem::path& path) {
+            std::ifstream input(path, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+        };
+        const auto manifest_bytes = read(fixture / "manifest.json");
+        const auto signed_bytes = read(fixture / "signed.json");
+        const Json document = Json::parse(manifest_bytes, nullptr, false);
+        auto python_trust = BackendPackTrustStore::Load(fixture / "trusted-keys.json", error);
+        if (!Expect(!manifest_bytes.empty() && !signed_bytes.empty() && document.is_object(),
+                    "the Python-signed plugin manifest fixture could not be read") ||
+            !Expect(python_trust.has_value(), error.c_str()) ||
+            !Expect(document["signed"].dump() == signed_bytes,
+                    "the canonical bytes differ from the bytes Python signed"))
+            return 1;
+        BackendPackMetadataVerifier python_verifier(std::move(*python_trust), "1.2.3", "win64", "x86_64");
+        BackendPackCatalogEntry entry;
+        entry.pack_id = document["signed"]["pack_id"].get<std::string>();
+        entry.manifest_url = "https://downloads.cyxwiz.com/" + entry.pack_id + ".json";
+        entry.manifest_sha256 = Sha256(manifest_bytes);
+        entry.signing_key_id = "pack-fixture";
+        entry.support_status = BackendPackSupportStatus::Diagnostic;
+        VerifiedBackendPackManifest python_manifest;
+        if (!Expect(python_verifier.VerifyManifest(fixture / "manifest.json", entry, python_manifest, error,
+                                                   BackendPackManifestKind::PluginPack),
+                    ("the verifier refused a manifest Python signed: " + error).c_str()) ||
+            !Expect(python_manifest.plugin_id == "org.example.simulacion" &&
+                        python_manifest.plugin_name == "Simulaci\xC3\xB3n \xC3\xBC" &&
+                        python_manifest.plugin_description ==
+                            "F\xC3\xADsica para rob\xC3\xB3tica: p\xC3\xA9ndulos, "
+                            "\xE6\xB5\x81\xE4\xBD\x93 \xF0\x9F\x8C\x8A.",
+                    "the non-ASCII name or description did not survive the round trip"))
+            return 1;
+        // One changed byte of the name and the signature no longer holds
+        Json altered = document;
+        altered["signed"]["plugin_name"] = "Simulacion \xC3\xBC";
+        const auto altered_path = temporary.Path() / "python-altered.json";
+        entry.manifest_sha256 = Sha256(WriteJson(altered_path, altered));
+        if (!Expect(!python_verifier.VerifyManifest(altered_path, entry, python_manifest, error,
+                                                    BackendPackManifestKind::PluginPack),
+                    "a Python-signed manifest with a changed name was accepted"))
+            return 1;
+    }
+
     std::cout << "backend pack metadata verifier contract tests passed\n";
     return 0;
 }

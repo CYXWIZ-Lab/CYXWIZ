@@ -48,7 +48,9 @@ inline const std::vector<std::string>& KnownAddOnPluginIds() {
 
 // Display name of an add-on: the name its signed pack carries (published_name,
 // empty when there is no pack or an older one), else this release's wording
-// for an expected plugin id, else the plugin id itself.
+// for an expected plugin id, else the plugin id itself. Screens that have the
+// pack records do not pick a pack themselves: AddOnWordsFor
+// (backend_pack_manager_model.h) chooses the add-on's words once.
 inline std::string AddOnTitle(const std::string& plugin_id,
                               const std::string& published_name = {}) {
     if (!published_name.empty()) return published_name;

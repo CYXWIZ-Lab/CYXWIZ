@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "keys": [
+    {
+      "key_id": "pack-fixture",
+      "algorithm": "ed25519",
+      "public_key": "KggPuqb0AMTCJBH20vIN2uItd7QWuiIejeKgG5vZRHo",
+      "roles": [
+        "pack"
+      ],
+      "revoked": false
+    }
+  ]
+}

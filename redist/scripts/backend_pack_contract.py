@@ -46,12 +46,18 @@ class ContractError(ValueError):
 def canonical_json_bytes(value: Any) -> bytes:
     """Return deterministic UTF-8 JSON for detached signature input."""
     _reject_floats(value, "document")
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except UnicodeEncodeError as error:
+        # A lone surrogate has no UTF-8 form: there is nothing to sign
+        raise ContractError(
+            f"document is not valid Unicode text (a lone surrogate): {error.reason}"
+        ) from error
 
 
 def _reject_floats(value: Any, field: str) -> None:
@@ -102,13 +108,50 @@ def _integer(value: Any, field: str, *, minimum: int = 0) -> int:
     return value
 
 
+# The rules for a plugin's name and description, by code point. They are a
+# fixed list, not a Unicode database lookup, so that this script and the
+# bootstrapper's verifier (IsPluginDisplayText in
+# backend_pack_metadata_verifier.cpp) refuse exactly the same text whatever
+# Python or compiler runs them. Change both together;
+# redist/tests/fixtures/plugin_display_text_cases.json is run by both suites.
+_DISPLAY_TEXT_CONTROLS = ((0x0000, 0x001F), (0x007F, 0x009F))  # C0, DEL, C1
+# Format characters (Unicode Cf: soft hyphen, zero-width, direction marks and
+# overrides, tags) and the line and paragraph separators: they do not show,
+# and can make a name read as another.
+_DISPLAY_TEXT_INVISIBLE = (
+    (0x00AD, 0x00AD), (0x0600, 0x0605), (0x061C, 0x061C), (0x06DD, 0x06DD),
+    (0x070F, 0x070F), (0x0890, 0x0891), (0x08E2, 0x08E2), (0x180E, 0x180E),
+    (0x200B, 0x200F), (0x2028, 0x202E), (0x2060, 0x206F), (0xFEFF, 0xFEFF),
+    (0xFFF9, 0xFFFB), (0x110BD, 0x110BD), (0x110CD, 0x110CD),
+    (0x13430, 0x1343F), (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A),
+    (0xE0001, 0xE0001), (0xE0020, 0xE007F),
+)
+# Spaces (Unicode Zs): allowed inside, but text of nothing else is blank.
+_DISPLAY_TEXT_SPACES = (
+    (0x0020, 0x0020), (0x00A0, 0x00A0), (0x1680, 0x1680), (0x2000, 0x200A),
+    (0x202F, 0x202F), (0x205F, 0x205F), (0x3000, 0x3000),
+)
+
+
+def _in_ranges(code_point: int, ranges: Sequence[tuple[int, int]]) -> bool:
+    return any(first <= code_point <= last for first, last in ranges)
+
+
 def display_text(value: Any, field: str, maximum_bytes: int) -> str:
     """A plugin's name or description, shown to the user as signed."""
     text = _string(value, field)
+    code_points = [ord(character) for character in text]
+    # A lone surrogate is not text: it has no UTF-8 form to sign
+    if any(0xD800 <= code_point <= 0xDFFF for code_point in code_points):
+        raise ContractError(f"{field} is not valid Unicode text (a lone surrogate)")
     if len(text.encode("utf-8")) > maximum_bytes:
         raise ContractError(f"{field} is longer than {maximum_bytes} bytes of UTF-8")
-    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in text):
+    if any(_in_ranges(code_point, _DISPLAY_TEXT_CONTROLS) for code_point in code_points):
         raise ContractError(f"{field} contains a control character")
+    if any(_in_ranges(code_point, _DISPLAY_TEXT_INVISIBLE) for code_point in code_points):
+        raise ContractError(f"{field} contains an invisible or direction-changing character")
+    if all(_in_ranges(code_point, _DISPLAY_TEXT_SPACES) for code_point in code_points):
+        raise ContractError(f"{field} is blank")
     return text
 
 

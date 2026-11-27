@@ -94,6 +94,7 @@ void ApplyInstalledWords(BackendPackManagerRecord& record,
     if (manifest == snapshot.installed_manifests.end()) return;
     record.plugin_name = manifest->plugin_name;
     record.plugin_description = manifest->plugin_description;
+    record.plugin_words_utc = manifest->generated_utc;
 }
 
 // An installed add-on the catalog does not list: its name, version, base and
@@ -208,6 +209,7 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
             record.plugin_id = manifest.plugin_id;
             record.plugin_name = manifest.plugin_name;
             record.plugin_description = manifest.plugin_description;
+            record.plugin_words_utc = manifest.generated_utc;
             record.compatibility = runtime::EvaluateBackendPackCompatibility(
                 manifest, compatibility_context);
             record.package_version = manifest.package_version;

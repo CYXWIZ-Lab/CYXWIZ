@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
+import os
 import shutil
 import stat
 import subprocess
@@ -23,6 +25,12 @@ REAL_INSTALL_PLUGIN_SDK = package_release.install_plugin_sdk
 # The built data plugin example the SDK carries (TOFIX181).
 EXAMPLE_LIBRARY = "examples/plugins/data-formats/built/bin/" + {
     "win32": "data_formats.dll", "darwin": "libdata_formats.dylib"}.get(sys.platform, "libdata_formats.so")
+
+# A plugin manifest Python packaged and signed, with a name that is not ASCII:
+# the bootstrapper's verifier test accepts it (the cross-language round trip).
+PLUGIN_MANIFEST_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "plugin-manifest-non-ascii"
+NON_ASCII_PLUGIN_NAME = "Simulaci\u00f3n \u00fc"
+NON_ASCII_PLUGIN_DESCRIPTION = "F\u00edsica para rob\u00f3tica: p\u00e9ndulos, \u6d41\u4f53 \U0001F30A."
 
 SIGN_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "sign_pack_manifest.py"
 SIGN_SPEC = importlib.util.spec_from_file_location("sign_pack_manifest", SIGN_SCRIPT)
@@ -828,10 +836,97 @@ class PackageReleaseTests(unittest.TestCase):
         package_release.validate_pack_manifest(manifest)
 
     @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
+    def test_packaging_signs_a_plugin_manifest_with_a_non_ascii_name(self) -> None:
+        """Python's half of the cross-language round trip.
+
+        Packaging and the release signing step sign a plugin manifest whose
+        name and description are not ASCII; the bytes signed are the canonical
+        bytes. The C++ half (test_backend_pack_metadata_verifier.cpp) verifies
+        the committed copy of such a manifest,
+        fixtures/plugin-manifest-non-ascii, with the bootstrapper's verifier.
+        CYXWIZ_WRITE_PLUGIN_MANIFEST_FIXTURE=1 rewrites that copy from this
+        run (a key made for the run and thrown away; only its public half is
+        kept, in the fixture's trust file).
+        """
+        openssl = shutil.which("openssl")
+        if openssl is None:
+            self.skipTest("OpenSSL is not available")
+        plugin = self.create_plugin()
+        self.set_plugin_json(
+            plugin, id="org.example.simulacion", name=NON_ASCII_PLUGIN_NAME,
+            description=NON_ASCII_PLUGIN_DESCRIPTION,
+        )
+        args = self.artifact_args(
+            "plugin", "--plugin-dir", str(plugin),
+            "--base-pack-id", "cyxwiz-base-1.2.3-1-windows-x86_64",
+            "--third-party-license", "MuJoCo=bin/MUJOCO_LICENSE.txt",
+            "--generated-utc", "2026-11-06T12:00:00Z",
+        )
+        _, archive = package_release.build_package(args, self.script)
+        assert archive is not None
+        manifest_path = archive.with_suffix(".zip.manifest.json")
+        private_key = self.root / "fixture-ed25519.pem"
+        subprocess.run(
+            [openssl, "genpkey", "-algorithm", "ED25519", "-out", str(private_key)],
+            check=True, capture_output=True,
+        )
+        self.assertEqual(0, sign_pack_manifest.main([
+            str(manifest_path), "--private-key", str(private_key),
+            "--key-id", "pack-fixture", "--openssl", openssl,
+        ]))
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        package_release.validate_pack_manifest(manifest)
+        self.assertEqual(NON_ASCII_PLUGIN_NAME, manifest["signed"]["plugin_name"])
+        self.assertEqual(NON_ASCII_PLUGIN_DESCRIPTION, manifest["signed"]["plugin_description"])
+        signed_bytes = archive.with_suffix(".zip.signed.json").read_bytes()
+        self.assertEqual(package_release.canonical_json_bytes(manifest["signed"]), signed_bytes)
+        # The canonical bytes carry the text as UTF-8, not as \u escapes
+        self.assertIn(NON_ASCII_PLUGIN_NAME.encode("utf-8"), signed_bytes)
+
+        if os.environ.get("CYXWIZ_WRITE_PLUGIN_MANIFEST_FIXTURE") == "1":
+            public_der = subprocess.run(
+                [openssl, "pkey", "-in", str(private_key), "-pubout", "-outform", "DER"],
+                check=True, capture_output=True,
+            ).stdout
+            public_key = base64.urlsafe_b64encode(public_der[-32:]).decode("ascii").rstrip("=")
+            PLUGIN_MANIFEST_FIXTURE.mkdir(parents=True, exist_ok=True)
+            (PLUGIN_MANIFEST_FIXTURE / "manifest.json").write_bytes(manifest_path.read_bytes())
+            (PLUGIN_MANIFEST_FIXTURE / "signed.json").write_bytes(signed_bytes)
+            (PLUGIN_MANIFEST_FIXTURE / "trusted-keys.json").write_text(json.dumps({
+                "schema_version": 1,
+                "keys": [{"key_id": "pack-fixture", "algorithm": "ed25519", "public_key": public_key,
+                          "roles": ["pack"], "revoked": False}],
+            }, indent=2) + "\n", encoding="ascii", newline="\n")
+
+    def test_the_committed_non_ascii_plugin_manifest_is_what_python_signs(self) -> None:
+        # The copy the C++ verifier test accepts: its signed bytes are still
+        # the canonical bytes of its signed body, as this Python writes them.
+        manifest = json.loads((PLUGIN_MANIFEST_FIXTURE / "manifest.json").read_text(encoding="utf-8"))
+        package_release.validate_pack_manifest(manifest)
+        self.assertEqual(2, manifest["schema_version"])
+        self.assertEqual(NON_ASCII_PLUGIN_NAME, manifest["signed"]["plugin_name"])
+        self.assertEqual(NON_ASCII_PLUGIN_DESCRIPTION, manifest["signed"]["plugin_description"])
+        self.assertEqual(
+            (PLUGIN_MANIFEST_FIXTURE / "signed.json").read_bytes(),
+            package_release.canonical_json_bytes(manifest["signed"]),
+        )
+        self.assertEqual("pack-fixture", manifest["signatures"][0]["key_id"])
+        trust = json.loads((PLUGIN_MANIFEST_FIXTURE / "trusted-keys.json").read_text(encoding="ascii"))
+        self.assertEqual(["pack-fixture"], [key["key_id"] for key in trust["keys"]])
+
+    @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
     def test_plugin_pack_refuses_a_name_it_cannot_sign(self) -> None:
         plugin = self.create_plugin()
         for fields, message in (
             ({"name": "Fluid\nLab"}, "plugin.json name contains a control character"),
+            ({"name": "Fluid\u0085Lab"}, "plugin.json name contains a control character"),
+            # A lone surrogate ("\ud800" in plugin.json): refused, not a traceback
+            ({"name": "Fluid\ud800Lab"}, "plugin.json name is not valid Unicode text"),
+            ({"name": "\u00a0  "}, "plugin.json name is blank"),
+            ({"description": " "}, "plugin.json description is blank"),
+            ({"name": "Fluid\u202eLab"}, "plugin.json name contains an invisible or direction-changing character"),
+            ({"description": "Fluids\u200b."}, "plugin.json description contains an invisible"),
             ({"name": ["Fluid Lab"]}, "plugin.json name must be a non-empty string"),
             ({"description": "x" * 600}, "plugin.json description is longer than"),
         ):

@@ -517,6 +517,55 @@ void TestAddOnWordsComeFromThePack() {
     Check(fluid_card(InstallerCards(kept, {})).title == "Fluid Lab",
           "An installed add-on the catalog dropped keeps its name");
 
+    // One source of words per plugin: an older pack without words beside a
+    // newer one with them. Whichever pack a screen is about, the add-on has
+    // the newer pack's name.
+    constexpr const char* kFluidNext = "cyxwiz-plugin-fluid-lab-2.1.0-1-win64-x86_64";
+    auto old_wordless = fluid;
+    old_wordless.manifest->plugin_name.clear();
+    old_wordless.manifest->plugin_description.clear();
+    old_wordless.manifest->generated_utc = "2026-08-01T00:00:00Z";
+    auto newer = MuJoCoRecord(kFluidNext, "2");
+    newer.manifest->plugin_id = kFluidPlugin;
+    newer.manifest->plugin_name = "Fluid Lab";
+    newer.manifest->plugin_description = "Fluid simulation: tanks, pipes and pumps.";
+    newer.manifest->generated_utc = "2026-09-01T00:00:00Z";
+    cyxwiz::runtime::VerifiedBackendPackCatalogSnapshot mixed;
+    mixed.records = {BaseRecord(), old_wordless, newer};
+    mixed.installed_manifests.push_back(*old_wordless.manifest);
+    const auto mixed_records = cyxwiz::BuildBackendPackCatalogRecords(mixed, ActiveBase(), active);
+    const auto* old_record = FindRecord(mixed_records, kFluidPack);
+    Check(old_record && old_record->plugin_name.empty() && old_record->installed,
+          "The installed older pack carries no words of its own");
+    const auto words = cyxwiz::AddOnWordsFor(mixed_records, kFluidPlugin);
+    Check(words.title == "Fluid Lab" && words.description == "Fluid simulation: tanks, pipes and pumps.",
+          "The add-on's words are its newest named pack's: " + words.title);
+    Check(fluid_card(InstallerCards(mixed_records, {})).title == "Fluid Lab" &&
+              fluid_card(EngineCards(mixed_records)).title == "Fluid Lab" &&
+              cyxwiz::BuildPackRemovalWording(mixed_records, kFluidPack).subject == "Add-on: Fluid Lab" &&
+              cyxwiz::SummaryAddOnLines({}, {kFluidPack}, mixed_records) ==
+                  std::vector<std::string>{"Fluid Lab"} &&
+              cyxwiz::SummaryAddOnLines({}, {kFluidNext}, mixed_records) ==
+                  std::vector<std::string>{"Fluid Lab"},
+          "The card, the summary and the uninstall confirmation name it alike, for either pack");
+
+    // The name changed between versions: the newest signed name is used
+    // everywhere, also where the older pack is the subject.
+    auto renamed_old = fluid;
+    renamed_old.manifest->plugin_name = "Fluid Bench";
+    renamed_old.manifest->generated_utc = "2026-08-01T00:00:00Z";
+    cyxwiz::runtime::VerifiedBackendPackCatalogSnapshot two_names;
+    two_names.records = {BaseRecord(), newer, renamed_old};  // the list order does not decide
+    two_names.installed_manifests.push_back(*renamed_old.manifest);
+    const auto two_name_records = cyxwiz::BuildBackendPackCatalogRecords(two_names, ActiveBase(), active);
+    Check(cyxwiz::AddOnWordsFor(two_name_records, kFluidPlugin).title == "Fluid Lab" &&
+              fluid_card(InstallerCards(two_name_records, {})).title == "Fluid Lab" &&
+              cyxwiz::BuildPackRemovalWording(two_name_records, kFluidPack).subject == "Add-on: Fluid Lab",
+          "A renamed add-on shows its newest name");
+    Check(cyxwiz::AddOnWordsFor(mixed_records, "org.example.none").title == "org.example.none" &&
+              cyxwiz::AddOnWordsFor({}, kMuJoCoPlugin).title == "Simulation (MuJoCo)",
+          "No named pack: this release's wording, else the plugin id");
+
     Check(cyxwiz::AddOnTitle(kFluidPlugin, "Fluid Lab") == "Fluid Lab" &&
               cyxwiz::AddOnTitle(kFluidPlugin) == kFluidPlugin &&
               cyxwiz::AddOnTitle(kMuJoCoPlugin, "Other") == "Other" &&
@@ -705,6 +754,33 @@ void TestBaseUpdateReinstallsAddOn() {
               "No compute-pack wording on an add-on card: " + words);
         Check(Resolve(records, kMuJoCoPlugin).empty(),
               "Nothing to tick: it comes with the update");
+    }
+
+    // The add-on was renamed between the installed pack and the one the CPU
+    // Engine update installs: the card shows that pack, under its name.
+    for (const bool old_pack_listed : {true, false}) {
+        auto renamed = BaseUpdateRecords(old_pack_listed, true);
+        bool old_named = false, new_named = false;
+        for (auto& record : renamed) {
+            if (record.pack_kind != cyxwiz::BackendPackRecordKind::Plugin) continue;
+            if (record.pack_id == kNewBasePack) {
+                record.plugin_name = "Simulation (MuJoCo 4)";
+                record.plugin_description = "Physics for the new Engine.";
+                record.plugin_words_utc = "2026-10-01T00:00:00Z";
+                new_named = true;
+            } else {
+                record.plugin_name = "Simulation (MuJoCo 3)";
+                record.plugin_description = "Physics for the old Engine.";
+                record.plugin_words_utc = "2026-08-01T00:00:00Z";
+                old_named = true;
+            }
+        }
+        const auto card = MuJoCoCard(InstallerCards(renamed, {}));
+        // The installed pack has a record of its own only while the catalog lists it
+        Check((old_named || !old_pack_listed) && new_named && card.pack_id == kNewBasePack &&
+                  card.title == "Simulation (MuJoCo 4)" &&
+                  card.description == "Physics for the new Engine.",
+              "A base-update card shows the words of the pack the update installs: " + card.title);
     }
 
     // Without a base update the blocked pack keeps add-on words too.

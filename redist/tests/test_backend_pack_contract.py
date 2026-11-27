@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import json
 import sys
+import unicodedata
 import unittest
 from pathlib import Path
 
@@ -18,6 +20,10 @@ contract = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = contract
 SPEC.loader.exec_module(contract)
 
+
+# A plugin pack's name and description: the cases this suite and the
+# bootstrapper's verifier test both run.
+DISPLAY_TEXT_CASES = Path(__file__).resolve().parent / "fixtures" / "plugin_display_text_cases.json"
 
 SHA = "a" * 64
 SIGNATURE = "A" * 86
@@ -354,6 +360,74 @@ class BackendPackContractTests(unittest.TestCase):
         document["signed"]["plugin_author"] = "Example"
         with self.assertRaisesRegex(contract.ContractError, "unsupported fields"):
             contract.validate_pack_manifest(document)
+
+    def test_plugin_display_text_cases_shared_with_the_verifier(self) -> None:
+        # The same file is run by test_backend_pack_metadata_verifier.cpp:
+        # packaging and the bootstrapper judge every case alike.
+        cases = json.loads(DISPLAY_TEXT_CASES.read_text(encoding="ascii"))["cases"]
+        self.assertGreater(len(cases), 30)
+        for case in cases:
+            text = case["text"] * case.get("repeat", 1) + case.get("suffix", "")
+            with self.subTest(case["why"]):
+                if case["accepted"]:
+                    self.assertEqual(text, contract.display_text(text, "name", case["maximum_bytes"]))
+                else:
+                    with self.assertRaises(contract.ContractError):
+                        contract.display_text(text, "name", case["maximum_bytes"])
+
+    def test_plugin_display_text_limits_are_bytes_of_utf8(self) -> None:
+        name = "\u00e9" * (contract.PLUGIN_NAME_MAX_BYTES // 2)
+        self.assertEqual(contract.PLUGIN_NAME_MAX_BYTES, len(name.encode("utf-8")))
+        description = "\U0001F30A" * (contract.PLUGIN_DESCRIPTION_MAX_BYTES // 4)
+        self.assertEqual(contract.PLUGIN_DESCRIPTION_MAX_BYTES, len(description.encode("utf-8")))
+        document = plugin_manifest()
+        document["signed"]["plugin_name"] = name
+        document["signed"]["plugin_description"] = description
+        contract.validate_pack_manifest(document)
+        document["signed"]["plugin_name"] = name + "x"
+        with self.assertRaisesRegex(contract.ContractError, "longer than 128 bytes"):
+            contract.validate_pack_manifest(document)
+        document["signed"]["plugin_name"] = name
+        document["signed"]["plugin_description"] = description + "x"
+        with self.assertRaisesRegex(contract.ContractError, "longer than 512 bytes"):
+            contract.validate_pack_manifest(document)
+
+    def test_plugin_display_text_refuses_a_lone_surrogate_cleanly(self) -> None:
+        # No UTF-8 form: a ContractError, never a UnicodeEncodeError
+        for text in ("Fluid\ud800Lab", "\udfff", "Fluid \udc00"):
+            with self.assertRaisesRegex(contract.ContractError, "not valid Unicode text"):
+                contract.display_text(text, "plugin.json name", contract.PLUGIN_NAME_MAX_BYTES)
+        document = plugin_manifest()
+        document["signed"]["plugin_name"] = "Fluid\ud800Lab"
+        with self.assertRaisesRegex(contract.ContractError, "not valid Unicode text"):
+            contract.validate_pack_manifest(document)
+        with self.assertRaisesRegex(contract.ContractError, "not valid Unicode text"):
+            contract.canonical_json_bytes(document["signed"])
+
+    def test_plugin_display_text_names_what_is_wrong(self) -> None:
+        for text, message in (
+            ("   ", "is blank"),
+            ("\u00a0\u3000", "is blank"),
+            ("Fluid\u0085Lab", "control character"),
+            ("Fluid\u202eLab", "invisible or direction-changing"),
+            ("Fluid\u200bLab", "invisible or direction-changing"),
+        ):
+            with self.assertRaisesRegex(contract.ContractError, message):
+                contract.display_text(text, "name", contract.PLUGIN_NAME_MAX_BYTES)
+
+    def test_plugin_display_text_list_covers_this_pythons_unicode(self) -> None:
+        # The rules are a fixed list (the verifier has no Unicode database).
+        # Every control, format character, line or paragraph separator and
+        # surrogate this Python knows must be refused by it, and every space
+        # must count as blank: a newer Unicode that adds one fails here.
+        for code_point in range(0x110000):
+            category = unicodedata.category(chr(code_point))
+            if category in ("Cc", "Cf", "Cs", "Zl", "Zp"):
+                with self.assertRaises(contract.ContractError, msg=hex(code_point)):
+                    contract.display_text("a" + chr(code_point), "name", 128)
+            elif category == "Zs":
+                with self.assertRaisesRegex(contract.ContractError, "is blank", msg=hex(code_point)):
+                    contract.display_text(chr(code_point), "name", 128)
 
     def test_plugin_pack_rejects_arrayfire_and_device_fields(self) -> None:
         for name, value in (

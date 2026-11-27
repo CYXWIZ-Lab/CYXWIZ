@@ -137,11 +137,60 @@ bool ReadString(
     return true;
 }
 
-// A plugin's name or description, shown to the user as signed: absent, or a
-// non-empty UTF-8 string within its limit and without control characters.
-constexpr std::size_t kMaximumPluginNameBytes = 128;
-constexpr std::size_t kMaximumPluginDescriptionBytes = 512;
+struct CodePointRange {
+    char32_t first;
+    char32_t last;
+};
 
+bool InRanges(char32_t code_point, std::initializer_list<CodePointRange> ranges) {
+    return std::any_of(ranges.begin(), ranges.end(), [&](const CodePointRange& range) {
+        return range.first <= code_point && code_point <= range.last;
+    });
+}
+
+// The next code point of well-formed UTF-8 (shortest form, no surrogate, at
+// most U+10FFFF); false at anything else.
+bool NextCodePoint(std::string_view text, std::size_t& offset, char32_t& code_point) {
+    const auto byte = [&](std::size_t index) {
+        return static_cast<unsigned char>(text[index]);
+    };
+    const unsigned char lead = byte(offset);
+    std::size_t length = 0;
+    char32_t minimum = 0;
+    if (lead < 0x80) {
+        code_point = lead;
+        ++offset;
+        return true;
+    } else if ((lead & 0xE0) == 0xC0) {
+        length = 2;
+        minimum = 0x80;
+        code_point = static_cast<char32_t>(lead & 0x1F);
+    } else if ((lead & 0xF0) == 0xE0) {
+        length = 3;
+        minimum = 0x800;
+        code_point = static_cast<char32_t>(lead & 0x0F);
+    } else if ((lead & 0xF8) == 0xF0) {
+        length = 4;
+        minimum = 0x10000;
+        code_point = static_cast<char32_t>(lead & 0x07);
+    } else {
+        return false;
+    }
+    if (text.size() - offset < length) return false;
+    for (std::size_t index = 1; index < length; ++index) {
+        const unsigned char next = byte(offset + index);
+        if ((next & 0xC0) != 0x80) return false;
+        code_point = (code_point << 6) | static_cast<char32_t>(next & 0x3F);
+    }
+    if (code_point < minimum || code_point > 0x10FFFF ||
+        (code_point >= 0xD800 && code_point <= 0xDFFF)) {
+        return false;
+    }
+    offset += length;
+    return true;
+}
+
+// A plugin's name or description: absent, or text IsPluginDisplayText accepts.
 bool ReadOptionalDisplayText(
     const Json& object,
     const char* key,
@@ -151,12 +200,7 @@ bool ReadOptionalDisplayText(
     if (!object.is_object() || !object.contains(key)) return true;
     if (!object[key].is_string()) return false;
     const auto& text = object[key].get_ref<const std::string&>();
-    if (text.empty() || text.size() > maximum_bytes ||
-        std::any_of(text.begin(), text.end(), [](unsigned char c) {
-            return c < 0x20 || c == 0x7f;
-        })) {
-        return false;
-    }
+    if (!IsPluginDisplayText(text, maximum_bytes)) return false;
     output = text;
     return true;
 }
@@ -675,6 +719,38 @@ bool VerifyPluginManifestBody(
 }
 
 }  // namespace
+
+// The same fixed lists as display_text in backend_pack_contract.py: change
+// both together.
+bool IsPluginDisplayText(std::string_view text, std::size_t maximum_bytes) {
+    if (text.empty() || text.size() > maximum_bytes) return false;
+    bool blank = true;
+    for (std::size_t offset = 0; offset < text.size();) {
+        char32_t code_point = 0;
+        if (!NextCodePoint(text, offset, code_point)) return false;
+        // C0, DEL and C1 controls
+        if (InRanges(code_point, {{0x0000, 0x001F}, {0x007F, 0x009F}})) return false;
+        // Format characters (Unicode Cf) and the line and paragraph separators
+        if (InRanges(code_point,
+                     {{0x00AD, 0x00AD}, {0x0600, 0x0605}, {0x061C, 0x061C},
+                      {0x06DD, 0x06DD}, {0x070F, 0x070F}, {0x0890, 0x0891},
+                      {0x08E2, 0x08E2}, {0x180E, 0x180E}, {0x200B, 0x200F},
+                      {0x2028, 0x202E}, {0x2060, 0x206F}, {0xFEFF, 0xFEFF},
+                      {0xFFF9, 0xFFFB}, {0x110BD, 0x110BD}, {0x110CD, 0x110CD},
+                      {0x13430, 0x1343F}, {0x1BCA0, 0x1BCA3}, {0x1D173, 0x1D17A},
+                      {0xE0001, 0xE0001}, {0xE0020, 0xE007F}})) {
+            return false;
+        }
+        // Spaces (Unicode Zs) are allowed inside; text of nothing else is blank
+        if (!InRanges(code_point,
+                      {{0x0020, 0x0020}, {0x00A0, 0x00A0}, {0x1680, 0x1680},
+                       {0x2000, 0x200A}, {0x202F, 0x202F}, {0x205F, 0x205F},
+                       {0x3000, 0x3000}})) {
+            blank = false;
+        }
+    }
+    return !blank;
+}
 
 VerifiedBackendPackPayload VerifiedBackendPackManifest::BindExtractedDirectory(
     std::filesystem::path source_directory) const {

@@ -468,6 +468,11 @@ if(CYXWIZ_BUILD_TESTS)
         cyxwiz-backend-pack-service
         OpenSSL::Crypto
     )
+    # The fixtures it shares with the Python suite (redist/tests): the plugin
+    # display-text cases and a plugin manifest Python packaged and signed.
+    target_compile_definitions(test_backend_pack_metadata_verifier PRIVATE
+        CYXWIZ_REDIST_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures"
+    )
     set_target_properties(test_backend_pack_metadata_verifier PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )

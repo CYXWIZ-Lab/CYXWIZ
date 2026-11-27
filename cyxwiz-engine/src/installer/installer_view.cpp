@@ -90,8 +90,9 @@ bool IsAddOn(const BackendPackManagerRecord &record) {
 
 // What a summary or list calls a record: an add-on's own name, else the
 // compute backend's.
-std::string RecordName(const BackendPackManagerRecord &record) {
-  return IsAddOn(record) ? AddOnTitle(record.plugin_id, record.plugin_name)
+std::string RecordName(const BackendPackManagerRecord &record,
+                       const std::vector<BackendPackManagerRecord> &records) {
+  return IsAddOn(record) ? AddOnWordsFor(records, record.plugin_id).title
                          : std::string(BackendName(record.backend));
 }
 
@@ -274,7 +275,7 @@ void RenderWorkloads(InstallerViewState &state,
       continue;
     if (IsAddOn(record)) {
       ImGui::BulletText("%s %s  Add-on", RecordIcon(record),
-                        RecordName(record).c_str());
+                        RecordName(record, catalog.records).c_str());
       continue;
     }
     const auto presentation = BuildInstallerPackPresentation(record);
@@ -949,7 +950,7 @@ void RenderSummary(InstallerViewState &state,
                      });
     // Add-ons are listed below: the plan's, with what happens to each.
     if (record != catalog.records.end() && !IsAddOn(*record)) {
-      component(RecordName(*record));
+      component(RecordName(*record, catalog.records));
     }
   }
   for (const auto &line :
