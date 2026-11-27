@@ -33,6 +33,23 @@ if(NOT TARGET CyxWiz::PluginSDK)
         INTERFACE_COMPILE_FEATURES cxx_std_20)
 endif()
 
+# CyxWiz::PluginImGui: the Engine's own Dear ImGui (headers and static
+# library), for a plugin with panels (IPanelProvider). Link it beside
+# CyxWiz::PluginSDK; a panel built with any other ImGui is refused at load.
+#
+#   target_link_libraries(my_plugin PRIVATE CyxWiz::PluginSDK CyxWiz::PluginImGui)
+if(NOT TARGET CyxWiz::PluginImGui)
+    find_library(CYXWIZ_SDK_IMGUI_LIBRARY NAMES imgui
+                 PATHS "${_cyxwiz_sdk_root}/lib" NO_DEFAULT_PATH)
+    if(CYXWIZ_SDK_IMGUI_LIBRARY AND EXISTS "${_cyxwiz_sdk_root}/include/imgui/imgui.h")
+        add_library(CyxWiz::PluginImGui STATIC IMPORTED)
+        set_target_properties(CyxWiz::PluginImGui PROPERTIES
+            IMPORTED_LOCATION "${CYXWIZ_SDK_IMGUI_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${_cyxwiz_sdk_root}/include/imgui"
+            INTERFACE_COMPILE_FEATURES cxx_std_11)
+    endif()
+endif()
+
 set(CyxWizSDK_PLUGIN_API_VERSION "@CYXWIZ_SDK_PLUGIN_API@")
 set(CyxWizSDK_TEMPLATE_DIR "${_cyxwiz_sdk_root}/template")
 

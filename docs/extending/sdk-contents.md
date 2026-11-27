@@ -2,7 +2,7 @@
 
 # What the plugin SDK contains
 
-Every header the plugin SDK installs under `<sdk>/include`, with the summary at the top of the header and the types it declares. Plugin API 1.4.0. The SDK also installs `cyxwiz-backend`'s import library, the CMake package `CyxWizSDK`, the template plugin, the data plugin example (source and built) and the Python example nodes; see [plugin-quickstart.md](plugin-quickstart.md). The SDK ships no ArrayFire, ImGui or spdlog headers: anything below that needs them (an `af::array` in a signature, a panel's ImGui calls) builds only inside the CyxWiz source tree.
+Every header the plugin SDK installs under `<sdk>/include`, with the summary at the top of the header and the types it declares. Plugin API 1.4.0. The SDK also installs `cyxwiz-backend`'s import library, the CMake package `CyxWizSDK`, the template plugin, the data plugin example (source and built) and the Python example nodes; see [plugin-quickstart.md](plugin-quickstart.md). It also installs the Engine's own Dear ImGui (`include/imgui`, the static library in `lib`) as the CMake target `CyxWiz::PluginImGui`, for plugins with panels ([plugin-api-reference.md](plugin-api-reference.md), `IPanelProvider`). The SDK ships no ArrayFire or spdlog headers: anything below that needs them (an `af::array` in a signature) builds only inside the CyxWiz source tree.
 
 ## Plugin interface
 
@@ -73,6 +73,7 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/optimization.h` | Linear and convex quadratic programs (HiGHS, the solver scipy uses) and the training optimizers' paths on a typed formula (TOFIX129 D10). The calculus of a formula is in calculus.h, the formula in expression.h. | `LinearConstraint`, `VariableBound`, `LinearProgram`, `QuadraticProgram`, `ProgramResult`, `OptimizerSetting`, `OptimizerPath`, `Optimization`, `ConstraintSense`, `ProgramStatus` |
 | `cyxwiz/optimizer.h` |  |  |
 | `cyxwiz/portable_random.h` | Seeded draws that are the same on every compiler and OS (TOFIX205). The standard fixes std::mt19937 / std::mt19937_64's raw output, but not std::shuffle or the std::*_distribution classes: MSVC, libstdc++ and libc++ turn one seed into different orders and values. Every draw here is built only on... |  |
+| `cyxwiz/portable_regex.h` | std::regex options that differ between standard libraries. |  |
 | `cyxwiz/recurrent_cuda_placement.h` |  |  |
 | `cyxwiz/rl_interface.h` |  | `RLTransition`, `RLBatch`, `StepResult`, `EnvInfo`, `ReplayBuffer`, `EpsilonSchedule` |
 | `cyxwiz/scheduler.h` |  | `SchedulerState`, `LRScheduler`, `StepLR`, `ExponentialLR`, `CosineAnnealingLR`, `ReduceLROnPlateau`, `LinearWarmupLR`, `OneCycleLR`, `WarmupDecayLR`, `SchedulerType` |
@@ -116,4 +117,7 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/optimizers/lr_warmup.h` |  | `LRWarmupState`, `LRWarmup`, `WarmupType` |
 | `cyxwiz/optimizers/optimizer_base.h` |  | `OptimizerState`, `Optimizer`, `OptimizerType` |
 | `cyxwiz/optimizers/sgd.h` |  | `SGDOptimizer` |
+| `cyxwiz/rl/dqn.h` | Deep Q-Network on the device, with hand-written gradients like every CyxWiz loss: the pieces of Stable-Baselines3 2.7's DQN.train between the networks (TOFIX216 DQN). A trainer runs the Q network and its target and, for each gradient step, in SB3's order: y = DqnTarget(q_target(next_obs), r,... | `DqnLoss` |
 | `cyxwiz/rl/ppo.h` | Proximal Policy Optimization on the device, with hand-written gradients like every CyxWiz loss. The policy network outputs the mean of a Gaussian (continuous actions, with a learned state-independent log standard deviation) or the logits of a categorical (discrete actions); the value network... | `PpoLossSettings`, `PpoLossStatistics`, `PpoLossResult`, `PpoBatch`, `PpoProviderCounts` |
+| `cyxwiz/rl/sac.h` | Soft Actor-Critic on the device, with hand-written gradients like every CyxWiz loss: the pieces of Stable-Baselines3 2.7's SAC.train between the networks (TOFIX216 S2). A trainer runs the networks and, for each gradient step, in SB3's order: alpha = exp(log_alpha)                      (before... | `SacSquashed`, `SacSquashGradients`, `SacCriticLoss`, `SacActorLoss`, `SacEntCoefLoss` |
+| `cyxwiz/rl/td3.h` | Twin Delayed DDPG on the device, with hand-written gradients like every CyxWiz loss: the pieces of Stable-Baselines3 2.7's TD3.train between the networks (TOFIX216 TD3). A trainer runs the networks and, for each gradient step, in SB3's order: a' = Td3TargetActions(actor_target(next_obs), noise) ... | `Td3CriticLoss`, `Td3ActorLoss` |

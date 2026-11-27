@@ -39,8 +39,12 @@ cmake --install "$build" --config Release --component plugin_sdk --prefix "$work
     || { cat "$work/install.log"; echo "FAIL: install"; exit 1; }
 echo "$(find "$work/sdk" -type f | wc -l) files"
 for unexpected in $(cd "$work/sdk/include" && ls); do
-    case $unexpected in cyxwiz|plugin|core) ;; *) fail "unexpected include folder $unexpected" ;; esac
+    case $unexpected in cyxwiz|plugin|core|imgui) ;; *) fail "unexpected include folder $unexpected" ;; esac
 done
+# The Engine's ImGui for plugins with panels (CyxWiz::PluginImGui).
+[ -f "$work/sdk/include/imgui/imgui.h" ] && [ -f "$work/sdk/include/imgui/imconfig.h" ] \
+    || fail "the SDK has no ImGui headers (include/imgui)"
+ls "$work/sdk/lib" | grep -qE "^(lib)?imgui\.(lib|a)$" || fail "the SDK has no ImGui library (lib/imgui)"
 core_headers=$(ls "$work/sdk/include/core" | tr '\n' ' ')
 [ "$core_headers" = "extension_node_contract.h graph_model.h node_metadata.h " ] \
     || fail "core/ should hold only the three contract headers, has: $core_headers"
@@ -92,13 +96,15 @@ build_plugin my_nodes "$source_root/plugins/template"
 build_plugin my_nodes_debug "$source_root/plugins/template" Debug
 build_plugin activation_nodes "$source_root/plugins/examples/activation_nodes"
 build_plugin data_formats "$data_example"
+build_plugin panel_example "$source_root/plugins/examples/panel_example"
 
 step "load and check with cyxwiz-plugin-check"
 check="$bin/cyxwiz-plugin-check"
 export PATH="$bin:$PATH"
 folders=()
 for folder in "$work/build/my_nodes/my_nodes" "$work/build/my_nodes_debug/my_nodes" \
-              "$work/build/activation_nodes/activation_nodes" "$work/build/data_formats/data_formats"               "$data_example/built"; do
+              "$work/build/activation_nodes/activation_nodes" "$work/build/data_formats/data_formats" \
+              "$work/build/panel_example/panel_example" "$data_example/built"; do
     if [ -f "$folder/plugin.json" ]; then folders+=("$folder"); else fail "no plugin folder $folder"; fi
 done
 if [ ${#folders[@]} -gt 0 ]; then

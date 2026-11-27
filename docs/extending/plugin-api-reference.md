@@ -40,7 +40,9 @@ SDK installs, with the types it declares, is listed in
 Namespaces: `cyxwiz::plugin` for the plugin API, `cyxwiz` for `Module`,
 `Tensor` and `ExtensionShapeResult`.
 
-The SDK has no ArrayFire, ImGui, spdlog or JSON headers. Members whose
+The SDK has no ArrayFire, spdlog or JSON headers. It carries the Engine's own
+Dear ImGui (`include/imgui`, `lib/imgui`) for plugins with panels, as the
+CMake target `CyxWiz::PluginImGui` (section 9). Members whose
 signature uses `af::` types are declared in `cyxwiz/tensor.h` but cannot be
 called from a plugin built against the SDK.
 
@@ -332,8 +334,38 @@ not trainable tensors.
 
 A panel draws with ImGui inside the Engine's ImGui context
 (`SetImGuiContext`, section 4), so the plugin must be compiled against
-exactly the ImGui version and configuration the Engine uses. The SDK has no
-ImGui: panels can only be built inside the CyxWiz source tree.
+exactly the ImGui version and configuration the Engine uses. The SDK ships
+that ImGui: link `CyxWiz::PluginImGui` beside `CyxWiz::PluginSDK`.
+
+<!-- excerpt: plugins/examples/panel_example/CMakeLists.txt -->
+```cmake
+target_link_libraries(panel_example PRIVATE CyxWiz::PluginSDK CyxWiz::PluginImGui)
+```
+
+The build fingerprint names the ImGui a plugin was built with (`imgui=`: its
+version, docking, and the sizes of the structures a configuration change
+alters). The Engine refuses a plugin built with another ImGui, with both
+values in the message, instead of loading it and crashing as it draws. An
+Engine release that moves to another ImGui makes plugins with panels rebuild
+against its SDK; its release notes say so. A plugin with no panels has no
+`imgui` value and is not affected.
+
+Rules for drawing:
+
+- Draw only inside `RenderPanel` (and `RenderPreferences`), on the UI thread.
+- Set the context in `SetImGuiContext` with
+  `ImGui::SetCurrentContext(static_cast<ImGuiContext*>(ctx))`. Never create
+  or destroy an ImGui context.
+- Use `PluginUi` for buttons and number fields, so the panel looks like the
+  Engine's.
+- An OpenGL texture you create is drawn with `ImGui::Image`; create and
+  delete it inside `RenderPanel`, where the Engine's OpenGL context is
+  current. A plugin that makes its own OpenGL context (for drawing off
+  screen) makes the Engine's current again before it returns.
+
+The example plugin `plugins/examples/panel_example` (a damped spring with
+typed fields and a plot) is built from the installed SDK alone by
+`scripts/sdk/check_plugin_sdk.sh`.
 
 #### Drawing with the Engine's widgets: `PluginUi` (API 1.4)
 

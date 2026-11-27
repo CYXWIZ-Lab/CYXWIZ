@@ -158,7 +158,8 @@ Include the plugin headers as `"plugin/..."` and the backend headers as
 
 ### Other libraries
 
-The SDK ships no spdlog, ImGui, JSON or ArrayFire. Log through the context
+The SDK ships no spdlog, JSON or ArrayFire. It does ship the Engine's own
+ImGui, `CyxWiz::PluginImGui`, for panels (section 12). Log through the context
 (`ctx.LogInfo`, below) instead of spdlog. Any other library is yours to find
 (`find_package`) and link, with these limits:
 
@@ -597,7 +598,7 @@ debugger: it needs the runtime libraries the launcher sets up.
 | Nodes | One tensor input and one tensor output. No losses from C++ yet (Python nodes can be losses) |
 | Remote training | Graphs with extension nodes do not train on a Server Node yet; the Engine refuses with a message |
 | Export | ONNX export and generated code refuse a model with extension nodes, naming the node |
-| Panels | `IPanelProvider` needs ImGui built exactly as in the Engine (same version and configuration). The SDK has no ImGui, so a plugin built against it cannot draw panels; panels are for plugins built inside the CyxWiz source tree |
+| Panels | `IPanelProvider` needs ImGui built exactly as in the Engine (same version and configuration): link the SDK's `CyxWiz::PluginImGui`. An Engine release with another ImGui refuses the plugin (the build fingerprint names both) until it is rebuilt against that release's SDK. No plot library is shipped yet: draw simple plots with `ImGui::PlotLines`. The example is `plugins/examples/panel_example` |
 
 ## 13. Distributing your plugin
 

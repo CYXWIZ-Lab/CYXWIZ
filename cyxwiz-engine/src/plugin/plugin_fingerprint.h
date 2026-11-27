@@ -26,6 +26,15 @@
 #include <af/version.h>
 #endif
 
+// A plugin with panels draws in the Engine's ImGui context
+// (IPlugin::SetImGuiContext), so it must be built with the Engine's ImGui:
+// the same version and the same configuration. The SDK ships that ImGui
+// (CyxWiz::PluginImGui, plugin-api-reference.md section 9). Where <imgui.h>
+// is on the include path the fingerprint names it ("imgui=" below).
+#if __has_include(<imgui.h>)
+#include <imgui.h>
+#endif
+
 namespace cyxwiz::plugin {
 
 // Plugin API version this SDK provides: the same numbers as
@@ -76,10 +85,27 @@ inline std::string CurrentBuildFingerprint() {
     const std::string arrayfire = "none";  // a plugin that does not include the backend
 #endif
 
+#if defined(IMGUI_VERSION_NUM)
+    // The version, docking, and the sizes of the structures a configuration
+    // change alters (imconfig.h: ImDrawIdx, ImTextureID, user fields), so a
+    // plugin built with another ImGui is refused instead of crashing as it draws.
+#if defined(IMGUI_HAS_DOCK)
+    const char* docking = "dock";
+#else
+    const char* docking = "nodock";
+#endif
+    const std::string imgui = std::to_string(IMGUI_VERSION_NUM) + "-" + docking +
+                              "-io" + std::to_string(sizeof(ImGuiIO)) + "-style" + std::to_string(sizeof(ImGuiStyle)) +
+                              "-vtx" + std::to_string(sizeof(ImDrawVert)) + "-idx" + std::to_string(sizeof(ImDrawIdx)) +
+                              "-tex" + std::to_string(sizeof(ImTextureID));
+#else
+    const std::string imgui = "none";  // a plugin that does not draw
+#endif
+
     return "sdk=" + std::to_string(CYXWIZ_VERSION_MAJOR) + "." + std::to_string(CYXWIZ_VERSION_MINOR) +
            ";api=" + std::to_string(kFingerprintApiMajor) + "." + std::to_string(kFingerprintApiMinor) +
            ";compiler=" + compiler + ";stdlib=" + stdlib + ";build=" + build +
-           ";ptr=" + std::to_string(sizeof(void*) * 8) + ";arrayfire=" + arrayfire;
+           ";ptr=" + std::to_string(sizeof(void*) * 8) + ";arrayfire=" + arrayfire + ";imgui=" + imgui;
 #endif
 }
 
@@ -93,8 +119,8 @@ struct FingerprintDifference {
 std::vector<std::pair<std::string, std::string>> ParseBuildFingerprint(const std::string& text);
 
 // What differs in a way that matters. Equal: sdk (major.minor), compiler,
-// stdlib, build, ptr, arrayfire (when both name one), api major; the plugin's
-// api minor may not be newer than the Engine's.
+// stdlib, build, ptr, arrayfire and imgui (each when both name one), api
+// major; the plugin's api minor may not be newer than the Engine's.
 std::vector<FingerprintDifference> CompareBuildFingerprints(const std::string& engine, const std::string& plugin);
 
 // "The plugin was built with build=debug, arrayfire=3.9; this Engine with

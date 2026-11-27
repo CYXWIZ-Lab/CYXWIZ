@@ -70,10 +70,13 @@ std::vector<FingerprintDifference> CompareBuildFingerprints(const std::string& e
         const std::string ev = Value(e, key);
         if (pv != ev) differ(key, pv, ev);
     }
-    const std::string p_af = Value(p, "arrayfire");
-    const std::string e_af = Value(e, "arrayfire");
-    if (!p_af.empty() && p_af != "none" && !e_af.empty() && e_af != "none" && p_af != e_af) {
-        differ("arrayfire", p_af, e_af);
+    // Compared only when both name one: a plugin that does not include the
+    // backend (or does not draw) has none, and a host without windows
+    // (cyxwiz-plugin-check) may have no ImGui.
+    for (const char* key : {"arrayfire", "imgui"}) {
+        const std::string pv = Value(p, key);
+        const std::string ev = Value(e, key);
+        if (!pv.empty() && pv != "none" && !ev.empty() && ev != "none" && pv != ev) differ(key, pv, ev);
     }
     return differences;
 }

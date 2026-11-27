@@ -523,6 +523,8 @@ if(CYXWIZ_BUILD_ENGINE)
     add_subdirectory(plugins/examples/image_nodes)
     add_subdirectory(plugins/examples/activation_nodes)
     add_subdirectory(plugins/examples/data_formats)
+    # A plugin with a panel, also built from the installed SDK by scripts/sdk/check_plugin_sdk.sh
+    add_subdirectory(plugins/examples/panel_example)
     # The SDK's template plugin, built here so it always compiles.
     add_subdirectory(plugins/template)
     if(CYXWIZ_BUILD_MUJOCO_PLUGIN)

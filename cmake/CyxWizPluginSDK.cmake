@@ -41,6 +41,9 @@ set(CYXWIZ_SDK_BUILT_WITH "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION
 add_library(cyxwiz-plugin-sdk-backend INTERFACE)
 target_link_libraries(cyxwiz-plugin-sdk-backend INTERFACE cyxwiz-plugin-sdk cyxwiz-backend)
 add_library(CyxWiz::PluginSDK ALIAS cyxwiz-plugin-sdk-backend)
+add_library(cyxwiz-plugin-imgui INTERFACE)
+target_link_libraries(cyxwiz-plugin-imgui INTERFACE imgui::imgui)
+add_library(CyxWiz::PluginImGui ALIAS cyxwiz-plugin-imgui)
 include("${CMAKE_SOURCE_DIR}/cmake/sdk/CyxWizPluginHelpers.cmake")
 
 set(_cyxwiz_sdk_cmake "${CMAKE_BINARY_DIR}/sdk/cmake")
@@ -106,6 +109,36 @@ install(FILES "$<TARGET_FILE:data_formats>"
 # Apache-2.0 (owner 2026-10-17, the plugin-SDK part of TOFIX142).
 install(FILES "${CMAKE_SOURCE_DIR}/cmake/sdk/LICENSE" "${CMAKE_SOURCE_DIR}/cmake/sdk/NOTICE"
         DESTINATION . COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+# Dear ImGui, for plugins with panels (SDK-10, TOFIX245): the headers and the
+# static library the Engine itself was built with, as CyxWiz::PluginImGui. A
+# panel draws in the Engine's ImGui context (IPlugin::SetImGuiContext), so a
+# plugin must use exactly this ImGui; the build fingerprint names its version
+# and configuration and the Engine refuses a plugin built with another one.
+# The library is the release one: plugins use the release C++ runtime in every
+# configuration (CyxWizPluginHelpers.cmake).
+get_target_property(_cyxwiz_imgui_includes imgui::imgui INTERFACE_INCLUDE_DIRECTORIES)
+find_file(_cyxwiz_imgui_header imgui.h PATHS ${_cyxwiz_imgui_includes} NO_DEFAULT_PATH NO_CACHE)
+if(NOT _cyxwiz_imgui_header)
+    message(FATAL_ERROR "The plugin SDK ships ImGui, but imgui.h was not found in ${_cyxwiz_imgui_includes}")
+endif()
+get_filename_component(_cyxwiz_imgui_dir "${_cyxwiz_imgui_header}" DIRECTORY)
+set(_cyxwiz_imgui_sdk_headers)
+foreach(_header imgui.h imconfig.h imgui_internal.h imstb_rectpack.h imstb_textedit.h imstb_truetype.h)
+    if(EXISTS "${_cyxwiz_imgui_dir}/${_header}")
+        list(APPEND _cyxwiz_imgui_sdk_headers "${_cyxwiz_imgui_dir}/${_header}")
+    endif()
+endforeach()
+install(FILES ${_cyxwiz_imgui_sdk_headers}
+        DESTINATION include/imgui COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+install(FILES "$<TARGET_FILE:imgui::imgui>"
+        DESTINATION lib COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+# Its MIT licence, beside the SDK's own.
+find_file(_cyxwiz_imgui_copyright copyright
+          PATHS "${_cyxwiz_imgui_dir}/../share/imgui" NO_DEFAULT_PATH NO_CACHE)
+if(_cyxwiz_imgui_copyright)
+    install(FILES "${_cyxwiz_imgui_copyright}" DESTINATION licenses RENAME imgui-LICENSE.txt
+            COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+endif()
 install(FILES
             "${CMAKE_SOURCE_DIR}/plugins/template/CMakeLists.txt"
             "${CMAKE_SOURCE_DIR}/plugins/template/plugin.json"

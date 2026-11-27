@@ -65,7 +65,7 @@ int main() {
     const auto pairs = ParseBuildFingerprint(engine);
     std::string keys;
     for (const auto& [k, v] : pairs) keys += k + ",";
-    Check(keys == "sdk,api,compiler,stdlib,build,ptr,arrayfire,", "keys in order: " + keys + " (" + engine + ")");
+    Check(keys == "sdk,api,compiler,stdlib,build,ptr,arrayfire,imgui,", "keys in order: " + keys + " (" + engine + ")");
     Check(CompareBuildFingerprints(engine, engine).empty(), "the same build matches");
 
     std::cout << "what counts as different\n";
@@ -82,6 +82,18 @@ int main() {
     Check(CompareBuildFingerprints(engine, With(engine, "arrayfire", "3.1")).size() == 1 ||
               Lookup(pairs, "arrayfire") == "none",
           "another ArrayFire version differs");
+    // An Engine that draws, against plugins with and without panels.
+    const std::string drawing_engine = With(engine, "imgui", "19190-dock-io5600-style1200-vtx20-idx2-tex8");
+    Check(CompareBuildFingerprints(drawing_engine, With(engine, "imgui", "none")).empty(),
+          "a plugin that does not draw skips the ImGui check");
+    Check(CompareBuildFingerprints(drawing_engine, drawing_engine).empty(), "the same ImGui matches");
+    const auto other_imgui =
+        CompareBuildFingerprints(drawing_engine, With(engine, "imgui", "19190-dock-io5600-style1200-vtx20-idx4-tex8"));
+    Check(other_imgui.size() == 1 && other_imgui[0].key == "imgui",
+          "an ImGui configured differently (32-bit draw indices) is refused");
+    Check(CompareBuildFingerprints(drawing_engine, With(engine, "imgui", "19180-dock-io5600-style1200-vtx20-idx2-tex8"))
+                  .size() == 1,
+          "another ImGui version is refused");
     const std::string text = DescribeFingerprintMismatch(build);
     Check(text.find("The plugin was built with build=debug-other; this Engine with build=") == 0 &&
               text.find("Rebuild the plugin against the CyxWiz SDK") != std::string::npos,

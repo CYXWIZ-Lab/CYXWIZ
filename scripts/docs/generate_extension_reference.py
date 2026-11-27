@@ -285,9 +285,11 @@ def sdk_contents(api_version):
            "Every header the plugin SDK installs under `<sdk>/include`, with the summary at the top of the "
            "header and the types it declares. Plugin API {}. The SDK also installs `cyxwiz-backend`'s import "
            "library, the CMake package `CyxWizSDK`, the template plugin, the data plugin example (source and built) and the Python example nodes; see "
-           "[plugin-quickstart.md](plugin-quickstart.md). The SDK ships no ArrayFire, ImGui or spdlog "
-           "headers: anything below that needs them (an `af::array` in a signature, a panel's ImGui calls) "
-           "builds only inside the CyxWiz source tree.\n".format(api_version)]
+           "[plugin-quickstart.md](plugin-quickstart.md). It also installs the Engine's own Dear ImGui "
+           "(`include/imgui`, the static library in `lib`) as the CMake target `CyxWiz::PluginImGui`, for "
+           "plugins with panels ([plugin-api-reference.md](plugin-api-reference.md), `IPanelProvider`). "
+           "The SDK ships no ArrayFire or spdlog headers: anything below that needs them (an `af::array` "
+           "in a signature) builds only inside the CyxWiz source tree.\n".format(api_version)]
     groups = {}
     for display, path in sdk_headers():
         group = "Backend (`cyxwiz`)" if display.startswith("cyxwiz/") else "Plugin interface"

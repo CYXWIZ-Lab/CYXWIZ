@@ -83,15 +83,17 @@ The SDK folder holds:
 | `include/plugin/`, `include/core/` | The plugin headers |
 | `include/cyxwiz/` | The backend headers: `cyxwiz::Tensor`, `cyxwiz::Module`, the built-in layers |
 | `lib/` | The library your plugin links: `cyxwiz-backend.lib` on Windows, `libcyxwiz-backend.so` on Linux, `libcyxwiz-backend.dylib` on macOS. At run time your plugin uses the Engine's own copy. (The 1.0.7 Linux and macOS SDKs lack it: there, add `-DCYXWIZ_SDK_BACKEND_LIBRARY="$sdk/../libcyxwiz-backend.so"` (`.dylib` on macOS) to the first `cmake` line of section 2) |
-| `lib/cmake/CyxWizSDK/` | The CMake package: `find_package(CyxWizSDK)`, the target `CyxWiz::PluginSDK`, the function `cyxwiz_plugin_folder()` |
+| `include/imgui/`, `lib/imgui.lib` (`libimgui.a` on Linux and macOS) | The Engine's own Dear ImGui, for plugins with panels: the target `CyxWiz::PluginImGui`. Its MIT licence is in `licenses/imgui-LICENSE.txt` |
+| `lib/cmake/CyxWizSDK/` | The CMake package: `find_package(CyxWizSDK)`, the targets `CyxWiz::PluginSDK` and `CyxWiz::PluginImGui`, the function `cyxwiz_plugin_folder()` |
 | `template/` | My Nodes: a plugin with one trainable node, Bent Identity, that builds as delivered |
 | `examples/python-nodes/` | Python example nodes ([python-nodes.md](python-nodes.md)) |
 | `examples/plugins/data-formats/` | A data plugin: an ARFF format for Data Input and an analytic for Explore > Plugins, as source and ready to Install in `built/` ([data-plugin-guide.md](data-plugin-guide.md)) |
 | `LICENSE`, `NOTICE` | The Apache License 2.0, which covers every file of the SDK |
 
 Every header is listed in [sdk-contents.md](sdk-contents.md). The SDK has
-no ArrayFire, ImGui, spdlog or JSON headers, and a trainable node needs
-none.
+no ArrayFire, spdlog or JSON headers, and a trainable node needs none. For a
+plugin with panels it carries the Engine's own ImGui (`include/imgui`,
+`lib/imgui`), the CMake target `CyxWiz::PluginImGui`.
 
 ### The compiler
 

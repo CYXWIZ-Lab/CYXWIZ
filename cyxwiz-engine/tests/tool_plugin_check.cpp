@@ -11,12 +11,13 @@
 // its gradients with the node's default settings, as the Plugin Manager's
 // "Check gradient" does; list its dataset formats and analytics (TOFIX181);
 // create two copies of each environment it offers, reset them and step them
-// with mid-range actions, every value finite (TOFIX195).
+// with mid-range actions, every value finite (TOFIX195); list its panels
+// (they are not drawn: the check has no window).
 // With --open, read each file through the plugin's dataset format as Data
 // Input's Apply does (the format its extension and CanLoad pick, every batch,
 // the data validated), and run each of its analytics on the columns that
 // analytic reads, as Explore > Plugins does.
-// Exit code 0 when every folder loads, registers something, every node and
+// Exit code 0 when every folder loads, registers something (a panel counts), every node and
 // environment passes, and every file opens and every analytic answers.
 #include <cyxwiz/gradient_check.h>
 #include "../src/core/extension_node_registry.h"
@@ -25,6 +26,7 @@
 #include "../src/plugin/registries/plugin_analytics_registry.h"
 #include "../src/plugin/registries/plugin_data_loader_registry.h"
 #include "../src/plugin/registries/plugin_environment_registry.h"
+#include "../src/plugin/registries/plugin_panel_registry.h"
 #include "../src/plugin/security/permission_store.h"
 
 #include <arrow/api.h>
@@ -353,8 +355,20 @@ bool CheckFolder(const fs::path& folder, const std::vector<fs::path>& files) {
             ok = false;
         }
     }
-    if (nodes + formats + analytics + environments == 0) {
-        std::cout << "  FAIL the plugin registered no nodes, dataset formats, analytics or environments\n";
+    // Panels (SDK-10): listed, not drawn. The check has no window and no
+    // Engine widgets (PluginContext::GetUi() is null here).
+    const size_t panels = cyxwiz::plugin::PluginPanelRegistry::Instance().CountForPlugin(manifest.id);
+    if (panels > 0) {
+        if (const auto* loaded = manager.GetLoadedPlugin(manifest.id); loaded && loaded->instance) {
+            if (auto* provider =
+                    static_cast<cyxwiz::plugin::IPanelProvider*>(loaded->instance->QueryInterface("IPanelProvider"))) {
+                for (const auto& panel : provider->GetPanels())
+                    std::cout << "  ok   panel " << panel.panel_id << " (" << panel.title << "), not drawn here\n";
+            }
+        }
+    }
+    if (nodes + formats + analytics + environments + panels == 0) {
+        std::cout << "  FAIL the plugin registered no nodes, dataset formats, analytics, environments or panels\n";
         ok = false;
     }
     for (const auto& file : files) ok = OpenThrough(manifest.id, file) && ok;
