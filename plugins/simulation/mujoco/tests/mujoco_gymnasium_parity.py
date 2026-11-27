@@ -25,7 +25,7 @@ def main() -> int:
     exe, work = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
     if len(sys.argv) > 3 and mujoco.__version__ != sys.argv[3]:
         print(f"FAIL: this Python has mujoco {mujoco.__version__}, the plugin is built on MuJoCo {sys.argv[3]}: "
-              f"install mujoco=={sys.argv[3]} in it (pip install mujoco=={sys.argv[3]} gymnasium[mujoco])")
+              f"install mujoco=={sys.argv[3]} in it (pip install mujoco=={sys.argv[3]} 'gymnasium[mujoco]')")
         return 1
     work.mkdir(parents=True, exist_ok=True)
     trajectory = work / "mujoco_trajectories.json"
