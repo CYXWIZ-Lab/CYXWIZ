@@ -49,9 +49,16 @@ struct BackendPackMetadataRefreshResult {
     std::string message;
     std::string catalog_id;
     std::size_t verified_pack_count = 0;
-    // Entries of a refreshed catalog whose manifest is the one the signed
-    // catalog names but which this client refuses: listed, never delivered.
+    // Entries of a refreshed catalog that are listed but not delivered, by
+    // reason. The verified catalog is published with its policy all the same;
+    // none of their manifests is.
+    // The manifest is the one the signed catalog names, and this client
+    // refuses it (a format it does not know, a key it does not trust):
     std::size_t refused_pack_count = 0;
+    // The downloaded manifest is not the bytes the signed catalog names:
+    std::size_t mismatched_pack_count = 0;
+    // The manifest could not be downloaded:
+    std::size_t unfetched_pack_count = 0;
 };
 
 BackendPackMetadataRefreshResult RefreshBackendPackMetadata(

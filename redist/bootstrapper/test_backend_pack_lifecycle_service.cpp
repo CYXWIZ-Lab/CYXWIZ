@@ -18,6 +18,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -452,14 +453,15 @@ public:
     // named by its SHA-256 and served from downloads.cyxwiz.com/<id>.json.
     void WriteCatalogOf(
         const std::filesystem::path& path,
-        const std::vector<std::pair<std::string, std::filesystem::path>>& packs) const {
+        const std::vector<std::pair<std::string, std::filesystem::path>>& packs,
+        const std::set<std::string>& revoked = {}) const {
         Json entries = Json::array();
         for (const auto& [pack_id, manifest] : packs) {
             entries.push_back({{"pack_id", pack_id},
                 {"manifest_url", "https://downloads.cyxwiz.com/" + pack_id + ".json"},
                 {"manifest_sha256", Hash(ReadBytes(manifest))},
                 {"signing_key_id", "pack-2026"},
-                {"support_status", "supported"}});
+                {"support_status", revoked.contains(pack_id) ? "revoked" : "supported"}});
         }
         Json catalog = {
             {"catalog_id", "production-2026-08"},
@@ -679,6 +681,11 @@ int main() {
                 snapshot.records.front().manifest.has_value(),
             "remote metadata refresh must verify and atomically publish a complete catalog snapshot");
 
+        // A corrupt remote manifest costs only its entry in that refresh and
+        // is never published: the manifest verified before stays the cached
+        // one, so the pack is still offered from verified bytes only.
+        const auto cached = BackendPackCachedManifestPath(destination, "opencl-v1");
+        const auto cached_before = Fixture::ReadBytes(cached);
         const auto corrupt = fixture.root / "corrupt-manifest.json";
         std::ofstream(corrupt, std::ios::binary | std::ios::trunc)
             << "{\"corrupt\":true}";
@@ -690,12 +697,121 @@ int main() {
         const bool previous_remains = reader.ReadCatalogSnapshot(
             request.current_utc, snapshot, read_error);
         failures += !Expect(
-            rejected.status ==
-                    BackendPackMetadataRefreshStatus::VerificationFailure &&
+            rejected.status == BackendPackMetadataRefreshStatus::Refreshed &&
+                rejected.verified_pack_count == 0 && rejected.mismatched_pack_count == 1 &&
+                rejected.message.find("did not match the signed catalog") != std::string::npos &&
                 previous_remains &&
                 snapshot.catalog.catalog_id == "production-2026-08" &&
-                snapshot.records.front().manifest.has_value(),
-            "a corrupt remote manifest must leave the previous verified catalog readable");
+                snapshot.records.front().manifest.has_value() &&
+                !cached_before.empty() && Fixture::ReadBytes(cached) == cached_before,
+            "a corrupt remote manifest must not be published; the verified one stays (" +
+                rejected.message + ")");
+    }
+    {
+        // Whoever controls the mirror, without a key, damages or withholds
+        // one manifest of a newly signed catalog that also revokes a pack.
+        // The catalog still reaches the client with its revocation; only the
+        // touched entry is not offered, and nothing unverified is.
+        for (const bool withheld : {false, true}) {
+            Fixture fixture;
+            const auto opencl_manifest = fixture.manifest_path;
+            fixture.PreparePlugin();
+            const auto plugin_manifest = fixture.manifest_path;
+            constexpr const char* catalog_url = "https://downloads.cyxwiz.com/catalogs/current.json";
+            constexpr const char* opencl_url = "https://downloads.cyxwiz.com/opencl-v1.json";
+            constexpr const char* plugin_url = "https://downloads.cyxwiz.com/mujoco-v1.json";
+            const auto catalog = fixture.root / "first-catalog.json";
+            fixture.WriteCatalogOf(catalog, {{"opencl-v1", opencl_manifest}, {"mujoco-v1", plugin_manifest}});
+            FixtureMetadataSource source;
+            source.Set(catalog_url, catalog);
+            source.Set(opencl_url, opencl_manifest);
+            source.Set(plugin_url, plugin_manifest);
+            const auto destination = fixture.root / "refreshed-under-attack";
+            BackendPackMetadataRefreshRequest request;
+            request.catalog_url = catalog_url;
+            request.trusted_keys_path = fixture.trust_path;
+            request.destination_root = destination;
+            request.current_utc = "2026-08-14T12:00:00Z";
+            const auto first = RefreshBackendPackMetadata(request, fixture.Verifier(), source);
+
+            // The next catalog revokes the plugin pack and renews the OpenCL
+            // manifest (new bytes, so the cached one no longer matches).
+            const auto renewed_manifest = fixture.root / "opencl-renewed.json";
+            std::ofstream(renewed_manifest, std::ios::binary | std::ios::trunc)
+                << Fixture::ReadBytes(opencl_manifest) << "\n";
+            const auto next_catalog = fixture.root / "next-catalog.json";
+            fixture.WriteCatalogOf(next_catalog,
+                                   {{"opencl-v1", renewed_manifest}, {"mujoco-v1", plugin_manifest}},
+                                   {"mujoco-v1"});
+            source.Set(catalog_url, next_catalog);
+            const auto bad = fixture.root / "attacked-manifest.json";
+            if (withheld) {
+                source.Set(opencl_url, fixture.root / "no-such-manifest.json");
+            } else {
+                std::ofstream(bad, std::ios::binary | std::ios::trunc) << "{\"not\":\"the manifest\"}";
+                source.Set(opencl_url, bad);
+            }
+            const auto attacked = RefreshBackendPackMetadata(request, fixture.Verifier(), source);
+            BackendPackLifecycleService reader(destination, fixture.Verifier());
+            VerifiedBackendPackCatalogSnapshot snapshot;
+            std::string read_error;
+            const bool readable = reader.ReadCatalogSnapshot(request.current_utc, snapshot, read_error);
+            const auto record = [&](const char* pack_id) -> const VerifiedBackendPackCatalogRecord* {
+                for (const auto& candidate : snapshot.records)
+                    if (candidate.catalog_entry.pack_id == pack_id) return &candidate;
+                return nullptr;
+            };
+            const std::string label = withheld ? "withheld" : "corrupted";
+            failures += !Expect(
+                first.status == BackendPackMetadataRefreshStatus::Refreshed && first.verified_pack_count == 2 &&
+                    attacked.status == BackendPackMetadataRefreshStatus::Refreshed &&
+                    attacked.verified_pack_count == 0 && attacked.refused_pack_count == 0 &&
+                    attacked.unfetched_pack_count == (withheld ? 1u : 0u) &&
+                    attacked.mismatched_pack_count == (withheld ? 0u : 1u) &&
+                    attacked.message.find("1 entry is not offered") != std::string::npos &&
+                    attacked.message.find(withheld ? "could not be downloaded"
+                                                   : "did not match the signed catalog") != std::string::npos,
+                "a " + label + " manifest must cost only its entry (" +
+                    std::string(BackendPackMetadataRefreshStatusName(attacked.status)) + ": " +
+                    attacked.message + ")");
+            failures += !Expect(
+                readable && snapshot.records.size() == 2 && record("mujoco-v1") &&
+                    record("mujoco-v1")->catalog_entry.support_status == BackendPackSupportStatus::Revoked &&
+                    !record("mujoco-v1")->manifest,
+                "the revocation in the catalog must be published although another manifest was " + label);
+            failures += !Expect(
+                readable && record("opencl-v1") && !record("opencl-v1")->manifest &&
+                    !record("opencl-v1")->manifest_error.empty() &&
+                    Fixture::ReadBytes(BackendPackCachedManifestPath(destination, "opencl-v1")) ==
+                        Fixture::ReadBytes(opencl_manifest),
+                "the " + label + " entry must not be offered, and its bad manifest never published");
+
+            // The mirror serves the right manifest again: the next refresh heals the entry
+            source.Set(opencl_url, renewed_manifest);
+            const auto healed = RefreshBackendPackMetadata(request, fixture.Verifier(), source);
+            snapshot = {};
+            const bool healed_readable = reader.ReadCatalogSnapshot(request.current_utc, snapshot, read_error);
+            failures += !Expect(
+                healed.status == BackendPackMetadataRefreshStatus::Refreshed && healed.verified_pack_count == 1 &&
+                    healed.unfetched_pack_count + healed.mismatched_pack_count == 0 && healed_readable &&
+                    record("opencl-v1") && record("opencl-v1")->manifest &&
+                    record("mujoco-v1")->catalog_entry.support_status == BackendPackSupportStatus::Revoked,
+                "a later refresh must heal a " + label + " entry (" + healed.message + ")");
+
+            // An unverified catalog still publishes nothing
+            const auto forged = fixture.root / "forged-catalog.json";
+            Json forged_document = Json::parse(Fixture::ReadBytes(catalog));
+            forged_document["signed"]["catalog_id"] = "forged-2026-08";
+            std::ofstream(forged, std::ios::binary | std::ios::trunc) << forged_document.dump();
+            source.Set(catalog_url, forged);
+            const auto refused = RefreshBackendPackMetadata(request, fixture.Verifier(), source);
+            snapshot = {};
+            const bool kept = reader.ReadCatalogSnapshot(request.current_utc, snapshot, read_error);
+            failures += !Expect(
+                refused.status == BackendPackMetadataRefreshStatus::VerificationFailure && kept &&
+                    record("mujoco-v1")->catalog_entry.support_status == BackendPackSupportStatus::Revoked,
+                "a catalog whose signature does not hold must publish nothing");
+        }
     }
     {
         // A catalog that lists a plugin pack refreshes online, as it reads
@@ -762,8 +878,8 @@ int main() {
             "an entry this client cannot read must be refused alone, unpublished (" +
                 std::string(BackendPackMetadataRefreshStatusName(partly.status)) + ": " + partly.message + ")");
 
-        // Bytes other than the ones the signed catalog names are a wrong
-        // download: the whole refresh fails and the published catalog stays.
+        // Bytes other than the ones the signed catalog names are never
+        // published: the plugin stays offered from the manifest verified before.
         const auto tampered = fixture.root / "tampered-plugin-manifest.json";
         std::ofstream(tampered, std::ios::binary | std::ios::trunc)
             << Fixture::ReadBytes(plugin_manifest) << " ";
@@ -773,11 +889,13 @@ int main() {
         read_error.clear();
         const bool kept = reader.ReadCatalogSnapshot(request.current_utc, snapshot, read_error);
         failures += !Expect(
-            rejected.status == BackendPackMetadataRefreshStatus::VerificationFailure &&
-                rejected.message.find("mujoco-v1") != std::string::npos && kept &&
-                snapshot.records.size() == 3 && record("mujoco-v1")->manifest,
-            "a plugin manifest that is not the catalog's must fail the refresh and keep the previous "
-            "catalog (" + rejected.message + ")");
+            rejected.status == BackendPackMetadataRefreshStatus::Refreshed &&
+                rejected.mismatched_pack_count == 1 && rejected.refused_pack_count == 1 &&
+                rejected.verified_pack_count == 1 && kept &&
+                snapshot.records.size() == 3 && record("mujoco-v1")->manifest &&
+                Fixture::ReadBytes(BackendPackCachedManifestPath(destination, "mujoco-v1")) ==
+                    Fixture::ReadBytes(plugin_manifest),
+            "a plugin manifest that is not the catalog's must not be published (" + rejected.message + ")");
     }
     {
         Fixture fixture;

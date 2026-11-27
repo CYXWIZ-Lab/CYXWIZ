@@ -186,6 +186,8 @@ BackendPackMetadataRefreshResult RefreshBackendPackMetadata(
     snapshot.records.reserve(snapshot.catalog.packs.size());
     std::size_t verified_pack_count = 0;
     std::size_t refused_pack_count = 0;
+    std::size_t mismatched_pack_count = 0;
+    std::size_t unfetched_pack_count = 0;
     for (const auto& entry : snapshot.catalog.packs) {
         VerifiedBackendPackCatalogRecord record;
         record.catalog_entry = entry;
@@ -198,27 +200,40 @@ BackendPackMetadataRefreshResult RefreshBackendPackMetadata(
             snapshot.records.push_back(std::move(record));
             continue;
         }
+        // From here the catalog is verified: its signature, its expiry and
+        // its policy hold whatever happens to one manifest. A manifest is
+        // served unsigned-for by the mirror, so whoever controls the mirror
+        // can withhold or damage one without any key. If that failed the
+        // refresh, they could keep a newly signed catalog, revocations
+        // included, from every client until the old one expires. So a
+        // manifest that cannot be fetched, or is not the bytes the catalog
+        // names, costs only its own entry: it is recorded with its reason,
+        // its manifest is not published, and the catalog is. A later refresh
+        // heals it. Nothing unverified is offered: the catalog read verifies
+        // every cached manifest against this catalog's SHA-256 again.
+        std::error_code remove_error;
         if (!source.Fetch(
                 entry.manifest_url, record.manifest_path,
                 kMaximumBackendPackMetadataBytes, error)) {
-            return Finish(
-                BackendPackMetadataRefreshStatus::SourceFailure,
-                "Cannot download signed manifest for " + entry.pack_id +
-                    ": " + error,
-                snapshot.catalog.catalog_id, verified_pack_count);
+            record.manifest_error =
+                "The signed manifest could not be downloaded: " + error;
+            error.clear();
+            std::filesystem::remove(record.manifest_path, remove_error);
+            ++unfetched_pack_count;
+            snapshot.records.push_back(std::move(record));
+            continue;
         }
-        // Not the bytes the signed catalog names: the download is wrong
-        // (damaged or replaced on the way). Nothing is published and the
-        // previous verified catalog stays; a later refresh can succeed.
         std::string digest;
         if (!Sha256File(record.manifest_path, digest, error) ||
             digest != entry.manifest_sha256) {
-            return Finish(
-                BackendPackMetadataRefreshStatus::VerificationFailure,
-                "Downloaded manifest for " + entry.pack_id +
-                    " was not trusted: its SHA-256 differs from the signed "
-                    "catalog",
-                snapshot.catalog.catalog_id, verified_pack_count);
+            record.manifest_error =
+                "The downloaded manifest is not the one the signed catalog "
+                "names (its SHA-256 differs)";
+            error.clear();
+            std::filesystem::remove(record.manifest_path, remove_error);
+            ++mismatched_pack_count;
+            snapshot.records.push_back(std::move(record));
+            continue;
         }
         // The catalog's own manifest, as each kind of pack: a backend pack,
         // the base, a plugin pack (the local catalog read tries the same).
@@ -243,14 +258,11 @@ BackendPackMetadataRefreshResult RefreshBackendPackMetadata(
         } else {
             // The signed catalog names exactly these bytes and this client
             // refuses them (a format it does not know, a key it does not
-            // trust): only this entry is refused. Its manifest is not
-            // published, so it cannot be delivered; the rest of the signed
-            // catalog, with its blocks and revocations, still reaches the
-            // client. Refusing the whole catalog would let one entry withhold
-            // them from every client that cannot read it.
+            // trust): likewise only this entry is lost.
             record.manifest_error = error + "; base manifest: " + base_error +
                                     "; plugin manifest: " + plugin_error;
             error.clear();
+            std::filesystem::remove(record.manifest_path, remove_error);
             ++refused_pack_count;
         }
         snapshot.records.push_back(std::move(record));
@@ -264,19 +276,32 @@ BackendPackMetadataRefreshResult RefreshBackendPackMetadata(
             "Cannot publish the verified catalog: " + error,
             snapshot.catalog.catalog_id, verified_pack_count);
     }
+    // How many entries are not offered, and why
+    std::string undelivered;
+    const auto count = [&](std::size_t entries, const char* reason) {
+        if (entries == 0) return;
+        undelivered += (undelivered.empty() ? "" : ", ") +
+                       std::to_string(entries) + " " + reason;
+    };
+    count(unfetched_pack_count, "could not be downloaded");
+    count(mismatched_pack_count, "did not match the signed catalog");
+    count(refused_pack_count, "cannot be read by this version");
+    const std::size_t undelivered_count =
+        unfetched_pack_count + mismatched_pack_count + refused_pack_count;
     auto refreshed = Finish(
         BackendPackMetadataRefreshStatus::Refreshed,
         "Verified signed catalog " + snapshot.catalog.catalog_id +
             " is current" +
-            (refused_pack_count == 0
+            (undelivered_count == 0
                  ? std::string{}
-                 : "; " + std::to_string(refused_pack_count) +
-                       (refused_pack_count == 1 ? " entry is" : " entries are") +
-                       " not offered: this version cannot read " +
-                       (refused_pack_count == 1 ? "its" : "their") +
-                       " signed details"),
+                 : "; " + std::to_string(undelivered_count) +
+                       (undelivered_count == 1 ? " entry is" : " entries are") +
+                       " not offered (" + undelivered +
+                       "). Refresh again later"),
         snapshot.catalog.catalog_id, verified_pack_count);
     refreshed.refused_pack_count = refused_pack_count;
+    refreshed.mismatched_pack_count = mismatched_pack_count;
+    refreshed.unfetched_pack_count = unfetched_pack_count;
     return refreshed;
 }
 

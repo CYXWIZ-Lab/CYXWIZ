@@ -294,20 +294,38 @@ bool IsBackendPackRecommended(const BackendPackManagerRecord &record) {
 
 AddOnWords AddOnWordsFor(const std::vector<BackendPackManagerRecord> &records,
                          const std::string &plugin_id) {
+  // Whether `left` is the better source of words than `right`. Never by the
+  // order of the list: the newest signed generation time first (UTC times of
+  // one format compare as text). Equal times are usual (a release build signs
+  // all its packs with one), so then a pack this Engine release can take
+  // before one for another release, the higher package version, and last the
+  // pack id.
+  const auto usable = [](const BackendPackManagerRecord &record) {
+    return !record.installed_for_other_base &&
+           (!record.compatibility.has_value() ||
+            record.compatibility->eligibility !=
+                runtime::BackendPackEligibility::Incompatible);
+  };
+  const auto better = [&](const BackendPackManagerRecord &left,
+                          const BackendPackManagerRecord &right) {
+    if (left.plugin_words_utc != right.plugin_words_utc)
+      return left.plugin_words_utc > right.plugin_words_utc;
+    if (usable(left) != usable(right))
+      return usable(left);
+    const auto version = runtime::CompareBackendPackVersions(
+        left.package_version, right.package_version);
+    if (version.has_value() && *version != 0)
+      return *version > 0;
+    return left.pack_id > right.pack_id;
+  };
   const BackendPackManagerRecord *newest = nullptr;
   for (const auto &record : records) {
     if (!IsPluginRecord(record) || record.plugin_id != plugin_id ||
         record.plugin_name.empty()) {
       continue;
     }
-    // Signed UTC times of one format compare as text. On a tie a pack for
-    // this CPU Engine wins over one left from another, then the first listed.
-    if (newest == nullptr ||
-        record.plugin_words_utc > newest->plugin_words_utc ||
-        (record.plugin_words_utc == newest->plugin_words_utc &&
-         newest->installed_for_other_base && !record.installed_for_other_base)) {
+    if (newest == nullptr || better(record, *newest))
       newest = &record;
-    }
   }
   return {AddOnTitle(plugin_id, newest ? newest->plugin_name : std::string{}),
           AddOnDescription(plugin_id, newest ? newest->plugin_description

@@ -183,8 +183,10 @@ FindBaseUpdate(const std::vector<BackendPackManagerRecord> &records,
 // plans, in the uninstall confirmation. One choice per plugin from all its
 // records, so two screens never name it differently: the signed name and
 // description of its newest pack that carries a name (by the manifest's signed
-// generation time; a pack for this CPU Engine before one left from another),
-// then this release's wording for an add-on it expects, then the plugin id.
+// generation time; on equal times a pack this Engine release can take before
+// one for another release, then the higher package version, then the pack
+// id; never the order of the list), then this release's wording for an add-on
+// it expects, then the plugin id.
 struct AddOnWords {
   std::string title;
   std::string description;

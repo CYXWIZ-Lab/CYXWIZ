@@ -426,12 +426,29 @@ first and the catalog last under the selected runtime root, never beside the
 installer executable; any source, verification, or publication failure leaves
 the previous verified catalog authoritative. The refresh reads a manifest as
 each kind of pack (backend pack, base, plugin pack), as the local catalog read
-does. A downloaded manifest whose SHA-256 differs from the one the signed
-catalog names is a wrong download and fails the whole refresh. A manifest that
-is the one the catalog names but that this client refuses (a format it does
-not know, a signing key it does not trust) refuses only its entry: that
-manifest is not published, the entry is listed without delivery, and the rest
-of the signed catalog, with its blocks and revocations, is published. The catalog endpoint must be
+does.
+
+Once the catalog's signature, expiry and policy are verified, one manifest
+cannot stop it. Manifests are fetched from the mirror, so whoever controls the
+mirror could otherwise, without any key, withhold or damage a single manifest
+and keep a newly signed catalog, its blocks and revocations included, from
+every client until the old catalog expires. Each of these therefore costs only
+its own entry:
+
+- the manifest cannot be downloaded;
+- the downloaded manifest's SHA-256 differs from the one the signed catalog
+  names;
+- the manifest is the one the catalog names, but this client refuses it (a
+  format it does not know, a signing key it does not trust).
+
+That entry is listed with its reason and without delivery, its manifest is not
+published, and the verified catalog is published with the other entries. The
+refresh reports how many entries were not delivered for each reason, and a
+later refresh heals them. Nothing unverified is offered: a catalog that does
+not verify publishes nothing, and the catalog read verifies every cached
+manifest against the current catalog's SHA-256 again, so a manifest cached
+from an earlier catalog is offered only if the current catalog still names
+exactly those bytes. The catalog endpoint must be
 direct HTTPS or an exact immutable canonical GitHub Release asset URL accepted
 by the one-hop policy. Production builds configure it with
 `CYXWIZ_INSTALLER_CATALOG_URL`; local integration runs may override it with
@@ -490,7 +507,10 @@ words without the Engine knowing it. Each is optional on its own (a
 then called by the wording the release has for an add-on it expects, else by
 its plugin ID. Every screen names an add-on by the same words: those of the
 plugin's newest pack that carries a name (by the signed `generated_utc`), from
-the catalog's packs and the installed one together.
+the catalog's packs and the installed one together. Equal times are usual; the
+choice is then a pack this Engine release can take before one for another
+release, the higher `package_version`, and last the pack ID, never the order
+of a list.
 
 When present, each is well-formed UTF-8 of at most 128 bytes for the name and
 512 for the description, and not blank (something other than spaces). It has
@@ -498,7 +518,12 @@ no control character (U+0000-U+001F, U+007F, U+0080-U+009F), no format
 character (Unicode category Cf: soft hyphen, zero-width characters, direction
 marks, embeddings, overrides and isolates, tags) and no line or paragraph
 separator: such characters do not show and can make one name read as another.
-A lone surrogate is not text. Anything else fails closed, in packaging and in
+A lone surrogate is not text. The zero-width non-joiner and joiner (U+200C,
+U+200D) are format characters and are refused for now, so some Persian, Indic
+and Sinhala names, and emoji joined into one sign, cannot be written as a
+plugin name yet. A later change may allow them where the IDNA contextual
+rules do (RFC 5892, Appendix A.1 and A.2), in both lists together and with
+cases for both suites. Anything else fails closed, in packaging and in
 the verifier, which apply one fixed list of code points
 (`display_text` in `redist/scripts/backend_pack_contract.py`,
 `IsPluginDisplayText` in the bootstrapper) and run the same cases

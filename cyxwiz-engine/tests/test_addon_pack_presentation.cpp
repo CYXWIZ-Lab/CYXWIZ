@@ -562,6 +562,44 @@ void TestAddOnWordsComeFromThePack() {
               fluid_card(InstallerCards(two_name_records, {})).title == "Fluid Lab" &&
               cyxwiz::BuildPackRemovalWording(two_name_records, kFluidPack).subject == "Add-on: Fluid Lab",
           "A renamed add-on shows its newest name");
+    // Equal generation times are usual (a release build signs its packs with
+    // one): the choice still never follows the order of the list.
+    const auto tied = [&](const char* pack_id, const char* name, const char* version) {
+        cyxwiz::BackendPackManagerRecord record;
+        record.pack_kind = cyxwiz::BackendPackRecordKind::Plugin;
+        record.plugin_id = kFluidPlugin;
+        record.pack_id = pack_id;
+        record.plugin_name = name;
+        record.package_version = version;
+        record.plugin_words_utc = "2026-08-20T00:00:00Z";
+        record.compatibility.emplace();
+        record.compatibility->eligibility = cyxwiz::runtime::BackendPackEligibility::Compatible;
+        return record;
+    };
+    const auto title_both_orders = [&](const cyxwiz::BackendPackManagerRecord& left,
+                                       const cyxwiz::BackendPackManagerRecord& right) {
+        const auto forward = cyxwiz::AddOnWordsFor({left, right}, kFluidPlugin).title;
+        const auto backward = cyxwiz::AddOnWordsFor({right, left}, kFluidPlugin).title;
+        Check(forward == backward, "The order of the list decided the name: " + forward + " / " + backward);
+        return forward;
+    };
+    Check(title_both_orders(tied("fluid-a", "Version two", "2"), tied("fluid-b", "Version ten", "10")) ==
+              "Version ten",
+          "On equal times the higher package version names the add-on (10 over 2, as numbers)");
+    Check(title_both_orders(tied("fluid-a", "Pack a", "3"), tied("fluid-b", "Pack b", "3")) == "Pack b",
+          "On equal times and versions the pack id decides");
+    auto other_release = tied("fluid-z", "For another release", "9");
+    other_release.compatibility->eligibility = cyxwiz::runtime::BackendPackEligibility::Incompatible;
+    auto left_behind = tied("fluid-y", "Left from another Engine", "9");
+    left_behind.installed_for_other_base = true;
+    Check(title_both_orders(tied("fluid-a", "For this release", "1"), other_release) == "For this release" &&
+              title_both_orders(tied("fluid-a", "For this release", "1"), left_behind) == "For this release",
+          "On equal times a pack this Engine release can take names the add-on, whatever the versions");
+    auto newer_other = other_release;
+    newer_other.plugin_words_utc = "2026-09-01T00:00:00Z";
+    Check(title_both_orders(tied("fluid-a", "For this release", "1"), newer_other) == "For another release",
+          "A newer signed pack still names the add-on (the pack a CPU Engine update installs)");
+
     Check(cyxwiz::AddOnWordsFor(mixed_records, "org.example.none").title == "org.example.none" &&
               cyxwiz::AddOnWordsFor({}, kMuJoCoPlugin).title == "Simulation (MuJoCo)",
           "No named pack: this release's wording, else the plugin id");
