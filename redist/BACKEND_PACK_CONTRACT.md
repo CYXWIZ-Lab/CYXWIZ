@@ -424,7 +424,14 @@ manifest digest, manifest signature, client version, platform, and
 architecture before publication. Verified manifests are atomically published
 first and the catalog last under the selected runtime root, never beside the
 installer executable; any source, verification, or publication failure leaves
-the previous verified catalog authoritative. The catalog endpoint must be
+the previous verified catalog authoritative. The refresh reads a manifest as
+each kind of pack (backend pack, base, plugin pack), as the local catalog read
+does. A downloaded manifest whose SHA-256 differs from the one the signed
+catalog names is a wrong download and fails the whole refresh. A manifest that
+is the one the catalog names but that this client refuses (a format it does
+not know, a signing key it does not trust) refuses only its entry: that
+manifest is not published, the entry is listed without delivery, and the rest
+of the signed catalog, with its blocks and revocations, is published. The catalog endpoint must be
 direct HTTPS or an exact immutable canonical GitHub Release asset URL accepted
 by the one-hop policy. Production builds configure it with
 `CYXWIZ_INSTALLER_CATALOG_URL`; local integration runs may override it with

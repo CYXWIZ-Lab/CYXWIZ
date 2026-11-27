@@ -443,6 +443,45 @@ public:
                                          "catalog-2026", catalog_key_));
     }
 
+    static std::string ReadBytes(const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    }
+
+    // A signed catalog of these manifests (pack id, manifest file), each
+    // named by its SHA-256 and served from downloads.cyxwiz.com/<id>.json.
+    void WriteCatalogOf(
+        const std::filesystem::path& path,
+        const std::vector<std::pair<std::string, std::filesystem::path>>& packs) const {
+        Json entries = Json::array();
+        for (const auto& [pack_id, manifest] : packs) {
+            entries.push_back({{"pack_id", pack_id},
+                {"manifest_url", "https://downloads.cyxwiz.com/" + pack_id + ".json"},
+                {"manifest_sha256", Hash(ReadBytes(manifest))},
+                {"signing_key_id", "pack-2026"},
+                {"support_status", "supported"}});
+        }
+        Json catalog = {
+            {"catalog_id", "production-2026-08"},
+            {"generated_utc", "2026-08-13T20:00:00Z"},
+            {"expires_utc", "2026-09-13T20:00:00Z"},
+            {"minimum_client_version", "0.2.0"},
+            {"packs", std::move(entries)}};
+        WriteJson(path, Envelope("cyxwiz-backend-pack-catalog", std::move(catalog),
+                                 "catalog-2026", catalog_key_));
+    }
+
+    // The manifest `source` as another pack, validly signed in an envelope
+    // schema this client does not know (a later release's format).
+    void WriteNewerSchemaManifest(
+        const std::filesystem::path& source, const std::filesystem::path& destination,
+        const std::string& pack_id) const {
+        Json body = Json::parse(ReadBytes(source)).at("signed");
+        body["pack_id"] = pack_id;
+        WriteJson(destination, Envelope("cyxwiz-backend-pack-manifest", std::move(body),
+                                        "pack-2026", pack_key_, 3));
+    }
+
     BackendPackMetadataVerifier Verifier() const {
         std::string error;
         auto trust = BackendPackTrustStore::Load(trust_path, error);
@@ -657,6 +696,88 @@ int main() {
                 snapshot.catalog.catalog_id == "production-2026-08" &&
                 snapshot.records.front().manifest.has_value(),
             "a corrupt remote manifest must leave the previous verified catalog readable");
+    }
+    {
+        // A catalog that lists a plugin pack refreshes online, as it reads
+        // locally: the refresh knows the three kinds of manifest.
+        Fixture fixture;
+        const auto opencl_manifest = fixture.manifest_path;
+        fixture.PreparePlugin();
+        const auto plugin_manifest = fixture.manifest_path;
+        const auto future_manifest = fixture.root / "future-manifest.json";
+        fixture.WriteNewerSchemaManifest(plugin_manifest, future_manifest, "future-v1");
+        const auto catalog = fixture.root / "mixed-catalog.json";
+        fixture.WriteCatalogOf(catalog, {{"opencl-v1", opencl_manifest}, {"mujoco-v1", plugin_manifest}});
+        constexpr const char* catalog_url = "https://downloads.cyxwiz.com/catalogs/current.json";
+        FixtureMetadataSource source;
+        source.Set(catalog_url, catalog);
+        source.Set("https://downloads.cyxwiz.com/opencl-v1.json", opencl_manifest);
+        source.Set("https://downloads.cyxwiz.com/mujoco-v1.json", plugin_manifest);
+        source.Set("https://downloads.cyxwiz.com/future-v1.json", future_manifest);
+        const auto destination = fixture.root / "refreshed-with-plugin";
+        BackendPackMetadataRefreshRequest request;
+        request.catalog_url = catalog_url;
+        request.trusted_keys_path = fixture.trust_path;
+        request.destination_root = destination;
+        request.current_utc = "2026-08-14T12:00:00Z";
+        const auto refreshed = RefreshBackendPackMetadata(request, fixture.Verifier(), source);
+        BackendPackLifecycleService reader(destination, fixture.Verifier());
+        VerifiedBackendPackCatalogSnapshot snapshot;
+        std::string read_error;
+        const bool readable = reader.ReadCatalogSnapshot(request.current_utc, snapshot, read_error);
+        const auto record = [&](const char* pack_id) -> const VerifiedBackendPackCatalogRecord* {
+            for (const auto& candidate : snapshot.records)
+                if (candidate.catalog_entry.pack_id == pack_id) return &candidate;
+            return nullptr;
+        };
+        failures += !Expect(
+            refreshed.status == BackendPackMetadataRefreshStatus::Refreshed &&
+                refreshed.verified_pack_count == 2 && refreshed.refused_pack_count == 0 && readable &&
+                snapshot.records.size() == 2 && record("opencl-v1") && record("opencl-v1")->manifest &&
+                record("mujoco-v1") && record("mujoco-v1")->manifest &&
+                record("mujoco-v1")->manifest->kind == BackendPackManifestKind::PluginPack &&
+                record("mujoco-v1")->manifest->plugin_name == "Simulation (MuJoCo)",
+            "a catalog that lists a plugin pack must refresh online (" +
+                std::string(BackendPackMetadataRefreshStatusName(refreshed.status)) + ": " +
+                refreshed.message + ")");
+
+        // An entry whose manifest is the one the signed catalog names, in a
+        // format this client does not know: only that entry is refused. The
+        // catalog and its other packs are published; the refused manifest is
+        // not, so the entry cannot be delivered.
+        fixture.WriteCatalogOf(catalog, {{"opencl-v1", opencl_manifest}, {"mujoco-v1", plugin_manifest},
+                                         {"future-v1", future_manifest}});
+        const auto partly = RefreshBackendPackMetadata(request, fixture.Verifier(), source);
+        snapshot = {};
+        read_error.clear();
+        const bool partly_readable = reader.ReadCatalogSnapshot(request.current_utc, snapshot, read_error);
+        failures += !Expect(
+            partly.status == BackendPackMetadataRefreshStatus::Refreshed &&
+                partly.verified_pack_count == 2 && partly.refused_pack_count == 1 &&
+                partly.message.find("1 entry is not offered") != std::string::npos && partly_readable &&
+                snapshot.records.size() == 3 && record("opencl-v1")->manifest &&
+                record("mujoco-v1")->manifest && record("future-v1") && !record("future-v1")->manifest &&
+                !record("future-v1")->manifest_error.empty() &&
+                !std::filesystem::exists(BackendPackCachedManifestPath(destination, "future-v1")),
+            "an entry this client cannot read must be refused alone, unpublished (" +
+                std::string(BackendPackMetadataRefreshStatusName(partly.status)) + ": " + partly.message + ")");
+
+        // Bytes other than the ones the signed catalog names are a wrong
+        // download: the whole refresh fails and the published catalog stays.
+        const auto tampered = fixture.root / "tampered-plugin-manifest.json";
+        std::ofstream(tampered, std::ios::binary | std::ios::trunc)
+            << Fixture::ReadBytes(plugin_manifest) << " ";
+        source.Set("https://downloads.cyxwiz.com/mujoco-v1.json", tampered);
+        const auto rejected = RefreshBackendPackMetadata(request, fixture.Verifier(), source);
+        snapshot = {};
+        read_error.clear();
+        const bool kept = reader.ReadCatalogSnapshot(request.current_utc, snapshot, read_error);
+        failures += !Expect(
+            rejected.status == BackendPackMetadataRefreshStatus::VerificationFailure &&
+                rejected.message.find("mujoco-v1") != std::string::npos && kept &&
+                snapshot.records.size() == 3 && record("mujoco-v1")->manifest,
+            "a plugin manifest that is not the catalog's must fail the refresh and keep the previous "
+            "catalog (" + rejected.message + ")");
     }
     {
         Fixture fixture;

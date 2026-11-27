@@ -49,6 +49,9 @@ struct BackendPackMetadataRefreshResult {
     std::string message;
     std::string catalog_id;
     std::size_t verified_pack_count = 0;
+    // Entries of a refreshed catalog whose manifest is the one the signed
+    // catalog names but which this client refuses: listed, never delivered.
+    std::size_t refused_pack_count = 0;
 };
 
 BackendPackMetadataRefreshResult RefreshBackendPackMetadata(

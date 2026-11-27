@@ -2,6 +2,7 @@
 
 #include "atomic_file_publisher.h"
 #include "backend_pack_acquisition.h"
+#include "backend_pack_hash.h"
 #include "backend_pack_lifecycle_service.h"
 #include "backend_pack_metadata_cache.h"
 #include "backend_pack_metadata_limits.h"
@@ -184,6 +185,7 @@ BackendPackMetadataRefreshResult RefreshBackendPackMetadata(
 
     snapshot.records.reserve(snapshot.catalog.packs.size());
     std::size_t verified_pack_count = 0;
+    std::size_t refused_pack_count = 0;
     for (const auto& entry : snapshot.catalog.packs) {
         VerifiedBackendPackCatalogRecord record;
         record.catalog_entry = entry;
@@ -205,26 +207,52 @@ BackendPackMetadataRefreshResult RefreshBackendPackMetadata(
                     ": " + error,
                 snapshot.catalog.catalog_id, verified_pack_count);
         }
+        // Not the bytes the signed catalog names: the download is wrong
+        // (damaged or replaced on the way). Nothing is published and the
+        // previous verified catalog stays; a later refresh can succeed.
+        std::string digest;
+        if (!Sha256File(record.manifest_path, digest, error) ||
+            digest != entry.manifest_sha256) {
+            return Finish(
+                BackendPackMetadataRefreshStatus::VerificationFailure,
+                "Downloaded manifest for " + entry.pack_id +
+                    " was not trusted: its SHA-256 differs from the signed "
+                    "catalog",
+                snapshot.catalog.catalog_id, verified_pack_count);
+        }
+        // The catalog's own manifest, as each kind of pack: a backend pack,
+        // the base, a plugin pack (the local catalog read tries the same).
         VerifiedBackendPackManifest manifest;
-        if (!verifier.VerifyManifest(
+        std::string base_error;
+        std::string plugin_error;
+        if (verifier.VerifyManifest(
                 record.manifest_path, entry, manifest, error,
                 BackendPackManifestKind::BackendPack,
+                BackendPackManifestTargetScope::CatalogDiscovery) ||
+            verifier.VerifyManifest(
+                record.manifest_path, entry, manifest, base_error,
+                BackendPackManifestKind::Base,
+                BackendPackManifestTargetScope::CatalogDiscovery) ||
+            verifier.VerifyManifest(
+                record.manifest_path, entry, manifest, plugin_error,
+                BackendPackManifestKind::PluginPack,
                 BackendPackManifestTargetScope::CatalogDiscovery)) {
-            std::string base_error;
-            if (!verifier.VerifyManifest(
-                    record.manifest_path, entry, manifest, base_error,
-                    BackendPackManifestKind::Base,
-                    BackendPackManifestTargetScope::CatalogDiscovery)) {
-                return Finish(
-                    BackendPackMetadataRefreshStatus::VerificationFailure,
-                    "Downloaded manifest for " + entry.pack_id +
-                        " was not trusted: " + error,
-                    snapshot.catalog.catalog_id, verified_pack_count);
-            }
             error.clear();
+            record.manifest = std::move(manifest);
+            ++verified_pack_count;
+        } else {
+            // The signed catalog names exactly these bytes and this client
+            // refuses them (a format it does not know, a key it does not
+            // trust): only this entry is refused. Its manifest is not
+            // published, so it cannot be delivered; the rest of the signed
+            // catalog, with its blocks and revocations, still reaches the
+            // client. Refusing the whole catalog would let one entry withhold
+            // them from every client that cannot read it.
+            record.manifest_error = error + "; base manifest: " + base_error +
+                                    "; plugin manifest: " + plugin_error;
+            error.clear();
+            ++refused_pack_count;
         }
-        record.manifest = std::move(manifest);
-        ++verified_pack_count;
         snapshot.records.push_back(std::move(record));
     }
 
@@ -236,11 +264,20 @@ BackendPackMetadataRefreshResult RefreshBackendPackMetadata(
             "Cannot publish the verified catalog: " + error,
             snapshot.catalog.catalog_id, verified_pack_count);
     }
-    return Finish(
+    auto refreshed = Finish(
         BackendPackMetadataRefreshStatus::Refreshed,
         "Verified signed catalog " + snapshot.catalog.catalog_id +
-            " is current",
+            " is current" +
+            (refused_pack_count == 0
+                 ? std::string{}
+                 : "; " + std::to_string(refused_pack_count) +
+                       (refused_pack_count == 1 ? " entry is" : " entries are") +
+                       " not offered: this version cannot read " +
+                       (refused_pack_count == 1 ? "its" : "their") +
+                       " signed details"),
         snapshot.catalog.catalog_id, verified_pack_count);
+    refreshed.refused_pack_count = refused_pack_count;
+    return refreshed;
 }
 
 const char* BackendPackMetadataRefreshStatusName(
