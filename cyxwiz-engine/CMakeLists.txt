@@ -8898,6 +8898,12 @@ target_include_directories(test_html_document_text_unavailable PRIVATE ${CMAKE_C
 target_link_libraries(test_html_document_text_unavailable PRIVATE Arrow::arrow_shared nlohmann_json::nlohmann_json)
 set_target_properties(test_html_document_text_unavailable PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# NodeType numbers are saved in every graph: the test fails to compile when one moves.
+add_executable(test_node_type_numbers tests/test_node_type_numbers.cpp)
+target_include_directories(test_node_type_numbers PRIVATE src)
+set_target_properties(test_node_type_numbers PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME test_node_type_numbers COMMAND test_node_type_numbers)
+
 # Visual subgraph persistence uses the actual node factory, without renderer startup.
 add_executable(test_subgraph_document tests/test_subgraph_document.cpp
     src/gui/subgraph_document.cpp src/gui/node_editor_nodes.cpp src/core/graph_node_factory.cpp
