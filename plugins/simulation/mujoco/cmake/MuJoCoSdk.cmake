@@ -1,17 +1,22 @@
 # The MuJoCo SDK for the plugin: the official release archive at one pinned
 # version, checked against its published SHA-256, so every machine builds
-# against the same MuJoCo the Python side pins (mujoco==CYXWIZ_MUJOCO_VERSION).
+# against the same MuJoCo. Every plugin in one Engine loads one mujoco library,
+# so all of them pin the same version. The Gymnasium parity test checks that its
+# Python has mujoco==CYXWIZ_MUJOCO_VERSION.
 #
 # Defines the imported target mujoco::mujoco and, for packaging:
 #   CYXWIZ_MUJOCO_RUNTIME   the shared library to ship next to the plugin
-#   CYXWIZ_MUJOCO_SDK_DIR   the extracted release (LICENSE, THIRD_PARTY_NOTICES.txt, model/)
-#   CYXWIZ_MUJOCO_NOTICES   its third-party notices file (named differently per platform)
+#   CYXWIZ_MUJOCO_SDK_DIR   the extracted release (LICENSE, the notices, model/)
+#   CYXWIZ_MUJOCO_NOTICES   its third-party notices file: THIRD_PARTY_NOTICES.txt
+#                           on Windows, THIRD_PARTY_NOTICES on Linux and macOS
 #
 # MUJOCO_DIR (cache path) points at an already extracted release of the same
 # version instead, for offline builds and for macOS (the macOS release is a
 # .dmg, which CMake cannot extract). The folder has include/mujoco/ and lib/
-# with the shared library; on macOS copy the headers and
-# libmujoco.<version>.dylib out of mujoco.framework into that layout.
+# with the shared library, and the release's LICENSE and THIRD_PARTY_NOTICES
+# (both ship with the plugin); on macOS copy the headers and
+# libmujoco.<version>.dylib out of mujoco.framework into that layout, and
+# LICENSE and THIRD_PARTY_NOTICES from the dmg's root.
 
 include_guard(GLOBAL)
 include(FetchContent)

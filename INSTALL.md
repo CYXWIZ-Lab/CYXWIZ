@@ -235,7 +235,7 @@ Pass options at configure time as `-DOPTION=ON` or `-DOPTION=OFF`.
 | `CYXWIZ_ENABLE_ASAN` | `OFF` | AddressSanitizer on supported toolchains |
 | `CYXWIZ_ENABLE_TRACY` | `OFF` | Optional Engine profiling when Tracy is installed |
 | `CYXWIZ_BUILD_ASSISTANT_PLUGIN` | `OFF` | Experimental assistant plugin |
-| `CYXWIZ_BUILD_MUJOCO_PLUGIN` | `OFF` | Optional MuJoCo plugin. The configure step downloads MuJoCo 4.0.1 (pinned, SHA-256 checked); offline, or on macOS, set `MUJOCO_DIR` to an extracted 4.0.1 release with `include/mujoco/` and `lib/` (`mujoco.dll`/`.lib`, `libmujoco.so.4.0.1` or `libmujoco.4.0.1.dylib`; on macOS copy them out of `mujoco.framework`) |
+| `CYXWIZ_BUILD_MUJOCO_PLUGIN` | `OFF` | Optional MuJoCo plugin. The configure step downloads MuJoCo 4.0.1 (pinned, SHA-256 checked); offline, or on macOS, set `MUJOCO_DIR` to an extracted 4.0.1 release with `include/mujoco/` and `lib/` (`mujoco.dll`/`.lib`, `libmujoco.so.4.0.1` or `libmujoco.4.0.1.dylib`; on macOS copy them out of `mujoco.framework`), plus the release's `LICENSE` and `THIRD_PARTY_NOTICES` (`.txt` on Windows; on macOS from the dmg's root): both ship with the plugin |
 
 An `ON` capability request does not prove that a dependency, backend, or device is used at run time; check CMake's configure summary and the Engine's verified device routes. List every cached CyxWiz option with:
 
