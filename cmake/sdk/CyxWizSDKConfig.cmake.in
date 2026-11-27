@@ -38,6 +38,11 @@ endif()
 # CyxWiz::PluginSDK; a panel built with any other ImGui is refused at load.
 #
 #   target_link_libraries(my_plugin PRIVATE CyxWiz::PluginSDK CyxWiz::PluginImGui)
+#
+# It defines CYXWIZ_PLUGIN_IMGUI, which makes the build fingerprint name the
+# ImGui. The plugin headers then include <imgui.h> first, so set
+# IMGUI_DEFINE_MATH_OPERATORS as a compile definition if you want ImGui's
+# vector operators, not with #define in a source file.
 if(NOT TARGET CyxWiz::PluginImGui)
     find_library(CYXWIZ_SDK_IMGUI_LIBRARY NAMES imgui
                  PATHS "${_cyxwiz_sdk_root}/lib" NO_DEFAULT_PATH)
@@ -46,6 +51,7 @@ if(NOT TARGET CyxWiz::PluginImGui)
         set_target_properties(CyxWiz::PluginImGui PROPERTIES
             IMPORTED_LOCATION "${CYXWIZ_SDK_IMGUI_LIBRARY}"
             INTERFACE_INCLUDE_DIRECTORIES "${_cyxwiz_sdk_root}/include/imgui"
+            INTERFACE_COMPILE_DEFINITIONS "CYXWIZ_PLUGIN_IMGUI=1"
             INTERFACE_COMPILE_FEATURES cxx_std_11)
     endif()
 endif()

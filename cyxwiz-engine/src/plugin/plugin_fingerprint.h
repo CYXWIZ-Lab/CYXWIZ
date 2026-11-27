@@ -28,10 +28,14 @@
 
 // A plugin with panels draws in the Engine's ImGui context
 // (IPlugin::SetImGuiContext), so it must be built with the Engine's ImGui:
-// the same version and the same configuration. The SDK ships that ImGui
-// (CyxWiz::PluginImGui, plugin-api-reference.md section 9). Where <imgui.h>
-// is on the include path the fingerprint names it ("imgui=" below).
-#if __has_include(<imgui.h>)
+// the same version and the same configuration. The SDK ships that ImGui as
+// CyxWiz::PluginImGui (plugin-api-reference.md, IPanelProvider), which
+// defines CYXWIZ_PLUGIN_IMGUI; the Engine's plugin host defines it too. Only
+// then does the fingerprint name the ImGui ("imgui=" below): a plugin without
+// panels is never judged by an ImGui that merely happens to be on its include
+// path. Define IMGUI_DEFINE_MATH_OPERATORS as a compile definition, not in a
+// source file, since this header includes <imgui.h> first.
+#if defined(CYXWIZ_PLUGIN_IMGUI)
 #include <imgui.h>
 #endif
 
@@ -85,10 +89,11 @@ inline std::string CurrentBuildFingerprint() {
     const std::string arrayfire = "none";  // a plugin that does not include the backend
 #endif
 
-#if defined(IMGUI_VERSION_NUM)
+#if defined(CYXWIZ_PLUGIN_IMGUI)
     // The version, docking, and the sizes of the structures a configuration
-    // change alters (imconfig.h: ImDrawIdx, ImTextureID, user fields), so a
-    // plugin built with another ImGui is refused instead of crashing as it draws.
+    // change alters (imconfig.h: ImDrawIdx, ImTextureID, ImWchar, user
+    // fields), so a plugin built with another ImGui is refused instead of
+    // crashing as it draws.
 #if defined(IMGUI_HAS_DOCK)
     const char* docking = "dock";
 #else
@@ -97,7 +102,7 @@ inline std::string CurrentBuildFingerprint() {
     const std::string imgui = std::to_string(IMGUI_VERSION_NUM) + "-" + docking +
                               "-io" + std::to_string(sizeof(ImGuiIO)) + "-style" + std::to_string(sizeof(ImGuiStyle)) +
                               "-vtx" + std::to_string(sizeof(ImDrawVert)) + "-idx" + std::to_string(sizeof(ImDrawIdx)) +
-                              "-tex" + std::to_string(sizeof(ImTextureID));
+                              "-tex" + std::to_string(sizeof(ImTextureID)) + "-wc" + std::to_string(sizeof(ImWchar));
 #else
     const std::string imgui = "none";  // a plugin that does not draw
 #endif

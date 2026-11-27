@@ -88,7 +88,7 @@ The SDK folder holds:
 | `template/` | My Nodes: a plugin with one trainable node, Bent Identity, that builds as delivered |
 | `examples/python-nodes/` | Python example nodes ([python-nodes.md](python-nodes.md)) |
 | `examples/plugins/data-formats/` | A data plugin: an ARFF format for Data Input and an analytic for Explore > Plugins, as source and ready to Install in `built/` ([data-plugin-guide.md](data-plugin-guide.md)) |
-| `LICENSE`, `NOTICE` | The Apache License 2.0, which covers every file of the SDK |
+| `LICENSE`, `NOTICE` | The Apache License 2.0, which covers every file of the SDK except Dear ImGui (MIT, `licenses/imgui-LICENSE.txt`) |
 
 Every header is listed in [sdk-contents.md](sdk-contents.md). The SDK has
 no ArrayFire, spdlog or JSON headers, and a trainable node needs none. For a

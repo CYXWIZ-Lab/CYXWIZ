@@ -155,6 +155,10 @@ target_link_libraries(cyxwiz-plugin-host PUBLIC
     nlohmann_json::nlohmann_json
     imgui::imgui
 )
+# The Engine's build fingerprint names its ImGui (plugin_fingerprint.h), so a
+# plugin with panels built with another ImGui is refused. Every target that
+# loads plugins links this library.
+target_compile_definitions(cyxwiz-plugin-host PUBLIC CYXWIZ_PLUGIN_IMGUI=1)
 set_target_properties(cyxwiz-plugin-host PROPERTIES
     CXX_STANDARD 20
     POSITION_INDEPENDENT_CODE ON

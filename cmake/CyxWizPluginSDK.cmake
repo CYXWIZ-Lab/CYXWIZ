@@ -43,6 +43,7 @@ target_link_libraries(cyxwiz-plugin-sdk-backend INTERFACE cyxwiz-plugin-sdk cyxw
 add_library(CyxWiz::PluginSDK ALIAS cyxwiz-plugin-sdk-backend)
 add_library(cyxwiz-plugin-imgui INTERFACE)
 target_link_libraries(cyxwiz-plugin-imgui INTERFACE imgui::imgui)
+target_compile_definitions(cyxwiz-plugin-imgui INTERFACE CYXWIZ_PLUGIN_IMGUI=1)
 add_library(CyxWiz::PluginImGui ALIAS cyxwiz-plugin-imgui)
 include("${CMAKE_SOURCE_DIR}/cmake/sdk/CyxWizPluginHelpers.cmake")
 
@@ -114,14 +115,26 @@ install(FILES "${CMAKE_SOURCE_DIR}/cmake/sdk/LICENSE" "${CMAKE_SOURCE_DIR}/cmake
 # panel draws in the Engine's ImGui context (IPlugin::SetImGuiContext), so a
 # plugin must use exactly this ImGui; the build fingerprint names its version
 # and configuration and the Engine refuses a plugin built with another one.
-# The library is the release one: plugins use the release C++ runtime in every
-# configuration (CyxWizPluginHelpers.cmake).
+# The library is always the release one, whatever --config installs:
+# plugins use the release C++ runtime in every configuration
+# (CyxWizPluginHelpers.cmake).
 get_target_property(_cyxwiz_imgui_includes imgui::imgui INTERFACE_INCLUDE_DIRECTORIES)
-find_file(_cyxwiz_imgui_header imgui.h PATHS ${_cyxwiz_imgui_includes} NO_DEFAULT_PATH NO_CACHE)
-if(NOT _cyxwiz_imgui_header)
+set(_cyxwiz_imgui_dir "")
+foreach(_dir ${_cyxwiz_imgui_includes})
+    if(NOT _cyxwiz_imgui_dir AND EXISTS "${_dir}/imgui.h")
+        set(_cyxwiz_imgui_dir "${_dir}")
+    endif()
+endforeach()
+if(NOT _cyxwiz_imgui_dir)
     message(FATAL_ERROR "The plugin SDK ships ImGui, but imgui.h was not found in ${_cyxwiz_imgui_includes}")
 endif()
-get_filename_component(_cyxwiz_imgui_dir "${_cyxwiz_imgui_header}" DIRECTORY)
+get_target_property(_cyxwiz_imgui_release imgui::imgui IMPORTED_LOCATION_RELEASE)
+if(NOT _cyxwiz_imgui_release)
+    get_target_property(_cyxwiz_imgui_release imgui::imgui IMPORTED_LOCATION)
+endif()
+if(NOT _cyxwiz_imgui_release OR NOT EXISTS "${_cyxwiz_imgui_release}")
+    message(FATAL_ERROR "The plugin SDK ships ImGui, but its release library was not found (${_cyxwiz_imgui_release})")
+endif()
 set(_cyxwiz_imgui_sdk_headers)
 foreach(_header imgui.h imconfig.h imgui_internal.h imstb_rectpack.h imstb_textedit.h imstb_truetype.h)
     if(EXISTS "${_cyxwiz_imgui_dir}/${_header}")
@@ -130,15 +143,16 @@ foreach(_header imgui.h imconfig.h imgui_internal.h imstb_rectpack.h imstb_texte
 endforeach()
 install(FILES ${_cyxwiz_imgui_sdk_headers}
         DESTINATION include/imgui COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
-install(FILES "$<TARGET_FILE:imgui::imgui>"
+install(FILES "${_cyxwiz_imgui_release}"
         DESTINATION lib COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
-# Its MIT licence, beside the SDK's own.
-find_file(_cyxwiz_imgui_copyright copyright
-          PATHS "${_cyxwiz_imgui_dir}/../share/imgui" NO_DEFAULT_PATH NO_CACHE)
-if(_cyxwiz_imgui_copyright)
-    install(FILES "${_cyxwiz_imgui_copyright}" DESTINATION licenses RENAME imgui-LICENSE.txt
-            COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+# Its MIT licence, beside the SDK's own (NOTICE names it). Required: the SDK
+# never ships ImGui without it.
+set(_cyxwiz_imgui_copyright "${_cyxwiz_imgui_dir}/../share/imgui/copyright")
+if(NOT EXISTS "${_cyxwiz_imgui_copyright}")
+    message(FATAL_ERROR "The plugin SDK ships ImGui, but its licence was not found at ${_cyxwiz_imgui_copyright}")
 endif()
+install(FILES "${_cyxwiz_imgui_copyright}" DESTINATION licenses RENAME imgui-LICENSE.txt
+        COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
 install(FILES
             "${CMAKE_SOURCE_DIR}/plugins/template/CMakeLists.txt"
             "${CMAKE_SOURCE_DIR}/plugins/template/plugin.json"

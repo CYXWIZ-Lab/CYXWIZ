@@ -8,7 +8,7 @@ add_library(mlflow_logger SHARED
 )
 
 # The plugin SDK (headers); this plugin draws, logs and reads JSON, so ImGui, spdlog and nlohmann_json too
-target_link_libraries(mlflow_logger PRIVATE cyxwiz-plugin-sdk imgui::imgui spdlog::spdlog nlohmann_json::nlohmann_json)
+target_link_libraries(mlflow_logger PRIVATE cyxwiz-plugin-sdk CyxWiz::PluginImGui spdlog::spdlog nlohmann_json::nlohmann_json)
 
 # Output to bin/ subdirectory
 set_target_properties(mlflow_logger PROPERTIES

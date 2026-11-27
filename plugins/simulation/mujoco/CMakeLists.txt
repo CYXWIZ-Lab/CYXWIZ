@@ -56,7 +56,7 @@ target_include_directories(mujoco_plugin PRIVATE
 target_link_libraries(mujoco_plugin PRIVATE
     cyxwiz-plugin-sdk
     spdlog::spdlog
-    imgui::imgui
+    CyxWiz::PluginImGui
     nlohmann_json::nlohmann_json
     mujoco::mujoco
     glad::glad

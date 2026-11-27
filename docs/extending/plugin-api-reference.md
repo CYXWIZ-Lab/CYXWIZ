@@ -342,13 +342,25 @@ that ImGui: link `CyxWiz::PluginImGui` beside `CyxWiz::PluginSDK`.
 target_link_libraries(panel_example PRIVATE CyxWiz::PluginSDK CyxWiz::PluginImGui)
 ```
 
-The build fingerprint names the ImGui a plugin was built with (`imgui=`: its
+Linking `CyxWiz::PluginImGui` defines `CYXWIZ_PLUGIN_IMGUI`, and the build
+fingerprint then names the ImGui the plugin was built with (`imgui=`: its
 version, docking, and the sizes of the structures a configuration change
 alters). The Engine refuses a plugin built with another ImGui, with both
 values in the message, instead of loading it and crashing as it draws. An
 Engine release that moves to another ImGui makes plugins with panels rebuild
-against its SDK; its release notes say so. A plugin with no panels has no
-`imgui` value and is not affected.
+against its SDK; its release notes say so. A plugin that does not link
+`CyxWiz::PluginImGui` has no `imgui` value and is not affected, whatever
+ImGui is on its include path.
+
+With `CYXWIZ_PLUGIN_IMGUI` defined, the plugin headers include `<imgui.h>`
+before your own includes. To use ImGui's vector operators
+(`imgui_internal.h`), set `IMGUI_DEFINE_MATH_OPERATORS` as a compile
+definition, not with `#define` in a source file:
+
+<!-- not compiled: one line of a plugin's own CMakeLists -->
+```cmake
+target_compile_definitions(my_plugin PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
+```
 
 Rules for drawing:
 

@@ -1,7 +1,7 @@
 // cyxwiz-plugin-check: load C++ plugin folders the way the Engine does and
 // check their trainable nodes (TOFIX125 P5 step 5.3, Part D8).
 //
-//   cyxwiz-plugin-check [--open <file>]... <plugin folder> [<plugin folder> ...]
+//   cyxwiz-plugin-check [--scratch] [--open <file>]... <plugin folder> [<plugin folder> ...]
 //
 // For each folder: read plugin.json, load the library (the build fingerprint
 // is checked before the plugin is created; the library's static
@@ -36,6 +36,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -427,7 +428,22 @@ int main(int argc, char** argv) {
     fs::path scratch_root;
     if (scratch) {
         std::error_code ec;
-        scratch_root = fs::temp_directory_path(ec) / ("cyxwiz-plugin-check-" + std::to_string(CurrentProcessId()));
+        const fs::path temp = fs::temp_directory_path(ec);
+        if (ec || temp.empty()) {
+            std::cout << "FAIL --scratch: no temporary folder (" << ec.message() << ")\n";
+            return EXIT_FAILURE;
+        }
+        // Profiles an earlier run could not remove (a library still mapped
+        // when it ended) go once they are a day old.
+        const auto day_ago = fs::file_time_type::clock::now() - std::chrono::hours(24);
+        for (const auto& entry : fs::directory_iterator(temp, ec)) {
+            std::error_code item_ec;
+            if (entry.path().filename().string().rfind("cyxwiz-plugin-check-", 0) == 0 &&
+                entry.is_directory(item_ec) && entry.last_write_time(item_ec) < day_ago && !item_ec) {
+                fs::remove_all(entry.path(), item_ec);
+            }
+        }
+        scratch_root = temp / ("cyxwiz-plugin-check-" + std::to_string(CurrentProcessId()));
         fs::create_directories(scratch_root, ec);
         scratch_profile.emplace(scratch_root);
         std::cout << "user profile for this run: " << scratch_root.string() << "\n";
@@ -438,7 +454,7 @@ int main(int argc, char** argv) {
     if (scratch) {
         scratch_profile.reset();
         std::error_code ec;
-        fs::remove_all(scratch_root, ec);  // a copy still held is left for the next run's cleanup
+        fs::remove_all(scratch_root, ec);  // what cannot go now goes with a later run's day-old cleanup
     }
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

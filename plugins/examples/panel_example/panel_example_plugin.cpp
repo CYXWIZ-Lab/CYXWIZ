@@ -119,17 +119,23 @@ private:
     void Reset() {
         position_m_ = 1.0;
         velocity_m_per_s_ = 0.0;
+        carry_s_ = 0.0;
         trace_.assign(240, 0.0f);
     }
 
-    // Semi-implicit Euler at a fixed 1 ms step, as many steps as the frame took.
+    // Semi-implicit Euler. The step is 1 ms, or smaller when the settings need it to stay stable
+    // (a tenth of m/c and of 1/omega), and the time a frame leaves over carries to the next frame,
+    // so the spring keeps real time at any frame rate.
     void Step(float frame_seconds) {
-        constexpr double kStep = 0.001;
-        const int steps = static_cast<int>(std::lround(std::fmin(frame_seconds, 0.1) / kStep));
-        for (int i = 0; i < steps; ++i) {
+        double step = 0.001;
+        if (damping_n_s_per_m_ > 0.0) step = std::fmin(step, 0.1 * mass_kg_ / damping_n_s_per_m_);
+        if (stiffness_n_per_m_ > 0.0) step = std::fmin(step, 0.1 * std::sqrt(mass_kg_ / stiffness_n_per_m_));
+        carry_s_ += std::fmin(static_cast<double>(frame_seconds), 0.1);  // at most 0.1 s after a stall
+        while (carry_s_ >= step) {
             const double accel = (-stiffness_n_per_m_ * position_m_ - damping_n_s_per_m_ * velocity_m_per_s_) / mass_kg_;
-            velocity_m_per_s_ += accel * kStep;
-            position_m_ += velocity_m_per_s_ * kStep;
+            velocity_m_per_s_ += accel * step;
+            position_m_ += velocity_m_per_s_ * step;
+            carry_s_ -= step;
         }
         trace_.erase(trace_.begin());
         trace_.push_back(static_cast<float>(position_m_));
@@ -143,6 +149,7 @@ private:
     double damping_n_s_per_m_ = 0.8;
     double position_m_ = 1.0;
     double velocity_m_per_s_ = 0.0;
+    double carry_s_ = 0.0;  // simulated time owed from earlier frames
     bool running_ = false;
     std::vector<float> trace_ = std::vector<float>(240, 0.0f);
 };
