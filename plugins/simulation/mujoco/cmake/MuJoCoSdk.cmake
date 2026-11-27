@@ -15,7 +15,7 @@
 include_guard(GLOBAL)
 include(FetchContent)
 
-set(CYXWIZ_MUJOCO_VERSION "3.17.0")
+set(CYXWIZ_MUJOCO_VERSION "4.0.1")
 set(MUJOCO_DIR "" CACHE PATH "Extracted MuJoCo ${CYXWIZ_MUJOCO_VERSION} release to use instead of downloading it")
 
 if(MUJOCO_DIR)
@@ -24,13 +24,13 @@ else()
     set(_mujoco_release "https://github.com/google-deepmind/mujoco/releases/download/${CYXWIZ_MUJOCO_VERSION}")
     if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
         set(_mujoco_archive "mujoco-${CYXWIZ_MUJOCO_VERSION}-windows-x86_64.zip")
-        set(_mujoco_sha256 "84d92054e767d0b24b7a8a5c7f3e34e883eb8e4bf7e8eefd7604dd09d999a517")
+        set(_mujoco_sha256 "abe3104a2ae0ca18a4b50fa1e79aaf57699496c7ee78ec7214104a0d1593fc75")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
         set(_mujoco_archive "mujoco-${CYXWIZ_MUJOCO_VERSION}-linux-x86_64.tar.gz")
-        set(_mujoco_sha256 "b3246fc698ca27e05ce36047fe2b6866fe23c9e95a26b3a84dd48f011b85e3e4")
+        set(_mujoco_sha256 "8df1308b2900a4ed6c18717ebbc9d66d53ab3fe7a4da860a7d5b21f94607299d")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
         set(_mujoco_archive "mujoco-${CYXWIZ_MUJOCO_VERSION}-linux-aarch64.tar.gz")
-        set(_mujoco_sha256 "55467a37b74e7d943899768aee820e6754a66811ae5ffa17d2768f0c40fc983a")
+        set(_mujoco_sha256 "e16dc0ed24d31279bce674bd03b9f8ef75f209d1189befe67b7c3b366978a6b3")
     else()
         message(FATAL_ERROR
             "No MuJoCo ${CYXWIZ_MUJOCO_VERSION} download for ${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_PROCESSOR}.\n"

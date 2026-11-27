@@ -99,7 +99,7 @@ def pack_manifest(kind: str = "backend_pack", backend: str = "opencl") -> dict:
 
 
 def plugin_manifest() -> dict:
-    pack_id = "cyxwiz-plugin-mujoco-3.17.0-1-win64"
+    pack_id = "cyxwiz-plugin-mujoco-4.0.1-1-win64"
     return {
         "schema_version": 2,
         "kind": "cyxwiz-backend-pack-manifest",
@@ -374,7 +374,7 @@ class BackendPackContractTests(unittest.TestCase):
             "plugins": [
                 {
                     "plugin_id": "com.cyxwiz.simulation.mujoco",
-                    "pack_id": "cyxwiz-plugin-mujoco-3.17.0-1-win64",
+                    "pack_id": "cyxwiz-plugin-mujoco-4.0.1-1-win64",
                 }
             ],
         }
