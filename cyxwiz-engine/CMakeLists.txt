@@ -8904,6 +8904,12 @@ target_include_directories(test_node_type_numbers PRIVATE src)
 set_target_properties(test_node_type_numbers PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME test_node_type_numbers COMMAND test_node_type_numbers)
 
+# The backend's log lines reach the host's logger (cyxwiz::UseHostLogger).
+add_executable(test_backend_host_logger tests/test_backend_host_logger.cpp)
+target_link_libraries(test_backend_host_logger PRIVATE cyxwiz-backend spdlog::spdlog)
+set_target_properties(test_backend_host_logger PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME test_backend_host_logger COMMAND test_backend_host_logger)
+
 # Visual subgraph persistence uses the actual node factory, without renderer startup.
 add_executable(test_subgraph_document tests/test_subgraph_document.cpp
     src/gui/subgraph_document.cpp src/gui/node_editor_nodes.cpp src/core/graph_node_factory.cpp
@@ -9820,6 +9826,9 @@ set_tests_properties(oracle_rl_provider_dispatch_cpu PROPERTIES
     LABELS "oracle;cpu"
     ENVIRONMENT "CYXWIZ_TEST_ARRAYFIRE_BACKEND=cpu")
 add_dependencies(cyxwiz-oracle-tests test_rl_provider_dispatch)
+# Not an oracle test: built here so the per-push Linux job can run it beside
+# its check that our binaries export no spdlog.
+add_dependencies(cyxwiz-oracle-tests test_backend_host_logger)
 foreach(_oracle_test IN LISTS CYXWIZ_ORACLE_HOST_TESTS)
     if(NOT _oracle_test IN_LIST CYXWIZ_ORACLE_TESTS)
         message(FATAL_ERROR "CYXWIZ_ORACLE_HOST_TESTS names ${_oracle_test}, which is not in CYXWIZ_ORACLE_TESTS")

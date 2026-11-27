@@ -262,6 +262,8 @@ int main(int argc, char** argv) {
         logger->set_level(spdlog::level::info);
         spdlog::set_default_logger(logger);
         spdlog::flush_on(spdlog::level::info);
+        // The backend's lines go to the same sinks, at the same level.
+        cyxwiz::UseHostLogger(logger);
     } catch (const spdlog::spdlog_ex& ex) {
         std::cerr << "Log initialization failed: " << ex.what() << std::endl;
     }

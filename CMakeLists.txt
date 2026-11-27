@@ -59,6 +59,17 @@ elseif(APPLE)
 elseif(UNIX)
     set(CYXWIZ_PLATFORM "Linux")
     add_compile_definitions(CYXWIZ_PLATFORM_LINUX)
+    # Keep our static spdlog and fmt out of every dynamic symbol table.
+    # ArrayFire's backends carry their own spdlog with default visibility; an
+    # executable that exports ours (it does, because libcyxwiz-backend.so
+    # defines the same symbols) makes ld.so bind ArrayFire's calls to our
+    # copy, a different version, and the first device query aborts with
+    # "free(): invalid pointer". Each library and plugin then keeps its own
+    # spdlog and fmt (on Windows they share vcpkg's spdlog.dll); the Engine
+    # hands its logger to the backend (cyxwiz::UseHostLogger) so the
+    # backend's lines still reach the Engine's log.
+    add_link_options(
+        "LINKER:--exclude-libs,libspdlog.a:libspdlogd.a:libfmt.a:libfmtd.a")
 endif()
 
 message(STATUS "Building CyxWiz for ${CYXWIZ_PLATFORM}")

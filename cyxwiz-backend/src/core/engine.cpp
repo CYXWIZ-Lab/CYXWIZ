@@ -288,6 +288,12 @@ void Shutdown() {
     g_initialized = false;
 }
 
+void UseHostLogger(std::shared_ptr<spdlog::logger> logger) {
+    if (logger) {
+        spdlog::set_default_logger(std::move(logger));
+    }
+}
+
 const char* GetVersionString() {
     static const std::string version =
         std::to_string(CYXWIZ_VERSION_MAJOR) + "." +

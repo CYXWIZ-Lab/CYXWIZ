@@ -188,6 +188,31 @@ jobs:
       - name: Build the oracle tests
         run: cmake --build build --config Release --target cyxwiz-oracle-tests --parallel
 
+      # ArrayFire's backends bring their own spdlog: if our binaries export
+      # spdlog or fmt, ld.so binds ArrayFire to our copy and the first device
+      # query aborts ("free(): invalid pointer"). The root CMakeLists keeps
+      # them out of the dynamic symbol tables; this proves it, and that the
+      # backend's lines still reach the host's logger.
+      - name: Check our Linux binaries keep spdlog private and the backend logs through the host
+        if: runner.os == 'Linux'
+        run: |
+          status=0
+          for binary in build/bin/test_oracle_train build/lib/libcyxwiz-backend.so; do
+            if [ ! -f "$binary" ]; then
+              echo "::error::$binary was not built"
+              status=1
+              continue
+            fi
+            exported=$(nm -D --defined-only -C "$binary" | grep -E 'spdlog::|fmt::' || true)
+            if [ -n "$exported" ]; then
+              echo "::error::$binary exports spdlog or fmt symbols"
+              echo "$exported" | head -20
+              status=1
+            fi
+          done
+          build/bin/test_backend_host_logger || status=1
+          exit $status
+
       # Tests keep their files in a scratch folder of their own: prove they
       # leave the user's CyxWiz folders alone (checked after the tests).
       - name: Record the user's CyxWiz folders before the tests
@@ -206,11 +231,8 @@ jobs:
         if: ${{ !cancelled() && steps.user-folders.outcome == 'success' }}
         run: python scripts/checks/check_user_folders_untouched.py check "${{ runner.temp }}/user-folders.json"
 
-      # Linux tests that use ArrayFire abort with "free(): invalid pointer" while
-      # ArrayFire alone runs on the same image. Record where: the libraries a test
-      # resolves, a backtrace, and the same test without ArrayFire's own library
-      # folder on LD_LIBRARY_PATH (its bundled TBB, hwloc and OpenCL loader would
-      # otherwise replace the ones the build linked). Diagnosis only.
+      # When a Linux test aborts, record where: the libraries a test resolves
+      # and a backtrace. Diagnosis only.
       - name: Diagnose a Linux test abort
         if: ${{ failure() && runner.os == 'Linux' }}
         run: |
@@ -220,9 +242,6 @@ jobs:
           ldd "$exe" | sort
           echo "== backtrace"
           gdb -batch -ex run -ex bt "$exe" 2>&1 | tail -80 || true
-          echo "== the same test without ArrayFire's folder on LD_LIBRARY_PATH"
-          af_root=$(dirname "$(dirname "$(find /opt/arrayfire -name 'libafcpu.so*' | head -1)")")
-          env -u LD_LIBRARY_PATH AF_PATH="$af_root" ctest --test-dir build -R '^oracle_oracle_train_cpu$' --output-on-failure || true
 
       - name: Upload the oracle logs
         if: always()
