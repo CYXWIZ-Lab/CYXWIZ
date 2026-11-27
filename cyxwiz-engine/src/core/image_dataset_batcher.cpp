@@ -261,8 +261,8 @@ void ImageDatasetBatcher::Reset() {
 
 void ImageDatasetBatcher::SetPhase(BatcherPhase phase) {
     current_phase_ = phase;
-    // Caller should Reset() afterwards; training_executor's
-    // RunValidationArrow does that via batcher.Reset().
+    // Caller should Reset() afterwards; the training executor's Evaluate
+    // does that.
 }
 
 bool ImageDatasetBatcher::IsEpochComplete() const {

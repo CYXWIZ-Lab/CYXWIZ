@@ -1302,7 +1302,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"log_interval", "int", "10", "Batches between training loss and metric reports; the loss and metrics are read from the device there, and a NaN or infinite loss stops the run at the next one; the trace's full events and the Health gradient sizes are taken there too (0: each epoch's first and last batch)", {}, "0-100000", "", "Training", false, true},
          {"validation_freq", "int", "1", "Validation frequency in epochs", {}, "1-10000", "", "Training", false, true},
          {"seed", "int", "42", "DataLoader seed: each epoch's batch order, class balancing draw and image / audio augmentation (the Data Split's seed decides the split)", {}, "0-2147483647", "", "Training", false, true},
-         {"model_seed", "int", "-1", "Model seed: weight initialisation, dropout and noise layers. -1 draws a seed when the run starts and records it in the run's trace, so a resumed run continues with it", {}, "-1-2147483647", "", "Training", false, true},
+         {"model_seed", "int", "-1", "Model seed: weight initialisation, dropout and noise layers (each batch's draws come from it, the epoch and the batch number). -1 draws a seed when the run starts and records it in the run's trace, so a resumed run continues with it", {}, "-1-2147483647", "", "Training", false, true},
          {training_contract::kGradientAccumulationStepsKey,
           "int",
           training_contract::kGradientAccumulationStepsDefaultValue,

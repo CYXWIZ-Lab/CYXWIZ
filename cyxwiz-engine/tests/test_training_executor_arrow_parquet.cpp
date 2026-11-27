@@ -9,7 +9,6 @@
 #include "../src/core/runtime_log_store.h"
 #include "../src/core/sequence_batcher.h"
 #include "../src/core/sequence_tag_metrics.h"
-#include "../src/core/sequence_training_step.h"
 #include "../src/core/sequence_vocabulary.h"
 #include "../src/core/test_executor.h"
 #include "../src/core/test_predictions_metrics.h"
@@ -783,6 +782,88 @@ void TestOneBatchWindowStepsGradientsAsTheyAre(const std::filesystem::path& work
               std::to_string(compared) + ", " + metrics.terminal_status + ")");
     Check(different == 0, "a one-batch window steps the gradients as they are: " + std::to_string(different) +
                               " weight(s) differ from SGD on the model's gradients, first " + first_difference);
+}
+
+cyxwiz::ExternalBatcherFactory ThreeRowFactory() {
+    auto batcher = std::make_shared<ThreeRowBatcher>();
+    return [batcher](const cyxwiz::TrainingConfiguration&, int) {
+        cyxwiz::ResolvedExternalBatchers batchers;
+        batchers.train = batcher;
+        return batchers;
+    };
+}
+
+// Every batch draws from (seed, epoch, batch) alone, for every kind of data
+// (TOFIX242 2.2c, owner decision Q5): a row batch's dropout masks do not
+// depend on what else drew from the device's generator before it. Only
+// sequence batches were reseeded; a row run's later batches drew on from
+// wherever the earlier ones (or anything between them) left it.
+void TestEveryBatchDrawsFromItsSeed(const std::filesystem::path& work_dir) {
+    const auto run = [&](bool draw_between) {
+        auto config = MakeConfig(work_dir / (draw_between ? "reseed-draw" : "reseed-plain"));
+        config.log_interval = 0;
+        config.model_seed = 7;
+        cyxwiz::CompiledLayer hidden;
+        hidden.type = gui::NodeType::Dense;
+        hidden.units = 16;
+        cyxwiz::CompiledLayer dropout;
+        dropout.type = gui::NodeType::Dropout;
+        config.layers.insert(config.layers.begin(), {hidden, dropout});
+        cyxwiz::TrainingExecutor executor(config, ThreeRowFactory());
+        executor.Train(
+            2, 3,
+            [&](int, int, int, float, float) {
+                if (!draw_between) return;
+                af::array noise = af::randu(5);  // something else drawing from the generator
+                noise.eval();
+            },
+            nullptr, nullptr);
+        Check(executor.GetMetrics().terminal_status == "completed", "the dropout run completes");
+        std::map<std::string, std::vector<float>> weights;
+        auto* model = executor.GetModel();
+        Check(model != nullptr, "the dropout run keeps its model");
+        for (const auto& [name, value] : model->GetParameters()) {
+            const float* data = value.ReadData<float>();
+            weights[name].assign(data, data + value.NumElements());
+        }
+        return weights;
+    };
+    Check(run(false) == run(true),
+          "a row batch's dropout draws come from (seed, epoch, batch) alone: a draw between batches "
+          "changed the trained weights");
+}
+
+// A plugin's OnBatchEnd gets the batch's own loss (the plugin API's promise),
+// for a row batch too: with batches of one size, the epoch's running loss
+// after batch k is the mean of the hook's losses 1..k. It got the running
+// loss itself.
+class BatchLossHook final : public cyxwiz::plugin::ITrainingHook {
+public:
+    void OnBatchEnd(cyxwiz::plugin::TrainingContext& context) override { losses.push_back(context.train_loss); }
+    std::vector<float> losses;
+};
+
+void TestPluginBatchEndHasTheBatchLoss(const std::filesystem::path& work_dir) {
+    auto config = MakeConfig(work_dir / "plugin-batch-loss");
+    config.log_interval = 1;
+    config.learning_rate = 0.5f;
+    BatchLossHook hook;
+    auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
+    hooks.RegisterHook("test.batch-loss", &hook);
+    cyxwiz::TrainingExecutor executor(config, ThreeRowFactory());
+    std::vector<float> running;
+    executor.Train(1, 3, [&](int, int, int, float loss, float) { running.push_back(loss); }, nullptr, nullptr);
+    hooks.RemoveByPlugin("test.batch-loss");
+    Check(hook.losses.size() == 4 && running.size() == 4,
+          "4 batches seen by the hook (" + std::to_string(hook.losses.size()) + ") and the callback (" +
+              std::to_string(running.size()) + ")");
+    double sum = 0.0;
+    for (size_t k = 0; k < hook.losses.size() && k < running.size(); ++k) {
+        sum += hook.losses[k];
+        const double mean = sum / static_cast<double>(k + 1);
+        CheckNear(running[k], mean, 1e-5,
+                  "the running loss after batch " + std::to_string(k + 1) + " is the mean of the hook's batch losses");
+    }
 }
 
 // A NaN or infinite loss fails the run with the reason, for a classification
@@ -2031,68 +2112,6 @@ void TestNERSequenceBuilder() {
     }
     Check(mismatch_failed,
           "NERSequenceBuilder should reject mismatched tag lengths");
-}
-
-void TestSequenceTrainingStep() {
-    std::vector<cyxwiz::NERSequenceRow> rows = {
-        {{"John", "lives", "in", "Berlin"},
-         {},
-         {"B-PER", "O", "O", "B-LOC"}},
-        {{"Mary", "works", "in", "Paris"},
-         {},
-         {"B-PER", "O", "O", "B-LOC"}},
-    };
-
-    cyxwiz::NERSequenceBuilderConfig builder_config;
-    builder_config.use_pos_tags = false;
-    builder_config.token_vocabulary.lowercase = true;
-    builder_config.batcher.batch_size = 2;
-    builder_config.batcher.max_sequence_length = 4;
-    builder_config.batcher.shuffle = false;
-    builder_config.batcher.tag_ignore_index = -100;
-
-    const auto built = cyxwiz::BuildNERSequenceData(rows, builder_config);
-    auto batcher = built.CreateBatcher();
-
-    cyxwiz::TrainingConfiguration config;
-    config.input_size = 4;
-    config.input_shape = {4};
-    config.output_size = built.tag_vocabulary.Size();
-    config.loss_type = gui::NodeType::CrossEntropyLoss;
-    config.loss_params["ignore_index"] = "-100";
-    config.optimizer_type = gui::NodeType::SGD;
-    config.learning_rate = 0.01f;
-    config.sequence_batch.enabled = true;
-    config.sequence_batch.ignore_index = -100;
-
-    cyxwiz::CompiledLayer embedding;
-    embedding.type = gui::NodeType::Embedding;
-    embedding.parameters["num_embeddings"] =
-        std::to_string(built.token_vocabulary.Size());
-    embedding.parameters["embedding_dim"] = "6";
-    config.layers.push_back(embedding);
-
-    cyxwiz::CompiledLayer token_head;
-    token_head.type = gui::NodeType::TimeDistributed;
-    token_head.units = static_cast<int>(built.tag_vocabulary.Size());
-    config.layers.push_back(token_head);
-
-    const auto result = cyxwiz::TrainSequenceTaggerEpoch(
-        config, batcher, built.tag_vocabulary.Values());
-
-    Check(result.success,
-          "sequence training step should succeed: " + result.error);
-    Check(result.batches == 1,
-          "sequence training step should consume one batch");
-    Check(result.samples == 2,
-          "sequence training step should report trained samples");
-    Check(std::isfinite(result.mean_loss),
-          "sequence training step should produce finite loss");
-    Check(result.metrics.total_tokens == 8,
-          "sequence training step should score non-padding tokens");
-    Check(result.metrics.token_accuracy >= 0.0 &&
-              result.metrics.token_accuracy <= 1.0,
-          "sequence training step token accuracy should be a probability");
 }
 
 void TestSequenceTrainingExecutor() {
@@ -5387,7 +5406,6 @@ int main(int argc, char** argv) {
     TestSequenceTagMetrics();
     TestSequenceVocabulary();
     TestNERSequenceBuilder();
-    TestSequenceTrainingStep();
     TestSequenceTrainingExecutor();
 
     const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(
@@ -5407,6 +5425,8 @@ int main(int argc, char** argv) {
     TestSharedPartBatcherEpochTotal(work_dir);
     TestGradientWindowClosesAtEpochEnd(work_dir);
     TestOneBatchWindowStepsGradientsAsTheyAre(work_dir);
+    TestEveryBatchDrawsFromItsSeed(work_dir);
+    TestPluginBatchEndHasTheBatchLoss(work_dir);
     TestBalancedClassWeightsOnEveryPath(work_dir);
     TestMissingValuesRefusalKeepsColumns(work_dir);
     const auto training_core_fixture = LoadTrainingCoreFixture(

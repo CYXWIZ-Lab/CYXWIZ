@@ -926,7 +926,6 @@ set(ENGINE_HEADERS
     src/core/ner_sequence_builder.h
     src/core/sequence_arrow_batcher.h
     src/core/sequence_model_input.h
-    src/core/sequence_training_step.h
     src/core/model_builder.h
     src/core/debug_executor.h
     src/core/debug_model_session.h

@@ -298,7 +298,7 @@ All members have empty defaults; override what you need. The
 | `OnTrainingStart`, `OnTrainingEnd` | Yes |
 | `OnEpochStart`, `OnEpochEnd` | Yes |
 | `bool ShouldStopEarly(const TrainingContext&)` | Yes, after each epoch; `true` stops training |
-| `OnBatchStart`, `OnBatchEnd` | Yes, around every training batch (not validation): `current_batch` counts 1 to `total_batches` in each epoch; `OnBatchEnd` has the batch's `train_loss` and the running `train_accuracy`. They run on the training thread for every batch, so keep them fast |
+| `OnBatchStart`, `OnBatchEnd` | Yes, around every training batch (not validation): `current_batch` counts 1 to `total_batches` in each epoch; `OnBatchEnd` has the batch's `train_loss` and the running `train_accuracy` (as of the last report batch; a token-tagging run's after every batch). They run on the training thread for every batch, so keep them fast. While a plugin with a training hook is loaded, each batch's loss is read from the device for `OnBatchEnd`, which makes each batch wait for the device |
 
 ## 9. Other interfaces
 

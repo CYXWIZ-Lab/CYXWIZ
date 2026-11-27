@@ -356,8 +356,7 @@ void AudioDatasetBatcher::Reset() {
 void AudioDatasetBatcher::SetPhase(BatcherPhase phase) {
     current_phase_ = phase;
     // Caller is expected to call Reset() afterwards so the new epoch
-    // order picks up. The training executor's RunValidationArrow does
-    // exactly that.
+    // order picks up. The training executor's Evaluate does exactly that.
 }
 
 bool AudioDatasetBatcher::IsEpochComplete() const {

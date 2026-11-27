@@ -28,6 +28,9 @@ the class balancing (under- and oversampling, the weighted sampler) and image
 and audio augmentation from the DataLoader seed, each with the epoch number, so
 a run resumed from a checkpoint draws what the full run would have drawn, for
 tables in memory and on disk, sparse features, images, audio and sequences.
+Every training batch then reseeds the model draws from the model seed, the
+epoch and the batch number: a batch's dropout masks and noise are its own,
+whatever drew random numbers before it.
 
 The DataLoader seed is 42 when you set none. A run without a model seed draws
 one at its start and records it (in the run's trace, marked as drawn), so it

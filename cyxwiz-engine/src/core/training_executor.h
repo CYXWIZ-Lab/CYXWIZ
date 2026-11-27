@@ -156,12 +156,21 @@ struct TrainingMetrics {
     bool resume_exact = false;           // seeds and data order replay exactly
 };
 
+// One evaluation pass (validation or test) of any kind of data.
 struct ObjectiveEvaluationMetrics {
     float loss = 0.0f;
-    float accuracy = 0.0f;
+    float accuracy = 0.0f;  // decisions, or a sequence pass's tokens
     float mae = 0.0f;
     float rmse = 0.0f;
+    float entity_f1 = 0.0f;   // token tagging
+    size_t token_count = 0;   // a sequence pass's scored tokens
+    size_t batches = 0;
 };
+
+// One batch as the training and evaluation loops see it, and one pass's
+// batches from a row or a sequence batcher (TOFIX242 2.2c; training_executor.cpp).
+struct TrainingStepInput;
+class TrainingPassBatches;
 
 /**
  * Callback types for training progress
@@ -424,13 +433,6 @@ public:
     }
 
 private:
-    struct SequenceEvaluationMetrics {
-        float loss = 0.0f;
-        float accuracy = 0.0f;
-        float entity_f1 = 0.0f;
-        size_t token_count = 0;
-    };
-
     // Dataset backing chosen by the constructor; mode_ is the tag Train()
     // uses to pick the batcher implementation. Every mode runs through the
     // IBatcher (or ISequenceBatcher) loops.
@@ -523,41 +525,21 @@ private:
      */
     bool Initialize(int batch_size);
 
-    /**
-     * Run a single training epoch through any IBatcher implementation.
-     * Used for both ArrowDatasetBatcher (in-memory) and ParquetArrowBatcher
-     * (disk-backed) — polymorphism via IBatcher lets the same loop drive
-     * either one. Name kept as *Arrow for backwards compat with callers
-     * that haven't been renamed yet; the implementation is batcher-agnostic.
-     */
-    void RunTrainingEpochArrow(
-        IBatcher& batcher,
-        int epoch,
-        BatchCallback batch_cb
-    );
-
-    /**
-     * Run validation through any IBatcher implementation.
-     */
-    void RunValidationArrow(IBatcher& batcher);
-    ObjectiveEvaluationMetrics EvaluateArrowBatcher(IBatcher& batcher);
-
-    /**
-     * Run a single token-tagging epoch through an ISequenceBatcher.
-     */
-    void RunTrainingEpochSequence(
-        ISequenceBatcher& batcher,
-        int epoch,
-        BatchCallback batch_cb
-    );
-
-    /**
-     * Run validation for token-tagging batches.
-     */
-    // False when the validation partition is empty (nothing was evaluated).
-    bool RunValidationSequence(ISequenceBatcher& batcher);
-    SequenceEvaluationMetrics EvaluateSequenceBatcher(
-        ISequenceBatcher& batcher);
+    // One training epoch over any batches (TOFIX242 2.2c: rows and sequences
+    // had a loop each): fetch, forward, loss, metrics on the device, backward,
+    // the step, the report cadence.
+    void RunTrainingEpoch(TrainingPassBatches& batches, int epoch, BatchCallback batch_cb);
+    // One evaluation pass (forward only), read once at its end.
+    ObjectiveEvaluationMetrics Evaluate(TrainingPassBatches& batches);
+    // Validation into the metrics; false when nothing was evaluated (an empty
+    // validation part, warned once a run).
+    bool RunValidation(TrainingPassBatches& batches);
+    bool NoValidation();
+    Tensor StepForward(const TrainingStepInput& step);
+    void StepBackward(const Tensor& predictions, const TrainingStepInput& step);
+    // The first training batch's values in the log (a debug aid, not under
+    // strict execution).
+    void LogFirstBatchSample(const Batch& batch, const Tensor& predictions);
 
     /**
      * Forward pass through the model

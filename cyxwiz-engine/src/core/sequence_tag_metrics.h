@@ -51,6 +51,34 @@ struct SequenceTagMetrics {
     double entity_f1 = 0.0;
 };
 
+// The rates from the counts (a rate stays as it was while its count is 0).
+inline void FinalizeSequenceTagMetricRates(SequenceTagMetrics& metrics) {
+    if (metrics.total_tokens > 0) {
+        metrics.token_accuracy =
+            static_cast<double>(metrics.correct_tokens) / static_cast<double>(metrics.total_tokens);
+    }
+    if (metrics.predicted_entities > 0) {
+        metrics.entity_precision =
+            static_cast<double>(metrics.matched_entities) / static_cast<double>(metrics.predicted_entities);
+    }
+    if (metrics.gold_entities > 0) {
+        metrics.entity_recall =
+            static_cast<double>(metrics.matched_entities) / static_cast<double>(metrics.gold_entities);
+    }
+    const double denom = metrics.entity_precision + metrics.entity_recall;
+    if (denom > 0.0) {
+        metrics.entity_f1 = 2.0 * metrics.entity_precision * metrics.entity_recall / denom;
+    }
+}
+
+inline void AccumulateSequenceTagMetrics(SequenceTagMetrics& total, const SequenceTagMetrics& batch) {
+    total.correct_tokens += batch.correct_tokens;
+    total.total_tokens += batch.total_tokens;
+    total.predicted_entities += batch.predicted_entities;
+    total.gold_entities += batch.gold_entities;
+    total.matched_entities += batch.matched_entities;
+}
+
 inline int64_t SequenceTagIdAt(const Tensor& tensor, size_t index) {
     if (tensor.GetDataType() == DataType::Int64) {
         return tensor.Data<int64_t>()[index];

@@ -32,7 +32,7 @@
 #include "model_builder.h"
 #include "run_execution_device.h"
 #include "sequence_model_input.h"
-#include "sequence_training_step.h"
+#include "sequence_tag_metrics.h"
 #include "training_batcher_setup.h"
 #include "training_parameter_contract.h"
 #include "../plugin/registries/plugin_training_hook_manager.h"
@@ -612,6 +612,74 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
     }
     return true;
 }
+
+// One batch as the loops see it: a row batch (tabular, image, audio, sparse)
+// or a sequence batch (token tagging, next token), with what the loss and the
+// metrics need from either.
+struct TrainingStepInput {
+    const Batch* rows = nullptr;
+    const SequenceBatch* sequence = nullptr;
+    const Tensor* targets = nullptr;
+    size_t size = 0;
+    bool last = false;
+    bool language_model = false;  // a sequence batch with next-token targets
+    int64_t ignore_index = -100;  // a sequence batch's padded targets
+};
+
+// One pass's batches from a row batcher or a sequence batcher.
+class TrainingPassBatches {
+public:
+    explicit TrainingPassBatches(IBatcher& batcher) : rows_(&batcher) {}
+    explicit TrainingPassBatches(ISequenceBatcher& batcher) : sequences_(&batcher) {}
+
+    bool Sequences() const { return sequences_ != nullptr; }
+    size_t NumBatches() const { return rows_ ? rows_->GetNumBatches() : sequences_->GetNumBatches(); }
+    bool Complete() const { return rows_ ? rows_->IsEpochComplete() : sequences_->IsEpochComplete(); }
+    void Reset() {
+        if (rows_) rows_->Reset();
+        else sequences_->Reset();
+    }
+    // A mid-epoch resume, and a checkpoint on stop, skip the batches the
+    // checkpoint trained: a sequence batcher can (a row batcher's skip comes
+    // with the run's resume work).
+    bool CanSkip() const { return sequences_ != nullptr; }
+    void Skip(size_t batches) {
+        if (!sequences_) throw std::runtime_error("TrainingExecutor: this data cannot continue inside an epoch");
+        sequences_->SkipBatches(batches);
+    }
+    // The next batch into step; false at the pass's end.
+    bool Next(const TrainingConfiguration& config, TrainingStepInput& step) {
+        step = TrainingStepInput{};
+        if (rows_) {
+            row_batch_ = rows_->GetNextBatch();
+            if (!row_batch_.IsValid()) return false;
+            step.rows = &row_batch_;
+            step.targets = &row_batch_.labels;
+            step.size = row_batch_.size;
+            step.last = row_batch_.last;
+            return true;
+        }
+        sequence_batch_ = sequences_->GetNextSequenceBatch();
+        if (!sequence_batch_.IsValid()) return false;
+        if (!sequence_batch_.IsSupervised()) {
+            throw std::runtime_error("TrainingExecutor: sequence batch is missing tag_ids or target_ids");
+        }
+        step.sequence = &sequence_batch_;
+        step.language_model = sequence_batch_.HasTargetIds();
+        step.targets = step.language_model ? &sequence_batch_.target_ids : &sequence_batch_.tag_ids;
+        step.ignore_index = step.language_model ? config.sequence_batch.target_ignore_index
+                                                : config.sequence_batch.ignore_index;
+        step.size = sequence_batch_.size;
+        step.last = sequence_batch_.last;
+        return true;
+    }
+
+private:
+    IBatcher* rows_ = nullptr;
+    ISequenceBatcher* sequences_ = nullptr;
+    Batch row_batch_;
+    SequenceBatch sequence_batch_;
+};
 
 void TrainingExecutor::Train(
     int epochs,
@@ -1524,14 +1592,13 @@ void TrainingExecutor::Train(
             cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyEpochStart(ctx);
         }
 
-        spdlog::debug("TrainingExecutor: About to call RunTrainingEpoch");
-        // Run training epoch - dispatch by dataset mode. Sequence batchers
-        // use the sequence loop; every other mode is an IBatcher.
-        if (mode_ == DatasetMode::SequenceExternal &&
-                   active_sequence_batcher) {
-            RunTrainingEpochSequence(*active_sequence_batcher, epoch, batch_cb);
+        // One epoch loop for every kind of batch (TOFIX242 2.2c)
+        if (mode_ == DatasetMode::SequenceExternal && active_sequence_batcher) {
+            TrainingPassBatches batches(*active_sequence_batcher);
+            RunTrainingEpoch(batches, epoch, batch_cb);
         } else if (active_train_ibatcher) {
-            RunTrainingEpochArrow(*active_train_ibatcher, epoch, batch_cb);
+            TrainingPassBatches batches(*active_train_ibatcher);
+            RunTrainingEpoch(batches, epoch, batch_cb);
         }
 
         if (ShouldStop()) break;
@@ -1564,20 +1631,25 @@ void TrainingExecutor::Train(
                    mode_ == DatasetMode::SequenceExternal &&
                    active_sequence_batcher) {
             active_sequence_batcher->SetPhase(BatcherPhase::Val);
-            validation_ran_this_epoch = RunValidationSequence(*active_sequence_batcher);
+            if (active_sequence_batcher->HasPhase(BatcherPhase::Val) && active_sequence_batcher->GetNumSamples() > 0) {
+                TrainingPassBatches validation(*active_sequence_batcher);
+                validation_ran_this_epoch = RunValidation(validation);
+            } else {
+                validation_ran_this_epoch = NoValidation();
+            }
             active_sequence_batcher->SetPhase(BatcherPhase::Train);
         } else if (should_validate_this_epoch && active_val_ibatcher && num_val_samples > 0) {
             // Not without a validation part (an image Data Split at 0.9 / 0 /
             // 0.1): it scored 0 samples and gave early stopping metrics of 0.
             active_val_ibatcher->SetPhase(val_batcher_phase);
             try {
-                RunValidationArrow(*active_val_ibatcher);
+                TrainingPassBatches validation(*active_val_ibatcher);
+                validation_ran_this_epoch = RunValidation(validation);
             } catch (MissingValuesError& e) {
                 if (supplied_role_input(config_.dataset_roles.dev)) e.SetSuppliedRole("Validation");
                 throw;
             }
             active_val_ibatcher->SetPhase(train_batcher_phase);
-            validation_ran_this_epoch = true;
             if ((config_.pair_metrics || config_.retrieval_metrics) && metric_eval_val) {
                 metric_eval_val->SetPhase(val_batcher_phase);
                 const MetricEvaluation evaluation = EvaluateMetricLearning(
@@ -1950,8 +2022,8 @@ void TrainingExecutor::Train(
         if (active_sequence_batcher->HasPhase(BatcherPhase::Test) &&
             active_sequence_batcher->GetNumSamples() > 0) {
             model_->SetTraining(false);
-            const auto test_evaluation =
-                EvaluateSequenceBatcher(*active_sequence_batcher);
+            TrainingPassBatches test_batches(*active_sequence_batcher);
+            const auto test_evaluation = Evaluate(test_batches);
             UpdateMetrics([test_evaluation](TrainingMetrics& m) {
                 m.test_loss = test_evaluation.loss;
                 m.test_accuracy = test_evaluation.accuracy;
@@ -1995,7 +2067,8 @@ void TrainingExecutor::Train(
         active_test_ibatcher->SetPhase(test_batcher_phase);
         const auto test_evaluation = [&] {
             try {
-                return EvaluateArrowBatcher(*active_test_ibatcher);
+                TrainingPassBatches test_batches(*active_test_ibatcher);
+                return Evaluate(test_batches);
             } catch (MissingValuesError& e) {
                 if (supplied_role_input(config_.dataset_roles.test)) e.SetSuppliedRole("Test");
                 throw;
@@ -2809,50 +2882,158 @@ void TrainingExecutor::PreprocessBatch(Batch& /*batch*/) {
     // Preprocessing is handled by DatasetBatcher
 }
 
+// =============================================================================
+// The pass loops (TOFIX242 2.2c): one training epoch and one evaluation for
+// every kind of batch. Rows and sequences had a loop each (and an evaluation
+// each), already different (TRN-21): the per-batch reseed, the plugin hook's
+// loss, the stop / mid-epoch checkpoints and the timings were each one's own.
+// =============================================================================
+
 namespace {
 
+// The batch's weight in the pass's mean loss: the loss's mean denominator on
+// the device; without one, a row batch's rows or a sequence batch's valid
+// target tokens.
+LossAggregationWeightValue StepLossWeight(const Loss& loss, const TrainingStepInput& step) {
+    if (step.rows) return ResolveLossAggregationWeight(loss, step.size);
+    LossAggregationWeightValue weight = ResolveLossAggregationWeight(loss, 0);
+    if (weight.device == nullptr && loss.GetReduction() == Reduction::Mean)
+        weight.host = static_cast<float>(CountValidTargetTokens(*step.targets, step.ignore_index));
+    return weight;
+}
 
-} // namespace
+// One pass's loss and metrics: summed on the device for every kind (TOFIX242
+// 2.2a); a token-tagging pass's entity metrics counted on the host each batch
+// (they need the predicted spans: the copy budget's named exception).
+class PassMetrics {
+public:
+    PassMetrics(const TrainingConfiguration& config, const std::vector<std::string>& tag_labels, bool sequences)
+        : config_(config),
+          tag_labels_(tag_labels),
+          sequences_(sequences),
+          regression_(!sequences && UsesRegressionMetrics(config)),
+          language_model_(sequences && config.sequence_batch.create_causal_lm_targets),
+          ignore_index_(ClassificationMetricIgnoreIndex(config)) {}
 
-void TrainingExecutor::RunTrainingEpochSequence(
-    ISequenceBatcher& batcher,
-    int epoch,
-    BatchCallback batch_cb)
-{
-    // The epoch's loss (and a language model's token counts) summed on the
-    // device, read on the report cadence and at the end (TOFIX242 2.2a: the
-    // loss was read every batch). Token tagging's entity metrics need the
-    // predicted spans on the host each batch: aggregate_metrics (the one
-    // per-batch read the copy budget names).
-    const bool language_model = config_.sequence_batch.create_causal_lm_targets;
+    bool Regression() const { return regression_; }
+    bool Sequences() const { return sequences_; }
+    // Token tagging: its accuracy is known on the host after every batch.
+    bool Tagging() const { return sequences_ && !language_model_; }
+
+    void AddLoss(const Tensor& loss, const LossAggregationWeightValue& weight) {
+        sums.AddLoss(loss, weight.device, weight.host);
+    }
+    // counts: whether a language model's next-token counts are taken (a
+    // training pass takes them on report batches: the argmax over the
+    // vocabulary is ~10% of a step, owner decision 2026-09-26).
+    void Add(const TrainingStepInput& step, const Tensor& predictions, bool counts) {
+        if (step.rows) {
+            if (regression_) {
+                sums.AddRegression(predictions, *step.targets, step.size, config_.output_size,
+                                   config_.regression_target_transform);
+            } else {
+                sums.AddCounts(BuildClassificationDecisionScalar(
+                                   predictions, *step.targets, step.size, config_.output_size,
+                                   ClassificationDecisionModeForLoss(config_.loss_type, config_.metric_mining),
+                                   ignore_index_, config_.pair_decision_threshold)
+                                   .counts.GetSemanticArray());
+            }
+        } else if (step.language_model) {
+            language_model_ = true;
+            if (counts) sums.AddCounts(NextTokenAccuracyCountsOnDevice(predictions, *step.targets, step.ignore_index));
+        } else {
+            AccumulateSequenceTagMetrics(
+                tags, ComputeSequenceTagMetricsFromLogits(predictions, *step.targets, tag_labels_, step.ignore_index));
+        }
+    }
+    void Restore(const MetricAccumulator::Totals& saved, const SequenceTagMetrics& saved_tags) {
+        sums.Restore(saved);
+        tags = saved_tags;
+    }
+    void Read(std::string_view sums_operation, std::string_view counts_operation) {
+        totals = sums.Read(sums_operation, counts_operation);
+        if (language_model_) {
+            tags.correct_tokens = totals.correct;
+            tags.total_tokens = totals.total;
+        }
+    }
+
+    float Loss(Reduction reduction) const { return static_cast<float>(totals.Loss(reduction)); }
+    float Accuracy() {
+        if (!sequences_) return static_cast<float>(totals.Accuracy());
+        FinalizeSequenceTagMetricRates(tags);
+        return static_cast<float>(tags.token_accuracy);
+    }
+    float EntityF1() {
+        FinalizeSequenceTagMetricRates(tags);
+        return static_cast<float>(tags.entity_f1);
+    }
+    float Mae() const { return static_cast<float>(totals.Mae()); }
+    float Rmse() const { return static_cast<float>(totals.Rmse()); }
+    uint64_t Correct() const { return sequences_ ? tags.correct_tokens : totals.correct; }
+    uint64_t Total() const { return sequences_ ? tags.total_tokens : totals.total; }
+
     MetricAccumulator sums;
     MetricAccumulator::Totals totals;
+    SequenceTagMetrics tags;
+
+private:
+    const TrainingConfiguration& config_;
+    const std::vector<std::string>& tag_labels_;
+    bool sequences_ = false;
+    bool regression_ = false;
+    bool language_model_ = false;
+    std::optional<int> ignore_index_;
+};
+
+bool PluginBatchHooksListen() {
+    return cyxwiz::plugin::PluginTrainingHookManager::Instance().GetHookCount() > 0;
+}
+
+}  // namespace
+
+Tensor TrainingExecutor::StepForward(const TrainingStepInput& step) {
+    if (step.rows) return ForwardBatch(*step.rows);
+    return Forward(BuildSequenceModelInput(*step.sequence, config_));
+}
+
+void TrainingExecutor::StepBackward(const Tensor& predictions, const TrainingStepInput& step) {
+    if (step.rows) BackwardBatch(predictions, *step.targets, *step.rows);
+    else Backward(predictions, *step.targets);
+}
+
+void TrainingExecutor::RunTrainingEpoch(TrainingPassBatches& batches, int epoch, BatchCallback batch_cb) {
+    // The epoch's loss and metrics summed on the device (TOFIX242 2.2a): no
+    // batch waits for the device; they are read on a report batch, and after
+    // the loop when its last batch was not one (a pass that ended on an
+    // unmarked batch, 2.1c).
+    PassMetrics metrics(config_, sequence_id_to_label_, batches.Sequences());
     int batch_num = 0;
     size_t sample_count = 0;
-    SequenceTagMetrics aggregate_metrics;
-    ReportWindow report_window;
     float current_loss = 0.0f;
     float current_acc = 0.0f;
+    ReportWindow report_window;
+    double fetch_total_ms = 0.0;
+    double fetch_max_ms = 0.0;
     bool last_batch_reported = false;
     int last_checked_batch = 0;
     const auto read_epoch_sums = [&]() {
-        totals = sums.Read("TrainingExecutor::ReadAccumulatedLoss", "TrainingExecutor::ReadAccumulatedAccuracy");
-        current_loss = static_cast<float>(totals.Loss(loss_->GetReduction()));
-        if (language_model) {
-            aggregate_metrics.correct_tokens = totals.correct;
-            aggregate_metrics.total_tokens = totals.total;
-            aggregate_metrics.token_accuracy = totals.Accuracy();
-        }
-        current_acc = static_cast<float>(aggregate_metrics.token_accuracy);
+        metrics.Read("TrainingExecutor::ReadAccumulatedLoss", "TrainingExecutor::ReadAccumulatedAccuracy");
+        current_loss = metrics.Loss(loss_->GetReduction());
+        current_acc = metrics.Accuracy();
     };
-    // As the IBatcher epoch: a non-finite loss fails the run where the sums
-    // are read (owner decision Q6); a range test ends on one itself.
+    // A NaN or infinite loss fails the run (TOFIX223 0.6) where the sums are
+    // read: on the report cadence and at the pass's end (owner decision Q6,
+    // 2026-11-27), naming the batches since the last check. A learning rate
+    // range test ends on a non-finite loss itself (its Record, after the
+    // step): that is its result, not a failure.
     const auto check_finite = [&]() {
-        if (!range_test_ && !totals.finite) {
+        if (!range_test_ && !metrics.totals.finite) {
             const int from = last_checked_batch + 1;
             throw std::runtime_error(
-                "the training loss became " + std::string(std::isnan(totals.loss_sum) ? "NaN" : "infinite") +
-                " in epoch " + std::to_string(epoch) + ", " +
+                "the training loss became " +
+                std::string(std::isnan(metrics.totals.loss_sum) ? "NaN" : "infinite") + " in epoch " +
+                std::to_string(epoch) + ", " +
                 (from == batch_num ? "batch " + std::to_string(batch_num)
                                    : "batches " + std::to_string(from) + "-" + std::to_string(batch_num)) +
                 " (a learning rate too high, or NaN / infinite values in the data)");
@@ -2865,49 +3046,65 @@ void TrainingExecutor::RunTrainingEpochSequence(
         TrainingEpochProgress progress;
         progress.epoch = epoch;
         progress.next_batch = batch_num;
-        progress.epoch_loss = static_cast<float>(totals.loss_sum);
-        progress.loss_weight_sum = static_cast<float>(totals.weight_sum);
+        progress.epoch_loss = static_cast<float>(metrics.totals.loss_sum);
+        progress.loss_weight_sum = static_cast<float>(metrics.totals.weight_sum);
         progress.sample_count = sample_count;
-        progress.metrics = aggregate_metrics;
+        progress.metrics = metrics.tags;
         return progress;
     };
+    const auto publish = [&](TrainingMetrics& m) {
+        m.train_loss = current_loss;
+        m.train_accuracy = current_acc;
+        if (metrics.Sequences()) {
+            m.train_token_accuracy = current_acc;
+            m.train_entity_f1 = metrics.EntityF1();
+            m.train_token_count = metrics.tags.total_tokens;
+        } else {
+            m.train_mae = metrics.Mae();
+            m.train_rmse = metrics.Rmse();
+        }
+    };
 
-    const size_t total_batches = batcher.GetNumBatches();
+    const size_t total_batches = batches.NumBatches();
+    const int total = static_cast<int>(total_batches);
     AttachGraphScheduleIfPending(total_batches);
-    UpdateMetrics([total_batches](TrainingMetrics& m) {
-        m.total_batches = static_cast<int>(total_batches);
+    UpdateMetrics([total](TrainingMetrics& m) {
+        m.total_batches = total;
         m.current_batch = 0;
     });
 
+    // Wall-clock start for the periodic progress log (training is not silent
+    // between the first batch and the epoch's end).
     const auto epoch_start_time = std::chrono::steady_clock::now();
-    // The epoch began in Train (BeginEpoch with its seed).
-    // Resumed inside this epoch (TOFIX118 P4e-2): same order, so skip what
-    // the checkpoint already trained and continue its running sums.
+    // The epoch began in Train (BeginEpoch with its seed, TOFIX242 2.1a): its
+    // order comes from (run seed, epoch) alone. Resumed inside this epoch
+    // (TOFIX118 P4e-2): same order, so skip what the checkpoint already
+    // trained and continue its running sums.
     if (pending_epoch_resume_ && pending_epoch_resume_->epoch == epoch) {
         const auto resume_point = *pending_epoch_resume_;
         pending_epoch_resume_.reset();
-        batcher.SkipBatches(static_cast<size_t>(resume_point.next_batch));
+        batches.Skip(static_cast<size_t>(resume_point.next_batch));
         batch_num = resume_point.next_batch;
         last_checked_batch = batch_num;
         MetricAccumulator::Totals saved;
         saved.loss_sum = resume_point.epoch_loss;
         saved.weight_sum = resume_point.loss_weight_sum;
         saved.batches = static_cast<uint64_t>(batch_num);
-        if (language_model) {
+        if (config_.sequence_batch.create_causal_lm_targets) {
             saved.correct = resume_point.metrics.correct_tokens;
             saved.total = resume_point.metrics.total_tokens;
         }
-        sums.Restore(saved);
+        metrics.Restore(saved, resume_point.metrics);
         sample_count = static_cast<size_t>(resume_point.sample_count);
-        aggregate_metrics = resume_point.metrics;
     }
     const int run_model_seed = GetMetrics().randomness.model_seed;
 
-    while (!batcher.IsEpochComplete()) {
+    TrainingStepInput step;
+    while (!batches.Complete()) {
         if (ShouldStop()) {
             // Keep the work done so far in this epoch (TOFIX118 gap 6): only
             // on a completed optimizer step, like the periodic checkpoint.
-            if (checkpoint_on_stop_.load() && !resume_root_.empty() && batch_num > 0 &&
+            if (checkpoint_on_stop_.load() && batches.CanSkip() && !resume_root_.empty() && batch_num > 0 &&
                 gradient_accumulated_batches_ == 0) {
                 SaveResumeCheckpoint(epoch - 1, progress_now());
             }
@@ -2915,194 +3112,151 @@ void TrainingExecutor::RunTrainingEpochSequence(
         }
         if (!WaitWhilePaused()) break;
 
-        // Each batch draws from (seed, epoch, batch): a batch replayed after
-        // a mid-epoch resume draws the same numbers.
+        // Each batch draws from (seed, epoch, batch), every kind of data
+        // (owner decision Q5): its dropout and noise do not depend on what
+        // drew before it, and a batch replayed after a mid-epoch resume draws
+        // the same numbers.
         if (run_model_seed >= 0) {
             SeedCurrentArrayFireRandomEngine(
                 TrainingStepSeed(static_cast<std::uint64_t>(run_model_seed), epoch, batch_num + 1));
         }
 
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
-            static_cast<int>(total_batches));
+        CrashRunRecorder::Instance().MarkStage(TrainingTraceStage::GetNextBatch, epoch, batch_num + 1, total);
         const auto fetch_start = std::chrono::steady_clock::now();
-        SequenceBatch batch = batcher.GetNextSequenceBatch();
+        if (!batches.Next(config_, step)) break;
         TrainingProfileStageFence();
-        const auto fetch_ms = std::chrono::duration<float, std::milli>(
-            std::chrono::steady_clock::now() - fetch_start).count();
-        if (!batch.IsValid()) break;
-        const bool should_report =
-            ShouldReportTrainingBatch(config_, batch_num + 1, static_cast<int>(total_batches), batch.last);
-        TraceBatchStage(should_report, TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
-                        static_cast<int>(total_batches), 0.0f, 0.0f, fetch_ms);
-        if (!batch.IsSupervised()) {
-            throw std::runtime_error(
-                "TrainingExecutor: sequence batch is missing tag_ids or target_ids");
-        }
-        const bool is_language_modeling = batch.HasTargetIds();
-        const Tensor& targets =
-            is_language_modeling ? batch.target_ids : batch.tag_ids;
-        const int64_t ignore_index = is_language_modeling
-            ? config_.sequence_batch.target_ignore_index
-            : config_.sequence_batch.ignore_index;
-
+        const double fetch_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - fetch_start).count();
+        const bool should_report = ShouldReportTrainingBatch(config_, batch_num + 1, total, step.last);
+        TraceBatchStage(should_report, TrainingTraceStage::GetNextBatch, epoch, batch_num + 1, total, 0.0f, 0.0f,
+                        static_cast<float>(fetch_ms));
         ++batch_num;
-        sample_count += batch.size;
-        NotifyPluginBatch(true, epoch, batch_num, static_cast<int>(total_batches), 0.0f, 0.0f);
+        sample_count += step.size;
+        fetch_total_ms += fetch_ms;
+        fetch_max_ms = std::max(fetch_max_ms, fetch_ms);
+        NotifyPluginBatch(true, epoch, batch_num, total, 0.0f, 0.0f);
 
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::Forward, epoch, batch_num,
-            static_cast<int>(total_batches));
+        CrashRunRecorder::Instance().MarkStage(TrainingTraceStage::Forward, epoch, batch_num, total);
         const auto forward_start = std::chrono::steady_clock::now();
-        Tensor model_input = BuildSequenceModelInput(batch, config_);
-        Tensor predictions = Forward(model_input);
+        Tensor predictions = StepForward(step);
         TrainingProfileStageFence();
-        const auto forward_ms = std::chrono::duration<float, std::milli>(
-            std::chrono::steady_clock::now() - forward_start).count();
-        TraceBatchStage(should_report, TrainingTraceStage::Forward, epoch, batch_num,
-                        static_cast<int>(total_batches), 0.0f, 0.0f, forward_ms);
-
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::ComputeLoss, epoch, batch_num,
-            static_cast<int>(total_batches));
-        const auto loss_start = std::chrono::steady_clock::now();
-        const Tensor loss_tensor = ComputeLossTensor(predictions, targets);
-        if (range_test_) {
-            // The range test reads every batch's loss (the run is short).
-            const ScopedArrayFireHostSyncAttribution range_sync_attribution(
-                ArrayFireHostSyncCategory::LossScalarReadback, "TrainingExecutor::RangeTestBatchLoss");
-            range_batch_loss_ = loss_tensor.ReadData<float>()[0];
+        const auto forward_ms =
+            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - forward_start).count();
+        TraceBatchStage(should_report, TrainingTraceStage::Forward, epoch, batch_num, total, 0.0f, 0.0f, forward_ms);
+        if (epoch == 1 && batch_num == 1 && step.rows) {
+            if (ShouldMaterializeFirstBatchDebugSamples(config_)) LogFirstBatchSample(*step.rows, predictions);
+            else RecordSkippedFirstBatchDebugSampleDump();
         }
-        const float batch_loss = current_loss;
-        TraceBatchStage(should_report, TrainingTraceStage::ComputeLoss, epoch, batch_num,
-                        static_cast<int>(total_batches), batch_loss, 0.0f, 0.0f, "device_resident");
+
+        CrashRunRecorder::Instance().MarkStage(TrainingTraceStage::ComputeLoss, epoch, batch_num, total);
+        const auto loss_start = std::chrono::steady_clock::now();
+        const Tensor loss_tensor = ComputeLossTensor(predictions, *step.targets);
+        // The batch's own loss: the range test reads every batch's (the run
+        // is short); a plugin's OnBatchEnd gets it (the plugin API's promise),
+        // read only while a plugin listens.
+        std::optional<float> own_loss;
+        if (range_test_ || PluginBatchHooksListen()) {
+            const ScopedArrayFireHostSyncAttribution own_loss_attribution(
+                ArrayFireHostSyncCategory::LossScalarReadback,
+                range_test_ ? "TrainingExecutor::RangeTestBatchLoss" : "TrainingExecutor::PluginBatchLoss");
+            own_loss = loss_tensor.ReadData<float>()[0];
+            if (range_test_) range_batch_loss_ = *own_loss;
+        }
+        TraceBatchStage(should_report, TrainingTraceStage::ComputeLoss, epoch, batch_num, total, current_loss, 0.0f,
+                        0.0f, "device_resident");
         TrainingProfileStageFence();
         const auto metric_start = std::chrono::steady_clock::now();
         TrainingTraceCollector::Instance().RecordNamedTiming(
-            "ComputeLoss.loss",
-            std::chrono::duration<float, std::milli>(metric_start - loss_start).count());
-        // The loss's weight: its mean denominator on the device (the target
-        // tokens it averaged); without one, the batch's valid tokens.
-        LossAggregationWeightValue loss_weight = ResolveLossAggregationWeight(*loss_, 0);
-        if (loss_weight.device == nullptr && loss_->GetReduction() == Reduction::Mean)
-            loss_weight.host = static_cast<float>(CountValidTargetTokens(targets, ignore_index));
-        if (is_language_modeling) {
-            // Training accuracy is sampled on the reporting cadence (batch 1,
-            // every log_interval batches, the final batch): the argmax over the
-            // vocabulary logits costs ~10% of a step (owner decision
-            // 2026-09-26, TOFIX118 P8); its counts stay on the device until
-            // the sums are read. Validation accuracy stays exact.
-            if (should_report) {
-                sums.AddCounts(NextTokenAccuracyCountsOnDevice(predictions, targets, ignore_index));
-                TrainingTraceCollector::Instance().RecordNamedTiming(
-                    "ComputeLoss.accuracy",
-                    std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - metric_start).count());
-            }
-        } else {
-            const auto batch_metrics = ComputeSequenceTagMetricsFromLogits(
-                predictions, targets, sequence_id_to_label_, ignore_index);
-            AccumulateSequenceTagMetrics(aggregate_metrics, batch_metrics);
-            FinalizeSequenceTagMetricRates(aggregate_metrics);
-        }
-        sums.AddLoss(loss_tensor, loss_weight.device, loss_weight.host);
+            "ComputeLoss.loss", std::chrono::duration<float, std::milli>(metric_start - loss_start).count());
+        const LossAggregationWeightValue loss_weight = StepLossWeight(*loss_, step);
+        metrics.AddLoss(loss_tensor, loss_weight);
+        metrics.Add(step, predictions, should_report);
+        const auto metric_end = std::chrono::steady_clock::now();
+        TrainingTraceCollector::Instance().RecordNamedTiming(
+            "ComputeLoss.accuracy", std::chrono::duration<float, std::milli>(metric_end - metric_start).count());
         TrainingTraceCollector::Instance().RecordStageTiming(
-            TrainingTraceStage::ComputeLoss,
-            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - loss_start).count());
+            TrainingTraceStage::ComputeLoss, std::chrono::duration<float, std::milli>(metric_end - loss_start).count());
 
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::Backward, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss);
+        CrashRunRecorder::Instance().MarkStage(TrainingTraceStage::Backward, epoch, batch_num, total, current_loss);
         const auto backward_start = std::chrono::steady_clock::now();
-        Backward(predictions, targets);
+        StepBackward(predictions, step);
         TrainingProfileStageFence();
-        const auto backward_ms = std::chrono::duration<float, std::milli>(
-            std::chrono::steady_clock::now() - backward_start).count();
-        TraceBatchStage(should_report, TrainingTraceStage::Backward, epoch, batch_num,
-                        static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
+        const auto backward_ms =
+            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - backward_start).count();
+        TraceBatchStage(should_report, TrainingTraceStage::Backward, epoch, batch_num, total, current_loss, 0.0f,
+                        backward_ms);
 
         last_batch_reported = should_report;
         if (should_report) {
             read_epoch_sums();
+            if (ReportWindow::Ends(epoch, batch_num)) {
+                const float window_loss =
+                    report_window.Loss(loss_->GetReduction(), current_loss, metrics.totals.weight_sum);
+                const float window_acc = report_window.Accuracy(metrics.Correct(), metrics.Total(), current_acc);
+                const bool regression = metrics.Regression();
+                UpdateMetrics([window_loss, window_acc, regression](TrainingMetrics& m) {
+                    m.report_loss = window_loss;
+                    if (!regression) m.report_accuracy = window_acc;
+                });
+            }
             // Before the optimizer step: a non-finite loss is not stepped
             check_finite();
         }
-        if (!language_model) current_acc = static_cast<float>(aggregate_metrics.token_accuracy);
-        const float current_f1 =
-            static_cast<float>(aggregate_metrics.entity_f1);
+        // Token tagging's accuracy is counted on the host after every batch
+        if (metrics.Tagging()) current_acc = metrics.Accuracy();
 
-        AccumulateGradientsAndMaybeStep(
-            epoch, batch_num, static_cast<int>(total_batches),
-            current_loss, current_acc, loss_weight.host, loss_weight.device,
-            batch.last, should_report);
+        AccumulateGradientsAndMaybeStep(epoch, batch_num, total, current_loss, current_acc, loss_weight.host,
+                                        loss_weight.device, step.last, should_report);
 
-        UpdateMetrics([batch_num,
-                       current_loss,
-                       current_acc,
-                       current_f1,
-                       token_count = aggregate_metrics.total_tokens]
-                      (TrainingMetrics& m) {
+        UpdateMetrics([&](TrainingMetrics& m) {
             m.current_batch = batch_num;
-            m.train_loss = current_loss;
-            m.train_accuracy = current_acc;
-            m.train_token_accuracy = current_acc;
-            m.train_entity_f1 = current_f1;
-            m.train_token_count = token_count;
+            publish(m);
         });
 
+        // Periodic progress log: batch 1, then every log interval
         if (ShouldLogTrainingBatch(config_, batch_num)) {
-            const auto now = std::chrono::steady_clock::now();
-            const auto elapsed_ms =
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    now - epoch_start_time).count();
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now() - epoch_start_time)
+                                        .count();
             const float elapsed_s = elapsed_ms / 1000.0f;
-            const float rate = elapsed_ms > 0
-                ? (batch_num * 1000.0f / static_cast<float>(elapsed_ms))
-                : 0.0f;
-            const auto snapshot = GetMetrics();
-            // Entity F1 is a token-tagging metric; a language model has no entities.
-            const std::string entity_f1 = config_.sequence_batch.create_causal_lm_targets
-                ? std::string()
-                : fmt::format(" entity_f1={:.2f}%", current_f1 * 100.0f);
-            spdlog::info("Epoch {} [{}/{}] seq_loss={:.4f} "
-                         "token_acc={:.2f}%{} "
-                         "({:.1f}s, {:.1f} batches/s) lr={:.3g}{}",
-                         epoch, batch_num, total_batches, current_loss,
-                         current_acc * 100.0f, entity_f1,
-                         elapsed_s, rate,
-                         snapshot.learning_rate > 0.0 ? snapshot.learning_rate
-                                                      : static_cast<double>(config_.learning_rate),
-                         config_.grad_clip_norm > 0.0f
-                             ? fmt::format(" grad_norm={:.3g}", snapshot.grad_norm) : std::string());
+            const float rate = elapsed_ms > 0 ? (batch_num * 1000.0f / static_cast<float>(elapsed_ms)) : 0.0f;
+            if (metrics.Sequences()) {
+                const auto snapshot = GetMetrics();
+                // Entity F1 is a token-tagging metric; a language model has no entities.
+                const std::string entity_f1 =
+                    metrics.Tagging() ? fmt::format(" entity_f1={:.2f}%", metrics.EntityF1() * 100.0f) : std::string();
+                spdlog::info("Epoch {} [{}/{}] seq_loss={:.4f} token_acc={:.2f}%{} ({:.1f}s, {:.1f} batches/s) lr={:.3g}{}",
+                             epoch, batch_num, total_batches, current_loss, current_acc * 100.0f, entity_f1,
+                             elapsed_s, rate,
+                             snapshot.learning_rate > 0.0 ? snapshot.learning_rate
+                                                          : static_cast<double>(config_.learning_rate),
+                             config_.grad_clip_norm > 0.0f ? fmt::format(" grad_norm={:.3g}", snapshot.grad_norm)
+                                                           : std::string());
+            } else if (metrics.Regression()) {
+                spdlog::info("Epoch {} [{}/{}] loss={:.4f} mae={:.4f} rmse={:.4f} ({:.1f}s, {:.1f} batches/s)", epoch,
+                             batch_num, total_batches, current_loss, metrics.Mae(), metrics.Rmse(), elapsed_s, rate);
+            } else {
+                spdlog::info("Epoch {} [{}/{}] loss={:.4f} acc={:.2f}% ({:.1f}s, {:.1f} batches/s)", epoch, batch_num,
+                             total_batches, current_loss, current_acc * 100.0f, elapsed_s, rate);
+            }
         }
 
-        if (should_report && ReportWindow::Ends(epoch, batch_num)) {
-            const float window_loss = report_window.Loss(loss_->GetReduction(), current_loss, totals.weight_sum);
-            const float window_acc = report_window.Accuracy(aggregate_metrics.correct_tokens,
-                                                            aggregate_metrics.total_tokens, current_acc);
-            UpdateMetrics([window_loss, window_acc](TrainingMetrics& m) {
-                m.report_loss = window_loss;
-                m.report_accuracy = window_acc;
-            });
-        }
-        NotifyPluginBatch(false, epoch, batch_num, static_cast<int>(total_batches), batch_loss, current_acc);
+        NotifyPluginBatch(false, epoch, batch_num, total, own_loss.value_or(current_loss), current_acc);
         if (batch_cb) {
-            CrashRunRecorder::Instance().MarkStage(
-                TrainingTraceStage::BatchCallback, epoch, batch_num,
-                static_cast<int>(total_batches), batch_loss, current_acc);
-            TraceBatchStage(should_report, TrainingTraceStage::BatchCallback, epoch, batch_num,
-                            static_cast<int>(total_batches), batch_loss, current_acc);
-            // The epoch's running loss with its running accuracy, as the
-            // Arrow epoch reports them (the batch's own loss went here, beside
-            // the running accuracy: ORA-33).
-            batch_cb(epoch, batch_num, static_cast<int>(total_batches),
-                     current_loss, current_acc);
+            CrashRunRecorder::Instance().MarkStage(TrainingTraceStage::BatchCallback, epoch, batch_num, total,
+                                                   current_loss, current_acc);
+            TraceBatchStage(should_report, TrainingTraceStage::BatchCallback, epoch, batch_num, total, current_loss,
+                            current_acc);
+            // The epoch's running loss with its running accuracy
+            batch_cb(epoch, batch_num, total, current_loss, current_acc);
         }
 
         // Mid-epoch resume checkpoint (TOFIX118 P4e-2): every N optimizer
-        // steps, only on a completed step (no accumulated gradients pending)
-        // and not on the epoch's last batch (the epoch-end checkpoint covers it).
-        if (resume_every_steps_ > 0 && !resume_root_.empty() && gradient_accumulated_batches_ == 0 &&
-            !batch.last && !ShouldStop()) {
+        // steps, only on a completed step (no accumulated gradients pending),
+        // not on the epoch's last batch (the epoch-end checkpoint covers it),
+        // and only for data a resume can skip into.
+        if (resume_every_steps_ > 0 && batches.CanSkip() && !resume_root_.empty() &&
+            gradient_accumulated_batches_ == 0 && !step.last && !ShouldStop()) {
             const int steps = GetMetrics().optimizer_step_count;
             if (steps > 0 && steps % resume_every_steps_ == 0 && steps != last_mid_epoch_checkpoint_step_) {
                 last_mid_epoch_checkpoint_step_ = steps;
@@ -3112,8 +3266,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
 
         // Generation previews every N optimizer steps (TOFIX159), on a
         // completed step; the epoch's last batch is covered by the epoch end.
-        if (generation_preview_ && gradient_accumulated_batches_ == 0 &&
-            !batch.last && !ShouldStop()) {
+        if (generation_preview_ && gradient_accumulated_batches_ == 0 && !step.last && !ShouldStop()) {
             const long long steps = GetMetrics().optimizer_step_count;
             if (steps != last_generation_preview_step_ &&
                 ShouldRunPreviewAfterStep(config_.generation_preview, steps)) {
@@ -3127,551 +3280,181 @@ void TrainingExecutor::RunTrainingEpochSequence(
             }
         }
     }
-
     if (batch_num > 0 && !last_batch_reported) {
         read_epoch_sums();
         check_finite();
     }
-    FinalizeSequenceTagMetricRates(aggregate_metrics);
-    const float final_loss = current_loss;
-    const float final_acc =
-        static_cast<float>(aggregate_metrics.token_accuracy);
-    const float final_f1 =
-        static_cast<float>(aggregate_metrics.entity_f1);
-    CloseGradientWindow(epoch, batch_num, static_cast<int>(total_batches), final_loss, final_acc);
+    CloseGradientWindow(epoch, batch_num, total, current_loss, current_acc);
 
-    UpdateMetrics([final_loss,
-                   final_acc,
-                   final_f1,
-                   token_count = aggregate_metrics.total_tokens]
-                  (TrainingMetrics& m) {
-        m.train_loss = final_loss;
-        m.train_accuracy = final_acc;
-        m.train_token_accuracy = final_acc;
-        m.train_entity_f1 = final_f1;
-        m.train_token_count = token_count;
-    });
-    CrashRunRecorder::Instance().MarkStage(
-        TrainingTraceStage::EpochComplete, epoch, batch_num,
-        static_cast<int>(total_batches), final_loss, final_acc);
-    TrainingTraceCollector::Instance().RecordStage(
-        TrainingTraceStage::EpochComplete, epoch, batch_num,
-        static_cast<int>(total_batches), final_loss, final_acc);
-
-    spdlog::debug("TrainingExecutor: sequence epoch {} consumed {} samples",
-                  epoch, sample_count);
-}
-
-bool TrainingExecutor::RunValidationSequence(ISequenceBatcher& batcher) {
-    // An empty validation partition (e.g. a ratio split that rounds to zero
-    // units) is no validation: reporting its loss as 0 would make epoch 1 the
-    // "best" checkpoint and restore it at the end.
-    const bool has_validation = batcher.HasPhase(BatcherPhase::Val) && batcher.GetNumSamples() > 0;
-    const auto evaluation = has_validation ? EvaluateSequenceBatcher(batcher) : SequenceEvaluationMetrics{};
-    if (evaluation.token_count == 0) {
-        if (!empty_validation_reported_) {
-            empty_validation_reported_ = true;
-            spdlog::warn("TrainingExecutor: the validation partition is empty; this run has no validation "
-                         "metrics (check the Data Split ratios against the number of documents)");
-            TrainingTraceCollector::Instance().RecordRuntimeWarning(
-                "TrainingExecutor.Validation", "validation partition is empty");
-        }
-        return false;
-    }
-    UpdateMetrics([evaluation](TrainingMetrics& m) {
-        m.val_loss = evaluation.loss;
-        m.val_accuracy = evaluation.accuracy;
-        m.has_validation_metrics = true;
-        m.val_token_accuracy = evaluation.accuracy;
-        m.val_entity_f1 = evaluation.entity_f1;
-        m.val_token_count = evaluation.token_count;
-    });
-    return true;
-}
-
-TrainingExecutor::SequenceEvaluationMetrics
-TrainingExecutor::EvaluateSequenceBatcher(ISequenceBatcher& batcher) {
-    // Summed on the device, read once at the end (TOFIX242 2.2a); token
-    // tagging's entity metrics on the host per batch, as in training.
-    MetricAccumulator sums;
-    SequenceTagMetrics aggregate_metrics;
-    bool language_model = false;
-    size_t batches = 0;
-
-    batcher.Reset();
-    while (!batcher.IsEpochComplete()) {
-        if (ShouldStop()) break;
-
-        SequenceBatch batch = batcher.GetNextSequenceBatch();
-        if (!batch.IsValid()) break;
-        if (!batch.IsSupervised()) {
-            throw std::runtime_error(
-                "TrainingExecutor: sequence validation batch is missing tag_ids or target_ids");
-        }
-        const bool is_language_modeling = batch.HasTargetIds();
-        const Tensor& targets =
-            is_language_modeling ? batch.target_ids : batch.tag_ids;
-        const int64_t ignore_index = is_language_modeling
-            ? config_.sequence_batch.target_ignore_index
-            : config_.sequence_batch.ignore_index;
-
-        Tensor model_input = BuildSequenceModelInput(batch, config_);
-        Tensor predictions = Forward(model_input);
-        ++batches;
-        LossAggregationWeightValue loss_weight = ResolveLossAggregationWeight(*loss_, 0);
-        if (loss_weight.device == nullptr && loss_->GetReduction() == Reduction::Mean)
-            loss_weight.host = static_cast<float>(CountValidTargetTokens(targets, ignore_index));
-        if (is_language_modeling) {
-            language_model = true;
-            sums.AddCounts(NextTokenAccuracyCountsOnDevice(predictions, targets, ignore_index));
-        } else {
-            const auto batch_metrics = ComputeSequenceTagMetricsFromLogits(
-                predictions, targets, sequence_id_to_label_, ignore_index);
-            AccumulateSequenceTagMetrics(aggregate_metrics, batch_metrics);
-        }
-        sums.AddLoss(ComputeLossTensor(predictions, targets), loss_weight.device, loss_weight.host);
-    }
-
-    SequenceEvaluationMetrics evaluation;
-    if (batches > 0) {
-        const auto totals = sums.Read("TrainingExecutor::ReadValidationLoss", "TrainingExecutor::ReadValidationAccuracy");
-        if (!totals.finite) {
-            throw std::runtime_error("the evaluation loss became " +
-                                     std::string(std::isnan(totals.loss_sum) ? "NaN" : "infinite") +
-                                     " (NaN / infinite values in the evaluation data, or a diverged model)");
-        }
-        evaluation.loss = static_cast<float>(totals.Loss(loss_->GetReduction()));
-        if (language_model) {
-            aggregate_metrics.correct_tokens = totals.correct;
-            aggregate_metrics.total_tokens = totals.total;
-        }
-    }
-    FinalizeSequenceTagMetricRates(aggregate_metrics);
-    evaluation.accuracy =
-        static_cast<float>(aggregate_metrics.token_accuracy);
-    evaluation.entity_f1 =
-        static_cast<float>(aggregate_metrics.entity_f1);
-    evaluation.token_count = aggregate_metrics.total_tokens;
-    return evaluation;
-}
-
-// =============================================================================
-// Arrow-specific training methods
-// =============================================================================
-
-void TrainingExecutor::RunTrainingEpochArrow(
-    IBatcher& batcher,
-    int epoch,
-    BatchCallback batch_cb)
-{
-    spdlog::debug("RunTrainingEpochArrow: Entered, epoch={}", epoch);
-
-    const bool regression_metrics = UsesRegressionMetrics(config_);
-    // The epoch's loss and metrics summed on the device (TOFIX242 2.2a): no
-    // batch waits for the device; they are read on a report batch, and after
-    // the loop when its last batch was not one (a pass that ended on an
-    // unmarked batch, 2.1c).
-    MetricAccumulator sums;
-    MetricAccumulator::Totals totals;
-    const auto metric_ignore_index = ClassificationMetricIgnoreIndex(config_);
-    int batch_num = 0;
-    float current_loss = 0.0f;
-    float current_acc = 0.0f;
-    float current_mae = 0.0f;
-    float current_rmse = 0.0f;
-    ReportWindow report_window;
-    double fetch_total_ms = 0.0;
-    double fetch_max_ms = 0.0;
-    bool last_batch_reported = false;
-    int last_checked_batch = 0;
-    const auto read_epoch_sums = [&]() {
-        totals = sums.Read("TrainingExecutor::ReadAccumulatedLoss", "TrainingExecutor::ReadAccumulatedAccuracy");
-        current_loss = static_cast<float>(totals.Loss(loss_->GetReduction()));
-        current_acc = static_cast<float>(totals.Accuracy());
-        current_mae = static_cast<float>(totals.Mae());
-        current_rmse = static_cast<float>(totals.Rmse());
-    };
-    // A NaN or infinite loss fails the run (TOFIX223 0.6) where the sums are
-    // read: on the report cadence and at the pass's end (owner decision Q6,
-    // 2026-11-27), naming the batches since the last check. A learning rate
-    // range test ends on a non-finite loss itself (its Record, after the
-    // step): that is its result, not a failure.
-    const auto check_finite = [&]() {
-        if (!range_test_ && !totals.finite) {
-            const int from = last_checked_batch + 1;
-            throw std::runtime_error(
-                "the training loss became " + std::string(std::isnan(totals.loss_sum) ? "NaN" : "infinite") +
-                " in epoch " + std::to_string(epoch) + ", " +
-                (from == batch_num ? "batch " + std::to_string(batch_num)
-                                   : "batches " + std::to_string(from) + "-" + std::to_string(batch_num)) +
-                " (a learning rate too high, or NaN / infinite values in the data)");
-        }
-        last_checked_batch = batch_num;
-    };
-
-    spdlog::debug("RunTrainingEpochArrow: Getting num batches");
-    size_t total_batches = batcher.GetNumBatches();
-    spdlog::debug("RunTrainingEpochArrow: total_batches={}", total_batches);
-    AttachGraphScheduleIfPending(total_batches);
-
-    UpdateMetrics([total_batches](TrainingMetrics& m) {
-        m.total_batches = static_cast<int>(total_batches);
-        m.current_batch = 0;
-    });
-
-    // Epoch wall-clock start for the periodic progress log below.
-    // Without per-batch logging the training run goes completely
-    // silent between the first-batch debug dump and the epoch-end
-    // summary, which can be 100+ seconds on a real dataset - making
-    // it impossible to tell "alive but slow" from "hung". This is
-    // the fix for the tofix.md entry "Training logs silent mid-epoch".
-    const auto epoch_start_time = std::chrono::steady_clock::now();
-
-    // The epoch began in Train (BeginEpoch with its seed, TOFIX242 2.1a): its
-    // order comes from (run seed, epoch) alone, so a resumed run replays it
-    // (TOFIX228 1.6, the level 3 oracle).
-
-    spdlog::debug("RunTrainingEpochArrow: Entering batch loop");
-    while (!batcher.IsEpochComplete()) {
-        if (ShouldStop()) break;
-        if (!WaitWhilePaused()) break;
-
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
-            static_cast<int>(total_batches));
-        const auto fetch_start = std::chrono::steady_clock::now();
-        Batch batch = batcher.GetNextBatch();
-        const double fetch_ms = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - fetch_start).count();
-        if (!batch.IsValid()) break;
-
-        const bool should_report = ShouldReportTrainingBatch(
-            config_, batch_num + 1, static_cast<int>(total_batches), batch.last);
-        TraceBatchStage(should_report, TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
-                        static_cast<int>(total_batches), 0.0f, 0.0f, static_cast<float>(fetch_ms));
-
-        batch_num++;
-        fetch_total_ms += fetch_ms;
-        fetch_max_ms = std::max(fetch_max_ms, fetch_ms);
-        NotifyPluginBatch(true, epoch, batch_num, static_cast<int>(total_batches), 0.0f, 0.0f);
-
-        // Forward pass through model
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::Forward, epoch, batch_num,
-            static_cast<int>(total_batches));
-        const auto forward_start = std::chrono::steady_clock::now();
-        Tensor predictions = ForwardBatch(batch);
-        const auto forward_ms = std::chrono::duration<float, std::milli>(
-            std::chrono::steady_clock::now() - forward_start).count();
-        TraceBatchStage(should_report, TrainingTraceStage::Forward, epoch, batch_num,
-                        static_cast<int>(total_batches), 0.0f, 0.0f, forward_ms);
-
-        // DEBUG: Log sample values for first batch of first epoch.
-        if (epoch == 1 && batch_num == 1 &&
-            !ShouldMaterializeFirstBatchDebugSamples(config_)) {
-            RecordSkippedFirstBatchDebugSampleDump();
-        } else if (epoch == 1 && batch_num == 1) {
-            const ScopedArrayFireHostSyncAttribution debug_sync_attribution(
-                ArrayFireHostSyncCategory::DebugSampleDump,
-                "TrainingExecutor::FirstArrowBatchDebugSampleDump");
-            if (batch.HasSparseFeatures()) {
-                const auto& sparse = *batch.sparse_features;
-                const double cells = static_cast<double>(sparse.rows) *
-                                     static_cast<double>(sparse.columns);
-                const double density = cells > 0.0
-                    ? static_cast<double>(sparse.values.size()) / cells
-                    : 0.0;
-                spdlog::info(
-                    "DEBUG Arrow: Sparse CSR input rows={}, features={}, "
-                    "nnz={}, density={:.6f}",
-                    sparse.rows,
-                    sparse.columns,
-                    sparse.values.size(),
-                    density);
-            } else {
-                const float* input_data = batch.data.ReadData<float>();
-                float min_input = input_data[0], max_input = input_data[0];
-                const auto& input_shape = batch.data.Shape();
-                if (input_shape.size() >= 2) {
-                    size_t input_size = input_shape[0] * input_shape[1];
-                    for (size_t i = 1;
-                         i < std::min(input_size, size_t(1000));
-                         ++i) {
-                        min_input = std::min(min_input, input_data[i]);
-                        max_input = std::max(max_input, input_data[i]);
-                    }
-                    spdlog::info(
-                        "DEBUG Arrow: Input data range: [{:.4f}, {:.4f}]",
-                        min_input,
-                        max_input);
-                }
-            }
-
-            // Debug labels
-            const auto& label_shape = batch.labels.Shape();
-            std::string shape_str;
-            for (auto d : label_shape) shape_str += std::to_string(d) + " ";
-            spdlog::info("DEBUG Arrow: Label shape: [{}], output_size={}", shape_str, config_.output_size);
-
-            size_t label_count = 0;
-            if (!label_shape.empty()) {
-                label_count = 1;
-                for (size_t dim : label_shape) {
-                    label_count *= dim;
-                }
-            }
-            if (label_count > 0) {
-                const size_t sample_count = std::min<size_t>(label_count, 3);
-                std::string label_str = "  [";
-                if (batch.labels.GetDataType() == DataType::Int32) {
-                    const int32_t* label_data =
-                        batch.labels.ReadData<int32_t>();
-                    for (size_t i = 0; i < sample_count; ++i) {
-                        label_str += fmt::format("{}", label_data[i]);
-                        if (i + 1 < sample_count) label_str += ", ";
-                    }
-                } else {
-                    const float* label_data =
-                        batch.labels.ReadData<float>();
-                    for (size_t i = 0; i < sample_count; ++i) {
-                        label_str += fmt::format("{:.1f}", label_data[i]);
-                        if (i + 1 < sample_count) label_str += ", ";
-                    }
-                }
-                label_str += "]";
-                spdlog::info("DEBUG Arrow: First label values: {}", label_str);
-            } else {
-                spdlog::error("DEBUG Arrow: Labels tensor is empty or invalid!");
-            }
-
-            // Debug predictions
-            const auto& pred_shape = predictions.Shape();
-            std::string pred_shape_str;
-            for (auto d : pred_shape) pred_shape_str += std::to_string(d) + " ";
-            spdlog::info("DEBUG Arrow: Predictions shape: [{}]", pred_shape_str);
-        }
-
-        // Compute loss
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::ComputeLoss, epoch, batch_num,
-            static_cast<int>(total_batches));
-        float batch_loss = current_loss;
-        Tensor loss_tensor = ComputeLossTensor(predictions, batch.labels);
-        if (range_test_) {
-            // The range test reads every batch's loss (the run is short).
-            const ScopedArrayFireHostSyncAttribution range_sync_attribution(
-                ArrayFireHostSyncCategory::LossScalarReadback,
-                "TrainingExecutor::RangeTestBatchLoss");
-            range_batch_loss_ = loss_tensor.ReadData<float>()[0];
-        }
-        const LossAggregationWeightValue loss_weight = ResolveLossAggregationWeight(*loss_, batch.size);
-        sums.AddLoss(loss_tensor, loss_weight.device, loss_weight.host);
-        TraceBatchStage(should_report, TrainingTraceStage::ComputeLoss, epoch, batch_num,
-                        static_cast<int>(total_batches), batch_loss, 0.0f, 0.0f, "device_resident");
-
-        // The batch's metrics, summed on the device
-        if (regression_metrics) {
-            sums.AddRegression(predictions, batch.labels, batch.size, config_.output_size,
-                               config_.regression_target_transform);
-        } else {
-            sums.AddCounts(BuildClassificationDecisionScalar(
-                               predictions, batch.labels, batch.size, config_.output_size,
-                               ClassificationDecisionModeForLoss(config_.loss_type, config_.metric_mining),
-                               metric_ignore_index, config_.pair_decision_threshold)
-                               .counts.GetSemanticArray());
-        }
-
-        // Backward pass
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::Backward, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss);
-        const auto backward_start = std::chrono::steady_clock::now();
-        BackwardBatch(predictions, batch.labels, batch);
-        const auto backward_ms = std::chrono::duration<float, std::milli>(
-            std::chrono::steady_clock::now() - backward_start).count();
-        TraceBatchStage(should_report, TrainingTraceStage::Backward, epoch, batch_num,
-                        static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
-
-        last_batch_reported = should_report;
-        if (should_report) {
-            read_epoch_sums();
-            batch_loss = current_loss;
-            if (ReportWindow::Ends(epoch, batch_num)) {
-                const float window_loss = report_window.Loss(loss_->GetReduction(), current_loss, totals.weight_sum);
-                const float window_acc = report_window.Accuracy(totals.correct, totals.total, current_acc);
-                UpdateMetrics([window_loss, window_acc, regression_metrics](TrainingMetrics& m) {
-                    m.report_loss = window_loss;
-                    if (!regression_metrics) m.report_accuracy = window_acc;
-                });
-            }
-            // Before the optimizer step: a non-finite loss is not stepped
-            check_finite();
-        }
-
-        AccumulateGradientsAndMaybeStep(
-            epoch, batch_num, static_cast<int>(total_batches),
-            batch_loss, current_acc, loss_weight.host, loss_weight.device,
-            batch.last, should_report);
-
-        UpdateMetrics([batch_num, current_loss, current_acc,
-                       current_mae, current_rmse](TrainingMetrics& m) {
-            m.current_batch = batch_num;
-            m.train_loss = current_loss;
-            m.train_accuracy = current_acc;
-            m.train_mae = current_mae;
-            m.train_rmse = current_rmse;
-        });
-
-        // Periodic progress log so the user knows training is alive.
-        // Fires on batch 1 (so they see immediate feedback that the
-        // loop entered) and every 50 batches after. Throughput is
-        // computed against epoch_start_time so the "batches/s" reading
-        // naturally warms up as the batcher + GPU pools stabilize.
-        if (ShouldLogTrainingBatch(config_, batch_num)) {
-            const auto now = std::chrono::steady_clock::now();
-            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - epoch_start_time).count();
-            const float elapsed_s = elapsed_ms / 1000.0f;
-            const float rate = elapsed_ms > 0
-                ? (batch_num * 1000.0f / static_cast<float>(elapsed_ms))
-                : 0.0f;
-            if (regression_metrics) {
-                spdlog::info(
-                    "Epoch {} [{}/{}] loss={:.4f} mae={:.4f} rmse={:.4f} "
-                    "({:.1f}s, {:.1f} batches/s)",
-                    epoch, batch_num, total_batches,
-                    current_loss, current_mae, current_rmse,
-                    elapsed_s, rate);
-            } else {
-                spdlog::info("Epoch {} [{}/{}] loss={:.4f} acc={:.2f}% "
-                             "({:.1f}s, {:.1f} batches/s)",
-                             epoch, batch_num, total_batches,
-                             current_loss, current_acc * 100.0f,
-                             elapsed_s, rate);
-            }
-        }
-
-        NotifyPluginBatch(false, epoch, batch_num, static_cast<int>(total_batches), batch_loss, current_acc);
-        // Batch callback
-        if (batch_cb) {
-            CrashRunRecorder::Instance().MarkStage(
-                TrainingTraceStage::BatchCallback, epoch, batch_num,
-                static_cast<int>(total_batches), batch_loss, current_acc);
-            TraceBatchStage(should_report, TrainingTraceStage::BatchCallback, epoch, batch_num,
-                            static_cast<int>(total_batches), batch_loss, current_acc);
-            batch_cb(epoch, batch_num, static_cast<int>(total_batches), current_loss, current_acc);
-        }
-    }
-    if (batch_num > 0 && !last_batch_reported) {
-        read_epoch_sums();
-        check_finite();
-    }
-    CloseGradientWindow(epoch, batch_num, static_cast<int>(total_batches), current_loss, current_acc);
-
-    // Final epoch metrics
-    float final_loss = current_loss;
-    float final_acc = current_acc;
-    const float final_mae = current_mae;
-    const float final_rmse = current_rmse;
-
-    UpdateMetrics([final_loss, final_acc, final_mae, final_rmse](TrainingMetrics& m) {
-        m.train_loss = final_loss;
-        m.train_accuracy = final_acc;
-        m.train_mae = final_mae;
-        m.train_rmse = final_rmse;
-    });
+    UpdateMetrics([&](TrainingMetrics& m) { publish(m); });
     if (batch_num > 0) {
-        spdlog::info(
-            "Arrow loader timing epoch {}: batches={}, avg_fetch={:.2f} ms, max_fetch={:.2f} ms",
-            epoch,
-            batch_num,
-            fetch_total_ms / static_cast<double>(batch_num),
-            fetch_max_ms);
+        spdlog::info("Loader timing epoch {}: batches={}, samples={}, avg_fetch={:.2f} ms, max_fetch={:.2f} ms", epoch,
+                     batch_num, sample_count, fetch_total_ms / static_cast<double>(batch_num), fetch_max_ms);
     }
-    CrashRunRecorder::Instance().MarkStage(
-        TrainingTraceStage::EpochComplete, epoch, batch_num,
-        static_cast<int>(total_batches), final_loss, final_acc);
-    TrainingTraceCollector::Instance().RecordStage(
-        TrainingTraceStage::EpochComplete, epoch, batch_num,
-        static_cast<int>(total_batches), final_loss, final_acc);
+    CrashRunRecorder::Instance().MarkStage(TrainingTraceStage::EpochComplete, epoch, batch_num, total, current_loss,
+                                           current_acc);
+    TrainingTraceCollector::Instance().RecordStage(TrainingTraceStage::EpochComplete, epoch, batch_num, total,
+                                                   current_loss, current_acc);
 }
 
-ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
-    IBatcher& batcher) {
+ObjectiveEvaluationMetrics TrainingExecutor::Evaluate(TrainingPassBatches& batches) {
     // The pass's loss and metrics summed on the device, read once at its end
-    // (TOFIX242 2.2a: the counts were read every batch).
-    MetricAccumulator sums;
-    const bool regression_metrics = UsesRegressionMetrics(config_);
-    const auto metric_ignore_index = ClassificationMetricIgnoreIndex(config_);
-    int batch_num = 0;
+    // (TOFIX242 2.2a); one pass for every kind of data (2.2c).
+    PassMetrics metrics(config_, sequence_id_to_label_, batches.Sequences());
+    ObjectiveEvaluationMetrics evaluation;
     double fetch_total_ms = 0.0;
     double fetch_max_ms = 0.0;
 
-    batcher.Reset();
-
-    while (!batcher.IsEpochComplete()) {
+    batches.Reset();
+    TrainingStepInput step;
+    while (!batches.Complete()) {
         if (ShouldStop()) break;
-
         const auto fetch_start = std::chrono::steady_clock::now();
-        Batch batch = batcher.GetNextBatch();
-        const double fetch_ms = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - fetch_start).count();
-        if (!batch.IsValid()) break;
-
-        batch_num++;
+        if (!batches.Next(config_, step)) break;
+        const double fetch_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - fetch_start).count();
+        ++evaluation.batches;
         fetch_total_ms += fetch_ms;
         fetch_max_ms = std::max(fetch_max_ms, fetch_ms);
 
         // Forward pass only (no backprop)
-        Tensor predictions = ForwardBatch(batch);
+        const Tensor predictions = StepForward(step);
+        metrics.AddLoss(ComputeLossTensor(predictions, *step.targets), StepLossWeight(*loss_, step));
+        metrics.Add(step, predictions, true);
+    }
+    if (evaluation.batches == 0) return evaluation;
 
-        const auto loss_weight = ResolveLossAggregationWeight(*loss_, batch.size);
-        sums.AddLoss(ComputeLossTensor(predictions, batch.labels), loss_weight.device, loss_weight.host);
-        if (regression_metrics) {
-            sums.AddRegression(predictions, batch.labels, batch.size, config_.output_size,
-                               config_.regression_target_transform);
+    metrics.Read("TrainingExecutor::ReadValidationLoss", "TrainingExecutor::ReadValidationAccuracy");
+    if (!metrics.totals.finite) {
+        // Early stopping and the best model cannot use a NaN or infinite loss (TOFIX223 0.6).
+        throw std::runtime_error("the evaluation loss became " +
+                                 std::string(std::isnan(metrics.totals.loss_sum) ? "NaN" : "infinite") +
+                                 " (NaN / infinite values in the evaluation data, or a diverged model)");
+    }
+    evaluation.loss = metrics.Loss(loss_->GetReduction());
+    evaluation.accuracy = metrics.Accuracy();
+    evaluation.mae = metrics.Mae();
+    evaluation.rmse = metrics.Rmse();
+    evaluation.entity_f1 = metrics.EntityF1();
+    evaluation.token_count = metrics.tags.total_tokens;
+    spdlog::info("Loader timing evaluation: batches={}, avg_fetch={:.2f} ms, max_fetch={:.2f} ms", evaluation.batches,
+                 fetch_total_ms / static_cast<double>(evaluation.batches), fetch_max_ms);
+    return evaluation;
+}
+
+bool TrainingExecutor::NoValidation() {
+    // An empty validation part (a ratio split that rounds to zero) is no
+    // validation: reporting its loss as 0 would make epoch 1 the "best"
+    // checkpoint and restore it at the end.
+    if (!empty_validation_reported_) {
+        empty_validation_reported_ = true;
+        spdlog::warn("TrainingExecutor: the validation partition is empty; this run has no validation "
+                     "metrics (check the Data Split ratios against the number of rows or documents)");
+        TrainingTraceCollector::Instance().RecordRuntimeWarning("TrainingExecutor.Validation",
+                                                                "validation partition is empty");
+    }
+    return false;
+}
+
+bool TrainingExecutor::RunValidation(TrainingPassBatches& batches) {
+    const auto evaluation = Evaluate(batches);
+    const bool sequences = batches.Sequences();
+    if (evaluation.batches == 0 || (sequences && evaluation.token_count == 0)) return NoValidation();
+    UpdateMetrics([evaluation, sequences](TrainingMetrics& m) {
+        m.val_loss = evaluation.loss;
+        m.val_accuracy = evaluation.accuracy;
+        m.has_validation_metrics = true;
+        if (sequences) {
+            m.val_token_accuracy = evaluation.accuracy;
+            m.val_entity_f1 = evaluation.entity_f1;
+            m.val_token_count = evaluation.token_count;
         } else {
-            sums.AddCounts(BuildClassificationDecisionScalar(
-                               predictions, batch.labels, batch.size, config_.output_size,
-                               ClassificationDecisionModeForLoss(config_.loss_type, config_.metric_mining),
-                               metric_ignore_index, config_.pair_decision_threshold)
-                               .counts.GetSemanticArray());
+            m.val_mae = evaluation.mae;
+            m.val_rmse = evaluation.rmse;
+        }
+    });
+    return true;
+}
+
+void TrainingExecutor::LogFirstBatchSample(const Batch& batch, const Tensor& predictions) {
+    const ScopedArrayFireHostSyncAttribution debug_sync_attribution(
+        ArrayFireHostSyncCategory::DebugSampleDump,
+        "TrainingExecutor::FirstArrowBatchDebugSampleDump");
+    if (batch.HasSparseFeatures()) {
+        const auto& sparse = *batch.sparse_features;
+        const double cells = static_cast<double>(sparse.rows) *
+                             static_cast<double>(sparse.columns);
+        const double density = cells > 0.0
+            ? static_cast<double>(sparse.values.size()) / cells
+            : 0.0;
+        spdlog::info(
+            "DEBUG Arrow: Sparse CSR input rows={}, features={}, "
+            "nnz={}, density={:.6f}",
+            sparse.rows,
+            sparse.columns,
+            sparse.values.size(),
+            density);
+    } else {
+        const float* input_data = batch.data.ReadData<float>();
+        float min_input = input_data[0], max_input = input_data[0];
+        const auto& input_shape = batch.data.Shape();
+        if (input_shape.size() >= 2) {
+            size_t input_size = input_shape[0] * input_shape[1];
+            for (size_t i = 1;
+                 i < std::min(input_size, size_t(1000));
+                 ++i) {
+                min_input = std::min(min_input, input_data[i]);
+                max_input = std::max(max_input, input_data[i]);
+            }
+            spdlog::info(
+                "DEBUG Arrow: Input data range: [{:.4f}, {:.4f}]",
+                min_input,
+                max_input);
         }
     }
 
-    const MetricAccumulator::Totals totals =
-        batch_num > 0 ? sums.Read("TrainingExecutor::ReadValidationLoss", "TrainingExecutor::ReadValidationAccuracy") : MetricAccumulator::Totals{};
-    const float final_loss = static_cast<float>(totals.Loss(loss_->GetReduction()));
-    if (batch_num > 0 && !totals.finite) {
-        // As the sequence evaluation does: early stopping and the best model
-        // cannot use a NaN or infinite loss (TOFIX223 0.6).
-        throw std::runtime_error("the evaluation loss became " +
-                                 std::string(std::isnan(totals.loss_sum) ? "NaN" : "infinite") +
-                                 " (NaN / infinite values in the evaluation data, or a diverged model)");
+    // Debug labels
+    const auto& label_shape = batch.labels.Shape();
+    std::string shape_str;
+    for (auto d : label_shape) shape_str += std::to_string(d) + " ";
+    spdlog::info("DEBUG Arrow: Label shape: [{}], output_size={}", shape_str, config_.output_size);
+
+    size_t label_count = 0;
+    if (!label_shape.empty()) {
+        label_count = 1;
+        for (size_t dim : label_shape) {
+            label_count *= dim;
+        }
     }
-    const float final_acc = static_cast<float>(totals.Accuracy());
-
-    if (batch_num > 0) {
-        spdlog::info(
-            "Arrow loader timing validation: batches={}, avg_fetch={:.2f} ms, max_fetch={:.2f} ms",
-            batch_num,
-            fetch_total_ms / static_cast<double>(batch_num),
-            fetch_max_ms);
+    if (label_count > 0) {
+        const size_t sample_count = std::min<size_t>(label_count, 3);
+        std::string label_str = "  [";
+        if (batch.labels.GetDataType() == DataType::Int32) {
+            const int32_t* label_data =
+                batch.labels.ReadData<int32_t>();
+            for (size_t i = 0; i < sample_count; ++i) {
+                label_str += fmt::format("{}", label_data[i]);
+                if (i + 1 < sample_count) label_str += ", ";
+            }
+        } else {
+            const float* label_data =
+                batch.labels.ReadData<float>();
+            for (size_t i = 0; i < sample_count; ++i) {
+                label_str += fmt::format("{:.1f}", label_data[i]);
+                if (i + 1 < sample_count) label_str += ", ";
+            }
+        }
+        label_str += "]";
+        spdlog::info("DEBUG Arrow: First label values: {}", label_str);
+    } else {
+        spdlog::error("DEBUG Arrow: Labels tensor is empty or invalid!");
     }
 
-    return {final_loss, final_acc, static_cast<float>(totals.Mae()), static_cast<float>(totals.Rmse())};
-}
-
-void TrainingExecutor::RunValidationArrow(IBatcher& batcher) {
-    const auto evaluation = EvaluateArrowBatcher(batcher);
-
-    UpdateMetrics([evaluation](TrainingMetrics& m) {
-        m.val_loss = evaluation.loss;
-        m.val_accuracy = evaluation.accuracy;
-        m.val_mae = evaluation.mae;
-        m.val_rmse = evaluation.rmse;
-        m.has_validation_metrics = true;
-    });
+    // Debug predictions
+    const auto& pred_shape = predictions.Shape();
+    std::string pred_shape_str;
+    for (auto d : pred_shape) pred_shape_str += std::to_string(d) + " ";
+    spdlog::info("DEBUG Arrow: Predictions shape: [{}]", pred_shape_str);
 }
 
 } // namespace cyxwiz
