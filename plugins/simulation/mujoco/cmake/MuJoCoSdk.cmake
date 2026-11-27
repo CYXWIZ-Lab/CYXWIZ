@@ -5,6 +5,7 @@
 # Defines the imported target mujoco::mujoco and, for packaging:
 #   CYXWIZ_MUJOCO_RUNTIME   the shared library to ship next to the plugin
 #   CYXWIZ_MUJOCO_SDK_DIR   the extracted release (LICENSE, THIRD_PARTY_NOTICES.txt, model/)
+#   CYXWIZ_MUJOCO_NOTICES   its third-party notices file (named differently per platform)
 #
 # MUJOCO_DIR (cache path) points at an already extracted release of the same
 # version instead, for offline builds and for macOS (the macOS release is a
@@ -77,6 +78,15 @@ else()
 endif()
 if(NOT EXISTS "${CYXWIZ_MUJOCO_RUNTIME}")
     message(FATAL_ERROR "MuJoCo SDK at '${CYXWIZ_MUJOCO_SDK_DIR}' has no ${CYXWIZ_MUJOCO_RUNTIME}")
+endif()
+# The third-party notices ship with the runtime: THIRD_PARTY_NOTICES.txt in the Windows release,
+# THIRD_PARTY_NOTICES (no extension) in the Linux archives
+set(CYXWIZ_MUJOCO_NOTICES "${CYXWIZ_MUJOCO_SDK_DIR}/THIRD_PARTY_NOTICES.txt")
+if(NOT EXISTS "${CYXWIZ_MUJOCO_NOTICES}")
+    set(CYXWIZ_MUJOCO_NOTICES "${CYXWIZ_MUJOCO_SDK_DIR}/THIRD_PARTY_NOTICES")
+endif()
+if(NOT EXISTS "${CYXWIZ_MUJOCO_NOTICES}")
+    message(FATAL_ERROR "MuJoCo SDK at '${CYXWIZ_MUJOCO_SDK_DIR}' has no THIRD_PARTY_NOTICES(.txt): the notices must ship")
 endif()
 
 add_library(mujoco::mujoco SHARED IMPORTED GLOBAL)
