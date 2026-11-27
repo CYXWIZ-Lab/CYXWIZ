@@ -746,6 +746,9 @@ class PackageReleaseTests(unittest.TestCase):
         signed = manifest["signed"]
         self.assertEqual("plugin_pack", signed["pack_kind"])
         self.assertEqual("com.cyxwiz.simulation.mujoco", signed["plugin_id"])
+        # This plugin.json has no name or description: the manifest has neither
+        self.assertNotIn("plugin_name", signed)
+        self.assertNotIn("plugin_description", signed)
         self.assertEqual("cyxwiz-base-1.2.3-1-windows-x86_64", signed["companion_base_id"])
         self.assertEqual("diagnostic", signed["support_status"])
         sources = {item["path"]: item["source"] for item in signed["components"]}
@@ -754,6 +757,50 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn({"component": "mujoco", "path": "THIRD_PARTY_LICENSES/MuJoCo/MUJOCO_LICENSE.txt"},
                       signed["licenses"])
         package_release.validate_pack_manifest(manifest)
+
+    def plugin_pack_args(self, plugin: Path) -> argparse.Namespace:
+        return self.artifact_args(
+            "plugin", "--plugin-dir", str(plugin),
+            "--base-pack-id", "cyxwiz-base-1.2.3-1-windows-x86_64",
+            "--third-party-license", "MuJoCo=bin/MUJOCO_LICENSE.txt",
+            "--generated-utc", "2026-11-06T12:00:00Z",
+            "--signing-key-id", "release-2026", "--signature", "A" * 86,
+        )
+
+    def set_plugin_json(self, plugin: Path, **fields: object) -> None:
+        path = plugin / "plugin.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document.update(fields)
+        path.write_text(json.dumps(document), encoding="utf-8")
+
+    @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
+    def test_plugin_pack_manifest_carries_the_plugins_name_and_description(self) -> None:
+        plugin = self.create_plugin()
+        self.set_plugin_json(
+            plugin, id="org.example.fluid-lab", name="Fluid Lab",
+            description="Fluid simulation: tanks, pipes and pumps.",
+        )
+
+        _, archive = package_release.build_package(self.plugin_pack_args(plugin), self.script)
+
+        manifest = json.loads(archive.with_suffix(".zip.manifest.json").read_text(encoding="utf-8"))
+        signed = manifest["signed"]
+        self.assertEqual("org.example.fluid-lab", signed["plugin_id"])
+        self.assertEqual("Fluid Lab", signed["plugin_name"])
+        self.assertEqual("Fluid simulation: tanks, pipes and pumps.", signed["plugin_description"])
+        package_release.validate_pack_manifest(manifest)
+
+    @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
+    def test_plugin_pack_refuses_a_name_it_cannot_sign(self) -> None:
+        plugin = self.create_plugin()
+        for fields, message in (
+            ({"name": "Fluid\nLab"}, "plugin.json name contains a control character"),
+            ({"name": ["Fluid Lab"]}, "plugin.json name must be a non-empty string"),
+            ({"description": "x" * 600}, "plugin.json description is longer than"),
+        ):
+            self.set_plugin_json(plugin, **{"name": "Fluid Lab", "description": "Fluids.", **fields})
+            with self.assertRaisesRegex(package_release.PackageError, message):
+                package_release.build_package(self.plugin_pack_args(plugin), self.script)
 
     @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
     def test_plugin_pack_needs_the_vcpkg_root_to_leave_libraries_to_the_base(self) -> None:

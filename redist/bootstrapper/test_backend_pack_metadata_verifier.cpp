@@ -628,6 +628,72 @@ int main() {
                     "a plugin pack without a companion base was accepted"))
             return 1;
 
+        // A pack made before manifests carried the plugin's name and
+        // description (PluginBody) has neither.
+        if (!Expect(plugin.plugin_name.empty() && plugin.plugin_description.empty(),
+                    "an older plugin manifest gained a name or description"))
+            return 1;
+        // The plugin's own name and description are signed with the pack, for
+        // any plugin; each is optional on its own.
+        auto named = PluginBody(pack_key);
+        named["plugin_id"] = "org.example.fluid-lab";
+        named["plugin_name"] = "Fluid Lab";
+        const auto named_path = temporary.Path() / "plugin-named.json";
+        auto named_entry = write_plugin(
+            named_path, Envelope("cyxwiz-backend-pack-manifest", named, "pack-2026", pack_key, 2),
+            "supported");
+        if (!Expect(plugin_verifier.VerifyManifest(named_path, named_entry, plugin, error,
+                                                   BackendPackManifestKind::PluginPack),
+                    error.c_str()) ||
+            !Expect(plugin.plugin_id == "org.example.fluid-lab" && plugin.plugin_name == "Fluid Lab" &&
+                        plugin.plugin_description.empty(),
+                    "a plugin manifest's name was not kept"))
+            return 1;
+        named["plugin_description"] = "Fluid simulation: tanks, pipes and pumps (\xC3\xA9tude).";
+        named_entry = write_plugin(
+            named_path, Envelope("cyxwiz-backend-pack-manifest", named, "pack-2026", pack_key, 2),
+            "supported");
+        if (!Expect(plugin_verifier.VerifyManifest(named_path, named_entry, plugin, error,
+                                                   BackendPackManifestKind::PluginPack),
+                    error.c_str()) ||
+            !Expect(plugin.plugin_name == "Fluid Lab" &&
+                        plugin.plugin_description ==
+                            "Fluid simulation: tanks, pipes and pumps (\xC3\xA9tude).",
+                    "a plugin manifest's description was not kept") ||
+            !Expect(plugin_verifier.VerifyInstalledManifest(named_path, "mujoco-v1",
+                                                            BackendPackManifestKind::PluginPack,
+                                                            plugin, error) &&
+                        plugin.plugin_name == "Fluid Lab",
+                    "installed plugin evidence lost the plugin's name"))
+            return 1;
+        // They are text for the user: a wrong type, an empty or oversized
+        // string and control characters fail closed, as does any other field.
+        const std::pair<const char*, Json> unusable[] = {
+            {"plugin_name", ""},
+            {"plugin_name", 7},
+            {"plugin_name", nullptr},
+            {"plugin_name", std::string(129, 'x')},
+            {"plugin_name", "Fluid\nLab"},
+            {"plugin_description", ""},
+            {"plugin_description", Json::array({"Fluids."})},
+            {"plugin_description", std::string(513, 'x')},
+            {"plugin_description", std::string("tab\there")},
+            {"plugin_author", "Example"},
+        };
+        for (const auto& [field, value] : unusable) {
+            auto body = PluginBody(pack_key);
+            body["plugin_name"] = "Fluid Lab";
+            body[field] = value;
+            bad_entry = write_plugin(
+                bad_path, Envelope("cyxwiz-backend-pack-manifest", body, "pack-2026", pack_key, 2),
+                "supported");
+            if (!Expect(!plugin_verifier.VerifyManifest(bad_path, bad_entry, plugin, error,
+                                                        BackendPackManifestKind::PluginPack),
+                        (std::string("a plugin manifest with an unusable ") + field +
+                         " was accepted: " + value.dump()).c_str()))
+                return 1;
+        }
+
         // Catalog and manifest support policy must agree.
         const auto diagnostic_entry = write_plugin(plugin_path, plugin_document, "diagnostic");
         if (!Expect(!plugin_verifier.VerifyManifest(plugin_path, diagnostic_entry, plugin, error,

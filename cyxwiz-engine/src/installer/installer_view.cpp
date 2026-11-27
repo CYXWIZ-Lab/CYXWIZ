@@ -91,7 +91,7 @@ bool IsAddOn(const BackendPackManagerRecord &record) {
 // What a summary or list calls a record: an add-on's own name, else the
 // compute backend's.
 std::string RecordName(const BackendPackManagerRecord &record) {
-  return IsAddOn(record) ? AddOnTitle(record.plugin_id)
+  return IsAddOn(record) ? AddOnTitle(record.plugin_id, record.plugin_name)
                          : std::string(BackendName(record.backend));
 }
 

@@ -409,7 +409,10 @@ public:
         };
         Json body = {
             {"pack_id", "mujoco-v1"}, {"pack_kind", "plugin_pack"},
-            {"plugin_id", "com.cyxwiz.simulation.mujoco"}, {"package_version", "1.0.0"},
+            {"plugin_id", "com.cyxwiz.simulation.mujoco"},
+            {"plugin_name", "Simulation (MuJoCo)"},
+            {"plugin_description", "Physics simulation for robotics and RL training."},
+            {"package_version", "1.0.0"},
             {"platform", "win64"}, {"architecture", "x86_64"},
             {"cyxwiz_release", {{"minimum", "0.2.0"}, {"maximum", "0.2.x"}}},
             {"companion_base_id", "base-v1"}, {"conflicts", Json::array()},
@@ -1363,8 +1366,12 @@ int main() {
             ReadInstalledBackendPackMetadata(fixture.runtime, "mujoco-v1",
                                              BackendPackManifestKind::PluginPack,
                                              fixture.Verifier(), evidence, error) &&
-                evidence.plugin_id == "com.cyxwiz.simulation.mujoco",
-            "plugin delivery must retain signed installed-version evidence");
+                evidence.plugin_id == "com.cyxwiz.simulation.mujoco" &&
+                evidence.plugin_name == "Simulation (MuJoCo)" &&
+                evidence.plugin_description ==
+                    "Physics simulation for robotics and RL training.",
+            "plugin delivery must retain signed installed-version evidence, with the "
+            "plugin's own name and description");
 
         // The installed add-on against its signed inventory: the check the
         // Engine runs before it loads the pack, and the add-on cards' Damaged.

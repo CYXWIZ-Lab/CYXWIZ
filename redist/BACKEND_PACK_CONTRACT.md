@@ -465,6 +465,7 @@ Its manifest uses envelope `schema_version` 2 with the same
 
 - `pack_id`, `pack_kind=plugin_pack`, `plugin_id` (the `plugin.json` id) and
   `package_version`;
+- optionally `plugin_name` and `plugin_description` (see below);
 - `platform` and `architecture`;
 - compatible CyxWiz release minimum/maximum;
 - the companion base ID (required: the plugin uses that base's shared
@@ -472,6 +473,19 @@ Its manifest uses envelope `schema_version` 2 with the same
 - `support_status`;
 - components, licenses and archive, with the schema-1 rules;
 - generation time in UTC.
+
+`plugin_name` and `plugin_description` are the plugin's own `name` and
+`description` from its `plugin.json`, copied by packaging and signed with the
+pack. The add-on cards, the Installer, the uninstall confirmation and the
+Engine's log call the add-on by them, so any plugin pack shows under its own
+words without the Engine knowing it. Each is optional on its own (a
+`plugin.json` without one, or a pack made before these fields): the add-on is
+then called by the wording the release has for an add-on it expects, else by
+its plugin ID. When present, each is a non-empty UTF-8 string without control
+characters, at most 128 bytes for the name and 512 for the description;
+anything else fails closed, in packaging and in the verifier. They are the only
+optional fields: every other field is required and no further field is
+accepted.
 
 There is no `backend`, `arrayfire`, `runtime_set_id` or device compatibility
 object; any of them fails closed. A schema-1 manifest cannot declare

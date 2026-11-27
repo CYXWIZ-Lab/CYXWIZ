@@ -434,6 +434,98 @@ void TestUnknownAddOnGetsAGenericCard() {
           "Shared add-on names");
 }
 
+// An add-on is called what its plugin calls itself: the signed pack carries
+// the plugin.json name and description, for any plugin, with no table entry.
+void TestAddOnWordsComeFromThePack() {
+    constexpr const char* kFluidPlugin = "org.example.fluid-lab";
+    constexpr const char* kFluidPack = "cyxwiz-plugin-fluid-lab-2.0.0-1-win64-x86_64";
+    const auto fluid_card = [&](const std::vector<cyxwiz::AddOnCardView>& cards) {
+        const auto card = std::find_if(cards.begin(), cards.end(), [&](const auto& candidate) {
+            return candidate.key == kFluidPlugin;
+        });
+        Check(card != cards.end(), "A plugin pack of the catalog has a card");
+        return *card;
+    };
+    auto fluid = MuJoCoRecord(kFluidPack);
+    fluid.manifest->plugin_id = kFluidPlugin;
+    fluid.manifest->plugin_name = "Fluid Lab";
+    fluid.manifest->plugin_description = "Fluid simulation: tanks, pipes and pumps.";
+    auto snapshot = Catalog();
+    snapshot.records.push_back(fluid);
+
+    const auto offered = cyxwiz::BuildBackendPackCatalogRecords(snapshot, ActiveBase());
+    const auto* record = FindRecord(offered, kFluidPack);
+    Check(record && record->plugin_name == "Fluid Lab" &&
+              record->plugin_description == "Fluid simulation: tanks, pipes and pumps.",
+          "The record carries the pack's name and description");
+    const auto card = fluid_card(InstallerCards(offered, {}));
+    Check(card.title == "Fluid Lab" &&
+              card.description == "Fluid simulation: tanks, pipes and pumps." &&
+              Detail(card, "Plugin") == kFluidPlugin,
+          "The card shows the plugin's own name and description: " + card.title);
+    Check(fluid_card(EngineCards(offered)).title == "Fluid Lab", "So does the Engine's card");
+
+    // A pack made before manifests carried them: this release's wording for an
+    // add-on it expects, and the plugin id for any other, as before.
+    const auto old_mujoco = MuJoCoCard(InstallerCards(offered, {}));
+    Check(old_mujoco.title == "Simulation (MuJoCo)" &&
+              old_mujoco.description.find("MuJoCo environments") != std::string::npos,
+          "An older pack of an expected add-on keeps this release's wording");
+    auto old_fluid = snapshot;
+    old_fluid.records.back().manifest->plugin_name.clear();
+    old_fluid.records.back().manifest->plugin_description.clear();
+    const auto old_card = fluid_card(
+        InstallerCards(cyxwiz::BuildBackendPackCatalogRecords(old_fluid, ActiveBase()), {}));
+    Check(old_card.title == kFluidPlugin &&
+              old_card.description == "An optional add-on from the signed catalog.",
+          "An older pack of any other plugin shows under its id");
+
+    // The pack's words win over this release's wording
+    auto renamed = Catalog();
+    renamed.records[1].manifest->plugin_name = "Simulation (MuJoCo 4)";
+    renamed.records[1].manifest->plugin_description = "Physics for robots.";
+    const auto renamed_card = MuJoCoCard(
+        InstallerCards(cyxwiz::BuildBackendPackCatalogRecords(renamed, ActiveBase()), {}));
+    Check(renamed_card.title == "Simulation (MuJoCo 4)" &&
+              renamed_card.description == "Physics for robots.",
+          "A named pack of an expected add-on shows its own words");
+
+    // Installed: the summary lines and the uninstall confirmation use them too
+    cyxwiz::runtime::ActivePluginsState active;
+    active.base_pack_id = kBase;
+    active.plugins.push_back({kFluidPlugin, kFluidPack});
+    const auto installed = cyxwiz::BuildBackendPackCatalogRecords(snapshot, ActiveBase(), active);
+    Check(cyxwiz::BuildPackRemovalWording(installed, kFluidPack).subject == "Add-on: Fluid Lab",
+          "The uninstall confirmation names the add-on by its own name");
+    Check(cyxwiz::SummaryAddOnLines({}, {kFluidPack}, offered) ==
+              std::vector<std::string>{"Fluid Lab"},
+          "The summary names it by its own name");
+    const auto selection = cyxwiz::ResolveBackendPackInstallerSelection(
+        cyxwiz::BackendPackInstallChoice::Custom, offered, {kFluidPack});
+    const auto plan = cyxwiz::BuildBackendPackInstallerPlan(
+        selection, offered, cyxwiz::CyxWizInstallerMode::Maintenance);
+    Check(plan.valid && cyxwiz::PlannedAddOnLines(plan, offered) ==
+                            std::vector<std::string>{"Fluid Lab"},
+          "The plan names it by its own name: " + plan.message);
+
+    // No longer in the catalog: the name comes from the signed manifest kept
+    // when it was installed
+    cyxwiz::runtime::VerifiedBackendPackCatalogSnapshot unlisted;
+    unlisted.records = {BaseRecord()};
+    unlisted.installed_manifests.push_back(*fluid.manifest);
+    const auto kept = cyxwiz::BuildBackendPackCatalogRecords(unlisted, ActiveBase(), active);
+    Check(fluid_card(InstallerCards(kept, {})).title == "Fluid Lab",
+          "An installed add-on the catalog dropped keeps its name");
+
+    Check(cyxwiz::AddOnTitle(kFluidPlugin, "Fluid Lab") == "Fluid Lab" &&
+              cyxwiz::AddOnTitle(kFluidPlugin) == kFluidPlugin &&
+              cyxwiz::AddOnTitle(kMuJoCoPlugin, "Other") == "Other" &&
+              cyxwiz::AddOnDescription(kFluidPlugin, "Fluids.") == "Fluids." &&
+              cyxwiz::AddOnDescription(kFluidPlugin) ==
+                  "An optional add-on from the signed catalog.",
+          "Name order: the pack's, this release's, the plugin id");
+}
+
 // After a CPU base update the add-on is still listed for the old base: the
 // Engine no longer loads it. Its card says so, offers this base's pack when
 // the catalog has one, and always offers Uninstall add-on.
@@ -911,6 +1003,7 @@ int main() {
     TestBuiltForAnotherEngineCard();
     TestNotPublishedAndUnavailableCards();
     TestUnknownAddOnGetsAGenericCard();
+    TestAddOnWordsComeFromThePack();
     TestAddOnInstalledForAnotherBase();
     TestResolvePackToSelect();
     TestBaseUpdateReinstallsAddOn();

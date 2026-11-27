@@ -515,7 +515,8 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
         });
     plan.message =
         plan.repair_plugin_pack_ids.size() == 1 && record != catalog_records.end()
-            ? "Repair the " + AddOnTitle(record->plugin_id) +
+            ? "Repair the " +
+                  AddOnTitle(record->plugin_id, record->plugin_name) +
                   " add-on from its signed package"
             : "Repair " + AddOnCount(plan.repair_plugin_pack_ids.size()) +
                   " from their signed packages";

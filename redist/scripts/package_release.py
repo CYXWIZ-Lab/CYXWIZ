@@ -23,7 +23,11 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from backend_pack_contract import (  # noqa: E402
+    PLUGIN_DESCRIPTION_MAX_BYTES,
+    PLUGIN_NAME_MAX_BYTES,
+    ContractError,
     canonical_json_bytes,
+    display_text,
     validate_pack_manifest,
 )
 from backend_pack_target import (  # noqa: E402
@@ -1514,6 +1518,20 @@ def build_plugin_pack(
     if not isinstance(plugin_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", plugin_id):
         raise PackageError(f"plugin id {plugin_id!r} is not a canonical identifier")
     validate_release_version(str(plugin_version), "plugin")
+    # The add-on is shown under the plugin's own words: they are signed with
+    # the pack. A plugin.json without one leaves that field out.
+    plugin_words: dict[str, str] = {}
+    for field, source, maximum in (
+        ("plugin_name", "name", PLUGIN_NAME_MAX_BYTES),
+        ("plugin_description", "description", PLUGIN_DESCRIPTION_MAX_BYTES),
+    ):
+        value = plugin_manifest.get(source) if isinstance(plugin_manifest, dict) else None
+        if value is None or value == "":
+            continue
+        try:
+            plugin_words[field] = display_text(value, f"plugin.json {source}", maximum)
+        except ContractError as error:
+            raise PackageError(str(error)) from error
     library = plugin_dir / library_relative
     require_file(library, "plugin library")
     pack_version = validate_release_version(args.pack_version, "pack")
@@ -1594,6 +1612,7 @@ def build_plugin_pack(
         "pack_id": pack_id,
         "pack_kind": "plugin_pack",
         "plugin_id": plugin_id,
+        **plugin_words,
         "package_version": pack_version,
         "platform": platform_name,
         "architecture": architecture,

@@ -7,6 +7,9 @@ Environment Library.
 
 An add-on needs no device check. It is ready when the Engine next starts.
 
+Each add-on is shown under the name and description its plugin declares: the
+signed package carries them.
+
 ## Installing one
 
 In the CyxWiz Installer, open **Individual components**. The **Add-ons**

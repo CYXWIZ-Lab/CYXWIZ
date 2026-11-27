@@ -56,6 +56,11 @@ struct BackendPackManagerRecord {
   BackendPackRecordKind pack_kind = BackendPackRecordKind::Compute;
   std::string backend;     // empty for a plugin pack
   std::string plugin_id;   // set for a plugin pack only
+  // A plugin pack's own name and description, from its signed manifest;
+  // empty for a pack made before manifests carried them (AddOnTitle and
+  // AddOnDescription then fall back).
+  std::string plugin_name;
+  std::string plugin_description;
   std::string pack_id;
   std::string installed_pack_id;
   std::string package_version;

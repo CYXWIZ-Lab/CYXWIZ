@@ -37,6 +37,8 @@ bool ActivePacks(const std::filesystem::path& runtime_root, std::vector<runtime:
            runtime::ResolveActivePluginPacks(runtime_root, active.base_pack_id, packs, skipped, error);
 }
 
+// A pack refused before its signed record could be read has no name of its
+// own: it is called by this release's wording, else by its plugin id.
 PackRefusal RefusalOf(const runtime::ActivePluginPack& active_pack, std::string reason, std::string detail) {
     PackRefusal refusal;
     refusal.plugin_id = active_pack.plugin_id;
@@ -87,7 +89,7 @@ bool ReadInstalledPluginPacks(const std::filesystem::path& runtime_root,
         PackPlugin pack;
         pack.plugin_id = active_pack.plugin_id;
         pack.pack_id = active_pack.pack_id;
-        pack.title = AddOnTitle(active_pack.plugin_id);
+        pack.title = AddOnTitle(active_pack.plugin_id, manifest.plugin_name);
         pack.package_version = manifest.package_version;
         pack.companion_base_id = manifest.companion_base_id;
         pack.directory = active_pack.directory;

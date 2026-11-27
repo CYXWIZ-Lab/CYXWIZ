@@ -82,6 +82,10 @@ struct VerifiedBackendPackManifest {
     std::string pack_id;
     std::string backend;
     std::string plugin_id;
+    // A plugin pack's own words from its plugin.json, as signed; empty for a
+    // pack made before the manifest carried them.
+    std::string plugin_name;
+    std::string plugin_description;
     std::string package_version;
     std::string platform;
     std::string architecture;

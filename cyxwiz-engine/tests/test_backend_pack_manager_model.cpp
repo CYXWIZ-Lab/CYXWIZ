@@ -1174,6 +1174,40 @@ void TestDamagedAddOnRecord() {
   addon.installed_for_other_base = true;
   Check(!cyxwiz::IsDamagedAddOn(addon),
         "An add-on installed for another base is not called damaged (it needs a reinstall)");
+
+  // The repair plan names the add-on: by its pack's own name, by this
+  // release's wording for an older pack, by its plugin id for any other.
+  addon.installed_for_other_base = false;
+  addon.compatibility =
+      Pack("mujoco-v1", cyxwiz::BackendPackCatalogSupport::Supported).compatibility;
+  cyxwiz::BackendPackManagerRecord base;
+  base.backend = "cpu";
+  base.pack_id = "base-v1";
+  base.installed = true;
+  base.active = true;
+  base.installed_pack_id = "base-v1";
+  base.catalog_support = cyxwiz::BackendPackCatalogSupport::Supported;
+  base.delivery_metadata_available = true;
+  const auto repair_message = [&](const cyxwiz::BackendPackManagerRecord& record) {
+    const auto records = std::vector{base, record};
+    const auto selection = cyxwiz::ResolveBackendPackInstallerSelection(
+        cyxwiz::BackendPackInstallChoice::Custom, records, {record.pack_id});
+    return cyxwiz::BuildBackendPackInstallerPlan(
+               selection, records, cyxwiz::CyxWizInstallerMode::Maintenance)
+        .message;
+  };
+  const std::string tail =
+      " add-on from its signed package; the CPU Engine and compute packs are unchanged";
+  Check(repair_message(addon) == "Repair the Simulation (MuJoCo)" + tail,
+        "An older pack is named by this release's wording: " + repair_message(addon));
+  auto named = addon;
+  named.plugin_id = "org.example.fluid-lab";
+  named.plugin_name = "Fluid Lab";
+  Check(repair_message(named) == "Repair the Fluid Lab" + tail,
+        "A pack is named by its own name: " + repair_message(named));
+  named.plugin_name.clear();
+  Check(repair_message(named) == "Repair the org.example.fluid-lab" + tail,
+        "An older pack of another plugin is named by its id: " + repair_message(named));
 }
 
 } // namespace

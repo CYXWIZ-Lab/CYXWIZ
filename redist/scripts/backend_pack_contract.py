@@ -16,6 +16,9 @@ from typing import Any, Mapping, Sequence
 
 SCHEMA_VERSION = 1
 PLUGIN_MANIFEST_SCHEMA_VERSION = 2
+# A plugin pack's own name and description (its plugin.json's), as UTF-8.
+PLUGIN_NAME_MAX_BYTES = 128
+PLUGIN_DESCRIPTION_MAX_BYTES = 512
 SIGNATURE_ALGORITHM = "ed25519"
 BACKENDS = ("cpu", "cuda", "opencl", "oneapi")
 PACK_KINDS = ("base", "backend_pack")
@@ -97,6 +100,16 @@ def _integer(value: Any, field: str, *, minimum: int = 0) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ContractError(f"{field} must be an integer >= {minimum}")
     return value
+
+
+def display_text(value: Any, field: str, maximum_bytes: int) -> str:
+    """A plugin's name or description, shown to the user as signed."""
+    text = _string(value, field)
+    if len(text.encode("utf-8")) > maximum_bytes:
+        raise ContractError(f"{field} is longer than {maximum_bytes} bytes of UTF-8")
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in text):
+        raise ContractError(f"{field} contains a control character")
+    return text
 
 
 def _identifier(value: Any, field: str) -> str:
@@ -358,11 +371,22 @@ def validate_plugin_pack_manifest(document: Any) -> None:
             "architecture", "cyxwiz_release", "companion_base_id", "conflicts",
             "support_status", "components", "licenses", "archive", "generated_utc",
         },
+        # The plugin's own words, from its plugin.json; a pack made before
+        # the manifest carried them has neither.
+        {"plugin_name", "plugin_description"},
     )
     pack_id = _identifier(signed["pack_id"], "signed.pack_id")
     if signed["pack_kind"] != "plugin_pack":
         raise ContractError("a schema-2 manifest must be a plugin_pack")
     _identifier(signed["plugin_id"], "signed.plugin_id")
+    if "plugin_name" in signed:
+        display_text(signed["plugin_name"], "signed.plugin_name", PLUGIN_NAME_MAX_BYTES)
+    if "plugin_description" in signed:
+        display_text(
+            signed["plugin_description"],
+            "signed.plugin_description",
+            PLUGIN_DESCRIPTION_MAX_BYTES,
+        )
     _version(signed["package_version"], "signed.package_version")
     _validate_target(signed)
     _utc(signed["generated_utc"], "signed.generated_utc")

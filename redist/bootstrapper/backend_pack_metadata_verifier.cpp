@@ -57,10 +57,15 @@ bool IsUtc(const std::string& value) {
     return true;
 }
 
+// optional_present: how many optional keys the caller found and checks itself.
 bool HasExactKeys(
     const Json& object,
-    std::initializer_list<const char*> expected) {
-    if (!object.is_object() || object.size() != expected.size()) return false;
+    std::initializer_list<const char*> expected,
+    std::size_t optional_present = 0) {
+    if (!object.is_object() ||
+        object.size() != expected.size() + optional_present) {
+        return false;
+    }
     return std::all_of(expected.begin(), expected.end(),
                        [&](const char* key) { return object.contains(key); });
 }
@@ -129,6 +134,30 @@ bool ReadString(
         return false;
     }
     output = object[key].get<std::string>();
+    return true;
+}
+
+// A plugin's name or description, shown to the user as signed: absent, or a
+// non-empty UTF-8 string within its limit and without control characters.
+constexpr std::size_t kMaximumPluginNameBytes = 128;
+constexpr std::size_t kMaximumPluginDescriptionBytes = 512;
+
+bool ReadOptionalDisplayText(
+    const Json& object,
+    const char* key,
+    std::size_t maximum_bytes,
+    std::string& output) {
+    output.clear();
+    if (!object.is_object() || !object.contains(key)) return true;
+    if (!object[key].is_string()) return false;
+    const auto& text = object[key].get_ref<const std::string&>();
+    if (text.empty() || text.size() > maximum_bytes ||
+        std::any_of(text.begin(), text.end(), [](unsigned char c) {
+            return c < 0x20 || c == 0x7f;
+        })) {
+        return false;
+    }
+    output = text;
     return true;
 }
 
@@ -586,12 +615,24 @@ bool VerifyPluginManifestBody(
     const std::string& client_version, const std::string& platform,
     const std::string& architecture) {
     std::string pack_kind;
+    // The plugin's own name and description are additive: a pack made before
+    // them has neither. Every other field is exact.
+    const std::size_t optional_fields =
+        (signed_body.is_object() && signed_body.contains("plugin_name") ? 1 : 0) +
+        (signed_body.is_object() && signed_body.contains("plugin_description") ? 1 : 0);
     if (!HasExactKeys(
             signed_body,
             {"pack_id", "pack_kind", "plugin_id", "package_version", "platform",
              "architecture", "cyxwiz_release", "companion_base_id", "conflicts",
              "support_status", "components", "licenses", "archive",
-             "generated_utc"}) ||
+             "generated_utc"},
+            optional_fields) ||
+        !ReadOptionalDisplayText(
+            signed_body, "plugin_name", kMaximumPluginNameBytes,
+            output.plugin_name) ||
+        !ReadOptionalDisplayText(
+            signed_body, "plugin_description", kMaximumPluginDescriptionBytes,
+            output.plugin_description) ||
         !ReadIdentifier(signed_body, "pack_id", output.pack_id, error) ||
         output.pack_id != catalog_entry.pack_id ||
         !ReadString(signed_body, "pack_kind", pack_kind, error) ||

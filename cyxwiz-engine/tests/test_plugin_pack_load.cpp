@@ -213,6 +213,8 @@ struct Fixture {
     Json Manifest() const {
         Json body = {
             {"pack_id", kPackId}, {"pack_kind", "plugin_pack"}, {"plugin_id", kPluginId},
+            // The plugin's own name, signed with the pack: what the log and the refusal call it
+            {"plugin_name", "Pack test add-on"},
             {"package_version", "2"},
             {"platform", std::string(cyxwiz::runtime::CurrentBackendPackPlatformId())},
             {"architecture", std::string(cyxwiz::runtime::CurrentBackendPackArchitectureId())},
@@ -278,6 +280,8 @@ int main() {
         Check(packs.packs.size() == 1 && packs.refusals.empty() && packs.packs[0].components.size() == 4 &&
                   packs.packs[0].package_version == "2",
               "the active add-on's signed metadata verifies with its four files");
+        Check(packs.packs[0].title == "Pack test add-on",
+              "the add-on is called by the name its signed pack carries: " + packs.packs[0].title);
         manager.SetPackPlugins(packs);
         std::string error;
         Check(manager.LoadPlugin(fixture.pack, &error), "the verified add-on loads" +
@@ -351,6 +355,7 @@ int main() {
                   refusals[0].reason.find("does not match its signed package") != std::string::npos &&
                   refusals[0].files_listed == 4,
               "the refusal names the file: " + (refusals.empty() ? std::string("none") : refusals[0].reason));
+        Check(refusals[0].title == "Pack test add-on", "the refusal names the add-on by its own name");
         const auto* dev = manager.GetLoadedPlugin("com.cyxwiz.tests.developer");
         Check(dev && dev->origin == LoadedPlugin::Origin::Developer,
               "the other plugins still load; a developer plugin loads as before");
@@ -381,6 +386,9 @@ int main() {
         const auto revoked = fixture.Read(fixture.root / "revoked.json");
         Check(revoked.packs.empty() && revoked.refusals.size() == 1 && revoked.refusals[0].files_listed == 0,
               "an add-on whose key is revoked is refused before any file is read");
+        Check(revoked.refusals[0].title == kPluginId,
+              "an add-on whose signed record cannot be read is called by its plugin id: " +
+                  revoked.refusals[0].title);
         manager.SetPackPlugins(revoked);
         Check(!manager.LoadPlugin(fixture.pack, &error) && manager.GetPackRefusals().size() == 1,
               "and its folder does not load");

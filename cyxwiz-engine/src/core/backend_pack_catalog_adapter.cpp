@@ -83,7 +83,20 @@ void ApplyUpdatePolicy(BackendPackManagerRecord& record,
         runtime::BackendPackUpdateDisposition::Upgrade;
 }
 
-// An installed add-on the catalog does not list: its version, base and
+// An installed add-on's own name and description, from the signed manifest
+// kept when it was installed.
+void ApplyInstalledWords(BackendPackManagerRecord& record,
+    const runtime::VerifiedBackendPackCatalogSnapshot& snapshot) {
+    const auto manifest = std::find_if(snapshot.installed_manifests.begin(),
+        snapshot.installed_manifests.end(), [&](const auto& candidate) {
+            return candidate.pack_id == record.installed_pack_id;
+        });
+    if (manifest == snapshot.installed_manifests.end()) return;
+    record.plugin_name = manifest->plugin_name;
+    record.plugin_description = manifest->plugin_description;
+}
+
+// An installed add-on the catalog does not list: its name, version, base and
 // licences come from the signed manifest kept when it was installed.
 void ApplyInstalledManifest(BackendPackManagerRecord& record,
     const runtime::VerifiedBackendPackCatalogSnapshot& snapshot) {
@@ -92,6 +105,7 @@ void ApplyInstalledManifest(BackendPackManagerRecord& record,
             return candidate.pack_id == record.installed_pack_id;
         });
     if (manifest == snapshot.installed_manifests.end()) return;
+    ApplyInstalledWords(record, snapshot);
     record.package_version = manifest->package_version;
     record.runtime_set_id = manifest->runtime_set_id;
     record.companion_base_id = manifest->companion_base_id;
@@ -192,6 +206,8 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
             const auto& manifest = *candidate.manifest;
             record.pack_kind = BackendPackRecordKind::Plugin;
             record.plugin_id = manifest.plugin_id;
+            record.plugin_name = manifest.plugin_name;
+            record.plugin_description = manifest.plugin_description;
             record.compatibility = runtime::EvaluateBackendPackCompatibility(
                 manifest, compatibility_context);
             record.package_version = manifest.package_version;
@@ -246,6 +262,7 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
                 record.installed = true;
                 record.installed_pack_id = plugin->pack_id;
                 record.active = true;
+                ApplyInstalledWords(record, catalog);
             }
         }
         if (installed) {

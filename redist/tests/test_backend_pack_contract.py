@@ -324,6 +324,37 @@ class BackendPackContractTests(unittest.TestCase):
         contract.validate_pack_manifest(plugin_manifest())
         contract.validate_plugin_pack_manifest(plugin_manifest())
 
+    def test_plugin_pack_carries_the_plugins_own_name_and_description(self) -> None:
+        # A pack made before the manifest carried them (plugin_manifest()) passes
+        # above; each of the two is optional on its own.
+        document = plugin_manifest()
+        document["signed"]["plugin_id"] = "org.example.fluid-lab"
+        document["signed"]["plugin_name"] = "Fluid Lab"
+        contract.validate_pack_manifest(document)
+        document["signed"]["plugin_description"] = "Fluid simulation: tanks, pipes and pumps (\u00e9tude)."
+        contract.validate_pack_manifest(document)
+
+    def test_plugin_pack_rejects_unusable_names_and_descriptions(self) -> None:
+        for field, value, message in (
+            ("plugin_name", "", "non-empty string"),
+            ("plugin_name", 7, "non-empty string"),
+            ("plugin_name", "x" * (contract.PLUGIN_NAME_MAX_BYTES + 1), "longer than"),
+            ("plugin_name", "\u00e9" * contract.PLUGIN_NAME_MAX_BYTES, "longer than"),
+            ("plugin_name", "Fluid\nLab", "control character"),
+            ("plugin_description", None, "non-empty string"),
+            ("plugin_description", "x" * (contract.PLUGIN_DESCRIPTION_MAX_BYTES + 1), "longer than"),
+            ("plugin_description", "tab\there", "control character"),
+        ):
+            document = plugin_manifest()
+            document["signed"][field] = value
+            with self.assertRaisesRegex(contract.ContractError, message):
+                contract.validate_pack_manifest(document)
+        # Still strict: another new field is refused
+        document = plugin_manifest()
+        document["signed"]["plugin_author"] = "Example"
+        with self.assertRaisesRegex(contract.ContractError, "unsupported fields"):
+            contract.validate_pack_manifest(document)
+
     def test_plugin_pack_rejects_arrayfire_and_device_fields(self) -> None:
         for name, value in (
             ("arrayfire", {"version": "3.10.0", "abi": "arrayfire-3.10"}),

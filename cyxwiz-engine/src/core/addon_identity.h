@@ -1,8 +1,11 @@
 #pragma once
 
-// The add-ons this release knows (plugin packs: optional features such as
-// Simulation (MuJoCo)): their names and words, one table for the add-on
-// cards, the Plugin Manager and the Engine's log. Header-only, so the plugin
+// What an add-on (a plugin pack: an optional feature such as Simulation
+// (MuJoCo)) is called. Its name and description come from the plugin itself:
+// packaging copies them from plugin.json into the signed pack manifest, and
+// the pack record carries them. The table below is only for an add-on this
+// release expects but has no pack for (its Not published card), and for a
+// pack made before manifests carried the words. Header-only, so the plugin
 // host and the installer can name an add-on without the card model.
 
 #include <string>
@@ -43,11 +46,24 @@ inline const std::vector<std::string>& KnownAddOnPluginIds() {
     return ids;
 }
 
-// Display name of an add-on: its own wording for a known plugin id, else the
-// plugin id itself.
-inline std::string AddOnTitle(const std::string& plugin_id) {
+// Display name of an add-on: the name its signed pack carries (published_name,
+// empty when there is no pack or an older one), else this release's wording
+// for an expected plugin id, else the plugin id itself.
+inline std::string AddOnTitle(const std::string& plugin_id,
+                              const std::string& published_name = {}) {
+    if (!published_name.empty()) return published_name;
     const auto* identity = FindAddOnIdentity(plugin_id);
     return identity ? std::string(identity->title) : plugin_id;
+}
+
+// What an add-on does, in the same order: its signed pack's description, else
+// this release's wording, else a plain line.
+inline std::string AddOnDescription(const std::string& plugin_id,
+                                    const std::string& published_description = {}) {
+    if (!published_description.empty()) return published_description;
+    const auto* identity = FindAddOnIdentity(plugin_id);
+    return identity ? std::string(identity->description)
+                    : std::string("An optional add-on from the signed catalog.");
 }
 
 }  // namespace cyxwiz
