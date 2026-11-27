@@ -711,6 +711,8 @@ class PackageReleaseTests(unittest.TestCase):
         for name in ("mujoco_plugin.dll", "mujoco.dll", "fmt.dll"):
             (plugin / "bin" / name).write_bytes(name.encode("ascii"))
         (plugin / "bin" / "MUJOCO_LICENSE.txt").write_text("apache", encoding="ascii")
+        # The plugin's own licence: not the Engine's (self.root / "LICENSE")
+        (plugin / "LICENSE").write_text("the plugin's own licence", encoding="ascii")
         (plugin / "assets" / "cartpole.xml").write_text("<mujoco/>", encoding="ascii")
         # fmt.dll is a vcpkg runtime library the base build output carries
         vcpkg_bin = self.root / "build" / "vcpkg_installed" / "x64-windows" / "bin"
@@ -756,7 +758,42 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertEqual("cyxwiz-plugin", sources["bin/mujoco_plugin.dll"])
         self.assertIn({"component": "mujoco", "path": "THIRD_PARTY_LICENSES/MuJoCo/MUJOCO_LICENSE.txt"},
                       signed["licenses"])
+        # The pack's LICENSE is the plugin's own, signed as such; the Engine's is not shipped
+        self.assertEqual("the plugin's own licence", (stage / "LICENSE").read_text(encoding="ascii"))
+        self.assertNotEqual((self.root / "LICENSE").read_bytes(), (stage / "LICENSE").read_bytes())
+        self.assertEqual("plugin-license", sources["LICENSE"])
+        self.assertIn({"component": "plugin-license", "path": "LICENSE"}, signed["licenses"])
         package_release.validate_pack_manifest(manifest)
+
+    @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
+    def test_plugin_pack_needs_the_plugins_own_licence(self) -> None:
+        plugin = self.create_plugin()
+        (plugin / "LICENSE").unlink()
+        # The Engine's LICENSE exists (setUp) and is never used in its place
+        self.assertTrue((self.root / "LICENSE").is_file())
+        with self.assertRaisesRegex(package_release.PackageError, r"has no LICENSE \(or LICENSE\.txt\)"):
+            package_release.build_package(self.plugin_pack_args(plugin), self.script)
+        (plugin / "LICENSE").write_bytes(b"")
+        with self.assertRaisesRegex(package_release.PackageError, "LICENSE is empty"):
+            package_release.build_package(self.plugin_pack_args(plugin), self.script)
+        (plugin / "LICENSE").unlink()
+
+        # LICENSE.txt is the plugin's licence too; the pack calls it LICENSE
+        (plugin / "LICENSE.txt").write_text("the plugin's licence, as a .txt", encoding="ascii")
+        stage, archive = package_release.build_package(self.plugin_pack_args(plugin), self.script)
+        self.assertEqual("the plugin's licence, as a .txt", (stage / "LICENSE").read_text(encoding="ascii"))
+        self.assertFalse((stage / "LICENSE.txt").exists())
+        manifest = json.loads(archive.with_suffix(".zip.manifest.json").read_text(encoding="utf-8"))
+        self.assertIn({"component": "plugin-license", "path": "LICENSE"}, manifest["signed"]["licenses"])
+        package_release.validate_pack_manifest(manifest)
+
+    def test_the_mujoco_plugin_folder_carries_the_licence_its_plugin_json_declares(self) -> None:
+        folder = Path(__file__).resolve().parents[2] / "plugins" / "simulation" / "mujoco"
+        declared = json.loads((folder / "plugin.json").read_text(encoding="utf-8"))["license"]
+        text = package_release.plugin_license_file(folder).read_text(encoding="utf-8")
+        self.assertEqual("Apache-2.0", declared)
+        self.assertIn("Apache License", text)
+        self.assertIn("Version 2.0, January 2004", text)
 
     def plugin_pack_args(self, plugin: Path) -> argparse.Namespace:
         return self.artifact_args(

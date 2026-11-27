@@ -46,7 +46,8 @@ opens the installer with the add-on ticked.
 The card shows the version, the download size, and the third-party licences
 the package includes (for MuJoCo: MuJoCo by Google DeepMind, Apache-2.0, and
 the Gymnasium task models, MIT). The licence files are in the package's
-`THIRD_PARTY_LICENSES` folder. In the Engine, **Details** lists the pack id,
+`THIRD_PARTY_LICENSES` folder; the package's `LICENSE` file is the add-on's
+own licence (for Simulation (MuJoCo): Apache-2.0). In the Engine, **Details** lists the pack id,
 the plugin id, the CPU Engine it is built for and the licence files.
 
 An installed add-on's card also checks its files against the signed package,

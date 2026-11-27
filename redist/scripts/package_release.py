@@ -1482,6 +1482,28 @@ def _license_source(name: str) -> str:
     return source
 
 
+def plugin_license_file(plugin_dir: Path) -> Path:
+    """The plugin's own licence text: LICENSE or LICENSE.txt of its folder.
+
+    A plugin pack ships the licence of the plugin, the one its plugin.json
+    declares. A plugin without one is refused: the Engine's licence is never
+    put in its place.
+    """
+    for name in ("LICENSE", "LICENSE.txt"):
+        candidate = plugin_dir / name
+        if candidate.is_symlink():
+            raise PackageError(f"The plugin's {name} must be a file of the plugin folder, not a link: {candidate}")
+        if candidate.is_file():
+            if candidate.stat().st_size == 0:
+                raise PackageError(f"The plugin's {name} is empty: {candidate}")
+            return candidate
+    raise PackageError(
+        f"The plugin folder has no LICENSE (or LICENSE.txt): {plugin_dir}. A plugin pack ships the "
+        "plugin's own licence, the one its plugin.json declares; add the licence text to the plugin folder "
+        "(see BACKEND_PACK_CONTRACT.md, Plugin Packs)"
+    )
+
+
 def build_plugin_pack(
     args: argparse.Namespace,
     paths: PackagePaths,
@@ -1495,9 +1517,10 @@ def build_plugin_pack(
     """Package one built Engine plugin as a schema-2 plugin pack.
 
     The pack folder is the plugin folder the Engine loads: plugin.json, the
-    plugin library and the shared libraries beside it, assets/, LICENSE and the
-    named third-party notices. The vcpkg runtime libraries the CPU base ships
-    are left out (base_shared_libraries): the plugin uses the base's copies.
+    plugin library and the shared libraries beside it, assets/, the plugin's
+    own LICENSE (plugin_license_file) and the named third-party notices. The
+    vcpkg runtime libraries the CPU base ships are left out
+    (base_shared_libraries): the plugin uses the base's copies.
     """
     if system != "windows":
         raise PackageError(f"Plugin packs are not yet qualified on {system}")
@@ -1534,6 +1557,7 @@ def build_plugin_pack(
             raise PackageError(str(error)) from error
     library = plugin_dir / library_relative
     require_file(library, "plugin library")
+    plugin_license = plugin_license_file(plugin_dir)
     pack_version = validate_release_version(args.pack_version, "pack")
     companion_base_id = args.base_pack_id or (
         f"cyxwiz-base-{version}-{pack_version}-{artifact_suffix}"
@@ -1562,7 +1586,7 @@ def build_plugin_pack(
         copy_file(item, stage / library_folder.relative_to(plugin_dir) / item.name)
     if (plugin_dir / "assets").is_dir():
         copy_tree(plugin_dir / "assets", stage / "assets")
-    copy_file(require_file(paths.root / "LICENSE", "CyxWiz LICENSE"), stage / "LICENSE")
+    copy_file(plugin_license, stage / "LICENSE")
     license_sources: dict[str, str] = {}
     for entry in args.third_party_license:
         name, separator, relative = entry.partition("=")
@@ -1584,7 +1608,7 @@ def build_plugin_pack(
         if component.path in license_sources:
             source = license_sources[component.path]
         elif component.path == "LICENSE":
-            source = "cyxwiz-package"
+            source = "plugin-license"
         elif (
             component.path.startswith(library_stage_relative + "/")
             and component.path != Path(library_relative).as_posix()

@@ -529,6 +529,13 @@ add-on cards show it as Damaged, and Repair replaces the folder. The check
 proves integrity against the installed trust file; it does not protect against
 a same-user change of that file.
 
+The pack's `LICENSE` is the plugin's own licence, the one its `plugin.json`
+declares in `license`: packaging takes `LICENSE` (or `LICENSE.txt`) from the
+plugin folder and signs it as the `plugin-license` component. A plugin folder
+without one fails packaging; the Engine's licence is never shipped in its
+place, since it is not the licence of the plugin. The MuJoCo simulation plugin
+is under the Apache License 2.0 (`plugins/simulation/mujoco/LICENSE`).
+
 Packaging names every third-party notice (`--third-party-license NAME=PATH`,
 PATH inside the plugin folder); a pack whose plugin ships third-party runtime
 libraries without one fails. A library beside the plugin is left to the base
