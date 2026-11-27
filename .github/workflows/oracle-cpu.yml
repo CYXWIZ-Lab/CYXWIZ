@@ -203,7 +203,10 @@ jobs:
               status=1
               continue
             fi
-            exported=$(nm -D --defined-only -C "$binary" | grep -E 'spdlog::|fmt::' || true)
+            # Our own cyxwiz:: API may name spdlog types (UseHostLogger);
+            # ArrayFire's spdlog never binds to a cyxwiz:: symbol.
+            exported=$(nm -D --defined-only -C "$binary" | grep -E 'spdlog::|fmt::' \
+              | grep -vE '^[0-9a-f]+ [A-Za-z] cyxwiz::' || true)
             if [ -n "$exported" ]; then
               echo "::error::$binary exports spdlog or fmt symbols"
               echo "$exported" | head -20
