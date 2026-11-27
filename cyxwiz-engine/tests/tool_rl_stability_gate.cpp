@@ -6,7 +6,10 @@
 // (resources/rl_reference/ppo_sb3_curves.json, sac_sb3_curves.json, td3_sb3_curves.json,
 // dqn_sb3_curves.json).
 //
-//   cyxwiz-rl-stability-gate [--sac | --td3 | --dqn] <task> <seed> <output.json> [<MuJoCo plugin folder>]
+//   cyxwiz-rl-stability-gate [--sac | --td3 | --dqn] <task> <seed> <output.json> [<environment plugin folder>]
+//
+// The plugin folder is the MuJoCo plugin's, or another plugin's that offers the same task ids (its id
+// is read from its plugin.json): CyxSim's gates run its environments this way.
 //
 // PPO: task CartPole-v1 (built in), InvertedPendulum-v5 or HalfCheetah-v5 (the
 // MuJoCo plugin). CartPole and InvertedPendulum stop at their target return;
@@ -97,7 +100,7 @@ int main(int argc, char** argv) {
     }
     if (argc < 4)
         return Fail("usage: cyxwiz-rl-stability-gate [--sac | --td3 | --dqn] <task> <seed> <output.json> "
-                    "[<MuJoCo plugin folder>]");
+                    "[<environment plugin folder>]");
     const std::string task = argv[1];
     const std::string seed = argv[2];
     const std::filesystem::path output = argv[3];
@@ -114,11 +117,20 @@ int main(int argc, char** argv) {
         return true;
     });
     auto& manager = cyxwiz::plugin::PluginManager::Instance();
+    // The plugin that offers the MuJoCo tasks: the Engine's MuJoCo plugin, or any plugin offering the
+    // same task ids (CyxSim); its id is read from the folder's plugin.json
+    std::string plugin_id;
     if (mujoco) {
-        if (argc < 5) return Fail(task + " needs the MuJoCo plugin folder");
+        if (argc < 5) return Fail(task + " needs the folder of a plugin that offers it (the MuJoCo plugin's)");
+        const std::filesystem::path folder = std::filesystem::absolute(argv[4]);
+        std::ifstream manifest(folder / "plugin.json");
+        const nlohmann::json info = nlohmann::json::parse(manifest, nullptr, false);
+        if (info.is_discarded() || !info.contains("id") || !info["id"].is_string())
+            return Fail("no plugin id in " + (folder / "plugin.json").string());
+        plugin_id = info["id"].get<std::string>();
         std::string error;
-        if (!manager.LoadPlugin(std::filesystem::absolute(argv[4]), &error)) return Fail("the MuJoCo plugin: " + error);
-        if (!manager.InitializePlugin("com.cyxwiz.simulation.mujoco")) return Fail("the MuJoCo plugin did not start");
+        if (!manager.LoadPlugin(folder, &error)) return Fail("the plugin " + plugin_id + ": " + error);
+        if (!manager.InitializePlugin(plugin_id)) return Fail("the plugin " + plugin_id + " did not start");
     }
 
     const bool cheetah = task == "HalfCheetah-v5";
@@ -140,7 +152,7 @@ int main(int argc, char** argv) {
     if (td3)  // TD3's second layer is 300 (SB3's and RL Zoo's [400, 300])
         for (const int dense : {id.p2, id.v2}) g.At(dense).parameters["units"] = "300";
     g.At(id.env).parameters["environment"] =
-        (mujoco ? std::string("com.cyxwiz.simulation.mujoco:") : std::string("cyxwiz.builtin:")) + task;
+        (mujoco ? plugin_id + ":" : std::string("cyxwiz.builtin:")) + task;
     if (preset) {
         for (const auto& [k, v] : preset->environment) g.At(id.env).parameters[k] = v;
         for (const auto& [k, v] : preset->learner) g.At(id.ppo).parameters[k] = v;
@@ -191,6 +203,7 @@ int main(int argc, char** argv) {
             {"seed", std::stoll(seed)},
             {"copies", config.copies},
             {"learner", cyxwiz::RLAlgorithmName(config.algorithm)},
+            {"environment", g.At(id.env).parameters["environment"]},  // which plugin's task ran
             {"total_timesteps", sac   ? config.sac.total_timesteps
                                 : td3 ? config.td3.total_timesteps
                                 : dqn ? config.dqn.total_timesteps
@@ -271,6 +284,6 @@ int main(int argc, char** argv) {
     std::printf("%s seed %s: %s, target %.0f reached at %lld steps, final mean return %.1f after %lld steps (%.0f s)\n",
                 task.c_str(), seed.c_str(), run.Message().c_str(), target, reached, last_return, steps, seconds);
     write(run.Message());
-    if (mujoco) manager.UnloadPlugin("com.cyxwiz.simulation.mujoco");
+    if (mujoco) manager.UnloadPlugin(plugin_id);
     return finished ? EXIT_SUCCESS : EXIT_FAILURE;
 }
