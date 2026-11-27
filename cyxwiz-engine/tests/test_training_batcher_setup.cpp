@@ -820,7 +820,7 @@ void TestParquetShuffleWindow(const std::filesystem::path& work_dir) {
     Check(built.train != nullptr, "the sorted fixture's train batcher is built");
     for (const uint64_t seed : {77u, 78u}) {
         built.train->BeginEpoch(seed);
-        size_t batches = 0, one_class = 0;
+        size_t batches = 0, one_class = 0, run = 0, longest_run = 0;
         std::vector<int> served(kRows, 0);
         while (!built.train->IsEpochComplete()) {
             const auto batch = built.train->GetNextBatch();
@@ -832,7 +832,13 @@ void TestParquetShuffleWindow(const std::filesystem::path& work_dir) {
                 same = same && class_of(row) == class_of(batch.row_ids.front());
             }
             one_class += same ? 1 : 0;
+            run = same ? run + 1 : 0;
+            longest_run = std::max(longest_run, run);
         }
+        // Read a group at a time every batch held one class: the whole epoch
+        // was one run. A window keeps such runs short.
+        Check(longest_run <= 2, "single-class batches of the sorted file come at most 2 in a row (" +
+                                    std::to_string(longest_run) + ")");
         size_t rows = 0, repeated = 0;
         for (const int times : served) {
             rows += times > 0 ? 1 : 0;

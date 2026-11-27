@@ -1275,7 +1275,7 @@
    "gap": "no multi-step training trajectory vs PyTorch; small shapes, float32 only"
   },
   "MetricBatchSampler": {
-   "gap": "picks are checked against a Python mirror of the Engine's own picker in metric_graph_pytorch.json (not a library reference); the losses and trained parameters downstream are checked vs PyTorch"
+   "gap": "picks are checked against a Python mirror of the Engine's own picker in metric_graph_pytorch.json (not a library reference); the losses and trained parameters downstream are checked vs PyTorch; a run resumed at each epoch serves the uninterrupted run's rows and values (engine vs engine, test_oracle_data replay)"
   },
   "MishActivation": {
    "checks": "forward and backward vs torch (mish) via CreateActivation; ArrayFire CPU, then every CUDA/OpenCL route (or the one requested)",
@@ -1374,10 +1374,10 @@
    ]
   },
   "ParquetArrowBatcher": {
-   "gap": "no PyTorch DataLoader comparison: Arrow vs Parquet and seed determinism are engine vs engine"
+   "gap": "no PyTorch DataLoader comparison: Arrow vs Parquet and seed determinism are engine vs engine; a run resumed at each epoch serves the uninterrupted run's rows and values (engine vs engine, test_oracle_data replay)"
   },
   "ParquetSequenceBatcher": {
-   "gap": "no reference comparison found (engine contracts only)"
+   "gap": "no reference comparison found (engine contracts only); a run resumed at each epoch serves the uninterrupted run's rows and values (engine vs engine, test_oracle_data replay)"
   },
   "PermuteModule": {
    "gap": "no oracle test drives this module; the tensor ops it calls have PyTorch fixtures (training_core tensor_* cases) read only by non-oracle tests"
@@ -1421,7 +1421,7 @@
    ]
   },
   "PrefetchBatcher": {
-   "gap": "wrapper (prefetches another batcher); no reference comparison, the weighted-sampler oracle runs with prefetch off"
+   "gap": "wrapper (prefetches another batcher); no reference comparison, the weighted-sampler oracle runs with prefetch off; a run resumed at each epoch serves the uninterrupted run's rows and values (engine vs engine, test_oracle_data replay)"
   },
   "RMSNormLayer": {
    "checks": "inside TransformerDecoderLayer (norm_type RMSNorm, eps 1e-5 / 1e-6) in the LibTorch block oracle: output, input and gamma gradients; device-selectable (CYXWIZ_TEST_ARRAYFIRE_BACKEND cpu/cuda/opencl/oneapi)",
@@ -1672,7 +1672,7 @@
    ]
   },
   "SequenceBatcher": {
-   "gap": "no reference comparison found: drop_last, padding and seed checks are engine contracts"
+   "gap": "no reference comparison found: drop_last, padding and seed checks are engine contracts; a run resumed at each epoch serves the uninterrupted run's rows and values (engine vs engine, test_oracle_data replay)"
   },
   "SequenceFeatureFusionModule": {
    "gap": "no oracle fixture or test found"

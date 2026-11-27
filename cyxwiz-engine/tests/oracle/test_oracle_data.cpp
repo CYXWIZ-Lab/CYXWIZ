@@ -26,8 +26,12 @@
 #include "../../src/core/arrow_dataset.h"
 #include "../../src/core/audio_dataset_batcher.h"
 #include "../../src/core/batch_uploads.h"
+#include "../../src/core/data_budget.h"
 #include "../../src/core/image_dataset_batcher.h"
+#include "../../src/core/metric_learning_sampling.h"
+#include "../../src/core/parquet_backed_dataset.h"
 #include "../../src/core/prepared_image_set.h"
+#include "../../src/core/sequence_arrow_batcher.h"
 #include "../../src/core/sample_split.h"
 #include "../../src/core/data_registry.h"
 #include "../../src/core/debug_run_paths.h"
@@ -41,13 +45,19 @@
 #include "../../src/core/training_trace_collector.h"
 
 #include <arrow/api.h>
+#include <arrow/io/file.h>
+#include <arrow/util/key_value_metadata.h>
+#include <cyxwiz/tokenizer.h>
+#include <parquet/arrow/writer.h>
 
 #include <algorithm>
 #include <functional>
 
 #include <iostream>
+#include <map>
 #include <memory>
 #include <optional>
+#include <sstream>
 
 #ifndef CYXWIZ_SOURCE_ROOT
 #error "CYXWIZ_SOURCE_ROOT must name the repository root"
@@ -193,6 +203,11 @@ std::vector<double> Values(const cyxwiz::Tensor& tensor) {
         case cyxwiz::DataType::Int32: {
             const int32_t* v = tensor.ReadData<int32_t>();
             std::copy(v, v + out.size(), out.begin());
+            break;
+        }
+        case cyxwiz::DataType::Int64: {  // token ids
+            const int64_t* v = tensor.ReadData<int64_t>();
+            std::transform(v, v + out.size(), out.begin(), [](int64_t x) { return static_cast<double>(x); });
             break;
         }
         default:
@@ -411,6 +426,248 @@ std::vector<double> ColumnValues(const std::shared_ptr<arrow::Table>& table, con
     return out;
 }
 
+// ------------------------------------------- replay: a resumed run's epochs --
+// TOFIX242 2.1: an epoch is a function of (DataLoader seed, epoch) alone, for
+// every batcher kind: a fresh batcher begun at epoch K serves, from K on, the
+// rows and the values the uninterrupted run served, class balancing,
+// augmentation, metric picks and a window of row groups included. (The order
+// itself is the Python port's: the checks of each kind below.)
+
+constexpr int kReplayEpochs = 3;
+
+struct ServedEpoch {
+    std::vector<int64_t> rows;   // as served
+    std::vector<double> values;  // the features (a sequence's token ids), as served
+};
+
+uint64_t ReplaySeed(int epoch) { return cyxwiz::TrainingEpochSeed(static_cast<uint64_t>(kLoaderSeed), epoch); }
+
+ServedEpoch Serve(cyxwiz::IBatcher& batcher, int epoch, bool& exact) {
+    exact = batcher.BeginEpoch(ReplaySeed(epoch)) && exact;
+    ServedEpoch out;
+    while (!batcher.IsEpochComplete()) {
+        const cyxwiz::Batch batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) break;
+        out.rows.insert(out.rows.end(), batch.row_ids.begin(), batch.row_ids.end());
+        if (batch.HasSparseFeatures()) {
+            const auto& csr = *batch.sparse_features;
+            out.values.insert(out.values.end(), csr.values.begin(), csr.values.end());
+        } else {
+            const auto values = Values(batch.data);
+            out.values.insert(out.values.end(), values.begin(), values.end());
+        }
+    }
+    return out;
+}
+
+ServedEpoch Serve(cyxwiz::ISequenceBatcher& batcher, int epoch, bool& exact) {
+    exact = batcher.BeginEpoch(ReplaySeed(epoch)) && exact;
+    ServedEpoch out;
+    while (!batcher.IsEpochComplete()) {
+        const cyxwiz::SequenceBatch batch = batcher.GetNextSequenceBatch();
+        if (batch.size == 0) break;
+        out.rows.insert(out.rows.end(), batch.row_ids.begin(), batch.row_ids.end());
+        const auto values = Values(batch.word_ids);
+        out.values.insert(out.values.end(), values.begin(), values.end());
+    }
+    return out;
+}
+
+// Each row's values in an epoch (its first serving).
+std::map<int64_t, std::vector<double>> ByRow(const ServedEpoch& epoch) {
+    std::map<int64_t, std::vector<double>> out;
+    const size_t width = epoch.rows.empty() ? 0 : epoch.values.size() / epoch.rows.size();
+    for (size_t i = 0; i < epoch.rows.size(); ++i)
+        out.emplace(epoch.rows[i], std::vector<double>(epoch.values.begin() + static_cast<std::ptrdiff_t>(i * width),
+                                                       epoch.values.begin() + static_cast<std::ptrdiff_t>((i + 1) * width)));
+    return out;
+}
+
+// `make` builds the kind's Train batcher as a run does; `augmented`: the
+// epoch's seed also draws the values (a row is served with other values in
+// another epoch).
+template <typename Batcher>
+void CheckReplay(const std::string& kind, const std::function<std::shared_ptr<Batcher>()>& make, bool augmented) {
+    bool exact = true;
+    const auto run = make();
+    std::vector<ServedEpoch> epochs;
+    for (int e = 1; e <= kReplayEpochs; ++e) epochs.push_back(Serve(*run, e, exact));
+    Check(exact, "replay, " + kind + ": every epoch begins from its seed alone (BeginEpoch says so)");
+    Check(!epochs[0].rows.empty() && epochs[0].rows != epochs[1].rows,
+          "replay, " + kind + ": the epochs' orders differ (" + std::to_string(epochs[0].rows.size()) + " rows)");
+    if (augmented) {
+        // Against epoch 1, every later epoch: a few rows with a coin-flip
+        // augmentation can draw alike in two epochs (3 images, p 0.5: 1 in 8).
+        const auto first = ByRow(epochs[0]);
+        size_t changed = 0;
+        for (size_t e = 1; e < epochs.size(); ++e) {
+            const auto later = ByRow(epochs[e]);
+            for (const auto& [row, values] : first)
+                if (const auto it = later.find(row); it != later.end() && it->second != values) ++changed;
+        }
+        Check(changed > 0, "replay, " + kind + ": the augmentation draws differ by epoch (" + std::to_string(changed) +
+                               " rows served with other values than in epoch 1)");
+    }
+    for (int resume = 2; resume <= kReplayEpochs; ++resume) {
+        const auto resumed = make();
+        bool resumed_exact = true;
+        int differs = 0;
+        for (int e = resume; e <= kReplayEpochs; ++e) {
+            const ServedEpoch got = Serve(*resumed, e, resumed_exact);
+            if (differs == 0 && (got.rows != epochs[e - 1].rows || got.values != epochs[e - 1].values)) differs = e;
+        }
+        Check(resumed_exact && differs == 0,
+              "replay, " + kind + ": a run resumed at epoch " + std::to_string(resume) + " serves epochs " +
+                  std::to_string(resume) + "-" + std::to_string(kReplayEpochs) +
+                  " as the uninterrupted run, rows and values" +
+                  (differs ? " (epoch " + std::to_string(differs) + " differs)" : std::string()));
+    }
+}
+
+template <typename Batcher>
+std::shared_ptr<Batcher> Owned(std::unique_ptr<Batcher> batcher) {
+    return std::shared_ptr<Batcher>(std::move(batcher));
+}
+
+// The tabular rows' Train batchers: in memory (class-balanced), through the
+// prefetch queue, under the metric pair sampler, and on disk (Parquet in row
+// groups of 8, read through a window of row groups, class-balanced).
+void RunTabularReplays(cyxwiz::TrainingConfiguration config, const std::shared_ptr<cyxwiz::ArrowDataset>& scaled,
+                       const fs::path& work) {
+    config.balance_classes = true;
+    config.balance_mode = "oversample";
+    config.balance_target = "max";
+    const auto in_memory = [config, scaled]() {
+        return cyxwiz::TakeResolvedExternalBatchers(cyxwiz::BuildArrowTrainingBatchers(config, scaled, "segment", kBatch))
+            .train;
+    };
+    CheckReplay<cyxwiz::IBatcher>("tabular in memory, class-balanced", in_memory, false);
+    auto queued = config;
+    queued.prefetch_factor = 2;
+    CheckReplay<cyxwiz::IBatcher>("tabular through the prefetch queue", [queued, scaled]() {
+        return cyxwiz::TakeResolvedExternalBatchers(cyxwiz::BuildArrowTrainingBatchers(queued, scaled, "segment", kBatch))
+            .train;
+    }, false);
+    CheckReplay<cyxwiz::IBatcher>("metric pairs over the tabular rows", [in_memory]() {
+        auto source = in_memory();
+        source->SetClassIndexLabelMode(true);  // one class id per row, as the pair builder reads them
+        auto sampler = std::make_unique<cyxwiz::MetricBatchSampler>(*source, cyxwiz::MetricSampling::Pairs,
+                                                                    cyxwiz::MetricMining::Random, kLoaderSeed);
+        // The sampler reads its source: the source lives as long as it.
+        return std::shared_ptr<cyxwiz::IBatcher>(sampler.release(), [source](cyxwiz::IBatcher* p) { delete p; });
+    }, false);
+
+    const fs::path file = work / "replay_rows.parquet";
+    {
+        auto out = arrow::io::FileOutputStream::Open(file.string());
+        Check(out.ok(), "replay: the rows' Parquet file opens");
+        if (!out.ok()) return;
+        const auto properties = parquet::ArrowWriterProperties::Builder().store_schema()->build();
+        Check(parquet::arrow::WriteTable(*scaled->GetArrowTable(), arrow::default_memory_pool(), *out, kBatch,
+                                         parquet::default_writer_properties(), properties)
+                      .ok() &&
+                  (*out)->Close().ok(),
+              "replay: the rows are written in row groups of " + std::to_string(kBatch));
+    }
+    const auto disk = cyxwiz::ParquetBackedDataset::Open(file.string(), "replay_rows");
+    Check(disk != nullptr && disk->GetNumRowGroups() > 4, "replay: the rows' file has more row groups than a window");
+    if (!disk) return;
+    cyxwiz::SetDataBudgetBytes(1);  // the smallest window: 4 row groups
+    CheckReplay<cyxwiz::IBatcher>("tabular on disk, a window of row groups, class-balanced", [config, disk]() {
+        return cyxwiz::TakeResolvedExternalBatchers(cyxwiz::BuildParquetTrainingBatchers(config, disk, "segment", kBatch))
+            .train;
+    }, false);
+    cyxwiz::SetDataBudgetBytes(0);
+}
+
+// Causal-LM token windows as the Engine writes them (token_ids, the window
+// bounds, the vocabulary in the schema metadata): 12 windows of 4 to 6 tokens.
+std::shared_ptr<arrow::Table> TokenWindows() {
+    std::vector<std::string> words;
+    for (int w = 0; w < 12; ++w) words.push_back("w" + std::to_string(w));
+    cyxwiz::Vocabulary vocabulary;
+    vocabulary.SetVocabulary(words);
+    std::ostringstream artifact;
+    if (!vocabulary.SaveToStream(artifact)) throw std::runtime_error("the windows' vocabulary is not saved");
+    auto ids = std::make_shared<arrow::Int64Builder>();
+    arrow::ListBuilder tokens(arrow::default_memory_pool(), ids);
+    arrow::Int64Builder starts, ends, targets;
+    int64_t offset = 0;
+    for (int window = 0; window < 12; ++window) {
+        const int64_t length = 4 + window % 3;
+        bool ok = tokens.Append().ok();
+        for (int64_t t = 0; t < length; ++t)
+            ok = ok && ids->Append(vocabulary.WordToIndex(words[static_cast<size_t>((window + t) % 12)])).ok();
+        ok = ok && starts.Append(offset).ok() && ends.Append(offset + length).ok() && targets.Append(length - 1).ok();
+        if (!ok) throw std::runtime_error("the token windows are not built");
+        offset += length;
+    }
+    std::shared_ptr<arrow::Array> token_array, start_array, end_array, target_array;
+    if (!tokens.Finish(&token_array).ok() || !starts.Finish(&start_array).ok() || !ends.Finish(&end_array).ok() ||
+        !targets.Finish(&target_array).ok())
+        throw std::runtime_error("the token windows are not built");
+    const auto metadata = arrow::key_value_metadata(
+        {"cyxwiz.token_windows.version", "cyxwiz.token_windows.context", "cyxwiz.token_windows.vocabulary",
+         "cyxwiz.token_windows.tokenizer_type", "cyxwiz.token_windows.lowercase"},
+        {"1", "6", artifact.str(), "0", "false"});
+    return arrow::Table::Make(arrow::schema({arrow::field("token_ids", arrow::list(arrow::int64()), false),
+                                             arrow::field("__token_start", arrow::int64(), false),
+                                             arrow::field("__token_end", arrow::int64(), false),
+                                             arrow::field("__valid_targets", arrow::int64(), false)},
+                                            metadata),
+                              {token_array, start_array, end_array, target_array});
+}
+
+// Sequences: the token windows in memory (SequenceBatcher) and on disk, one
+// window per row group, read through a window of row groups
+// (ParquetSequenceBatcher).
+void RunSequenceReplays() {
+    const auto windows = TokenWindows();
+    cyxwiz::TrainingConfiguration config;
+    config.sequence_batch.enabled = true;
+    config.sequence_batch.create_causal_lm_targets = true;
+    config.sequence_batch.create_attention_mask = true;
+    config.sequence_batch.max_sequence_length = 6;
+    config.sequence_batch.token_column = "token_ids";
+    config.shuffle = true;
+    config.dataloader_seed = kLoaderSeed;
+    config.train_ratio = 1.0f;
+    config.val_ratio = 0.0f;
+    config.test_ratio = 0.0f;
+    const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(windows, "replay_windows");
+    CheckReplay<cyxwiz::ISequenceBatcher>("token windows in memory", [config, dataset]() {
+        auto built = cyxwiz::BuildSequenceBatcherFromArrowDataset(dataset, config, 2);
+        if (!built.success()) throw std::runtime_error("token windows in memory: " + built.error_message);
+        return Owned(std::move(built.batcher));
+    }, false);
+
+    const fs::path file = fs::temp_directory_path() / "cyxwiz_oracle_replay_windows.parquet";
+    {
+        auto out = arrow::io::FileOutputStream::Open(file.string());
+        const auto properties = parquet::ArrowWriterProperties::Builder().store_schema()->build();
+        Check(out.ok() &&
+                  parquet::arrow::WriteTable(*windows, arrow::default_memory_pool(), *out, 1,
+                                             parquet::default_writer_properties(), properties)
+                      .ok() &&
+                  (*out)->Close().ok(),
+              "replay: the token windows are written one per row group");
+    }
+    cyxwiz::SequenceWindowSource source;
+    source.file = cyxwiz::ParquetBackedDataset::Open(file.string(), "replay_windows_on_disk");
+    Check(source.file != nullptr && source.file->GetNumRowGroups() == 12, "replay: the windows' file has 12 row groups");
+    if (!source.file) return;
+    cyxwiz::SetDataBudgetBytes(1);  // the smallest window: 4 row groups
+    CheckReplay<cyxwiz::ISequenceBatcher>("token windows on disk, a window of row groups", [config, source]() {
+        auto built = cyxwiz::BuildSequenceBatcherFromWindowSources(source, config, 2);
+        if (!built.success()) throw std::runtime_error("token windows on disk: " + built.error_message);
+        return Owned(std::move(built.batcher));
+    }, false);
+    cyxwiz::SetDataBudgetBytes(0);
+    source.file.reset();
+    std::error_code ignored;
+    fs::remove(file, ignored);
+}
+
 void Run(const json& fixture) {
     const json& tol = fixture.at("tolerance");
     const fs::path csv = ModelDir() / fixture.at("csv").get<std::string>();
@@ -592,6 +849,7 @@ void Run(const json& fixture) {
     // histograms were read without one).
     Check(copies.unknown == 0, "copy budget: every device-to-host read is named (" + std::to_string(copies.unknown) +
                                    " are not)");
+    RunTabularReplays(config, scaled, work);
     fs::remove_all(work);
 }
 
@@ -958,6 +1216,18 @@ void RunImage() {
     if (!prepared.set) return;
     cyxwiz::ImageDatasetBatcher batcher(prepared.set, f.at("batch_size").get<int>(), SplitOf(f), true, kLoaderSeed);
     ReadPhases("image", f, batcher);
+    CheckReplay<cyxwiz::IBatcher>("images, a random horizontal flip", [&]() {
+        auto flipped = std::make_shared<cyxwiz::ImageDatasetBatcher>(prepared.set, f.at("batch_size").get<int>(),
+                                                                     SplitOf(f), true, kLoaderSeed);
+        cyxwiz::image::ImageOp flip;
+        flip.kind = cyxwiz::image::ImageOpKind::HorizontalFlip;
+        flip.probability = 0.5f;
+        cyxwiz::image::ImageAugmentation transforms;
+        transforms.ops.push_back(flip);
+        flipped->SetImageTransforms(transforms);
+        flipped->SetPhase(cyxwiz::BatcherPhase::Train);
+        return std::shared_ptr<cyxwiz::IBatcher>(flipped);
+    }, true);
     TrainKind("image", f, ImageModel(), "image_model", [](cyxwiz::TrainingConfiguration&) {},
               [&](const cyxwiz::TrainingConfiguration& c) {
                   auto shared = std::make_shared<cyxwiz::ImageDatasetBatcher>(prepared.set, c.batch_size, SplitOf(f),
@@ -989,6 +1259,15 @@ void RunAudio() {
                                         kLoaderSeed);
     Check(batcher.GetNumSamples() > 0, "audio: the clips load");
     ReadPhases("audio", f, batcher);
+    CheckReplay<cyxwiz::IBatcher>("audio, additive noise", [&]() {
+        auto noisy = preprocessing;
+        noisy.has_augmentation = true;
+        noisy.noise_level = 0.05f;
+        auto augmented = std::make_shared<cyxwiz::AudioDatasetBatcher>(entry, noisy, f.at("batch_size").get<int>(),
+                                                                       SplitOf(f), true, 0, kLoaderSeed);
+        augmented->SetPhase(cyxwiz::BatcherPhase::Train);
+        return std::shared_ptr<cyxwiz::IBatcher>(augmented);
+    }, true);
     TrainKind("audio", f, AudioModel(), "audio_model", [](cyxwiz::TrainingConfiguration&) {},
               [&](const cyxwiz::TrainingConfiguration& c) {
                   auto shared = std::make_shared<cyxwiz::AudioDatasetBatcher>(entry, preprocessing, c.batch_size,
@@ -1035,6 +1314,15 @@ void RunSparse() {
     bool seeded = false;
     const PartRead train = ReadTrain(*set.train, 2, kLoaderSeed, seeded);
     CheckParts("sparse", f, train, ReadOnce(set.val), ReadOnce(set.test), seeded);
+    auto balanced = config;
+    balanced.balance_classes = true;
+    balanced.balance_mode = "oversample";
+    balanced.balance_target = "max";
+    const int batch_size = f.at("batch_size").get<int>();
+    CheckReplay<cyxwiz::IBatcher>("sparse rows, class-balanced", [balanced, features, batch_size]() {
+        return cyxwiz::TakeResolvedExternalBatchers(cyxwiz::BuildSparseTrainingBatchers(balanced, features, batch_size))
+            .train;
+    }, false);
 
     // Training on those batches: a linear model on the CSR rows against
     // PyTorch running its export on the dense rows in the same order.
@@ -1065,7 +1353,7 @@ int main(int argc, char** argv) {
                   << fixture.at("numpy_version").get<std::string>() << "\n";
         Run(fixture);
         RunUnshuffledSplit(fixture);
-        for (const auto& kind : {RunText, RunSeries, RunImage, RunAudio, RunSparse}) {
+        for (const auto& kind : {RunText, RunSeries, RunImage, RunAudio, RunSparse, RunSequenceReplays}) {
             try {
                 kind();
             } catch (const std::exception& e) {

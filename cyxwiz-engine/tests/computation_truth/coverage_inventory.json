@@ -1647,7 +1647,7 @@
    "status": "gap",
    "checks": "",
    "evidence": [],
-   "gap": "picks are checked against a Python mirror of the Engine's own picker in metric_graph_pytorch.json (not a library reference); the losses and trained parameters downstream are checked vs PyTorch"
+   "gap": "picks are checked against a Python mirror of the Engine's own picker in metric_graph_pytorch.json (not a library reference); the losses and trained parameters downstream are checked vs PyTorch; a run resumed at each epoch serves the uninterrupted run's rows and values (engine vs engine, test_oracle_data replay)"
   },
   {
    "component": "MishActivation",
@@ -1800,7 +1800,7 @@
    "status": "gap",
    "checks": "",
    "evidence": [],
-   "gap": "no PyTorch DataLoader comparison: Arrow vs Parquet and seed determinism are engine vs engine"
+   "gap": "no PyTorch DataLoader comparison: Arrow vs Parquet and seed determinism are engine vs engine; a run resumed at each epoch serves the uninterrupted run's rows and values (engine vs engine, test_oracle_data replay)"
   },
   {
    "component": "ParquetSequenceBatcher",
@@ -1809,7 +1809,7 @@
    "status": "gap",
    "checks": "",
    "evidence": [],
-   "gap": "no reference comparison found (engine contracts only)"
+   "gap": "no reference comparison found (engine contracts only); a run resumed at each epoch serves the uninterrupted run's rows and values (engine vs engine, test_oracle_data replay)"
   },
   {
    "component": "PermuteModule",
@@ -1878,7 +1878,7 @@
    "status": "gap",
    "checks": "",
    "evidence": [],
-   "gap": "wrapper (prefetches another batcher); no reference comparison, the weighted-sampler oracle runs with prefetch off"
+   "gap": "wrapper (prefetches another batcher); no reference comparison, the weighted-sampler oracle runs with prefetch off; a run resumed at each epoch serves the uninterrupted run's rows and values (engine vs engine, test_oracle_data replay)"
   },
   {
    "component": "RMSNormLayer",
@@ -2200,7 +2200,7 @@
    "status": "gap",
    "checks": "",
    "evidence": [],
-   "gap": "no reference comparison found: drop_last, padding and seed checks are engine contracts"
+   "gap": "no reference comparison found: drop_last, padding and seed checks are engine contracts; a run resumed at each epoch serves the uninterrupted run's rows and values (engine vs engine, test_oracle_data replay)"
   },
   {
    "component": "SequenceFeatureFusionModule",
