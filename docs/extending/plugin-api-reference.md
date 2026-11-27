@@ -682,8 +682,13 @@ plugin_sdk --prefix <folder>` installs the SDK.
 ## 12. `cyxwiz-plugin-check`
 
 ```
-cyxwiz-plugin-check [--open <file>]... <plugin folder> [<plugin folder> ...]
+cyxwiz-plugin-check [--scratch] [--open <file>]... <plugin folder> [<plugin folder> ...]
 ```
+
+Loading a plugin copies its library into your plugin cache and reads your
+plugin settings, as the Engine does. `--scratch` runs the check in a user
+profile of its own, removed at the end, so your cache, settings and
+permissions stay as they were: use it in scripts and CI.
 
 The tool is `runtime/base/<base>/cyxwiz-plugin-check` (`.exe`). Start it
 with `cyxwiz-cli plugin-check <plugin folder> ...` from the installation
@@ -711,9 +716,13 @@ For each folder it:
    prints *ok node ...* or *FAIL node ...* (*refuses every input shape the
    check uses* when it accepts neither);
 6. lists the plugin's dataset formats and analytics (*ok dataset format
-   ...*, *ok analytic ...*), prints *FAIL not added: &lt;reason&gt;* for each
-   node, format or analytic the Engine refused, and *FAIL the plugin
-   registered no nodes, dataset formats or analytics* when there is none;
+   ...*, *ok analytic ...*); creates two copies of each environment, resets
+   them and steps them with mid-range actions, every value finite (*ok
+   environment ...*); lists its panels (*ok panel &lt;id&gt; (&lt;title&gt;), not
+   drawn here*: the check has no window); prints *FAIL not added:
+   &lt;reason&gt;* for each node, format or analytic the Engine refused, and
+   *FAIL the plugin registered no nodes, dataset formats, analytics,
+   environments or panels* when there is none;
 7. for each `--open <file>`, when the plugin adds a dataset format: picks
    the format as Data Input does (extension, then `CanLoad`), reads every
    batch, validates the table, prints *ok open &lt;file&gt; as &lt;format&gt;:
