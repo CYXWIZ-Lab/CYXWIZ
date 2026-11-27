@@ -12,7 +12,7 @@
 // CYXWIZ_PLUGIN_ENTRY exports the fingerprint of the plugin's own build
 // (CyxwizPluginBuildFingerprint); the loader compares it with the Engine's
 // before any other plugin code runs. The text is
-//   "sdk=0.2;api=1.3;compiler=msvc-19;stdlib=msvc-stl;build=release;ptr=64;arrayfire=3.10"
+//   "sdk=0.2;api=1.4;compiler=msvc-19;stdlib=msvc-stl;build=release;ptr=64;arrayfire=3.10"
 // and is computed where this header is compiled: in the plugin for the
 // plugin, in the Engine for the Engine.
 
@@ -28,12 +28,14 @@
 
 namespace cyxwiz::plugin {
 
-// Plugin API version this SDK provides (plugin_types.h keeps the same numbers
-// as PLUGIN_API_VERSION_*). Raise it whenever a class a plugin derives from
-// changes shape (a new virtual in Module or Optimizer, a new member): a
-// plugin built before must be refused, not run with the old layout.
+// Plugin API version this SDK provides: the same numbers as
+// PLUGIN_API_VERSION_* in plugin_types.h, which checks at compile time that
+// they match (plugin_types.h includes this header, so the numbers cannot be
+// read from there). Raise both whenever the SDK's interfaces or the classes a
+// plugin derives from change shape. A plugin whose minor is higher than the
+// Engine's is refused.
 inline constexpr int kFingerprintApiMajor = 1;
-inline constexpr int kFingerprintApiMinor = 3;
+inline constexpr int kFingerprintApiMinor = 4;
 
 inline std::string CurrentBuildFingerprint() {
 #ifdef CYXWIZ_TEST_BUILD_FINGERPRINT

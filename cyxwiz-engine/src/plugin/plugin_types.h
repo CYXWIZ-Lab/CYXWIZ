@@ -26,6 +26,8 @@ constexpr uint16_t PLUGIN_API_VERSION_MAJOR = 1;
 // IPreferencesProvider (TOFIX212).
 constexpr uint16_t PLUGIN_API_VERSION_MINOR = 4;
 constexpr uint16_t PLUGIN_API_VERSION_PATCH = 0;
+static_assert(kFingerprintApiMajor == PLUGIN_API_VERSION_MAJOR && kFingerprintApiMinor == PLUGIN_API_VERSION_MINOR,
+              "plugin_fingerprint.h must carry the plugin API version");
 
 // ============================================================================
 // PluginVersion - Semantic versioning

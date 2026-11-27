@@ -508,7 +508,7 @@ directly, so your plugin must be built the way the Engine was.
 compiler that builds your plugin, for example
 
 ```
-sdk=0.2;api=1.3;compiler=msvc-19;stdlib=msvc-stl;build=release;ptr=64;arrayfire=none
+sdk=0.2;api=1.4;compiler=msvc-19;stdlib=msvc-stl;build=release;ptr=64;arrayfire=none
 ```
 
 The Engine loads your library, then compares the fingerprint with its own
@@ -518,7 +518,7 @@ global constructors (and `DllMain` on Windows): keep them trivial.
 | Item | Must match | Values |
 |---|---|---|
 | `sdk` | The CyxWiz SDK major and minor version | `0.2` |
-| `api` | Same major; your minor not newer than the Engine's | `1.2` |
+| `api` | Same major; your minor not newer than the Engine's | `1.4` |
 | `compiler` | Compiler family and major version | `msvc-19` (every Visual Studio from 2015 to 2026), `gcc-11`, `clang-16`. clang-cl reports `clang-N`, MinGW `gcc-N`: both differ from a Visual Studio Engine |
 | `stdlib` | The C++ standard library | `msvc-stl`, `libstdc++`, `libc++` |
 | `build` | `debug` with the debug Visual C++ runtime (`_DEBUG`) or `_GLIBCXX_DEBUG`, otherwise `release` | The Engine is `release` |
