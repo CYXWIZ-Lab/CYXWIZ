@@ -206,6 +206,24 @@ jobs:
         if: ${{ !cancelled() && steps.user-folders.outcome == 'success' }}
         run: python scripts/checks/check_user_folders_untouched.py check "${{ runner.temp }}/user-folders.json"
 
+      # Linux tests that use ArrayFire abort with "free(): invalid pointer" while
+      # ArrayFire alone runs on the same image. Record where: the libraries a test
+      # resolves, a backtrace, and the same test without ArrayFire's own library
+      # folder on LD_LIBRARY_PATH (its bundled TBB, hwloc and OpenCL loader would
+      # otherwise replace the ones the build linked). Diagnosis only.
+      - name: Diagnose a Linux test abort
+        if: ${{ failure() && runner.os == 'Linux' }}
+        run: |
+          sudo apt-get install -y gdb > /dev/null
+          exe=$(find build -name test_oracle_train -type f -perm -u+x | head -1)
+          echo "== libraries of $exe"
+          ldd "$exe" | sort
+          echo "== backtrace"
+          gdb -batch -ex run -ex bt "$exe" 2>&1 | tail -80 || true
+          echo "== the same test without ArrayFire's folder on LD_LIBRARY_PATH"
+          af_root=$(dirname "$(dirname "$(find /opt/arrayfire -name 'libafcpu.so*' | head -1)")")
+          env -u LD_LIBRARY_PATH AF_PATH="$af_root" ctest --test-dir build -R '^oracle_oracle_train_cpu$' --output-on-failure || true
+
       - name: Upload the oracle logs
         if: always()
         uses: actions/upload-artifact@v4
