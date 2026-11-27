@@ -188,12 +188,12 @@ jobs:
       - name: Build the oracle tests
         run: cmake --build build --config Release --target cyxwiz-oracle-tests --parallel
 
-      # ArrayFire's backends bring their own spdlog: if our binaries export
-      # spdlog or fmt, ld.so binds ArrayFire to our copy and the first device
-      # query aborts ("free(): invalid pointer"). The root CMakeLists keeps
-      # them out of the dynamic symbol tables; this proves it, and that the
-      # backend's lines still reach the host's logger.
-      - name: Check our Linux binaries keep spdlog private and the backend logs through the host
+      # ArrayFire's backends bring their own spdlog and FFTW: if our binaries
+      # export ours, ld.so binds ArrayFire to our copies (the first device
+      # query aborted with "free(): invalid pointer"). The root CMakeLists
+      # keeps them out of the dynamic symbol tables; this proves it, and that
+      # the backend's lines still reach the host's logger.
+      - name: Check our Linux binaries keep spdlog and FFTW private and the backend logs through the host
         if: runner.os == 'Linux'
         run: |
           status=0
@@ -205,15 +205,23 @@ jobs:
             fi
             # Our own cyxwiz:: API may name spdlog types (UseHostLogger);
             # ArrayFire's spdlog never binds to a cyxwiz:: symbol.
-            exported=$(nm -D --defined-only -C "$binary" | grep -E 'spdlog::|fmt::' \
+            exported=$(nm -D --defined-only -C "$binary" \
+              | grep -E 'spdlog::|fmt::|^[0-9a-f]+ [A-Za-z] fftw' \
               | grep -vE '^[0-9a-f]+ [A-Za-z] cyxwiz::' || true)
             if [ -n "$exported" ]; then
-              echo "::error::$binary exports spdlog or fmt symbols"
+              echo "::error::$binary exports spdlog, fmt or FFTW symbols"
               echo "$exported" | head -20
               status=1
             fi
           done
           build/bin/test_backend_host_logger || status=1
+          # Report only: C functions ArrayFire's libraries look up that our
+          # backend also exports (the next library like FFTW would show here).
+          nm -D --defined-only build/lib/libcyxwiz-backend.so | awk '{print $3}' | sort -u > "$RUNNER_TEMP/ours.txt"
+          find /opt/arrayfire -name 'libaf*.so*' -type f -exec nm -D --undefined-only {} + \
+            | awk '{print $2}' | sort -u > "$RUNNER_TEMP/arrayfire.txt"
+          echo "== C symbols ArrayFire looks up that our backend exports:"
+          comm -12 "$RUNNER_TEMP/ours.txt" "$RUNNER_TEMP/arrayfire.txt" | grep -v '^_Z' | head -50
           exit $status
 
       # Tests keep their files in a scratch folder of their own: prove they
@@ -234,17 +242,29 @@ jobs:
         if: ${{ !cancelled() && steps.user-folders.outcome == 'success' }}
         run: python scripts/checks/check_user_folders_untouched.py check "${{ runner.temp }}/user-folders.json"
 
-      # When a Linux test aborts, record where: the libraries a test resolves
-      # and a backtrace. Diagnosis only.
-      - name: Diagnose a Linux test abort
+      # When Linux tests fail, record where: for the first three, the
+      # libraries the test resolves and a backtrace. Diagnosis only.
+      - name: Diagnose failed Linux tests
         if: ${{ failure() && runner.os == 'Linux' }}
         run: |
+          failed=build/Testing/Temporary/LastTestsFailed.log
+          if [ ! -f "$failed" ]; then
+            echo "no failed-test list"
+            exit 0
+          fi
           sudo apt-get install -y gdb > /dev/null
-          exe=$(find build -name test_oracle_train -type f -perm -u+x | head -1)
-          echo "== libraries of $exe"
-          ldd "$exe" | sort
-          echo "== backtrace"
-          gdb -batch -ex run -ex bt "$exe" 2>&1 | tail -80 || true
+          ctest --test-dir build --show-only=json-v1 > "$RUNNER_TEMP/tests.json"
+          for name in $(cut -d: -f2 "$failed" | head -3); do
+            exe=$(jq -r --arg n "$name" '.tests[] | select(.name == $n) | .command[0]' "$RUNNER_TEMP/tests.json")
+            if [ ! -x "$exe" ]; then
+              echo "== $name: no executable"
+              continue
+            fi
+            echo "== $name: libraries of $exe"
+            ldd "$exe" | sort
+            echo "== $name: backtrace"
+            gdb -batch -ex run -ex 'thread apply all bt' "$exe" 2>&1 | tail -120 || true
+          done
 
       - name: Upload the oracle logs
         if: always()

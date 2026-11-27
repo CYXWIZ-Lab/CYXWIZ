@@ -68,8 +68,13 @@ elseif(UNIX)
     # spdlog and fmt (on Windows they share vcpkg's spdlog.dll); the Engine
     # hands its logger to the backend (cyxwiz::UseHostLogger) so the
     # backend's lines still reach the Engine's log.
+    # FFTW likewise: ArrayFire's CPU backend calls fftw_* from its own FFTW,
+    # and our static copy (audio processing) must not take those calls.
+    # Only archives whose state no library of ours shares across a library
+    # boundary are listed, not ALL: protobuf, for one, is shared between the
+    # Engine and the backend today, and splitting it would need its own check.
     add_link_options(
-        "LINKER:--exclude-libs,libspdlog.a:libspdlogd.a:libfmt.a:libfmtd.a")
+        "LINKER:--exclude-libs,libspdlog.a:libspdlogd.a:libfmt.a:libfmtd.a:libfftw3.a:libfftw3f.a:libfftw3l.a:libfftw3_threads.a:libfftw3f_threads.a:libfftw3l_threads.a")
 endif()
 
 message(STATUS "Building CyxWiz for ${CYXWIZ_PLATFORM}")
