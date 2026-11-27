@@ -1023,22 +1023,53 @@ void NodeEditor::RenderEmptyCanvas() {
         starter_graphs_found_ = true;
     }
     const st::EmptyCanvas text;
-    // Two small windows of their own in the canvas centre: the words take no
-    // input (a node dropped on them, a right-click or the wheel reach the
-    // canvas, as the hint says), only the row of buttons below them does.
+    // Two overlays of the canvas, in its centre, drawn and clipped with it (a
+    // window of its own was drawn over windows floating above the Studio). The
+    // words take no input (a node dropped on them, a right-click or the wheel
+    // reach the canvas, as the hint says); only the buttons below them do.
+    // Both are sized here, so they are centred in the frame they first show.
+    const ImGuiStyle& style = ImGui::GetStyle();
     const float centre_x = canvas_origin_.x + canvas_size_.x * 0.5f;
-    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
-                                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav |
                                    ImGuiWindowFlags_NoMove;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ::gui::NextWindowFollowsCurrent();
-    ImGui::SetNextWindowPos(ImVec2(centre_x, canvas_origin_.y + canvas_size_.y * 0.40f), ImGuiCond_Always,
-                            ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowBgAlpha(0.0f);
-    float words_bottom = canvas_origin_.y + canvas_size_.y * 0.45f;
-    if (ImGui::Begin("##EmptyCanvas", nullptr, flags | ImGuiWindowFlags_NoInputs)) {
-        const float wrap = std::min(canvas_size_.x - 48.0f, ImGui::GetFontSize() * 26.0f);
+
+    const float wrap = std::min(canvas_size_.x - 48.0f, ImGui::GetFontSize() * 26.0f);
+    const float words_w = wrap + style.WindowPadding.x * 2.0f;
+    const float words_h = style.WindowPadding.y * 2.0f + style.ItemSpacing.y * 2.0f +
+                          ImGui::CalcTextSize(text.title, nullptr, false, wrap).y +
+                          ImGui::CalcTextSize(text.hint, nullptr, false, wrap).y;
+
+    const char* search = ICON_FA_MAGNIFYING_GLASS " Search nodes";
+    const char* panel = ICON_FA_CUBES " Open the Nodes panel";
+    const char* example = ICON_FA_DIAGRAM_PROJECT " Open an example graph " ICON_FA_CHEVRON_DOWN;
+    std::vector<const char*> labels{search};
+    if (open_nodes_panel_callback_) labels.push_back(panel);
+    if (!starter_graphs_.empty()) labels.push_back(example);
+    float row_w = 0.0f;
+    float widest = 0.0f;
+    for (const char* label : labels) {
+        const float w = ui::ButtonWidth(label, ui::ButtonSize::Small);
+        row_w += w;
+        widest = std::max(widest, w);
+    }
+    row_w += style.ItemSpacing.x * static_cast<float>(labels.size() - 1);
+    // One row when it fits the canvas, else one button per line, centred
+    const bool one_row = row_w + style.WindowPadding.x * 2.0f <= canvas_size_.x - 24.0f;
+    const float rows = one_row ? 1.0f : static_cast<float>(labels.size());
+    const float actions_w = (one_row ? row_w : widest) + style.WindowPadding.x * 2.0f;
+    const float actions_h = rows * ui::ButtonHeight(ui::ButtonSize::Small) + (rows - 1.0f) * style.ItemSpacing.y +
+                            style.WindowPadding.y * 2.0f;
+
+    // Shown whole or not at all: never cut by the canvas edges or the footer
+    const float room_h = canvas_size_.y - kCanvasFooterHeight - 16.0f;
+    if (words_h + actions_h > room_h || std::max(words_w, actions_w) > canvas_size_.x - 16.0f) return;
+    const float top = canvas_origin_.y + 8.0f;
+    const float words_y = std::clamp(canvas_origin_.y + canvas_size_.y * 0.40f - words_h * 0.5f, top,
+                                     top + room_h - words_h - actions_h);
+
+    if (::gui::BeginCanvasOverlay("##EmptyCanvas", centre_x - words_w * 0.5f, words_y, words_w, words_h,
+                                  flags | ImGuiWindowFlags_NoInputs, true)) {
         const auto centred = [wrap](const char* line, const ImVec4& colour) {
             const float w = std::min(ImGui::CalcTextSize(line).x, wrap);
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (wrap - w) * 0.5f));
@@ -1049,29 +1080,32 @@ void NodeEditor::RenderEmptyCanvas() {
         ImGui::Dummy(ImVec2(wrap, 0.0f));
         centred(text.title, t.text_bright);
         centred(text.hint, t.text_dim);
-        words_bottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
     }
-    ImGui::End();
+    ::gui::EndCanvasOverlay();
 
-    ::gui::NextWindowFollowsCurrent();
-    ImGui::SetNextWindowPos(ImVec2(centre_x, words_bottom), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
-    ImGui::SetNextWindowBgAlpha(0.0f);
-    if (ImGui::Begin("##EmptyCanvasActions", nullptr, flags)) {
-        const char* search = ICON_FA_MAGNIFYING_GLASS " Search nodes";
-        const char* panel = ICON_FA_CUBES " Open the Nodes panel";
-        const char* example = ICON_FA_DIAGRAM_PROJECT " Open an example graph " ICON_FA_CHEVRON_DOWN;
+    // Before each button: beside the last one, or centred on a line of its own
+    const auto place = [&](const char* label, bool first) {
+        if (one_row) {
+            if (!first) ImGui::SameLine();
+            return;
+        }
+        ImGui::SetCursorPosX(style.WindowPadding.x + (widest - ui::ButtonWidth(label, ui::ButtonSize::Small)) * 0.5f);
+    };
+    if (::gui::BeginCanvasOverlay("##EmptyCanvasActions", centre_x - actions_w * 0.5f, words_y + words_h, actions_w,
+                                  actions_h, flags, true)) {
+        place(search, true);
         if (ui::SecondaryButton(search)) {
             node_add_search_.just_activated = true;
             node_add_search_.is_active = true;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The box at the top right of the canvas: type a node's name");
         if (open_nodes_panel_callback_) {
-            ImGui::SameLine();
+            place(panel, false);
             if (ui::SecondaryButton(panel)) open_nodes_panel_callback_();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag a node from it onto the canvas");
         }
         if (!starter_graphs_.empty()) {
-            ImGui::SameLine();
+            place(example, false);
             if (ui::SecondaryButton(example)) ImGui::OpenPopup("##example_graphs");
             if (ImGui::BeginPopup("##example_graphs")) {
                 for (const auto& starter : starter_graphs_) {
@@ -1083,8 +1117,7 @@ void NodeEditor::RenderEmptyCanvas() {
             }
         }
     }
-    ImGui::End();
-    ImGui::PopStyleVar();
+    ::gui::EndCanvasOverlay();
 }
 
 // The Studio's notices and questions (TOFIX129 A3-8), on the shared dialog
