@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace cyxwiz {
@@ -108,8 +109,17 @@ private:
     void WriteRoutineLocked();
     static constexpr std::chrono::milliseconds kRoutineWriteInterval{200};
     std::chrono::steady_clock::time_point last_write_{};
+    // The latest stage mark, kept raw (TOFIX242 2.2b, TRN-07): its time and
+    // thread are formatted when the file is written or a later event lands,
+    // not on every batch.
+    void ApplyStageMarkLocked();
+    const char* marked_stage_ = nullptr;
+    std::chrono::system_clock::time_point marked_at_{};
+    std::thread::id marked_thread_{};
     static std::string NowIso8601();
+    static std::string Iso8601(std::chrono::system_clock::time_point time);
     static std::string ThreadIdString();
+    static std::string ThreadIdString(std::thread::id id);
     static std::string DomainName(PreprocessingDomain domain);
     static std::string BackendName();
 

@@ -1299,7 +1299,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"drop_last", "bool", "false", "Drop incomplete final batch", {}, "", "", "Training", false, false},
          {"num_workers", "int", "0", "Worker count for batch preparation", {}, "0-128", "", "Runtime", false, true},
          {"prefetch_factor", "int", "2", "Prefetch factor when workers are active", {}, "0-64", "", "Runtime", false, true},
-         {"log_interval", "int", "10", "Batches between training loss and metric reports; the loss and metrics are read from the device there, and a NaN or infinite loss stops the run at the next one (0: each epoch's first and last batch)", {}, "0-100000", "", "Training", false, true},
+         {"log_interval", "int", "10", "Batches between training loss and metric reports; the loss and metrics are read from the device there, and a NaN or infinite loss stops the run at the next one; the trace's full events and the Health gradient sizes are taken there too (0: each epoch's first and last batch)", {}, "0-100000", "", "Training", false, true},
          {"validation_freq", "int", "1", "Validation frequency in epochs", {}, "1-10000", "", "Training", false, true},
          {"seed", "int", "42", "DataLoader seed: each epoch's batch order, class balancing draw and image / audio augmentation (the Data Split's seed decides the split)", {}, "0-2147483647", "", "Training", false, true},
          {"model_seed", "int", "-1", "Model seed: weight initialisation, dropout and noise layers. -1 draws a seed when the run starts and records it in the run's trace, so a resumed run continues with it", {}, "-1-2147483647", "", "Training", false, true},

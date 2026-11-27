@@ -192,6 +192,7 @@ void CrashRunRecorder::StartTrainingRun(const TrainingConfiguration& config,
     status_ = "running";
     dataset_name_ = config.dataset_name;
     backend_ = BackendName();
+    marked_stage_ = nullptr;  // superseded
     last_stage_ = StageName(TrainingTraceStage::Start);
     last_event_time_ = NowIso8601();
     last_thread_id_ = ThreadIdString();
@@ -238,9 +239,9 @@ void CrashRunRecorder::MarkStage(TrainingTraceStage stage,
         return;
     }
 
-    last_stage_ = StageName(stage);
-    last_event_time_ = NowIso8601();
-    last_thread_id_ = ThreadIdString();
+    marked_stage_ = StageName(stage);
+    marked_at_ = std::chrono::system_clock::now();
+    marked_thread_ = std::this_thread::get_id();
     epoch_ = epoch;
     batch_ = batch;
     total_batches_ = total_batches;
@@ -257,6 +258,7 @@ void CrashRunRecorder::MarkPanelEvent(const std::string& action,
         return;
     }
 
+    ApplyStageMarkLocked();
     last_event_time_ = NowIso8601();
     last_thread_id_ = ThreadIdString();
     std::string event = last_event_time_ + " [" + last_thread_id_ + "] " + action;
@@ -280,6 +282,7 @@ void CrashRunRecorder::MarkBackendEvent(const std::string& source,
         return;
     }
 
+    ApplyStageMarkLocked();
     last_event_time_ = NowIso8601();
     last_thread_id_ = ThreadIdString();
     std::string event = last_event_time_ + " [" + last_thread_id_ + "] " + source;
@@ -318,6 +321,7 @@ void CrashRunRecorder::MarkActiveModelCheckpoint(
     restored_checkpoint_epoch_ = checkpoint_epoch;
     restored_checkpoint_step_ = checkpoint_step;
     active_model_provenance_ = provenance;
+    ApplyStageMarkLocked();
     last_event_time_ = NowIso8601();
     last_thread_id_ = ThreadIdString();
     WriteLocked();
@@ -330,6 +334,7 @@ void CrashRunRecorder::MarkCompleted() {
     }
     status_ = "completed";
     terminal_reason_ = "completed_all_epochs";
+    marked_stage_ = nullptr;  // superseded
     last_stage_ = StageName(TrainingTraceStage::Complete);
     last_event_time_ = NowIso8601();
     last_thread_id_ = ThreadIdString();
@@ -344,6 +349,7 @@ void CrashRunRecorder::MarkEarlyStopped(const std::string& reason) {
     }
     status_ = "early_stopped";
     terminal_reason_ = reason;
+    marked_stage_ = nullptr;  // superseded
     last_stage_ = StageName(TrainingTraceStage::EarlyStopped);
     last_event_time_ = NowIso8601();
     last_thread_id_ = ThreadIdString();
@@ -358,6 +364,7 @@ void CrashRunRecorder::MarkCancelled() {
     }
     status_ = "cancelled";
     terminal_reason_ = "user_cancelled";
+    marked_stage_ = nullptr;  // superseded
     last_stage_ = StageName(TrainingTraceStage::Cancelled);
     last_event_time_ = NowIso8601();
     last_thread_id_ = ThreadIdString();
@@ -371,6 +378,7 @@ void CrashRunRecorder::MarkFailed(const std::string& reason) {
         return;
     }
     status_ = "failed";
+    marked_stage_ = nullptr;  // superseded
     last_stage_ = StageName(TrainingTraceStage::Failed);
     last_event_time_ = NowIso8601();
     last_thread_id_ = ThreadIdString();
@@ -446,8 +454,17 @@ void CrashRunRecorder::WriteRoutineLocked() {
     WriteLocked();
 }
 
+void CrashRunRecorder::ApplyStageMarkLocked() {
+    if (marked_stage_ == nullptr) return;
+    last_stage_ = marked_stage_;
+    last_event_time_ = Iso8601(marked_at_);
+    last_thread_id_ = ThreadIdString(marked_thread_);
+    marked_stage_ = nullptr;
+}
+
 void CrashRunRecorder::WriteLocked() {
     last_write_ = std::chrono::steady_clock::now();
+    ApplyStageMarkLocked();
     try {
         std::filesystem::create_directories(DebugRunDir());
 
@@ -491,7 +508,10 @@ void CrashRunRecorder::WriteLocked() {
 }
 
 std::string CrashRunRecorder::NowIso8601() {
-    const auto now = std::chrono::system_clock::now();
+    return Iso8601(std::chrono::system_clock::now());
+}
+
+std::string CrashRunRecorder::Iso8601(std::chrono::system_clock::time_point now) {
     const std::time_t time = std::chrono::system_clock::to_time_t(now);
     std::tm tm{};
 #ifdef _WIN32
@@ -505,8 +525,12 @@ std::string CrashRunRecorder::NowIso8601() {
 }
 
 std::string CrashRunRecorder::ThreadIdString() {
+    return ThreadIdString(std::this_thread::get_id());
+}
+
+std::string CrashRunRecorder::ThreadIdString(std::thread::id id) {
     std::ostringstream out;
-    out << std::this_thread::get_id();
+    out << id;
     return out.str();
 }
 

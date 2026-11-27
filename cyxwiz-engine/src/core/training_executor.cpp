@@ -174,6 +174,21 @@ bool ShouldReportTrainingBatch(const TrainingConfiguration& config,
            batch_num % config.log_interval == 0;
 }
 
+// A batch stage in the run's trace (TOFIX242 2.2b, TRN-07): its time goes into
+// the stage's counters on every batch; a full event (the device, the memory
+// held, the stage's values) only on a report batch, where the loss and metrics
+// are read. Every batch built one, with two memory queries.
+void TraceBatchStage(bool full_event, TrainingTraceStage stage, int epoch, int batch, int total_batches,
+                     float loss = 0.0f, float accuracy = 0.0f, float duration_ms = 0.0f,
+                     const std::string& status = "ok") {
+    auto& trace = TrainingTraceCollector::Instance();
+    if (full_event) {
+        trace.RecordStage(stage, epoch, batch, total_batches, loss, accuracy, duration_ms, status, "");
+    } else {
+        trace.RecordStageTiming(stage, duration_ms);
+    }
+}
+
 void AccumulateDeviceValue(Tensor& accumulator,
                            bool& initialized,
                            const Tensor& value,
@@ -544,6 +559,7 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
     graph_schedule_pending_ = false;
     range_test_.reset();
     health_.reset();
+    health_sample_pending_ = false;
     if (config_.learning_rate_range.enabled) {
         // The range test sets the rate of every step: no schedule.
         range_test_ = std::make_unique<LearningRateRangeTest>(config_.learning_rate_range);
@@ -2269,14 +2285,32 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     float current_acc,
     float gradient_weight,
     const Tensor* device_gradient_weight,
-    bool force_step) {
+    bool force_step,
+    bool report) {
     if (!model_ || !optimizer_) {
         return false;
     }
 
-    const auto grads = model_->GetGradients();
+    auto grads = model_->GetGradients();
     if (grads.empty()) {
         return false;
+    }
+    if (report) health_sample_pending_ = true;
+
+    const int grad_accum_steps =
+        training_contract::ClampGradientAccumulationSteps(
+            config_.grad_accum_steps);
+    const bool steps_now = force_step || gradient_accumulated_batches_ + 1 >= grad_accum_steps;
+    // (A Mean batch weighing 0 on the host counted nothing: the window steps it as zeros, as before.)
+    const bool counted = loss_->GetReduction() != Reduction::Mean || device_gradient_weight != nullptr ||
+                         gradient_weight > 0.0f;
+    if (gradient_accumulated_batches_ == 0 && steps_now && counted) {
+        // A window of one batch (TOFIX242 2.2b, TRN-09): the step's gradients
+        // are the backward's as they are. Weighing them by the batch's loss
+        // denominator and dividing again was two more passes over every
+        // gradient, and (g * w) / w is not g in the last bits.
+        StepWith(std::move(grads), epoch, batch_num, total_batches, batch_loss, current_acc, report);
+        return true;
     }
 
     if (device_gradient_weight == nullptr &&
@@ -2331,18 +2365,15 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
             gradient_accumulation_weight_ += gradient_weight;
         }
     }
-    const int grad_accum_steps =
-        training_contract::ClampGradientAccumulationSteps(
-            config_.grad_accum_steps);
-    if (!force_step && gradient_accumulated_batches_ < grad_accum_steps) {
+    if (!steps_now) {
         return false;
     }
-    StepGradientWindow(epoch, batch_num, total_batches, batch_loss, current_acc);
+    StepGradientWindow(epoch, batch_num, total_batches, batch_loss, current_acc, report);
     return true;
 }
 
 void TrainingExecutor::StepGradientWindow(int epoch, int batch_num, int total_batches,
-                                          float batch_loss, float current_acc) {
+                                          float batch_loss, float current_acc, bool report) {
     const bool mean_reduction = loss_->GetReduction() == Reduction::Mean;
     std::map<std::string, Tensor> averaged_grads;
     const float host_scale = mean_reduction &&
@@ -2363,7 +2394,11 @@ void TrainingExecutor::StepGradientWindow(int epoch, int batch_num, int total_ba
             averaged_grads[name] = accumulated * host_scale;
         }
     }
+    StepWith(std::move(averaged_grads), epoch, batch_num, total_batches, batch_loss, current_acc, report);
+}
 
+void TrainingExecutor::StepWith(std::map<std::string, Tensor> gradients, int epoch, int batch_num,
+                                int total_batches, float batch_loss, float current_acc, bool report) {
     CrashRunRecorder::Instance().MarkStage(
         TrainingTraceStage::UpdateParameters, epoch, batch_num,
         total_batches, batch_loss, current_acc);
@@ -2373,17 +2408,21 @@ void TrainingExecutor::StepGradientWindow(int epoch, int batch_num, int total_ba
     step_settings.regularization_l1 = config_.regularization_l1;
     step_settings.regularization_l2 = config_.regularization_l2;
     step_settings.grad_clip_norm = config_.grad_clip_norm;
-    if (health_) step_settings.on_gradients = [this](const std::map<std::string, Tensor>& g) { health_->OnStep(g); };
-    const float norm = ApplyOptimizerStep(*model_, *optimizer_, averaged_grads, step_settings);
+    // The health's gradient norms on the report cadence, not a pass over
+    // every weight gradient each step (TOFIX242 2.2b, TRN-09)
+    if (health_ && health_sample_pending_) {
+        step_settings.on_gradients = [this](const std::map<std::string, Tensor>& g) { health_->OnStep(g); };
+        health_sample_pending_ = false;
+    }
+    const float norm = ApplyOptimizerStep(*model_, *optimizer_, gradients, step_settings);
     // With clipping on, the norm as computed: NaN and infinite ones too (they are not refused)
     if (step_settings.grad_clip_norm > 0.0f) UpdateMetrics([norm](TrainingMetrics& m) { m.grad_norm = norm; });
     TrainingProfileStageFence();
     const auto optimizer_ms = std::chrono::duration<float, std::milli>(
         std::chrono::steady_clock::now() - optimizer_start).count();
 
-    TrainingTraceCollector::Instance().RecordStage(
-        TrainingTraceStage::UpdateParameters, epoch, batch_num,
-        total_batches, batch_loss, current_acc, optimizer_ms);
+    TraceBatchStage(report, TrainingTraceStage::UpdateParameters, epoch, batch_num,
+                    total_batches, batch_loss, current_acc, optimizer_ms);
 
     UpdateMetrics([](TrainingMetrics& m) {
         ++m.optimizer_step_count;
@@ -2427,7 +2466,7 @@ void TrainingExecutor::CloseGradientWindow(int epoch, int batch_num, int total_b
     // last batch, or trailing empty units): its window is still this epoch's.
     spdlog::debug("TrainingExecutor: epoch {} ended with {} batch(es) of gradients pending; stepping them",
                   epoch, gradient_accumulated_batches_);
-    StepGradientWindow(epoch, batch_num, total_batches, batch_loss, current_acc);
+    StepGradientWindow(epoch, batch_num, total_batches, batch_loss, current_acc, true);  // the pass end reports
 }
 
 void TrainingExecutor::EnableLayerSnapshots(LayerSnapshotSchedule schedule) {
@@ -2892,9 +2931,10 @@ void TrainingExecutor::RunTrainingEpochSequence(
         const auto fetch_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - fetch_start).count();
         if (!batch.IsValid()) break;
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
-            static_cast<int>(total_batches), 0.0f, 0.0f, fetch_ms);
+        const bool should_report =
+            ShouldReportTrainingBatch(config_, batch_num + 1, static_cast<int>(total_batches), batch.last);
+        TraceBatchStage(should_report, TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
+                        static_cast<int>(total_batches), 0.0f, 0.0f, fetch_ms);
         if (!batch.IsSupervised()) {
             throw std::runtime_error(
                 "TrainingExecutor: sequence batch is missing tag_ids or target_ids");
@@ -2919,9 +2959,8 @@ void TrainingExecutor::RunTrainingEpochSequence(
         TrainingProfileStageFence();
         const auto forward_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - forward_start).count();
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::Forward, epoch, batch_num,
-            static_cast<int>(total_batches), 0.0f, 0.0f, forward_ms);
+        TraceBatchStage(should_report, TrainingTraceStage::Forward, epoch, batch_num,
+                        static_cast<int>(total_batches), 0.0f, 0.0f, forward_ms);
 
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::ComputeLoss, epoch, batch_num,
@@ -2935,11 +2974,8 @@ void TrainingExecutor::RunTrainingEpochSequence(
             range_batch_loss_ = loss_tensor.ReadData<float>()[0];
         }
         const float batch_loss = current_loss;
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::ComputeLoss, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss, 0.0f, 0.0f, "device_resident", "");
-        const bool should_report =
-            ShouldReportTrainingBatch(config_, batch_num, static_cast<int>(total_batches), batch.last);
+        TraceBatchStage(should_report, TrainingTraceStage::ComputeLoss, epoch, batch_num,
+                        static_cast<int>(total_batches), batch_loss, 0.0f, 0.0f, "device_resident");
         TrainingProfileStageFence();
         const auto metric_start = std::chrono::steady_clock::now();
         TrainingTraceCollector::Instance().RecordNamedTiming(
@@ -2981,9 +3017,8 @@ void TrainingExecutor::RunTrainingEpochSequence(
         TrainingProfileStageFence();
         const auto backward_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - backward_start).count();
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::Backward, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
+        TraceBatchStage(should_report, TrainingTraceStage::Backward, epoch, batch_num,
+                        static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
 
         last_batch_reported = should_report;
         if (should_report) {
@@ -2998,7 +3033,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
         AccumulateGradientsAndMaybeStep(
             epoch, batch_num, static_cast<int>(total_batches),
             current_loss, current_acc, loss_weight.host, loss_weight.device,
-            batch.last);
+            batch.last, should_report);
 
         UpdateMetrics([batch_num,
                        current_loss,
@@ -3054,9 +3089,8 @@ void TrainingExecutor::RunTrainingEpochSequence(
             CrashRunRecorder::Instance().MarkStage(
                 TrainingTraceStage::BatchCallback, epoch, batch_num,
                 static_cast<int>(total_batches), batch_loss, current_acc);
-            TrainingTraceCollector::Instance().RecordStage(
-                TrainingTraceStage::BatchCallback, epoch, batch_num,
-                static_cast<int>(total_batches), batch_loss, current_acc);
+            TraceBatchStage(should_report, TrainingTraceStage::BatchCallback, epoch, batch_num,
+                            static_cast<int>(total_batches), batch_loss, current_acc);
             // The epoch's running loss with its running accuracy, as the
             // Arrow epoch reports them (the batch's own loss went here, beside
             // the running accuracy: ORA-33).
@@ -3311,10 +3345,10 @@ void TrainingExecutor::RunTrainingEpochArrow(
             std::chrono::steady_clock::now() - fetch_start).count();
         if (!batch.IsValid()) break;
 
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
-            static_cast<int>(total_batches), 0.0f, 0.0f,
-            static_cast<float>(fetch_ms));
+        const bool should_report = ShouldReportTrainingBatch(
+            config_, batch_num + 1, static_cast<int>(total_batches), batch.last);
+        TraceBatchStage(should_report, TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
+                        static_cast<int>(total_batches), 0.0f, 0.0f, static_cast<float>(fetch_ms));
 
         batch_num++;
         fetch_total_ms += fetch_ms;
@@ -3329,9 +3363,8 @@ void TrainingExecutor::RunTrainingEpochArrow(
         Tensor predictions = ForwardBatch(batch);
         const auto forward_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - forward_start).count();
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::Forward, epoch, batch_num,
-            static_cast<int>(total_batches), 0.0f, 0.0f, forward_ms);
+        TraceBatchStage(should_report, TrainingTraceStage::Forward, epoch, batch_num,
+                        static_cast<int>(total_batches), 0.0f, 0.0f, forward_ms);
 
         // DEBUG: Log sample values for first batch of first epoch.
         if (epoch == 1 && batch_num == 1 &&
@@ -3433,10 +3466,8 @@ void TrainingExecutor::RunTrainingEpochArrow(
         }
         const LossAggregationWeightValue loss_weight = ResolveLossAggregationWeight(*loss_, batch.size);
         sums.AddLoss(loss_tensor, loss_weight.device, loss_weight.host);
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::ComputeLoss, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss, 0.0f, 0.0f,
-            "device_resident", "");
+        TraceBatchStage(should_report, TrainingTraceStage::ComputeLoss, epoch, batch_num,
+                        static_cast<int>(total_batches), batch_loss, 0.0f, 0.0f, "device_resident");
 
         // The batch's metrics, summed on the device
         if (regression_metrics) {
@@ -3458,12 +3489,9 @@ void TrainingExecutor::RunTrainingEpochArrow(
         BackwardBatch(predictions, batch.labels, batch);
         const auto backward_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - backward_start).count();
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::Backward, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
+        TraceBatchStage(should_report, TrainingTraceStage::Backward, epoch, batch_num,
+                        static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
 
-        const bool should_report = ShouldReportTrainingBatch(
-            config_, batch_num, static_cast<int>(total_batches), batch.last);
         last_batch_reported = should_report;
         if (should_report) {
             read_epoch_sums();
@@ -3483,7 +3511,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
         AccumulateGradientsAndMaybeStep(
             epoch, batch_num, static_cast<int>(total_batches),
             batch_loss, current_acc, loss_weight.host, loss_weight.device,
-            batch.last);
+            batch.last, should_report);
 
         UpdateMetrics([batch_num, current_loss, current_acc,
                        current_mae, current_rmse](TrainingMetrics& m) {
@@ -3529,9 +3557,8 @@ void TrainingExecutor::RunTrainingEpochArrow(
             CrashRunRecorder::Instance().MarkStage(
                 TrainingTraceStage::BatchCallback, epoch, batch_num,
                 static_cast<int>(total_batches), batch_loss, current_acc);
-            TrainingTraceCollector::Instance().RecordStage(
-                TrainingTraceStage::BatchCallback, epoch, batch_num,
-                static_cast<int>(total_batches), batch_loss, current_acc);
+            TraceBatchStage(should_report, TrainingTraceStage::BatchCallback, epoch, batch_num,
+                            static_cast<int>(total_batches), batch_loss, current_acc);
             batch_cb(epoch, batch_num, static_cast<int>(total_batches), current_loss, current_acc);
         }
     }

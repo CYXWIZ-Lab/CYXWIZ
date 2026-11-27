@@ -25,6 +25,8 @@
 #include "route_qualification_test_fixture.h"
 #include "algorithms/arrayfire_backend_utils.h"
 
+#include <cyxwiz/optimizers/sgd.h>
+
 #include <arrow/api.h>
 #include <arrow/io/api.h>
 #include <parquet/arrow/writer.h>
@@ -676,6 +678,111 @@ void TestGradientWindowClosesAtEpochEnd(const std::filesystem::path& work_dir) {
               kind + ": every epoch takes its 2 steps (" + std::to_string(steps_at_epoch_2) + " after epoch 1, " +
                   std::to_string(metrics.optimizer_step_count) + " in all, " + metrics.terminal_status + ")");
     }
+}
+
+// 12 rows of 2 features in 4 batches of 3, one-hot over 2 classes, the last batch marked.
+class ThreeRowBatcher final : public cyxwiz::IBatcher {
+public:
+    cyxwiz::Batch GetNextBatch() override {
+        cyxwiz::Batch batch;
+        if (cursor_ >= 12) {
+            ended_ = true;
+            return batch;
+        }
+        std::vector<float> x, y;
+        for (size_t row = cursor_; row < cursor_ + 3; ++row) {
+            x.push_back(0.1f * static_cast<float>(row % 5) + 0.03f);
+            x.push_back(0.7f - 0.11f * static_cast<float>(row % 4));
+            y.push_back(row % 3 == 0 ? 1.0f : 0.0f);
+            y.push_back(row % 3 == 0 ? 0.0f : 1.0f);
+        }
+        batch.data = cyxwiz::Tensor({3, 2}, x.data());
+        batch.labels = cyxwiz::Tensor({3, 2}, y.data());
+        batch.size = 3;
+        cursor_ += 3;
+        batch.last = cursor_ >= 12;
+        return batch;
+    }
+    void Reset() override {
+        cursor_ = 0;
+        ended_ = false;
+    }
+    bool IsEpochComplete() const override { return ended_; }
+    size_t GetNumBatches() const override { return 4; }
+    size_t GetNumSamples() const override { return 12; }
+    void SetNormalization(float, float) override {}
+    void SetOneHotEncoding(size_t) override {}
+    void SetFlatten(bool) override {}
+
+private:
+    size_t cursor_ = 0;
+    bool ended_ = false;
+};
+
+// A window of one batch steps the backward's gradients as they are (TOFIX242
+// 2.2b, TRN-09): after every step the weights are a plain SGD step from the
+// last ones on the model's own gradients, bit for bit. The step weighed each
+// gradient by the batch's loss denominator and divided it again, (g * 3) / 3,
+// which is not g in the last bits (and two more passes over every gradient).
+void TestOneBatchWindowStepsGradientsAsTheyAre(const std::filesystem::path& work_dir) {
+    auto batcher = std::make_shared<ThreeRowBatcher>();
+    cyxwiz::ExternalBatcherFactory factory = [batcher](const cyxwiz::TrainingConfiguration&, int) {
+        cyxwiz::ResolvedExternalBatchers batchers;
+        batchers.train = batcher;
+        return batchers;
+    };
+    auto config = MakeConfig(work_dir / "one-batch-window");
+    config.log_interval = 0;
+    config.grad_accum_steps = 1;
+    config.momentum = 0.0f;
+    config.learning_rate = 0.37f;
+    cyxwiz::CompiledLayer hidden;
+    hidden.type = gui::NodeType::Dense;
+    hidden.units = 32;
+    config.layers.insert(config.layers.begin(), hidden);
+    cyxwiz::TrainingExecutor executor(config, factory);
+
+    std::optional<std::map<std::string, cyxwiz::Tensor>> before;
+    int compared = 0;
+    size_t different = 0;
+    std::string first_difference;
+    executor.Train(
+        2, 3,
+        [&](int epoch, int batch, int, float, float) {
+            auto* model = executor.GetModel();
+            if (model == nullptr) return;
+            auto after = model->GetParameters();
+            if (before) {
+                auto expected = *before;
+                auto gradients = model->GetGradients();
+                cyxwiz::SGDOptimizer sgd(static_cast<double>(config.learning_rate));
+                sgd.Step(expected, gradients);
+                for (const auto& [name, value] : after) {
+                    const auto found = expected.find(name);
+                    Check(found != expected.end() && found->second.NumElements() == value.NumElements(),
+                          "the reference step holds parameter " + name);
+                    const float* got = value.ReadData<float>();
+                    const float* want = found->second.ReadData<float>();
+                    for (size_t i = 0; i < value.NumElements(); ++i) {
+                        if (got[i] == want[i]) continue;
+                        if (different++ == 0) {
+                            first_difference = name + "[" + std::to_string(i) + "] at epoch " +
+                                               std::to_string(epoch) + " batch " + std::to_string(batch) + ": " +
+                                               std::to_string(got[i]) + " vs " + std::to_string(want[i]);
+                        }
+                    }
+                }
+                ++compared;
+            }
+            before = std::move(after);
+        },
+        nullptr, nullptr);
+    const auto metrics = executor.GetMetrics();
+    Check(metrics.terminal_status == "completed" && metrics.optimizer_step_count == 8 && compared == 7,
+          "one-batch windows: 8 steps, 7 compared (" + std::to_string(metrics.optimizer_step_count) + ", " +
+              std::to_string(compared) + ", " + metrics.terminal_status + ")");
+    Check(different == 0, "a one-batch window steps the gradients as they are: " + std::to_string(different) +
+                              " weight(s) differ from SGD on the model's gradients, first " + first_difference);
 }
 
 // A NaN or infinite loss fails the run with the reason, for a classification
@@ -5299,6 +5406,7 @@ int main(int argc, char** argv) {
     TestNonFiniteLossFailsTheRun(work_dir);
     TestSharedPartBatcherEpochTotal(work_dir);
     TestGradientWindowClosesAtEpochEnd(work_dir);
+    TestOneBatchWindowStepsGradientsAsTheyAre(work_dir);
     TestBalancedClassWeightsOnEveryPath(work_dir);
     TestMissingValuesRefusalKeepsColumns(work_dir);
     const auto training_core_fixture = LoadTrainingCoreFixture(

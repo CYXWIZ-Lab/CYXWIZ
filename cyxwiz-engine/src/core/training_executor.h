@@ -589,7 +589,9 @@ private:
     /**
      * Accumulate current model gradients and step optimizer at the configured
      * grad_accum_steps boundary, or when force_step is true for a final partial
-     * accumulation window.
+     * accumulation window. A window of one batch steps the model's gradients
+     * as they are (TOFIX242 2.2b). report: a report batch (its step's trace
+     * event and the health's gradient norms are taken there).
      */
     bool AccumulateGradientsAndMaybeStep(
         int epoch,
@@ -599,11 +601,16 @@ private:
         float current_acc,
         float gradient_weight,
         const Tensor* device_gradient_weight,
-        bool force_step
+        bool force_step,
+        bool report
     );
     // One optimizer step from the accumulated window, which it then empties.
     void StepGradientWindow(int epoch, int batch_num, int total_batches,
-                            float batch_loss, float current_acc);
+                            float batch_loss, float current_acc, bool report);
+    // One optimizer step from these gradients (the penalty, the clip, the
+    // optimizer, the scheduler), then the window emptied.
+    void StepWith(std::map<std::string, Tensor> gradients, int epoch, int batch_num, int total_batches,
+                  float batch_loss, float current_acc, bool report);
     void ClearGradientWindow();
     // After an epoch's batch loop (TOFIX242 2.1c): a window its last batch did
     // not close is stepped when the epoch ran to its end and dropped when the
@@ -647,6 +654,9 @@ private:
     float gradient_accumulation_weight_ = 0.0f;
     Tensor gradient_accumulation_device_weight_;
     bool gradient_accumulation_device_weight_initialized_ = false;
+    // The health's gradient norms are taken at the first step on or after a
+    // report batch, not on every step (TOFIX242 2.2b, TRN-09).
+    bool health_sample_pending_ = false;
 };
 
 } // namespace cyxwiz

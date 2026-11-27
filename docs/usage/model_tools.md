@@ -108,11 +108,14 @@ a new model.
 
 ## Health
 
-Recorded during every training, once an epoch, at no extra pass:
+Recorded during every training, once an epoch:
 
 - **Weight size by epoch**: ||W|| of each layer's weights.
 - **Mean gradient by epoch**: the mean size of its gradients over the
-  epoch's steps (summed on the device).
+  epoch's report steps (summed on the device). A report step is the first
+  optimizer step on or after each report batch: the epoch's first and last
+  batch, and every **Report every** batches on the **Data Loader**. Taking
+  them on every step was one more pass over the gradients each step.
 - **Weights, last epoch**: a histogram of the weights.
 - **Dead after its ReLU**: units that gave 0 for every validation row.
 

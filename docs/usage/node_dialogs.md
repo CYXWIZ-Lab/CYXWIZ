@@ -235,7 +235,10 @@ RMSE are summed on the device, so training does not wait for them batch by
 batch; validation and the final test read their sums once, at the end of the
 pass. A loss that becomes NaN or infinite stops the run at the next report
 (or the epoch's end), and the error names the batches since the report
-before it; with **Report every** set to 1 it names the batch.
+before it; with **Report every** set to 1 it names the batch. The run's trace
+(the Studio Debugger's training events) keeps a full event for each stage of
+a report batch; every other batch adds only its stage times to the totals.
+The **Health** gradient sizes are taken at the same points.
 
 ## Row Filter
 
