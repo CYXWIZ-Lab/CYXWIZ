@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -91,6 +92,64 @@ class MachORuntimeClosureTests(unittest.TestCase):
             )
 
             self.assertEqual(dependency.resolve(), resolved)
+
+    def test_plugin_sdk_copy_of_a_dylib_is_not_a_duplicate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-macho-") as temporary:
+            stage = Path(temporary)
+            (stage / "sdk" / "lib").mkdir(parents=True)
+            engine = stage / "cyxwiz-engine"
+            backend = stage / "libcyxwiz-backend.dylib"
+            sdk_backend = stage / "sdk" / "lib" / "libcyxwiz-backend.dylib"
+            for path in (engine, backend, sdk_backend):
+                path.write_bytes(b"\xcf\xfa\xed\xfe" + str(path).encode())
+            commands: list[tuple[str, ...]] = []
+
+            def runner(command):
+                command = tuple(command)
+                commands.append(command)
+                output = ""
+                if command[:2] == ("otool", "-L"):
+                    output = f"{command[-1]}:\n"
+                    if Path(command[-1]) == engine.resolve():
+                        output += "\t@rpath/libcyxwiz-backend.dylib (compatibility version 0.0.0)\n"
+                return subprocess.CompletedProcess(command, 0, output)
+
+            copied = macho.close_macos_runtime(stage, (), runner=runner)
+
+            self.assertEqual([], copied)
+            ids = {Path(command[-1]) for command in commands if command[:2] == ("install_name_tool", "-id")}
+            self.assertEqual({backend.resolve(), sdk_backend.resolve()}, ids)
+            # The Engine's dependency goes to the base copy, never to the SDK's
+            changes = [command for command in commands if command[:2] == ("install_name_tool", "-change")]
+            self.assertEqual([("install_name_tool", "-change", "@rpath/libcyxwiz-backend.dylib",
+                               "@loader_path/libcyxwiz-backend.dylib", str(engine.resolve()))], changes)
+
+    def test_two_copies_inside_the_plugin_sdk_are_refused(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-macho-") as temporary:
+            stage = Path(temporary)
+            (stage / "sdk" / "lib").mkdir(parents=True)
+            (stage / "sdk" / "bin").mkdir(parents=True)
+            for path in (stage / "sdk" / "lib" / "libtwice.dylib", stage / "sdk" / "bin" / "libtwice.dylib"):
+                path.write_bytes(b"\xcf\xfa\xed\xfe" + str(path).encode())
+
+            def runner(command):
+                return subprocess.CompletedProcess(tuple(command), 0, "")
+
+            with self.assertRaisesRegex(macho.MachOClosureError, "Duplicate packaged Mach-O name libtwice.dylib"):
+                macho.close_macos_runtime(stage, (), runner=runner)
+
+    def test_two_runtime_copies_of_one_dylib_name_are_refused(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-macho-") as temporary:
+            stage = Path(temporary)
+            (stage / "lib").mkdir()
+            for path in (stage / "libtwice.dylib", stage / "lib" / "libtwice.dylib"):
+                path.write_bytes(b"\xcf\xfa\xed\xfe" + str(path).encode())
+
+            def runner(command):
+                return subprocess.CompletedProcess(tuple(command), 0, "")
+
+            with self.assertRaisesRegex(macho.MachOClosureError, "Duplicate packaged Mach-O name libtwice.dylib"):
+                macho.close_macos_runtime(stage, (), runner=runner)
 
     def test_build_machine_rpaths_are_foreign(self) -> None:
         stage = Path("/package")

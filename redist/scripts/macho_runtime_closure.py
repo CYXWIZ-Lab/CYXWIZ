@@ -164,6 +164,19 @@ def is_bundled_python(path: Path, stage: Path) -> bool:
         return False
 
 
+PLUGIN_SDK_DIR = "sdk"
+
+
+def is_plugin_sdk_file(path: Path, stage: Path) -> bool:
+    """A file of the plugin SDK (sdk/). The SDK carries its own copy of the
+    backend library for plugins to link against; the Engine never loads that
+    copy, so it is not a second runtime copy of the base's library."""
+    try:
+        return path.relative_to(stage).parts[:1] == (PLUGIN_SDK_DIR,)
+    except ValueError:
+        return False
+
+
 def foreign_rpaths(binary: Path, rpaths: Iterable[str], stage: Path) -> list[str]:
     """LC_RPATH entries that point outside the package.
 
@@ -219,7 +232,14 @@ def close_macos_runtime(
         for item in sorted(python_lib.iterdir()):
             if item.is_file() and is_macho(item):
                 packaged_by_name.setdefault(item.name, item.resolve())
-    for item in queue:
+    # The base first, so a name resolves to the base's file. An SDK copy of a
+    # base library is skipped here (dependencies never resolve to it by name)
+    # but is still rewritten below, so a plugin link resolves its dependencies.
+    for item in sorted(queue, key=lambda entry: is_plugin_sdk_file(entry.path, stage)):
+        existing = packaged_by_name.get(item.path.name)
+        if (existing is not None and is_plugin_sdk_file(item.path, stage)
+                and not is_plugin_sdk_file(existing, stage)):
+            continue
         existing = packaged_by_name.setdefault(item.path.name, item.path)
         if existing != item.path:
             raise MachOClosureError(

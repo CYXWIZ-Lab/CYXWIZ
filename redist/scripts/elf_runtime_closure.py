@@ -93,6 +93,19 @@ def is_bundled_python(path: Path, stage: Path) -> bool:
         return False
 
 
+PLUGIN_SDK_DIR = "sdk"
+
+
+def is_plugin_sdk_file(path: Path, stage: Path) -> bool:
+    """A file of the plugin SDK (sdk/). The SDK carries its own copy of the
+    backend library for plugins to link against; the Engine never loads that
+    copy, so it is not a second runtime copy of the base's library."""
+    try:
+        return path.relative_to(stage).parts[:1] == (PLUGIN_SDK_DIR,)
+    except ValueError:
+        return False
+
+
 def packaged_rpath(binary: Path, stage: Path) -> str:
     directories = (
         stage,
@@ -159,7 +172,14 @@ def close_linux_runtime(
         for item in sorted(python_lib.iterdir()):
             if item.is_file() and is_elf(item):
                 packaged_by_name.setdefault(item.name, item.resolve())
-    for binary in queue:
+    # The base first, so a name resolves to the base's file. An SDK copy of a
+    # base library is skipped here (dependencies never resolve to it) but still
+    # gets its RUNPATH below, so a plugin link resolves its dependencies.
+    for binary in sorted(queue, key=lambda item: is_plugin_sdk_file(item.path, stage)):
+        existing = packaged_by_name.get(binary.path.name)
+        if (existing is not None and is_plugin_sdk_file(binary.path, stage)
+                and not is_plugin_sdk_file(existing, stage)):
+            continue
         existing = packaged_by_name.setdefault(binary.path.name, binary.path)
         if existing != binary.path:
             raise ElfClosureError(

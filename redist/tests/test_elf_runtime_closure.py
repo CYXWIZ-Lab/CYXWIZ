@@ -95,6 +95,52 @@ class ElfRuntimeClosureTests(unittest.TestCase):
             patched = [command for command in commands if command[0] == "patchelf"]
             self.assertEqual(2, len(patched))
 
+    def test_plugin_sdk_copy_of_a_library_is_not_a_duplicate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-elf-") as temporary:
+            root = Path(temporary)
+            stage = root / "stage"
+            build = root / "build"
+            (stage / "sdk" / "lib").mkdir(parents=True)
+            build.mkdir()
+            engine = stage / "cyxwiz-engine"
+            backend = stage / "libcyxwiz-backend.so"
+            sdk_backend = stage / "sdk" / "lib" / "libcyxwiz-backend.so"
+            built_backend = build / "libcyxwiz-backend.so"
+            for path in (engine, backend, sdk_backend, built_backend):
+                path.write_bytes(b"\x7fELF" + path.name.encode())
+            commands: list[tuple[str, ...]] = []
+
+            def runner(command):
+                command = tuple(command)
+                commands.append(command)
+                output = ""
+                if command[0] == "ldd" and Path(command[1]).resolve() == engine.resolve():
+                    output = f"libcyxwiz-backend.so => {built_backend} (0x01)\n"
+                elif command[0] == "ldd":
+                    output = "libc.so.6 => /usr/lib/libc.so.6 (0x02)\n"
+                return subprocess.CompletedProcess(command, 0, output)
+
+            copied = elf.close_linux_runtime(stage, runner=runner)
+
+            # The Engine's dependency is the base copy: nothing copied, the SDK's never chosen
+            self.assertEqual([], copied)
+            self.assertFalse((stage / "lib").exists())
+            patched = {Path(command[-1]) for command in commands if command[0] == "patchelf"}
+            self.assertEqual({engine.resolve(), backend.resolve(), sdk_backend.resolve()}, patched)
+
+    def test_two_runtime_copies_of_one_name_are_refused(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-elf-") as temporary:
+            stage = Path(temporary)
+            (stage / "lib").mkdir()
+            for path in (stage / "libtwice.so", stage / "lib" / "libtwice.so"):
+                path.write_bytes(b"\x7fELF" + str(path).encode())
+
+            def runner(command):
+                return subprocess.CompletedProcess(command, 0, "")
+
+            with self.assertRaisesRegex(elf.ElfClosureError, "Duplicate packaged ELF name libtwice.so"):
+                elf.close_linux_runtime(stage, runner=runner)
+
     def test_closure_rejects_unresolved_dependency(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cyxwiz-elf-") as temporary:
             stage = Path(temporary)
