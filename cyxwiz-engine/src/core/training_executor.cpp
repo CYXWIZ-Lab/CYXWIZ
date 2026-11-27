@@ -1414,7 +1414,7 @@ void TrainingExecutor::Train(
     // Resume (TOFIX118 P4e): restore the checkpoint into the model and
     // optimizer just built, and continue at the epoch after it.
     int start_epoch = 1;
-    int run_model_seed = GetMetrics().randomness.model_seed;
+    int run_model_seed = GetLiveMetrics().randomness.model_seed;
     resume_total_epochs_ = epochs;
     resume_model_seed_ = run_model_seed;
     resume_best_val_loss_ = best_val_loss;
@@ -1456,7 +1456,7 @@ void TrainingExecutor::Train(
         // A run that drew its own seeds continues the checkpoint's, so the
         // resumed epochs draw what the original run would have (TOFIX242 2.1b)
         {
-            const TrainingRandomness drawn = GetMetrics().randomness;
+            const TrainingRandomness drawn = GetLiveMetrics().randomness;
             TrainingRandomness adopted = drawn;
             if (drawn.model_seed_drawn && restored.model_seed >= 0) {
                 run_model_seed = static_cast<int>(restored.model_seed);
@@ -1682,7 +1682,7 @@ void TrainingExecutor::Train(
         }
 
         // Get current metrics for callback
-        TrainingMetrics current = GetMetrics();
+        TrainingRunLive current = GetLiveMetrics();
 
         // Compute samples per second
         float samples_per_sec = static_cast<float>(num_train_samples) / epoch_time;
@@ -1721,7 +1721,7 @@ void TrainingExecutor::Train(
             ApplySchedulerAdvance(
                 scheduler_controller_->OnEpochCompleted(
                     scheduler_validation_loss));
-            current = GetMetrics();
+            current = GetLiveMetrics();
         }
 
         // Epoch callback
@@ -1776,10 +1776,11 @@ void TrainingExecutor::Train(
                 if (checkpoint_manager && save_best_checkpoint) {
                     // Any model: a checkpoint holds its parameter map (a graph
                     // with branches too, TOFIX157).
+                    // The whole record (its per-epoch histories), once per improvement
                     if (checkpoint_manager->SaveBestModel(
                             *model_,
                             optimizer_.get(),
-                            current,
+                            GetMetrics(),
                             current.val_loss)) {
                         if (scheduler_controller_) {
                             TrainingSchedulerResumeState scheduler_state;
@@ -1837,13 +1838,13 @@ void TrainingExecutor::Train(
             point.kind = "epoch";
             point.epoch = epoch;
             point.total_epochs = epochs;
-            point.step = GetMetrics().optimizer_step_count;
+            point.step = OptimizerSteps();
             if (validation_ran_this_epoch) point.validation_loss = current.val_loss;
             if (!RunGenerationPreview(point)) break;
         }
 
         if (layer_snapshot_schedule_) {
-            const TrainingMetrics m = GetMetrics();
+            const TrainingRunLive m = GetLiveMetrics();
             TrainingEpochRecord record;
             record.epoch = epoch;
             record.train_loss = m.train_loss;
@@ -2508,7 +2509,12 @@ void TrainingExecutor::StepWith(std::map<std::string, Tensor> gradients, int epo
         const bool done = range_test_->Record(range_batch_loss_);
         const double next = range_test_->CurrentLearningRate();
         UpdateMetrics([this, next](TrainingMetrics& m) {
-            m.range_points = range_test_->Points();
+            // Append-only: the points the test added (the whole list was
+            // copied every step)
+            const auto& points = range_test_->Points();
+            if (points.size() < m.range_points.size()) m.range_points.clear();
+            m.range_points.insert(m.range_points.end(),
+                                  points.begin() + static_cast<std::ptrdiff_t>(m.range_points.size()), points.end());
             m.range_stop_reason = range_test_->StopReason();
             m.learning_rate = next;
         });
@@ -2847,6 +2853,39 @@ TrainingMetrics TrainingExecutor::GetMetrics() const {
     return metrics_;
 }
 
+TrainingRunLive TrainingExecutor::GetLiveMetrics() const {
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    return static_cast<const TrainingRunLive&>(metrics_);
+}
+
+namespace {
+template <typename T>
+std::vector<T> EntriesSince(const std::vector<T>& series, size_t from) {
+    return from < series.size() ? std::vector<T>(series.begin() + static_cast<std::ptrdiff_t>(from), series.end())
+                                : std::vector<T>{};
+}
+}  // namespace
+
+std::vector<EpochHealth> TrainingExecutor::HealthEpochsSince(size_t from) const {
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    return EntriesSince(metrics_.health.epochs, from);
+}
+
+std::vector<LearningRateRangePoint> TrainingExecutor::RangePointsSince(size_t from) const {
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    return EntriesSince(metrics_.range_points, from);
+}
+
+std::vector<double> TrainingExecutor::LearningRatesSince(size_t from) const {
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    return EntriesSince(metrics_.learning_rate_history, from);
+}
+
+int TrainingExecutor::OptimizerSteps() const {
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    return metrics_.optimizer_step_count;
+}
+
 void TrainingExecutor::NotifyPluginBatch(bool start, int epoch, int batch, int total_batches,
                                          float loss, float accuracy) {
     auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
@@ -3097,7 +3136,7 @@ void TrainingExecutor::RunTrainingEpoch(TrainingPassBatches& batches, int epoch,
         metrics.Restore(saved, resume_point.metrics);
         sample_count = static_cast<size_t>(resume_point.sample_count);
     }
-    const int run_model_seed = GetMetrics().randomness.model_seed;
+    const int run_model_seed = GetLiveMetrics().randomness.model_seed;
 
     TrainingStepInput step;
     while (!batches.Complete()) {
@@ -3221,7 +3260,7 @@ void TrainingExecutor::RunTrainingEpoch(TrainingPassBatches& batches, int epoch,
             const float elapsed_s = elapsed_ms / 1000.0f;
             const float rate = elapsed_ms > 0 ? (batch_num * 1000.0f / static_cast<float>(elapsed_ms)) : 0.0f;
             if (metrics.Sequences()) {
-                const auto snapshot = GetMetrics();
+                const auto snapshot = GetLiveMetrics();
                 // Entity F1 is a token-tagging metric; a language model has no entities.
                 const std::string entity_f1 =
                     metrics.Tagging() ? fmt::format(" entity_f1={:.2f}%", metrics.EntityF1() * 100.0f) : std::string();
@@ -3257,7 +3296,7 @@ void TrainingExecutor::RunTrainingEpoch(TrainingPassBatches& batches, int epoch,
         // and only for data a resume can skip into.
         if (resume_every_steps_ > 0 && batches.CanSkip() && !resume_root_.empty() &&
             gradient_accumulated_batches_ == 0 && !step.last && !ShouldStop()) {
-            const int steps = GetMetrics().optimizer_step_count;
+            const int steps = OptimizerSteps();
             if (steps > 0 && steps % resume_every_steps_ == 0 && steps != last_mid_epoch_checkpoint_step_) {
                 last_mid_epoch_checkpoint_step_ = steps;
                 SaveResumeCheckpoint(epoch - 1, progress_now());
@@ -3267,7 +3306,7 @@ void TrainingExecutor::RunTrainingEpoch(TrainingPassBatches& batches, int epoch,
         // Generation previews every N optimizer steps (TOFIX159), on a
         // completed step; the epoch's last batch is covered by the epoch end.
         if (generation_preview_ && gradient_accumulated_batches_ == 0 && !step.last && !ShouldStop()) {
-            const long long steps = GetMetrics().optimizer_step_count;
+            const long long steps = OptimizerSteps();
             if (steps != last_generation_preview_step_ &&
                 ShouldRunPreviewAfterStep(config_.generation_preview, steps)) {
                 last_generation_preview_step_ = steps;

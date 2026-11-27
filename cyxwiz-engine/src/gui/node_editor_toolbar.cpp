@@ -415,7 +415,7 @@ void NodeEditor::ShowToolbar() {
     const float arrow_w = ImGui::CalcTextSize(ICON_FA_CHEVRON_RIGHT).x + 2.0f * sp;
 
     // The run group at its widest, so the bar does not refold as a run's line grows.
-    const auto metrics = training_active ? training_mgr.GetCurrentMetrics() : cyxwiz::TrainingMetrics{};
+    const auto metrics = training_active ? training_mgr.GetLiveMetrics() : cyxwiz::TrainingRunLive{};
     const bool waiting_gpu = training_active && !metrics.waiting_for_gpu.empty();
     const char* pause_label = ICON_FA_PAUSE " Pause##run_pause";
     const char* resume_label = ICON_FA_PLAY " Resume##run_resume";

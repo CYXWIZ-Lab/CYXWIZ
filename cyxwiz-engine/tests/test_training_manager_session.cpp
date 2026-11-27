@@ -249,6 +249,25 @@ int main(int argc, char** argv) {
     manager.ClearTrainedModel();
     std::cout << "PASS: completion barrier rejects premature restart; inactive model is ready\n";
 
+    // While a run trains, the manager's current metrics hold its series so
+    // far: the Health of the epochs done (TOFIX242 2.2d). They held none
+    // until the run ended, so the Model window's Health and the Dashboard's
+    // health warning stayed empty during training.
+    {
+        std::atomic<int> health_epochs{-1};
+        manager.SetOnProgress([&](int epoch, float, float) {
+            if (epoch == 2) health_epochs.store(static_cast<int>(manager.GetCurrentMetrics().health.epochs.size()));
+        });
+        Check(StartArrow(manager, MakeConfig(work_dir / "live_series"), MakeDataset(), "label", 3, 2, {}),
+              "the live-series run should start");
+        WaitForTerminalTask(manager, tasks, manager.GetCurrentTaskId(), "live series");
+        manager.SetOnProgress(nullptr);
+        manager.ClearTrainedModel();
+        Check(health_epochs.load() == 2, "during the run the manager's metrics hold the Health of the 2 epochs done (" +
+                                             std::to_string(health_epochs.load()) + ")");
+        std::cout << "PASS: the manager's metrics hold the run's series while it trains\n";
+    }
+
     std::atomic<int> start_callbacks{0};
     std::atomic<int> end_callbacks{0};
     std::atomic<int> progress_callbacks{0};

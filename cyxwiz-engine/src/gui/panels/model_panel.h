@@ -99,6 +99,11 @@ private:
     uint64_t range_seen_serial_ = 0;      // the last finished test taken in
     std::vector<LearningRateRangePoint> range_points_;
     std::string range_stop_reason_;
+    // The running training's Health so far: its new epochs are read in as
+    // they come (TOFIX242 2.2d; a frame copied the run's whole record, which
+    // held no Health until the run ended).
+    mutable uint64_t health_task_ = 0;
+    mutable TrainingHealth health_live_;
     std::string range_message_;
     bool range_message_error_ = false;
     bool steepest_rule_ = true;

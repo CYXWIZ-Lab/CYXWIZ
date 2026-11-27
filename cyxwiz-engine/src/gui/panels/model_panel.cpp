@@ -385,8 +385,9 @@ void ModelPanel::RenderLearningRate() {
                          : outcome.cancelled     ? "Stopped before the test ended; the curve so far is shown."
                                                  : std::string();
     } else if (range_running_ && manager.IsTrainingActive()) {
-        const auto live = manager.GetCurrentMetrics();
-        range_points_ = live.range_points;
+        // The points added since the last frame
+        auto added = manager.RangePointsSince(range_points_.size());
+        range_points_.insert(range_points_.end(), added.begin(), added.end());
         range_stop_reason_.clear();
     }
 
@@ -896,8 +897,19 @@ void ModelPanel::RenderExplainResult(const std::vector<std::string>& class_names
 
 HealthView ModelPanel::CurrentHealth() const {
     auto& training = TrainingManager::Instance();
-    const TrainingHealth health =
-        training.IsTrainingActive() ? training.GetCurrentMetrics().health : training.GetLastMetrics().health;
+    const TrainingHealth* health = &training.GetLastMetrics().health;
+    if (training.IsTrainingActive()) {
+        // The run's epochs so far: this run's new ones read in
+        const uint64_t task = training.GetCurrentTaskId();
+        if (task != health_task_) {
+            health_task_ = task;
+            health_live_.epochs.clear();
+        }
+        auto added = training.HealthEpochsSince(health_live_.epochs.size());
+        health_live_.epochs.insert(health_live_.epochs.end(), std::make_move_iterator(added.begin()),
+                                   std::make_move_iterator(added.end()));
+        health = &health_live_;
+    }
     std::vector<std::string> names;
     const LiveGraphCompile* live = node_editor_ ? node_editor_->GetLiveCompile() : nullptr;
     const ActiveModelInfo info = training.GetActiveModelInfo();
@@ -905,7 +917,7 @@ HealthView ModelPanel::CurrentHealth() const {
         info.evaluation_config ? &*info.evaluation_config : (live ? live->Config() : nullptr);
     if (config)
         for (const auto& layer : config->layers) names.push_back(layer.name);
-    return BuildHealthView(health, names);
+    return BuildHealthView(*health, names);
 }
 
 namespace {

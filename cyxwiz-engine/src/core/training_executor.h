@@ -37,10 +37,10 @@ inline bool UsesRegressionMetrics(const TrainingConfiguration& config) {
     return UsesContinuousTargetMetrics(config);
 }
 
-/**
- * Training metrics updated during training
- */
-struct TrainingMetrics {
+// A training run's state as it goes (TOFIX242 2.2d, TRN-17): counters,
+// current values and the outcome. Small: the loop reads it per batch and the
+// GUI per frame (GetLiveMetrics), without the series.
+struct TrainingRunLive {
     TrainingRandomness randomness;
     // Current progress
     int current_epoch = 0;
@@ -53,12 +53,7 @@ struct TrainingMetrics {
     int optimizer_step_count = 0;
     int scheduler_step_count = 0;
     double learning_rate = 0.0;
-    // A learning rate range test (config.learning_rate_range): every step's
-    // rate, loss and smoothed loss so far, and why it stopped once it has.
-    std::vector<LearningRateRangePoint> range_points;
-    std::string range_stop_reason;
-    // Weights, gradients and dead units once an epoch (the Model window's Health).
-    TrainingHealth health;
+    std::string range_stop_reason;  // why a learning rate range test stopped, once it has
     float grad_norm = 0.0f;  // global gradient norm before clipping (grad_clip_norm > 0)
     size_t train_sample_count = 0;
     size_t val_sample_count = 0;
@@ -136,6 +131,22 @@ struct TrainingMetrics {
     int64_t missing_values_total_rows = -1;
     std::string missing_values_supplied_role;  // "Validation" / "Test": a supplied input refused (fix its file)
 
+    // Resume checkpoints (TOFIX118 P4e).
+    std::string last_resume_checkpoint;  // newest complete one written by this run
+    std::string initialized_from;        // warm-start checkpoint or weights file (model weights only)
+    int resumed_after_epoch = 0;         // > 0: this run continued a checkpoint
+    bool resume_exact = false;           // seeds and data order replay exactly
+};
+
+// A training run's series: append-only, one entry an epoch (losses, metrics,
+// health) or a step (learning rates, range points). A reader takes the new
+// entries by range while the run goes.
+struct TrainingRunSeries {
+    // A learning rate range test (config.learning_rate_range): every step's
+    // rate, loss and smoothed loss so far.
+    std::vector<LearningRateRangePoint> range_points;
+    // Weights, gradients and dead units once an epoch (the Model window's Health).
+    TrainingHealth health;
     // History (for plotting)
     std::vector<float> loss_history;
     std::vector<float> accuracy_history;
@@ -148,13 +159,11 @@ struct TrainingMetrics {
     // Post-step learning rates, one entry per scheduler advance. The initial
     // rate is reported separately by learning_rate before the first advance.
     std::vector<double> learning_rate_history;
-
-    // Resume checkpoints (TOFIX118 P4e).
-    std::string last_resume_checkpoint;  // newest complete one written by this run
-    std::string initialized_from;        // warm-start checkpoint or weights file (model weights only)
-    int resumed_after_epoch = 0;         // > 0: this run continued a checkpoint
-    bool resume_exact = false;           // seeds and data order replay exactly
 };
+
+// A run's whole record: what a finished run reports, and what a checkpoint
+// keeps. Copying it copies every series: not per batch or per frame.
+struct TrainingMetrics : TrainingRunLive, TrainingRunSeries {};
 
 // One evaluation pass (validation or test) of any kind of data.
 struct ObjectiveEvaluationMetrics {
@@ -364,10 +373,18 @@ public:
      */
     bool IsPaused() const { return is_paused_.load(); }
 
-    /**
-     * Get current training metrics (thread-safe)
-     */
+    // The run's whole record so far, series included (thread-safe). It copies
+    // every series: for the run's end and rare reads, not per batch or frame.
     TrainingMetrics GetMetrics() const;
+    // Counters, current values and the outcome, without the series (TOFIX242
+    // 2.2d): per batch or per frame.
+    TrainingRunLive GetLiveMetrics() const;
+    // A series' entries from `from` on (append-only): a reader keeps its copy
+    // and asks for what is new.
+    std::vector<EpochHealth> HealthEpochsSince(size_t from) const;
+    std::vector<LearningRateRangePoint> RangePointsSince(size_t from) const;
+    std::vector<double> LearningRatesSince(size_t from) const;
+    int OptimizerSteps() const;
 
     /**
      * Get the training configuration

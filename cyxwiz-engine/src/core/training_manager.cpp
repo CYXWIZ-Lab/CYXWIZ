@@ -78,8 +78,39 @@ TrainingManager::~TrainingManager() {
 }
 
 TrainingMetrics TrainingManager::GetCurrentMetrics() const {
+    TrainingMetrics metrics;
+    {
+        std::lock_guard<std::mutex> lock(metrics_mutex_);
+        metrics = cached_metrics_;
+    }
+    // While a run trains, the series the executor keeps (TOFIX242 2.2d): this
+    // record had none of them until the run ended.
+    if (is_training_.load()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (current_executor_) {
+            metrics.health.epochs = current_executor_->HealthEpochsSince(0);
+            metrics.range_points = current_executor_->RangePointsSince(0);
+            metrics.learning_rate_history = current_executor_->LearningRatesSince(0);
+        }
+    }
+    return metrics;
+}
+
+TrainingRunLive TrainingManager::GetLiveMetrics() const {
     std::lock_guard<std::mutex> lock(metrics_mutex_);
-    return cached_metrics_;
+    return static_cast<const TrainingRunLive&>(cached_metrics_);
+}
+
+std::vector<EpochHealth> TrainingManager::HealthEpochsSince(size_t from) const {
+    if (!is_training_.load()) return {};
+    std::lock_guard<std::mutex> lock(mutex_);
+    return current_executor_ ? current_executor_->HealthEpochsSince(from) : std::vector<EpochHealth>{};
+}
+
+std::vector<LearningRateRangePoint> TrainingManager::RangePointsSince(size_t from) const {
+    if (!is_training_.load()) return {};
+    std::lock_guard<std::mutex> lock(mutex_);
+    return current_executor_ ? current_executor_->RangePointsSince(from) : std::vector<LearningRateRangePoint>{};
 }
 
 std::string TrainingManager::WaitingForGpu() const {
@@ -172,7 +203,7 @@ bool TrainingManager::StartTrainingCommon(
                 if (!mgr.IsTrainingActive()) {
                     break;
                 }
-                auto metrics = mgr.GetCurrentMetrics();
+                const auto metrics = mgr.GetLiveMetrics();
                 // Progress counts the batches of the epoch in progress; the
                 // epoch counter alone reads 1/1 = 100% for a whole 1-epoch run.
                 const double now_seconds = std::chrono::duration<double>(
@@ -607,14 +638,14 @@ void TrainingManager::TrainingThreadFunc(
                                                float val_loss, float val_acc, float epoch_time) {
         // Update cached metrics
         float samples_per_sec = 0.0f;
-        TrainingMetrics seq_metrics;
+        TrainingRunLive seq_metrics;
         const bool sequence_mode =
             exec && exec->GetConfig().sequence_batch.enabled;
         const bool regression_mode =
             exec && UsesRegressionMetrics(exec->GetConfig());
-        const TrainingMetrics objective_metrics = exec
-            ? exec->GetMetrics()
-            : TrainingMetrics{};
+        const TrainingRunLive objective_metrics = exec
+            ? exec->GetLiveMetrics()
+            : TrainingRunLive{};
         {
             std::lock_guard<std::mutex> lock(metrics_mutex_);
             cached_metrics_.current_epoch = epoch;
@@ -659,7 +690,7 @@ void TrainingManager::TrainingThreadFunc(
         }
 
         if (sequence_mode) {
-            seq_metrics = exec->GetMetrics();
+            seq_metrics = exec->GetLiveMetrics();
             {
                 std::lock_guard<std::mutex> lock(metrics_mutex_);
                 cached_metrics_.train_token_accuracy = seq_metrics.train_token_accuracy;
@@ -698,7 +729,7 @@ void TrainingManager::TrainingThreadFunc(
             }
             // Pair / Retrieval Metrics (TOFIX140 A5), in percent like accuracy.
             {
-                const TrainingMetrics latest = exec->GetMetrics();
+                const TrainingRunLive latest = exec->GetLiveMetrics();
                 if (latest.val_pair_metrics && val_loss >= 0.0f) {
                     panel->AddCustomMetric("Val Pair Accuracy", epoch, latest.val_pair_metrics->accuracy * 100.0);
                 }
@@ -817,7 +848,7 @@ void TrainingManager::TrainingThreadFunc(
                         *first_batch_told = true;
                         if (const auto folder = exec->GenerationPreviewDir(); !folder.empty())
                             panel->SetGenerationPreviewFolder(folder);
-                        const TrainingMetrics split = exec->GetMetrics();
+                        const TrainingRunLive split = exec->GetLiveMetrics();
                         panel->SetRunData(exec->GetConfig().dataset_name, split.train_sample_count,
                                           split.val_sample_count, split.test_sample_count);
                         // The executor may have started a trace of its own.
@@ -834,7 +865,7 @@ void TrainingManager::TrainingThreadFunc(
                                             static_cast<double>(total_batches);
                         // The point is the mean since the previous one (the
                         // executor's report window), not the epoch's running mean.
-                        const TrainingMetrics point = exec ? exec->GetMetrics() : TrainingMetrics{};
+                        const TrainingRunLive point = exec ? exec->GetLiveMetrics() : TrainingRunLive{};
                         panel->AddLossPoint(frac_epoch,
                                             static_cast<double>(exec ? point.report_loss : batch_loss),
                                             -1.0);

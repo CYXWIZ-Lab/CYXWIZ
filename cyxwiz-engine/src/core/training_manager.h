@@ -86,8 +86,17 @@ public:
     // Get the current training task ID (0 if none)
     uint64_t GetCurrentTaskId() const { return current_task_id_.load(); }
 
-    // Get current training metrics (thread-safe)
+    // The run's whole record so far (thread-safe): while it trains, with the
+    // series the executor keeps (Health, learning rates, range points). It
+    // copies every series: not per frame.
     TrainingMetrics GetCurrentMetrics() const;
+    // Counters, current values and the outcome, without the series (TOFIX242
+    // 2.2d): per frame.
+    TrainingRunLive GetLiveMetrics() const;
+    // While a run trains, a series' entries from `from` on (append-only; empty
+    // between runs): a view keeps its copy and asks for what is new.
+    std::vector<EpochHealth> HealthEpochsSince(size_t from) const;
+    std::vector<LearningRateRangePoint> RangePointsSince(size_t from) const;
     // Why the run waits for another training run's GPU, while it does ("" otherwise)
     std::string WaitingForGpu() const;
 
