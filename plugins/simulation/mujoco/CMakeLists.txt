@@ -150,11 +150,13 @@ add_custom_command(TARGET test_mujoco_log POST_BUILD
     COMMENT "Copying the MuJoCo runtime next to test_mujoco_log")
 add_test(NAME mujoco_log COMMAND test_mujoco_log)
 # The Gymnasium replay needs CYXWIZ_RL_ORACLE_PYTHON (cyxwiz-engine) to have
-# mujoco of the plugin's version too (the Engine's python-embed does).
+# gymnasium and mujoco of the plugin's version; the test checks the version and
+# fails naming the pip line when it differs.
 if(CYXWIZ_RL_ORACLE_PYTHON)
     add_test(NAME mujoco_gymnasium_parity
              COMMAND ${CYXWIZ_RL_ORACLE_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/mujoco_gymnasium_parity.py
-                     $<TARGET_FILE:test_mujoco_environments> ${CMAKE_CURRENT_BINARY_DIR}/parity)
+                     $<TARGET_FILE:test_mujoco_environments> ${CMAKE_CURRENT_BINARY_DIR}/parity
+                     ${CYXWIZ_MUJOCO_VERSION})
 endif()
 # pycyxwiz.rl over _cyxwiz_envs (the Engine's module) with the same Python
 if(CYXWIZ_RL_ORACLE_PYTHON AND TARGET _cyxwiz_envs)
