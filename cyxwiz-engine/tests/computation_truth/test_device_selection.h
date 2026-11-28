@@ -5,6 +5,14 @@
 // ArrayFire backend, CYXWIZ_OPENCL_TEST_DEVICE=N picks the OpenCL GPU (0 =
 // the NVIDIA card, 1 = the Intel UHD 630 on the dev box). Unset = default.
 //
+// The device is not the compute path: a CUDA run without the NVIDIA provider
+// computes on ArrayFire alone, and a test that only compares results passes
+// on either. CYXWIZ_EXPECT_PATH=nvidia|opencl|oneapi|<provider id> says which
+// provider every RL op must have run on, and makes test_ppo_trainer,
+// test_fused_ppo and cyxwiz-rl-stability-gate FAIL (naming the op and the
+// reason) instead of skipping or passing when one did not. Unset = as before.
+// It is read by expected_compute_path.h, in this folder.
+//
 // The analysis algorithms compute in float64 where the device has it and in
 // float32 otherwise (cyxwiz-backend arrayfire_host_values.h), so a check names
 // both tolerances: DeviceTolerance(float64, float32) (TOFIX145 item 7).

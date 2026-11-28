@@ -17,6 +17,7 @@
 #include "../src/plugin/plugin_manager.h"
 #include "../src/plugin/registries/plugin_environment_registry.h"
 #include "algorithms/arrayfire_backend_utils.h"
+#include "computation_truth/expected_compute_path.h"
 #include "computation_truth/test_device_selection.h"
 
 #include <arrayfire.h>
@@ -36,6 +37,8 @@
 namespace {
 
 int failures = 0;
+// CYXWIZ_EXPECT_PATH: the provider every RL op must have run on (unset: none required)
+cyxwiz::test::ExpectedComputePath g_expected;
 
 void Check(bool ok, const std::string& what) {
     if (ok) return;
@@ -138,6 +141,23 @@ void CheckCartPole() {
     Check(!outcome.updates.empty() && !outcome.updates.back().compute_path.empty(),
           "an update says how it ran");
     if (!outcome.updates.empty()) std::printf("CartPole-v1 ran as %s\n", outcome.updates.back().compute_path.c_str());
+    // Every part of the path is named: the networks, Adam, and PPO's three ops
+    if (!outcome.updates.empty()) {
+        const auto& parts = outcome.updates.back().compute_parts;
+        bool named = parts.size() == 5 && parts[0].what == "networks" && parts[1].what == "Adam" &&
+                     parts[2].what == "PPO sample" && parts[3].what == "PPO loss" && parts[4].what == "PPO GAE";
+        Check(named, "the compute path lists the networks, Adam and PPO's sample, loss and GAE");
+        const std::string& path = outcome.updates.back().compute_path;
+        // Parts that run the same way share one entry ("Adam, PPO sample, ...: <provider>")
+        Check(path.find("Adam") != std::string::npos && path.find("PPO sample") != std::string::npos &&
+                  path.find("PPO loss") != std::string::npos && path.find("PPO GAE") != std::string::npos,
+              "and says so in words: " + path);
+        // CYXWIZ_EXPECT_PATH: each of them on the named provider, or the test fails
+        if (g_expected.set)
+            Check(cyxwiz::test::ReportComputePathViolations(
+                      g_expected, cyxwiz::test::ComputePathViolations(parts, g_expected.provider_id), "CartPole-v1"),
+                  "every RL op ran on " + g_expected.provider_id);
+    }
     if (!outcome.updates.empty())
         std::printf("CartPole-v1: mean return %.1f after %lld steps (%d updates, %.0f s)\n",
                     outcome.updates.back().mean_episode_return, static_cast<long long>(outcome.updates.back().timesteps),
@@ -182,7 +202,10 @@ void CheckFallbackMidRun() {
     if (!fused) {
         Check(!provider_on_cuda, "a CUDA run with a provider installed uses the fused kernels: " +
                                      (outcome.updates.empty() ? outcome.error : outcome.updates.front().compute_path));
-        if (!provider_on_cuda)
+        // CYXWIZ_EXPECT_PATH: the fused kernels were required, so there is something to check
+        Check(!g_expected.set, "CYXWIZ_EXPECT_PATH=" + g_expected.name + ", but the run does not use the fused kernels: " +
+                                   (outcome.updates.empty() ? outcome.error : outcome.updates.front().compute_path));
+        if (!provider_on_cuda && !g_expected.set)
             std::printf("mid-run provider failure not checked: the run does not use the fused kernels here\n");
         return;
     }
@@ -192,7 +215,7 @@ void CheckFallbackMidRun() {
     const std::string& after = outcome.updates.back().compute_path;
     Check(before.rfind("fused", 0) == 0, "before the failure the run uses the fused kernels: " + before);
     Check(after.find("ArrayFire operations (the fused kernels failed") != std::string::npos &&
-              after.find("optimizers per tensor") != std::string::npos,
+              after.find("Adam: ArrayFire, per tensor") != std::string::npos,
           "after it, each update says it runs on ArrayFire operations: " + after);
     bool finite = true;
     for (const auto& u : outcome.updates) finite = finite && std::isfinite(u.policy_loss) && std::isfinite(u.value_loss);
@@ -248,6 +271,7 @@ void CheckPendulum(const std::filesystem::path& plugin) {
 
 int main(int argc, char** argv) {
     if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) return EXIT_FAILURE;
+    g_expected = cyxwiz::test::ReadExpectedComputePath();
     CheckRefusals();
     CheckCartPole();
     CheckFallbackMidRun();

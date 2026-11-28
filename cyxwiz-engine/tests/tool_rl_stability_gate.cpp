@@ -43,6 +43,12 @@
 // the run actually trained on. CYXWIZ_GATE_NO_PROVIDERS=1 turns the neural
 // providers off (the networks run as ArrayFire operations) for comparisons;
 // CYXWIZ_GATE_STEPS=<n> caps the run at n steps for measurements.
+// CYXWIZ_EXPECT_PATH=nvidia|opencl|oneapi|<provider id> requires the path the
+// gate measures (computation_truth/expected_compute_path.h): the run FAILS,
+// naming the op and the reason, when its networks, its Adam step or one of
+// PPO's ops did not run on that provider. A gate measures a path; without
+// this a CUDA run on ArrayFire alone passes as a CUDA result. The report
+// records the path either way ("compute_path", "compute_parts").
 // CYXWIZ_GATE_PRINT_CONFIG=1 prints the run's configuration as JSON (the
 // graph with every node's settings, the compiled budget, stop and layers) and
 // trains nothing: to check that a change leaves the gate's protocol as it was.
@@ -60,6 +66,7 @@
 #include "../src/core/rl_graph_presentation.h"
 #include "../src/plugin/plugin_manager.h"
 #include "../src/plugin/registries/plugin_environment_registry.h"
+#include "computation_truth/expected_compute_path.h"
 #include "rl_graph_test_support.h"
 #include "route_qualification_test_fixture.h"
 
@@ -367,6 +374,7 @@ int main(int argc, char** argv) {
         return written ? EXIT_SUCCESS : Fail("the configuration could not be written to standard output");
     }
 
+    const cyxwiz::test::ExpectedComputePath expected = cyxwiz::test::ReadExpectedComputePath();
     cyxwiz::rl::RLTrainingRun run;
     std::string error;
     const auto start = std::chrono::steady_clock::now();
@@ -374,6 +382,25 @@ int main(int argc, char** argv) {
     nlohmann::json rows = nlohmann::json::array();
     std::string device;        // where the run trains, once its preflight is done
     std::string compute_path;  // how the last update ran (fused kernels or ArrayFire)
+    std::vector<cyxwiz::rl::ComputePathPart> compute_parts;  // the same, part by part
+    const auto follow_path = [&](const std::string& path, const std::vector<cyxwiz::rl::ComputePathPart>& parts) {
+        if (path != compute_path) {  // at the first update, and when it changes
+            std::printf("compute_path: %s\n", path.c_str());
+            std::fflush(stdout);
+        }
+        compute_path = path;
+        compute_parts = parts;
+    };
+    const auto parts_json = [&]() {
+        nlohmann::json parts = nlohmann::json::array();
+        for (const auto& part : compute_parts)
+            parts.push_back({{"what", part.what},
+                             {"provider", part.provider_id},  // empty: ArrayFire
+                             {"mixed", part.mixed},
+                             {"reason", part.reason},
+                             {"detail", part.detail}});
+        return parts;
+    };
     long long reached = -1;
     float last_return = std::numeric_limits<float>::quiet_NaN();
     // The report as it stands: written every few updates as well as at the end,
@@ -392,6 +419,8 @@ int main(int argc, char** argv) {
             {"layers", layers},
             {"device", device},
             {"compute_path", compute_path},
+            {"compute_parts", parts_json()},
+            {"expected_path", expected.set ? nlohmann::json(expected.provider_id) : nlohmann::json(nullptr)},
             {"outcome", outcome},
             {"reached_target_at", reached < 0 ? nlohmann::json(nullptr) : nlohmann::json(reached)},
             {"final_mean_return", Number(last_return)},
@@ -421,7 +450,7 @@ int main(int argc, char** argv) {
             }
         }
         for (const auto& m : run.TakeUpdates()) {
-            compute_path = m.compute_path;
+            follow_path(m.compute_path, m.compute_parts);
             rows.push_back({m.timesteps, Number(m.mean_episode_return), Number(m.policy_loss), Number(m.value_loss),
                             Number(m.approx_kl), Number(m.clip_fraction), Number(m.explained_variance),
                             Number(m.std), Number(m.steps_per_second)});
@@ -436,7 +465,7 @@ int main(int argc, char** argv) {
             if (m.update % 10 == 0) write("Running");
         }
         for (const auto& m : run.TakeOffPolicyReports()) {
-            compute_path = m.compute_path;
+            follow_path(m.compute_path, m.compute_parts);
             if (dqn)
                 rows.push_back({m.timesteps, Number(m.mean_episode_return), Number(m.critic_loss),
                                 Number(m.exploration_rate), Number(m.mean_q), Number(m.steps_per_second)});
@@ -463,7 +492,13 @@ int main(int argc, char** argv) {
     const long long steps = rows.empty() ? 0 : rows.back()[0].get<long long>();
     std::printf("%s seed %s: %s, target %.0f reached at %lld steps, final mean return %.1f after %lld steps (%.0f s)\n",
                 task.c_str(), seed.c_str(), run.Message().c_str(), target, reached, last_return, steps, seconds);
-    write(run.Message());
+    // CYXWIZ_EXPECT_PATH: a run that took another path than the one the gate
+    // measures is a failed run, whatever its returns
+    const std::vector<std::string> violations =
+        expected.set ? cyxwiz::test::ComputePathViolations(compute_parts, expected.provider_id)
+                     : std::vector<std::string>{};
+    const bool on_path = cyxwiz::test::ReportComputePathViolations(expected, violations, "cyxwiz-rl-stability-gate");
+    write(on_path ? run.Message() : "Wrong compute path: " + violations.front());
     if (from_plugin) manager.UnloadPlugin(plugin_id);
-    return finished ? EXIT_SUCCESS : EXIT_FAILURE;
+    return finished && on_path ? EXIT_SUCCESS : EXIT_FAILURE;
 }

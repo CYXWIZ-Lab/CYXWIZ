@@ -9,11 +9,15 @@
 // checks both paths against PyTorch.
 //
 // Runs on the device CYXWIZ_TEST_ARRAYFIRE_BACKEND names; without a provider
-// for it (the CPU) there is nothing to compare and it says so.
+// for it (the CPU) there is nothing to compare and it says so. With
+// CYXWIZ_EXPECT_PATH set (computation_truth/expected_compute_path.h) that is
+// a failure instead, and every PPO op must have run on the named provider.
 
 #include <cyxwiz/neural_provider.h>
+#include <cyxwiz/neural_provider_dispatch.h>
 #include <cyxwiz/rl/ppo.h>
 #include <cyxwiz/tensor.h>
+#include "computation_truth/expected_compute_path.h"
 #include "computation_truth/test_device_selection.h"
 
 #include <algorithm>
@@ -88,8 +92,11 @@ void RanOnProvider(const cyxwiz::rl::PpoProviderCounts& before, long long runs, 
               ", " + std::to_string(now.failed - before.failed) + " fell back)");
 }
 
+// The reference half of a comparison: providers off, and unobserved, so
+// CYXWIZ_EXPECT_PATH judges only the provider half
 template <typename F>
 auto OnArrayFire(F f) {
+    const cyxwiz::ScopedNeuralDispatchObserver unobserved(nullptr);
     cyxwiz::SetNeuralProvidersDisabledForTesting(true);
     auto out = f();
     cyxwiz::SetNeuralProvidersDisabledForTesting(false);
@@ -255,9 +262,20 @@ void CheckSampleStep() {
 
 int main() {
     if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) return EXIT_FAILURE;
+    const cyxwiz::test::ExpectedComputePath expected = cyxwiz::test::ReadExpectedComputePath();
+    const std::vector<std::pair<const char*, cyxwiz::NeuralOp>> ppo_ops{
+        {"PPO", cyxwiz::NeuralOp::PpoLoss}, {"PPO", cyxwiz::NeuralOp::PpoSample}, {"PPO", cyxwiz::NeuralOp::PpoGae}};
+    // Every provider call of the comparisons below, for CYXWIZ_EXPECT_PATH
+    const cyxwiz::NeuralDispatchTally tally;
     const bool served = ProviderServes(cyxwiz::NeuralOp::PpoLoss, true) && ProviderServes(cyxwiz::NeuralOp::PpoLoss, false) &&
                         ProviderServes(cyxwiz::NeuralOp::PpoSample, true) && ProviderServes(cyxwiz::NeuralOp::PpoGae, true);
     if (!served) {
+        if (expected.set) {
+            // A required path that did not run is a failure, not a skip
+            cyxwiz::test::ReportComputePathViolations(
+                expected, cyxwiz::test::DispatchViolations(tally, expected.provider_id, ppo_ops), "test_fused_ppo");
+            return EXIT_FAILURE;
+        }
         std::printf("no provider runs PPO's kernels on this device: nothing to compare\n");
         std::printf("test_fused_ppo: all checks passed\n");
         return EXIT_SUCCESS;
@@ -271,6 +289,10 @@ int main() {
     CompareGae(512, 1);
     CompareGae(7, 33);
     CheckSampleStep();
+    if (expected.set &&
+        !cyxwiz::test::ReportComputePathViolations(
+            expected, cyxwiz::test::DispatchViolations(tally, expected.provider_id, ppo_ops), "test_fused_ppo"))
+        ++failures;
     if (failures == 0) std::printf("test_fused_ppo: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
