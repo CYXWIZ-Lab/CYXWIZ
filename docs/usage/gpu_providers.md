@@ -75,10 +75,13 @@ The OpenCL and oneAPI providers have the same reasons in their own words
 kernel library from another Engine version").
 
 The oneAPI kernel library (`cyxwiz-oneapi-kernels`) is loaded and its version
-checked once, when the Engine starts: Compile and a run only read that
-verdict. A library that is missing, does not load or is from another Engine
-version stays unused until the Engine is started again, so restart the Engine
-after installing or replacing it.
+checked once per Engine start, the first time anything asks for a neural
+provider (usually the first Compile or run): from then on Compile and a run
+only read that verdict. The oneAPI provider is registered only if ArrayFire's
+oneAPI backend is available at that moment; otherwise oneAPI devices have no
+provider until the Engine is started again. A library that is missing, does
+not load or is from another Engine version also stays unused until the Engine
+is started again, so restart the Engine after installing or replacing it.
 
 Where you read it:
 
