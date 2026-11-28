@@ -389,6 +389,9 @@ int main(int argc, char** argv) {
     // The devices: one line each at Debug with its backend and index (the
     // number used to be the backend's enum value); one count per backend at Info.
     auto devices = cyxwiz::Device::GetAvailableDevices();
+    // The saved choice resolved against them now, so the first Compile and
+    // the ones after it report the same device
+    cyxwiz::RefreshExecutionRouteResolution(devices);
     std::map<std::string, int> per_backend;
     for (const auto& device : devices) {
         const std::string backend = cyxwiz::ExecutionDeviceSelectionBackendName(device.type);

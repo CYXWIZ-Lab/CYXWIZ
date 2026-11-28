@@ -98,6 +98,8 @@ cyxwiz::MaterializationCachePruneResult ClearGraphMaterializationCache(
 // never starts a task that is already known to fail:
 //  - sequence token / sentence-id / tag columns missing from a loaded
 //    train, dev or test dataset (the same check Train runs);
+//  - the device saved in Preferences > Devices is not among this machine's
+//    devices, or several match it (choose it again);
 //  - the requested device route is not qualified for training on this machine
 //    (error under the strict execution policy or when CPU recovery is not
 //    qualified, otherwise a warning that the run moves to ArrayFire CPU);

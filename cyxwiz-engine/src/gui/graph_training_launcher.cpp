@@ -473,7 +473,14 @@ std::vector<cyxwiz::ValidationIssue> CheckGraphLaunchReadiness(
     // 2. Device route qualification (only graphs that train a model).
     if (!config.layers.empty() && route != nullptr) {
         const cyxwiz::RequestedRouteTrainingReadiness& preview = *route;
-        if (preview.route_available && !preview.authorized) {
+        if (preview.route_available && preview.route_unresolved) {
+            // The saved device is gone or not told apart: choosing it again is the fix, not Verify
+            const bool can_fall_back = !config.strict_execution && preview.cpu_recovery_qualified;
+            issues.push_back({can_fall_back ? cyxwiz::IssueLevel::Warning : cyxwiz::IssueLevel::Error, -1, "",
+                preview.message + (can_fall_back ? " Until then a run falls back to ArrayFire CPU."
+                                                 : " Until then training cannot start."),
+                cyxwiz::errors::Training::InvalidTrainingSetup});
+        } else if (preview.route_available && !preview.authorized) {
             const std::string device = preview.route_name.empty()
                 ? std::string("the selected device") : "'" + preview.route_name + "'";
             const bool can_fall_back =

@@ -5661,6 +5661,11 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
     }
 
     try {
+        // The selected route's resolution, before the compiler asks the
+        // providers about it: the compiler and the readiness preview below
+        // read this one answer. The devices are enumerated only when none was
+        // read since the selection changed, never on each Compile.
+        (void)cyxwiz::EnsureExecutionRouteResolution();
         cyxwiz::GraphCompiler compiler;
         cyxwiz::TrainingConfiguration config = compiler.Compile(nodes, links);
 
@@ -5676,6 +5681,15 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         if (config.is_valid && config.rl) {
             const auto [first_units, second_units] = cyxwiz::RLNetworkUnits(*config.rl);
             const auto route = cyxwiz::PreviewRequestedRouteTrainingReadiness();
+            if (route.route_unresolved) {
+                // A model graph reads it in its launch readiness (below)
+                cyxwiz::ValidationIssue issue;
+                issue.level = cyxwiz::IssueLevel::Warning;
+                issue.node_id = config.rl->learner_node_id;
+                issue.node_name = cyxwiz::RLAlgorithmName(config.rl->algorithm);
+                issue.message = route.message;
+                compile_result_issues_.push_back(std::move(issue));
+            }
             const std::string advice = route.route_available
                 ? cyxwiz::rl_device::CompileAdvice(
                       cyxwiz::rl_device::BackendWord(cyxwiz::ExecutionDeviceSelectionBackendName(route.type)),

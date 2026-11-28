@@ -344,6 +344,22 @@ void CheckLaunchReadinessAtCompile(cyxwiz::DataRegistry& registry) {
     issues=gui::CheckGraphLaunchReadiness(nodes,config,registry,&unqualified);
     Check(count(issues,cyxwiz::IssueLevel::Warning,"fall back to ArrayFire CPU")==1 &&
           count(issues,cyxwiz::IssueLevel::Error,"")==0,"a qualified CPU fallback is a warning");
+    // The saved device is gone: choosing it again is the fix, not Verify.
+    cyxwiz::RequestedRouteTrainingReadiness unresolved=unqualified;
+    unresolved.route_unresolved=true;unresolved.route_name.clear();
+    unresolved.message="The device chosen in Preferences > Devices (arrayfire_opencl device 1) is not among this "
+                       "machine's devices (unplugged, or its driver changed). Open Preferences > Devices and choose "
+                       "the device again.";
+    issues=gui::CheckGraphLaunchReadiness(nodes,config,registry,&unresolved);
+    Check(issues.size()==1 && count(issues,cyxwiz::IssueLevel::Warning,"choose the device again")==1 &&
+          count(issues,cyxwiz::IssueLevel::Warning,"falls back to ArrayFire CPU")==1 &&
+          issues.front().message.find("Verify Selected")==std::string::npos,
+          "a saved device that is gone is a warning that says to choose it again");
+    config.strict_execution=true;
+    issues=gui::CheckGraphLaunchReadiness(nodes,config,registry,&unresolved);
+    Check(count(issues,cyxwiz::IssueLevel::Error,"training cannot start")==1,
+          "under Strict it is an error");
+    config.strict_execution=false;
     // Qualified device, fallback allowed, CPU recovery unverified: an Info note.
     cyxwiz::RequestedRouteTrainingReadiness no_recovery=qualified;
     no_recovery.type=cyxwiz::DeviceType::OPENCL;no_recovery.route_name="Iris Xe";

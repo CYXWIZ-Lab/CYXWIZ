@@ -425,16 +425,30 @@ void TestNotServed() {
     Check(executions == 0, "nothing ran on a provider");
 }
 
+cyxwiz::DeviceInfo InventoryDevice(cyxwiz::DeviceType type, int device_id, const std::string& fingerprint) {
+    cyxwiz::DeviceInfo device;
+    device.type = type;
+    device.device_id = device_id;
+    device.name = "Test GPU " + std::to_string(device_id);
+    device.physical_fingerprint = fingerprint;
+    device.physical_fingerprint_known = true;
+    return device;
+}
+
 // Compile's provider target never enumerates devices (Device::GetAvailableDevices
 // probes every ArrayFire backend; one of them crashes on activation on some
-// machines), and inside a run it is the run's bound device.
+// machines), and inside a run it is the run's bound device. The GUI Compile
+// resolves the selected route once per selection (EnsureExecutionRouteResolution)
+// before the compiler asks the providers, so the compiler and the readiness
+// preview read one answer, the first Compile after start included.
 void TestCompileTargetNeverEnumerates() {
     using cyxwiz::DeviceType;
     const cyxwiz::NeuralDeviceTarget opencl1{DeviceType::OPENCL, 1};
     const cyxwiz::NeuralDeviceTarget opencl2{DeviceType::OPENCL, 2};
     const cyxwiz::NeuralDeviceTarget cuda{DeviceType::CUDA, 0};
     // A saved selection with a physical identity: the case that used to read the inventory
-    const cyxwiz::PendingExecutionDeviceSelection saved{DeviceType::OPENCL, 1, "pci:0000:01:00.0|test-gpu"};
+    const std::string fingerprint = "pci:0000:01:00.0|test-gpu";
+    const cyxwiz::PendingExecutionDeviceSelection saved{DeviceType::OPENCL, 1, fingerprint};
     const auto set_saved = [](const cyxwiz::PendingExecutionDeviceSelection& selection) {
         // The slot itself: a commit would also record the process device for the tests after this one
         std::lock_guard<std::mutex> lock(cyxwiz::PendingExecutionDeviceSelectionMutex());
@@ -445,10 +459,24 @@ void TestCompileTargetNeverEnumerates() {
     const uint64_t before = cyxwiz::detail::DeviceEnumerationCount();
     Check(cyxwiz::SameNeuralDeviceTarget(cyxwiz::RequestedRouteNeuralTarget(), opencl1),
           "a saved identity not resolved yet gives its stored backend and index");
-    // An inventory read elsewhere (the run preflight) resolved it to another index: that answer is used
-    cyxwiz::RememberResolvedExecutionRoute(saved, 2);
-    Check(cyxwiz::SameNeuralDeviceTarget(cyxwiz::RequestedRouteNeuralTarget(), opencl2),
-          "the device an inventory resolved the saved identity to is used");
+
+    // The Engine's start read the devices: the GPUs were reordered, the saved
+    // one is now OpenCL device 2
+    cyxwiz::RefreshExecutionRouteResolution({InventoryDevice(DeviceType::OPENCL, 1, "pci:0000:02:00.0|other-gpu"),
+                                             InventoryDevice(DeviceType::OPENCL, 2, fingerprint)});
+    // The GUI Compile, twice: the route first, then the compiler's target and the preview
+    std::vector<cyxwiz::NeuralDeviceTarget> compiled;
+    std::vector<cyxwiz::NeuralDeviceTarget> previewed;
+    for (int compile = 0; compile < 2; ++compile) {
+        (void)cyxwiz::EnsureExecutionRouteResolution();
+        compiled.push_back(cyxwiz::RequestedRouteNeuralTarget());
+        const auto preview = cyxwiz::PreviewRequestedRouteTrainingReadiness();
+        previewed.push_back({preview.type, preview.device_id});
+    }
+    Check(cyxwiz::SameNeuralDeviceTarget(compiled[0], opencl2) && cyxwiz::SameNeuralDeviceTarget(compiled[1], opencl2),
+          "the first and the second Compile after start report the same device, the one the identity resolved to");
+    Check(cyxwiz::SameNeuralDeviceTarget(previewed[0], opencl2) && cyxwiz::SameNeuralDeviceTarget(previewed[1], opencl2),
+          "and the readiness preview judges that device too");
     {
         const cyxwiz::ScopedNeuralRunTarget run(cuda);
         Check(cyxwiz::SameNeuralDeviceTarget(cyxwiz::RequestedRouteNeuralTarget(), cuda),
@@ -460,19 +488,44 @@ void TestCompileTargetNeverEnumerates() {
         cyxwiz::DeviceType type = DeviceType::CPU;
         int device_id = 0;
         std::string error;
-        cyxwiz::ResolveRequestedExecutionRoute({}, type, device_id, error);
-        Check(!error.empty() && !cyxwiz::CachedResolvedExecutionRoute(saved),
+        cyxwiz::ResolveRequestedExecutionRoute({InventoryDevice(DeviceType::OPENCL, 1, "pci:0000:02:00.0|other-gpu")},
+                                               type, device_id, error);
+        const auto cached = cyxwiz::CachedExecutionRouteResolution();
+        Check(!error.empty() && cached && !cached->resolved && cached->device_id == 1,
               "a resolution failure clears the cached target");
         Check(cyxwiz::SameNeuralDeviceTarget(cyxwiz::RequestedRouteNeuralTarget(), opencl1),
               "after it, the stored backend and index again, not the unplugged device");
+        // Said once, with what to do; the GUI Compile reports it too
+        Check(!cyxwiz::TakeUnresolvedExecutionRouteWarning(saved), "Compile warned about it once already");
+        const auto preview = cyxwiz::PreviewRequestedRouteTrainingReadiness();
+        Check(preview.route_unresolved && !preview.authorized &&
+                  preview.message.find("is not among this machine's devices") != std::string::npos &&
+                  preview.message.find("Open Preferences > Devices and choose the device again") != std::string::npos,
+              "the unresolved route is a warning that says what to do: " + preview.message);
     }
     Check(cyxwiz::detail::DeviceEnumerationCount() == before,
-          "Compile's provider target enumerated the devices " +
+          "Compile's provider target and the preview enumerated the devices " +
               std::to_string(cyxwiz::detail::DeviceEnumerationCount() - before) + " times");
-    // Another selection never reads the first one's resolution (keyed by the selection)
-    set_saved({DeviceType::OPENCL, 1, "pci:0000:02:00.0|other-gpu"});
-    Check(cyxwiz::SameNeuralDeviceTarget(cyxwiz::RequestedRouteNeuralTarget(), opencl1),
+
+    // Another selection never reads the first one's resolution (keyed by the
+    // selection); with no inventory read for it, the GUI Compile enumerates
+    // once, and the Compiles after it never
+    set_saved({DeviceType::OPENCL, 1, "pci:0000:03:00.0|third-gpu"});
+    Check(!cyxwiz::CachedExecutionRouteResolution() &&
+              cyxwiz::SameNeuralDeviceTarget(cyxwiz::RequestedRouteNeuralTarget(), opencl1),
           "another selection never reads the old one's resolution");
+    const uint64_t lazy_before = cyxwiz::detail::DeviceEnumerationCount();
+    std::vector<cyxwiz::NeuralDeviceTarget> lazy;
+    for (int compile = 0; compile < 3; ++compile) {
+        (void)cyxwiz::EnsureExecutionRouteResolution();
+        lazy.push_back(cyxwiz::RequestedRouteNeuralTarget());
+        (void)cyxwiz::PreviewRequestedRouteTrainingReadiness();
+    }
+    Check(cyxwiz::detail::DeviceEnumerationCount() - lazy_before == 1,
+          "three Compiles after a selection change enumerated the devices " +
+              std::to_string(cyxwiz::detail::DeviceEnumerationCount() - lazy_before) + " times, not once");
+    Check(cyxwiz::SameNeuralDeviceTarget(lazy[0], lazy[1]) && cyxwiz::SameNeuralDeviceTarget(lazy[1], lazy[2]),
+          "and they all report the same device");
     cyxwiz::ClearPendingExecutionDeviceSelection();
     cyxwiz::ClearSavedExecutionDeviceSelection();
 }

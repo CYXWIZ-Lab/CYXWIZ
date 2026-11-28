@@ -854,6 +854,9 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         cached_devices_.clear();
                         try {
                             auto devices = cyxwiz::Device::GetAvailableDevices();
+                            // Read again on Refresh devices, after Verify and after
+                            // a commit: Compile's route is resolved against it
+                            cyxwiz::RefreshExecutionRouteResolution(devices);
                             for (const auto& dev : devices) {
                                 CachedDevice cached;
                                 cached.type = static_cast<int>(dev.type);
