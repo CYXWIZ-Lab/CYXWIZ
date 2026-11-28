@@ -1,9 +1,12 @@
 #include "cyxwiz/neural_provider_dispatch.h"
 
+#include "neural_run_target_internal.h"
+
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <memory>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -14,16 +17,30 @@ namespace {
 thread_local NeuralDispatchObserver g_dispatch_observer = nullptr;
 thread_local NeuralProviderFailurePolicy g_failure_policy = NeuralProviderFailurePolicy::FallBack;
 
+// Why an op was not served, as part of the "once" key, so one cause never
+// hides another: no provider serves the device family (its reason, from
+// WhyNoNeuralProviderServes, is a fact of the process and does not change
+// within a run), or the request or the thread is off the run's bound device
+// (target_mismatch).
+enum class NotServedCause { NoProvider, TargetMismatch };
+
 // What each observer scope on this thread has already heard is not served:
 // one list per ScopedNeuralDispatchObserver, innermost last. A scope is a run
-// (or a tally inside it), so "once per (layer, op, device family) and run".
-// A list holds a handful of entries: a run asks for a few ops.
+// (or a tally inside it), so "once per (layer, op, device family, cause) and
+// run". A list holds a handful of entries: a run asks for a few ops.
 struct NotServedKey {
     NeuralOp op;
     DeviceType platform;
     std::string layer;
+    NotServedCause cause;
 };
 thread_local std::vector<std::vector<NotServedKey>> g_not_served_reported;
+
+// Outside every observer scope (a thread no run observes, which can still
+// hold a run target) there is no scope to remember in: a cause is logged once
+// per (op, cause) for the process.
+std::mutex g_unscoped_mutex;
+std::vector<std::pair<NeuralOp, NotServedCause>> g_unscoped_reported;
 
 bool IsBackwardRecurrentOp(NeuralOp op) {
     return op == NeuralOp::LstmBackward || op == NeuralOp::GruBackward || op == NeuralOp::RnnBackward;
@@ -63,23 +80,32 @@ NeuralDispatchEvent MakeEvent(const NeuralOpRequest& request, const char* layer,
     return event;
 }
 
-// No provider serves the request's device family: tells the observer why,
-// the first time its scope asks for this (layer, op, device family). Called
-// only with an observer set, so an unobserved call builds nothing.
-// Whether this scope hears of (layer, op, device family) for the first time;
-// it is remembered from then on.
-bool FirstInScope(const NeuralOpRequest& request, const char* layer) {
-    if (g_not_served_reported.empty()) g_not_served_reported.emplace_back();  // an observer set without a scope
+// Whether this scope hears of (layer, op, device family) not being served
+// for `cause` for the first time; it is remembered from then on. Outside
+// every scope: whether the process hears of (op, cause) for the first time.
+bool FirstInScope(const NeuralOpRequest& request, const char* layer, NotServedCause cause) {
+    if (g_not_served_reported.empty()) {
+        std::lock_guard<std::mutex> lock(g_unscoped_mutex);
+        for (const auto& [op, known] : g_unscoped_reported)
+            if (op == request.op && known == cause) return false;
+        g_unscoped_reported.emplace_back(request.op, cause);
+        return true;
+    }
     auto& reported = g_not_served_reported.back();
     const char* name = layer ? layer : "";
     for (const auto& key : reported)
-        if (key.op == request.op && key.platform == request.target.platform && key.layer == name) return false;
-    reported.push_back({request.op, request.target.platform, name});
+        if (key.op == request.op && key.platform == request.target.platform && key.layer == name &&
+            key.cause == cause)
+            return false;
+    reported.push_back({request.op, request.target.platform, name, cause});
     return true;
 }
 
+// No provider serves the request's device family: tells the observer why,
+// the first time its scope asks for this (layer, op, device family). Called
+// only with an observer set, so an unobserved call builds nothing.
 void ReportNotServedOnce(const NeuralOpRequest& request, const char* layer) {
-    if (!FirstInScope(request, layer)) return;
+    if (!FirstInScope(request, layer, NotServedCause::NoProvider)) return;
     const NeuralProviderAbsence absence = WhyNoNeuralProviderServes(request.target.platform, request.op);
     NeuralDispatchEvent event = MakeEvent(request, layer, nullptr, NeuralDispatchOutcome::NotServed);
     event.reason = BackendFallbackReasonName(absence.reason);
@@ -309,17 +335,24 @@ bool IsNeuralProviderRouteError(const std::exception& e) {
 bool CheckNeuralRunTarget(const NeuralOpRequest& request, const char* layer) {
     NeuralDeviceTarget bound;
     if (!BoundNeuralRunTarget(bound)) return true;  // outside a run: the request's own target
+    const bool request_on_it = SameNeuralDeviceTarget(request.target, bound);
+    // The thread's ArrayFire device is read once per run scope on a thread,
+    // at its first call: the Engine binds a run's device once, and code that
+    // moves a thread to another device opens a scope of its own
+    if (request_on_it && detail::NeuralRunThreadVerified()) return true;
     NeuralDeviceTarget thread;
     std::string error;
     const bool known = QueryArrayFireNeuralTarget(thread, error);
-    if (known && SameNeuralDeviceTarget(thread, bound) && SameNeuralDeviceTarget(request.target, bound)) return true;
-    if (!FirstInScope(request, layer)) return false;
+    const bool thread_on_it = known && SameNeuralDeviceTarget(thread, bound);
+    if (thread_on_it) detail::MarkNeuralRunThreadVerified();
+    if (thread_on_it && request_on_it) return true;
+    if (!FirstInScope(request, layer, NotServedCause::TargetMismatch)) return false;
     // A provider would read tensors that are not where it runs: none is
     // asked, ArrayFire runs the op where its data is
     std::string detail = "the run is bound to " + TargetWords(bound);
     if (!known) detail += ", and ArrayFire's active device could not be read (" + error + ")";
-    else if (!SameNeuralDeviceTarget(thread, bound)) detail += ", the thread's ArrayFire device is " + TargetWords(thread);
-    if (!SameNeuralDeviceTarget(request.target, bound)) detail += ", the request names " + TargetWords(request.target);
+    else if (!thread_on_it) detail += ", the thread's ArrayFire device is " + TargetWords(thread);
+    if (!request_on_it) detail += ", the request names " + TargetWords(request.target);
     const NeuralProviderAbsence absence =
         DescribeNeuralProviderAbsence(BackendFallbackReason::TargetMismatch, request.target.platform);
     NeuralDispatchEvent event = MakeEvent(request, layer, nullptr, NeuralDispatchOutcome::NotServed);

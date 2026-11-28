@@ -391,6 +391,22 @@ void TestNotServed() {
         Check(g_events.size() == 1 && g_events[0].layer == "fused MLP" && g_events[0].op == "mlp_forward",
               "a probe that finds no provider is reported once");
     }
+    {
+        // A not-served report never hides a later target mismatch of the same op
+        g_events.clear();
+        const cyxwiz::ScopedNeuralDispatchObserver fourth_run(&CollectEvent);
+        cyxwiz::DispatchNeuralProviderOp(forward, "LSTM", run);  // the CPU: no provider is offered
+        {
+            const cyxwiz::ScopedNeuralRunTarget bound(cuda);  // the request and the thread are on the CPU
+            cyxwiz::DispatchNeuralProviderOp(forward, "LSTM", run);
+            cyxwiz::DispatchNeuralProviderOp(forward, "LSTM", run);
+        }
+        Check(g_events.size() == 2 &&
+                  g_events[0].reason == BackendFallbackReasonName(BackendFallbackReason::ProviderNotOffered) &&
+                  g_events[1].reason == BackendFallbackReasonName(BackendFallbackReason::TargetMismatch),
+              "not served, then a target mismatch of the same op: both are reported once (" +
+                  std::to_string(g_events.size()) + " events)");
+    }
     Check(executions == 0, "nothing ran on a provider");
 }
 
@@ -488,6 +504,11 @@ void TestRunTarget() {
         Check(cyxwiz::DispatchNeuralProviderOp(request, "LSTM", run) && executions == 1,
               "a request on the run's device is served");
         Check(g_events.size() == 1 && g_events[0].outcome == NeuralDispatchOutcome::Ran, "and reported as ran");
+        // The thread was read once for the scope; a request off the device is still refused
+        const auto off_device = cyxwiz::RecurrentProviderRequest(cyxwiz::NeuralOp::LstmForward, cuda, shape);
+        Check(!cyxwiz::CheckNeuralRunTarget(off_device, "LSTM"), "a request off the run's device is refused after the "
+                                                               "thread was found on it");
+        Check(cyxwiz::CheckNeuralRunTarget(request, "LSTM"), "and a request on it is still served");
         {
             const cyxwiz::ScopedNeuralRunTarget inner(cuda);  // nested: the inner one decides, then the outer is back
             Check(!cyxwiz::CheckNeuralRunTarget(request, "Inner"), "a nested target decides inside its scope");

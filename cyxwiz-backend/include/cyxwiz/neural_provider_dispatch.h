@@ -92,11 +92,14 @@ enum class NeuralDispatchOutcome {
     Ran,       // the provider ran the op
     Declined,  // a provider serves the device but not this request: ArrayFire runs it on the same device
     Failed,    // the provider was chosen and failed
-    // No provider serves the request's device family: ArrayFire runs the op.
-    // Reported once per (layer, op, device family) in an observer's scope, not
-    // per call, with the reason (provider_not_built, provider_not_installed,
-    // provider_abi_mismatch, provider_disabled, provider_not_offered, or the
-    // family's *_provider_unavailable) and its words in `detail`.
+    // No provider serves the request's device family, or the request or the
+    // thread is off the run's bound device (target_mismatch): ArrayFire runs
+    // the op. Reported once per (layer, op, device family, cause) in an
+    // observer's scope, not per call, so a target mismatch is reported even
+    // after the op was reported not served. The reason (provider_not_built,
+    // provider_not_installed, provider_abi_mismatch, provider_disabled,
+    // provider_not_offered, the family's *_provider_unavailable, or
+    // target_mismatch) and its words are in `detail`.
     NotServed,
 };
 CYXWIZ_API const char* NeuralDispatchOutcomeName(NeuralDispatchOutcome outcome);
@@ -117,7 +120,9 @@ using NeuralDispatchObserver = void (*)(const NeuralDispatchEvent& event);
 
 // An observer's scope on this thread: a run, or a test. It is also the scope
 // of "once" for NotServed: each scope hears of an unserved (layer, op, device
-// family) one time, however often the op is asked for.
+// family) one time per cause (no provider, target mismatch), however often
+// the op is asked for. A thread with no observer scope logs a target
+// mismatch once per (op, cause) for the process.
 class CYXWIZ_API ScopedNeuralDispatchObserver {
 public:
     explicit ScopedNeuralDispatchObserver(NeuralDispatchObserver observer);
@@ -207,8 +212,15 @@ CYXWIZ_API bool IsNeuralProviderRouteError(const std::exception& e);
 // thread's ArrayFire device are both the device the run bound. When not, no
 // provider may be asked (it would read tensors that are not where it runs):
 // false, logged as a warning and reported to the observer as NotServed with
-// reason target_mismatch, once per (layer, op, device family) and scope.
-// Outside a run: true.
+// reason target_mismatch, once per (layer, op, device family) and scope (with
+// no observer scope, once per op for the process). Outside a run: true.
+// Cost: outside a run, one thread-local read. Inside a run, the thread's
+// ArrayFire device (two ArrayFire queries) is read at the thread's first call
+// in the run scope and remembered until the scope ends; later calls compare
+// the request with the bound device only. A thread is not read again in the
+// middle of a scope, so code that moves a thread's ArrayFire device inside a
+// run opens a ScopedNeuralRunTarget of its own (PolicyDeviceScope does). A
+// mismatch is read again on every call.
 CYXWIZ_API bool CheckNeuralRunTarget(const NeuralOpRequest& request, const char* layer);
 
 // Runs `execute` on the first provider that serves request.target and
