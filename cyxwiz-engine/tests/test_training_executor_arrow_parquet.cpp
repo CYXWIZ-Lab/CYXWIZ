@@ -2114,6 +2114,89 @@ void TestNERSequenceBuilder() {
           "NERSequenceBuilder should reject mismatched tag lengths");
 }
 
+// A NaN loss fails a sequence run as it fails a row run (TOFIX242 2.2, owner
+// decision Q6): every parameter set to NaN after batch 4's step makes batch
+// 5's loss NaN; with a report every 3 batches it is caught at batch 6, and the
+// error names the batches since the report before (4-6).
+void TestSequenceNaNStops() {
+    std::vector<cyxwiz::NERSequenceRow> rows;
+    for (int copy = 0; copy < 6; ++copy) {
+        rows.push_back({{"John", "lives", "in", "Berlin"}, {}, {"B-PER", "O", "O", "B-LOC"}});
+        rows.push_back({{"Mary", "works", "in", "Paris"}, {}, {"B-PER", "O", "O", "B-LOC"}});
+    }
+    cyxwiz::NERSequenceBuilderConfig builder_config;
+    builder_config.use_pos_tags = false;
+    builder_config.token_vocabulary.lowercase = true;
+    builder_config.batcher.batch_size = 1;
+    builder_config.batcher.max_sequence_length = 4;
+    builder_config.batcher.shuffle = false;
+    builder_config.batcher.tag_ignore_index = -100;
+    const auto built = cyxwiz::BuildNERSequenceData(rows, builder_config);
+
+    cyxwiz::TrainingConfiguration config;
+    config.input_size = 4;
+    config.input_shape = {4};
+    config.output_size = built.tag_vocabulary.Size();
+    config.loss_type = gui::NodeType::CrossEntropyLoss;
+    config.loss_params["ignore_index"] = "-100";
+    config.optimizer_type = gui::NodeType::SGD;
+    config.learning_rate = 0.01f;
+    config.sequence_batch.enabled = true;
+    config.sequence_batch.ignore_index = -100;
+    config.save_best_checkpoint = false;
+    config.log_interval = 3;
+    const auto checkpoint_dir = std::filesystem::temp_directory_path() / "cyxwiz_sequence_nan_stops";
+    std::filesystem::remove_all(checkpoint_dir);
+    config.checkpoint_dir = checkpoint_dir.string();
+    cyxwiz::CompiledLayer embedding;
+    embedding.type = gui::NodeType::Embedding;
+    embedding.parameters["num_embeddings"] = std::to_string(built.token_vocabulary.Size());
+    embedding.parameters["embedding_dim"] = "6";
+    config.layers.push_back(embedding);
+    cyxwiz::CompiledLayer token_head;
+    token_head.type = gui::NodeType::TimeDistributed;
+    token_head.units = static_cast<int>(built.tag_vocabulary.Size());
+    config.layers.push_back(token_head);
+
+    auto batcher = std::make_unique<cyxwiz::SequenceBatcher>(built.samples, built.batcher_config);
+    cyxwiz::TrainingExecutor executor(config, std::move(batcher), built.tag_vocabulary.Values());
+    int batches = 0;
+    int poison_after = 0;
+    bool poisoned = false;
+    std::string error;
+    try {
+        executor.Train(1, 1, [&](int, int batch, int total, float, float) {
+            batches = total;
+            // After batch 4, or batch 1 in an epoch too short for 6 batches
+            if (poison_after == 0) poison_after = total >= 6 ? 4 : 1;
+            if (batch != poison_after) return;
+            auto* model = executor.GetModel();
+            if (model == nullptr) return;
+            auto parameters = model->GetParameters();
+            for (auto& [name, value] : parameters) {
+                const std::vector<float> nans(value.NumElements(), std::numeric_limits<float>::quiet_NaN());
+                value = cyxwiz::Tensor(value.Shape(), nans.data());
+            }
+            model->SetParameters(parameters);
+            poisoned = true;
+        }, nullptr, nullptr);
+    } catch (const std::exception& e) {
+        error = e.what();
+    }
+    // The report before the NaN batch and the one that reads it: batch 1, every
+    // 3rd batch and the epoch's last report.
+    const auto report_at = [&](int b) { return b == 1 || b % 3 == 0 || b == batches; };
+    int checked = poison_after;
+    while (checked > 1 && !report_at(checked)) --checked;
+    int caught = poison_after + 1;
+    while (caught < batches && !report_at(caught)) ++caught;
+    const std::string window = "epoch 1, batches " + std::to_string(checked + 1) + "-" + std::to_string(caught);
+    Check(poisoned && error.find("training loss became NaN") != std::string::npos &&
+              error.find(window) != std::string::npos,
+          "sequences: a NaN after a step fails the run at the next report, naming " + window + " (" +
+              (error.empty() ? std::string("the run did not fail") : error) + ")");
+}
+
 void TestSequenceTrainingExecutor() {
     const std::vector<cyxwiz::NERSequenceRow> rows = {
         {{"John", "lives", "in", "Berlin"},
@@ -5407,6 +5490,7 @@ int main(int argc, char** argv) {
     TestSequenceVocabulary();
     TestNERSequenceBuilder();
     TestSequenceTrainingExecutor();
+    TestSequenceNaNStops();
 
     const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(
         MakeTrainingTable(), "training_executor_arrow");

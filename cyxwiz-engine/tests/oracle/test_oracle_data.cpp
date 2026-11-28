@@ -54,6 +54,7 @@
 #include <functional>
 
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -425,6 +426,59 @@ void CheckReadBudget(const std::string& kind, cyxwiz::TrainingConfiguration conf
     Check(batches >= 20 && reads <= budget, kind + ": loss and metric reads stay within the report budget (" +
                                                 std::to_string(reads) + " over " + std::to_string(batches) +
                                                 " batches, budget " + std::to_string(budget) + ")");
+    fs::remove_all(work);
+}
+
+// A NaN loss fails the run on every kind (TOFIX242 2.2, owner decision Q6:
+// caught where the sums are read). Every parameter set to NaN after batch 4's
+// step makes batch 5's loss NaN; with a report every 3 batches it is caught
+// at batch 6 (or the pass's end, if sooner), and the error names the batches
+// since the report before: 4-6.
+void CheckNaNStops(const std::string& kind, cyxwiz::TrainingConfiguration config,
+                   const std::function<cyxwiz::ResolvedExternalBatchers(const cyxwiz::TrainingConfiguration&)>& make) {
+    config.batch_size = 1;
+    config.log_interval = 3;
+    config.validation_freq = 1;
+    const fs::path work = fs::temp_directory_path() / "cyxwiz_oracle_nan_stops";
+    fs::remove_all(work);
+    config.checkpoint_dir = (work / "checkpoints").string();
+    cyxwiz::test::PinTrainingDevice();
+    cyxwiz::TrainingExecutor executor(config, make(config));
+    int batches = 0;
+    int poison_after = 0;
+    bool poisoned = false;
+    std::string error;
+    try {
+        executor.Train(1, config.batch_size, [&](int, int batch, int total, float, float) {
+            batches = total;
+            // After batch 4, or batch 1 in an epoch too short for 6 batches
+            if (poison_after == 0) poison_after = total >= 6 ? 4 : 1;
+            if (batch != poison_after) return;
+            auto* model = executor.GetModel();
+            if (model == nullptr) return;
+            auto parameters = model->GetParameters();
+            for (auto& [name, value] : parameters) {
+                const std::vector<float> nans(value.NumElements(), std::numeric_limits<float>::quiet_NaN());
+                value = cyxwiz::Tensor(value.Shape(), nans.data());
+            }
+            model->SetParameters(parameters);
+            poisoned = true;
+        });
+    } catch (const std::exception& e) {
+        error = e.what();
+    }
+    // The report before the NaN batch and the one that reads it: batch 1, every
+    // 3rd batch and the epoch's last report.
+    const auto report_at = [&](int b) { return b == 1 || b % 3 == 0 || b == batches; };
+    int checked = poison_after;
+    while (checked > 1 && !report_at(checked)) --checked;
+    int caught = poison_after + 1;
+    while (caught < batches && !report_at(caught)) ++caught;
+    const std::string window = "epoch 1, batches " + std::to_string(checked + 1) + "-" + std::to_string(caught);
+    Check(poisoned && error.find("training loss became NaN") != std::string::npos &&
+              error.find(window) != std::string::npos,
+          kind + ": a NaN after a step fails the run at the next report, naming " + window + " (" +
+              (error.empty() ? std::string("the run did not fail") : error) + ")");
     fs::remove_all(work);
 }
 
@@ -882,9 +936,11 @@ void Run(const json& fixture) {
     // histograms were read without one).
     Check(copies.unknown == 0, "copy budget: every device-to-host read is named (" + std::to_string(copies.unknown) +
                                    " are not)");
-    CheckReadBudget("tabular (classification)", config, [&](const cyxwiz::TrainingConfiguration& c) {
+    const auto make_tabular = [&](const cyxwiz::TrainingConfiguration& c) {
         return cyxwiz::TakeResolvedExternalBatchers(cyxwiz::BuildArrowTrainingBatchers(c, scaled, "segment", c.batch_size));
-    });
+    };
+    CheckReadBudget("tabular (classification)", config, make_tabular);
+    CheckNaNStops("tabular", config, make_tabular);
     RunTabularReplays(config, scaled, work);
     fs::remove_all(work);
 }
@@ -1162,12 +1218,12 @@ void RunText() {
     bool seeded = false;
     const PartRead train = ReadTrain(*set.train, 2, kLoaderSeed, seeded);
     CheckParts("text", f, train, ReadOnce(set.val), ReadOnce(set.test), seeded);
-    TrainKind("text", f, TextModel(), "text_model",
-              [](cyxwiz::TrainingConfiguration& c) { ShuffledSplit(c, 0.7f, 0.15f, 0.15f); },
-              [&](const cyxwiz::TrainingConfiguration& c) {
-                  return cyxwiz::TakeResolvedExternalBatchers(
-                      cyxwiz::BuildArrowTrainingBatchers(c, tokens, "y", c.batch_size));
-              });
+    const auto make = [&](const cyxwiz::TrainingConfiguration& c) {
+        return cyxwiz::TakeResolvedExternalBatchers(cyxwiz::BuildArrowTrainingBatchers(c, tokens, "y", c.batch_size));
+    };
+    const auto trained = TrainKind("text", f, TextModel(), "text_model",
+                                   [](cyxwiz::TrainingConfiguration& c) { ShuffledSplit(c, 0.7f, 0.15f, 0.15f); }, make);
+    if (trained) CheckNaNStops("text", *trained, make);
 }
 
 // Time series: Data Input -> TimeSeriesWindow -> TimeSeriesSplit
@@ -1215,6 +1271,7 @@ void RunSeries() {
                                    },
                                    make);
     if (trained) CheckReadBudget("series (regression)", *trained, make);
+    if (trained) CheckNaNStops("series", *trained, make);
 }
 
 // One batcher serves an image / audio set's three parts (SetPhase), as the
@@ -1267,14 +1324,15 @@ void RunImage() {
         flipped->SetPhase(cyxwiz::BatcherPhase::Train);
         return std::shared_ptr<cyxwiz::IBatcher>(flipped);
     }, true);
-    TrainKind("image", f, ImageModel(), "image_model", [](cyxwiz::TrainingConfiguration&) {},
-              [&](const cyxwiz::TrainingConfiguration& c) {
-                  auto shared = std::make_shared<cyxwiz::ImageDatasetBatcher>(prepared.set, c.batch_size, SplitOf(f),
-                                                                              true, kLoaderSeed);
-                  // As the Engine's image setup does (image_batchers.cpp): one-hot class labels.
-                  shared->SetOneHotEncoding(f.at("classes").get<size_t>());
-                  return cyxwiz::ResolvedExternalBatchers{shared, shared, shared};
-              });
+    const auto make = [&](const cyxwiz::TrainingConfiguration& c) {
+        auto shared = std::make_shared<cyxwiz::ImageDatasetBatcher>(prepared.set, c.batch_size, SplitOf(f), true,
+                                                                    kLoaderSeed);
+        // As the Engine's image setup does (image_batchers.cpp): one-hot class labels.
+        shared->SetOneHotEncoding(f.at("classes").get<size_t>());
+        return cyxwiz::ResolvedExternalBatchers{shared, shared, shared};
+    };
+    const auto trained = TrainKind("image", f, ImageModel(), "image_model", [](cyxwiz::TrainingConfiguration&) {}, make);
+    if (trained) CheckNaNStops("image", *trained, make);
 }
 
 // Audio: a class-per-folder set of 16-bit mono WAVs, the magnitude
@@ -1307,14 +1365,15 @@ void RunAudio() {
         augmented->SetPhase(cyxwiz::BatcherPhase::Train);
         return std::shared_ptr<cyxwiz::IBatcher>(augmented);
     }, true);
-    TrainKind("audio", f, AudioModel(), "audio_model", [](cyxwiz::TrainingConfiguration&) {},
-              [&](const cyxwiz::TrainingConfiguration& c) {
-                  auto shared = std::make_shared<cyxwiz::AudioDatasetBatcher>(entry, preprocessing, c.batch_size,
-                                                                              SplitOf(f), true, 0, kLoaderSeed);
-                  // As the Engine's audio setup does (audio_dataset_batcher.cpp): one-hot class labels.
-                  shared->SetOneHotEncoding(f.at("classes").get<size_t>());
-                  return cyxwiz::ResolvedExternalBatchers{shared, shared, shared};
-              });
+    const auto make = [&](const cyxwiz::TrainingConfiguration& c) {
+        auto shared = std::make_shared<cyxwiz::AudioDatasetBatcher>(entry, preprocessing, c.batch_size, SplitOf(f), true,
+                                                                    0, kLoaderSeed);
+        // As the Engine's audio setup does (audio_dataset_batcher.cpp): one-hot class labels.
+        shared->SetOneHotEncoding(f.at("classes").get<size_t>());
+        return cyxwiz::ResolvedExternalBatchers{shared, shared, shared};
+    };
+    const auto trained = TrainKind("audio", f, AudioModel(), "audio_model", [](cyxwiz::TrainingConfiguration&) {}, make);
+    if (trained) CheckNaNStops("audio", *trained, make);
 }
 
 // Sparse: the text CSV through TFIDFVectorizer (sparse output, vocabulary
@@ -1365,12 +1424,12 @@ void RunSparse() {
 
     // Training on those batches: a linear model on the CSR rows against
     // PyTorch running its export on the dense rows in the same order.
-    TrainKind("sparse", f, SparseModel(), "sparse_linear",
-              [](cyxwiz::TrainingConfiguration& c) { ShuffledSplit(c, 0.7f, 0.15f, 0.15f); },
-              [&](const cyxwiz::TrainingConfiguration& c) {
-                  return cyxwiz::TakeResolvedExternalBatchers(
-                      cyxwiz::BuildSparseTrainingBatchers(c, features, c.batch_size));
-              });
+    const auto make = [&](const cyxwiz::TrainingConfiguration& c) {
+        return cyxwiz::TakeResolvedExternalBatchers(cyxwiz::BuildSparseTrainingBatchers(c, features, c.batch_size));
+    };
+    const auto trained = TrainKind("sparse", f, SparseModel(), "sparse_linear",
+                                   [](cyxwiz::TrainingConfiguration& c) { ShuffledSplit(c, 0.7f, 0.15f, 0.15f); }, make);
+    if (trained) CheckNaNStops("sparse", *trained, make);
 }
 
 }  // namespace
