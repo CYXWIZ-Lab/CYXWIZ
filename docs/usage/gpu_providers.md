@@ -194,8 +194,17 @@ words. Two things differ: an RL run declares no placement before its first
 batch (it asks the provider as it goes), and under Compatibility a fused
 network, the joint Adam step or a PPO kernel whose provider failed stays on
 ArrayFire for the rest of that run. The next run asks the provider again: a
-failure in one run never changes the path of a later one. See
+failure in one run never changes the path of a later one. The compute path
+then names that part "turned off for this run after a provider failure"
+(reason `provider_latched`). See
 [Where it trains](rl_training.md#where-it-trains).
+
+Policy playback and the stress test follow the same policy as training: they
+run the policy on its device with its providers, and under Strict a provider
+failure stops the playback or the stress test with the same message instead
+of moving it to ArrayFire. Under Compatibility they go on on ArrayFire. The
+RL Training Dashboard's preview of a running training is never counted in
+that training's trace.
 
 ## One training run per GPU
 

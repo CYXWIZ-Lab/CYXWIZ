@@ -232,6 +232,8 @@ with ArrayFire operations on the same device and the run's trace records the
 failure (for the networks, **Run details** also says how they now compute).
 Every provider call is counted in the run's trace (Studio Debugger, Runtime:
 provider groups), as in [Strict and the providers](gpu_providers.md#strict-and-the-providers).
+Playing a trained policy and its stress test follow the same policy: under
+Strict a provider failure stops them with the same message.
 
 Where the run actually trains is shown on every surface:
 
