@@ -29,6 +29,7 @@
 #include <dlfcn.h>
 #endif
 
+#include <atomic>
 #include <filesystem>
 #include <limits>
 #include <mutex>
@@ -68,18 +69,42 @@ std::filesystem::path BackendDirectory() {
 
 bool ArrayFireOneapiLoaded() { return detail::IsLibraryLoaded("afoneapi"); }
 
+// How the process found the kernel library: not checked yet (Present until a
+// load says otherwise), or known to be of another ABI, or not loadable.
+std::atomic<provider_absence::ModuleState> g_kernel_state{provider_absence::ModuleState::Present};
+
+}  // namespace
+
+// Why a kernel library file cannot be used, from what its load found:
+// BackendInternalError when it can; ProviderAbiMismatch when an entry point
+// is missing or its ABI number is another one (a library of another Engine
+// version); OneapiProviderUnavailable when it does not load at all (the oneAPI
+// runtime it needs is missing).
+BackendFallbackReason OneapiKernelLibraryVerdict(bool loaded, bool entry_points, int abi) {
+    if (!loaded) return BackendFallbackReason::OneapiProviderUnavailable;
+    if (!entry_points || abi != CYXWIZ_ONEAPI_KERNELS_ABI) return BackendFallbackReason::ProviderAbiMismatch;
+    return BackendFallbackReason::BackendInternalError;
+}
+
+namespace {
+
 // Lazily loaded kernel library (never unloaded: SYCL objects it owns live
 // for the process).
 class KernelLibrary {
 public:
-    explicit KernelLibrary(std::filesystem::path path) : path_(std::move(path)) {}
+    // installed: the library beside the backend, whose verdict the absence
+    // reason reports (OneapiKernelLibraryState); false for a check of another file.
+    explicit KernelLibrary(std::filesystem::path path, bool installed = true)
+        : path_(std::move(path)), installed_(installed) {}
 
     const std::filesystem::path& Path() const { return path_; }
 
-    // True once the entry points are bound; failure is sticky and explained.
-    bool Ensure(std::string& failure) {
+    // True once the entry points are bound; failure is sticky and explained,
+    // with its reason (OneapiKernelLibraryVerdict) in failure_reason.
+    bool Ensure(std::string& failure, BackendFallbackReason* failure_reason = nullptr) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (loaded_) return true;
+        if (failure_reason) *failure_reason = reason_;
         if (!failure_.empty()) {
             failure = failure_;
             return false;
@@ -87,8 +112,27 @@ public:
         if (!ArrayFireOneapiLoaded()) {
             // Not sticky: ArrayFire loads its oneAPI backend on first use.
             failure = "ArrayFire's oneAPI backend is not loaded in this process";
+            if (failure_reason) *failure_reason = BackendFallbackReason::OneapiProviderUnavailable;
             return false;
         }
+        return LoadLocked(failure, failure_reason);
+    }
+
+    // Loads the library and checks it, whatever ArrayFire has loaded (for a
+    // check of the file alone). Same verdict and stickiness as Ensure.
+    bool Check(std::string& failure, BackendFallbackReason& failure_reason) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (loaded_) return true;
+        failure_reason = reason_;
+        if (!failure_.empty()) {
+            failure = failure_;
+            return false;
+        }
+        return LoadLocked(failure, &failure_reason);
+    }
+
+private:
+    bool LoadLocked(std::string& failure, BackendFallbackReason* failure_reason) {
 #ifdef _WIN32
         HMODULE module = LoadLibraryExW(path_.wstring().c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
         const auto symbol = [&](const char* name) {
@@ -99,8 +143,10 @@ public:
         const auto symbol = [&](const char* name) { return module ? dlsym(module, name) : nullptr; };
 #endif
         if (!module) {
-            failure_ = "could not load " + path_.string();
+            failure_ = "could not load " + path_.string() + " (the oneAPI runtime it needs may be missing)";
+            reason_ = OneapiKernelLibraryVerdict(false, false, 0);
             failure = failure_;
+            if (failure_reason) *failure_reason = reason_;
             return false;
         }
         abi_ = reinterpret_cast<int (*)()>(symbol("cyxwiz_oneapi_kernels_abi"));
@@ -108,14 +154,20 @@ public:
         probe_ = reinterpret_cast<decltype(probe_)>(symbol("cyxwiz_oneapi_device_probe"));
         forward_ = reinterpret_cast<decltype(forward_)>(symbol("cyxwiz_oneapi_attention_forward"));
         backward_ = reinterpret_cast<decltype(backward_)>(symbol("cyxwiz_oneapi_attention_backward"));
-        if (!abi_ || !info_ || !probe_ || !forward_ || !backward_) {
+        const bool entry_points = abi_ && info_ && probe_ && forward_ && backward_;
+        const int abi = abi_ ? abi_() : 0;
+        reason_ = OneapiKernelLibraryVerdict(true, entry_points, abi);
+        if (!entry_points) {
             failure_ = path_.string() + " is missing entry points";
-        } else if (abi_() != CYXWIZ_ONEAPI_KERNELS_ABI) {
-            failure_ = path_.string() + " has ABI " + std::to_string(abi_()) + ", expected " +
+        } else if (abi != CYXWIZ_ONEAPI_KERNELS_ABI) {
+            failure_ = path_.string() + " has ABI " + std::to_string(abi) + ", this Engine needs " +
                        std::to_string(CYXWIZ_ONEAPI_KERNELS_ABI);
         }
         if (!failure_.empty()) {
+            if (installed_ && reason_ == BackendFallbackReason::ProviderAbiMismatch)
+                g_kernel_state = provider_absence::ModuleState::WrongAbi;
             failure = failure_;
+            if (failure_reason) *failure_reason = reason_;
             return false;
         }
         char info[2048] = {};
@@ -125,6 +177,7 @@ public:
         return true;
     }
 
+public:
     std::string RuntimeInfo() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return loaded_ ? runtime_info_ : std::string("kernels not loaded yet");
@@ -138,9 +191,11 @@ public:
 
 private:
     std::filesystem::path path_;
+    bool installed_ = true;
     mutable std::mutex mutex_;
     bool loaded_ = false;
     std::string failure_;
+    BackendFallbackReason reason_ = BackendFallbackReason::BackendInternalError;
     std::string runtime_info_;
 };
 
@@ -214,12 +269,32 @@ public:
             capability.detail = "the oneAPI provider covers device_probe and attention";
             return capability;
         }
+        if (ArrayFireOneapiLoaded()) {
+            std::string failure;
+            BackendFallbackReason reason = BackendFallbackReason::OneapiProviderUnavailable;
+            if (!library_.Ensure(failure, &reason)) {
+                capability.reason = reason;
+                capability.detail = failure;
+                return capability;
+            }
+        }
         capability.supported = true;
         capability.reason = BackendFallbackReason::BackendInternalError;
         return capability;
     }
 
     NeuralResourceEstimate EstimateResources(const NeuralOpRequest&) const override { return {}; }
+
+    // Loads and checks the kernel library now; false, logged with the reason
+    // and what to do, when it cannot be used.
+    bool CheckKernels() {
+        std::string failure;
+        BackendFallbackReason reason = BackendFallbackReason::OneapiProviderUnavailable;
+        if (library_.Ensure(failure, &reason)) return true;
+        spdlog::warn("oneAPI neural provider not registered (reason={}): {}. {}", BackendFallbackReasonName(reason),
+                     failure, DescribeNeuralProviderAbsence(reason, DeviceType::ONEAPI).fix);
+        return false;
+    }
 
     NeuralOpStatus Execute(const NeuralOpRequest&, NeuralOpBuffers&) override {
         return Fail(BackendFallbackReason::OneapiProviderUnsupportedContract,
@@ -235,7 +310,8 @@ public:
                         "device-resident execution needs the ArrayFire oneAPI device identity");
         }
         std::string failure;
-        if (!library_.Ensure(failure)) return Fail(BackendFallbackReason::OneapiProviderUnavailable, failure);
+        BackendFallbackReason reason = BackendFallbackReason::OneapiProviderUnavailable;
+        if (!library_.Ensure(failure, &reason)) return Fail(reason, failure);
         CyxOneapiDevice device{};
         device.name = buffers.queue.oneapi_device_name.c_str();
         device.platform = buffers.queue.oneapi_platform_name.c_str();
@@ -317,12 +393,20 @@ private:
 
 }  // namespace
 
+BackendFallbackReason CheckOneapiKernelLibraryForTesting(const std::string& path, std::string& detail) {
+    KernelLibrary library{std::filesystem::path(path), false};
+    BackendFallbackReason reason = BackendFallbackReason::BackendInternalError;
+    detail.clear();
+    library.Check(detail, reason);
+    return reason;
+}
+
 // How the process found the kernel library, for the reason a oneAPI device
 // has no provider (WhyNoNeuralProviderServes)
 provider_absence::ModuleState OneapiKernelLibraryState() {
     std::error_code ec;
-    return std::filesystem::exists(BackendDirectory() / kKernelLibrary, ec) ? provider_absence::ModuleState::Present
-                                                                            : provider_absence::ModuleState::NotFound;
+    if (!std::filesystem::exists(BackendDirectory() / kKernelLibrary, ec)) return provider_absence::ModuleState::NotFound;
+    return g_kernel_state.load();
 }
 
 void RegisterOneapiSyclNeuralProvider(NeuralProviderRegistry& registry) {
@@ -335,6 +419,12 @@ void RegisterOneapiSyclNeuralProvider(NeuralProviderRegistry& registry) {
         return;
     }
     auto provider = std::make_shared<OneapiSyclProvider>(library);
+    // The kernels' version is checked as soon as it can be: now when
+    // ArrayFire's oneAPI backend is loaded (the library must share its SYCL
+    // runtime), else at the first request once it is. A library of another
+    // version is not registered: a oneAPI device then has no provider, with
+    // the reason provider_abi_mismatch.
+    if (ArrayFireOneapiLoaded() && !provider->CheckKernels()) return;
     spdlog::info("oneAPI neural provider registered: {}", provider->Version());
     registry.Register(std::move(provider));
 }

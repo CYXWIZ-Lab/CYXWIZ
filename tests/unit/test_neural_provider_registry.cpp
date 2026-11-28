@@ -447,3 +447,44 @@ TEST_CASE("The registry says why no provider serves a device in this process",
           BackendFallbackReason::ProviderNotBuilt);
 #endif
 }
+
+#ifdef CYXWIZ_HAS_ONEAPI_DNN_PROVIDER
+#include "../oneapi/cyxwiz_oneapi_kernels.h"
+
+// The oneAPI kernel library's version check: a library of another version, or
+// one without the entry points, is provider_abi_mismatch (not a failure of a
+// run's first call); one that does not load is oneapi_provider_unavailable.
+// Checked with files every machine has: no oneAPI device is needed.
+TEST_CASE("The oneAPI kernel library is checked for its version",
+          "[gpu_execution][neural_provider][absence][oneapi]") {
+    using cyxwiz::BackendFallbackReason;
+    using cyxwiz::OneapiKernelLibraryVerdict;
+    CHECK(OneapiKernelLibraryVerdict(true, true, CYXWIZ_ONEAPI_KERNELS_ABI) ==
+          BackendFallbackReason::BackendInternalError);
+    CHECK(OneapiKernelLibraryVerdict(true, true, CYXWIZ_ONEAPI_KERNELS_ABI - 1) ==
+          BackendFallbackReason::ProviderAbiMismatch);
+    CHECK(OneapiKernelLibraryVerdict(true, true, CYXWIZ_ONEAPI_KERNELS_ABI + 1) ==
+          BackendFallbackReason::ProviderAbiMismatch);
+    CHECK(OneapiKernelLibraryVerdict(true, false, CYXWIZ_ONEAPI_KERNELS_ABI) ==
+          BackendFallbackReason::ProviderAbiMismatch);
+    CHECK(OneapiKernelLibraryVerdict(false, false, 0) == BackendFallbackReason::OneapiProviderUnavailable);
+
+    std::string detail;
+    CHECK(cyxwiz::CheckOneapiKernelLibraryForTesting("no-such-folder/cyxwiz-oneapi-kernels-missing.dll", detail) ==
+          BackendFallbackReason::OneapiProviderUnavailable);
+    CHECK(detail.find("could not load") != std::string::npos);
+    // A real library that is not the kernel library: loads, has none of its entry points
+#ifdef _WIN32
+    const char* other = "kernel32.dll";
+#else
+    const char* other = "libc.so.6";
+#endif
+    CHECK(cyxwiz::CheckOneapiKernelLibraryForTesting(other, detail) == BackendFallbackReason::ProviderAbiMismatch);
+    CHECK(detail.find("missing entry points") != std::string::npos);
+    // Its words: another Engine version, and what to do
+    CHECK(cyxwiz::DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderAbiMismatch, cyxwiz::DeviceType::ONEAPI)
+              .Sentence() ==
+          "oneAPI kernel library from another Engine version. Rebuild or reinstall cyxwiz-oneapi-kernels for this "
+          "Engine version.");
+}
+#endif
