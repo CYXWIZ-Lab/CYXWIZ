@@ -64,14 +64,71 @@ convolution), with NVIDIA cuBLAS for the matrix multiplies.
   `CYXWIZ_NEURAL_PROVIDER_MODULE_ABI`, `neural_provider.h`),
   `cyxwiz_nvidia_provider_register` and
   `cyxwiz_nvidia_provider_device_memory`. A missing module, or one that
-  cannot load (no NVIDIA driver: `nvcuda.dll`), counts as not installed
-  (a Debug log line); a loaded one logs "NVIDIA neural provider module
-  loaded: <path>".
+  cannot load (no NVIDIA driver: `nvcuda.dll`), counts as not found: one
+  Info log line per process in a build with the CUDA route, with the reason
+  (`provider_not_installed` when this build made the module,
+  `provider_not_built` otherwise) and what to do. A module with another ABI
+  number is not used (`provider_abi_mismatch`, a warning). A loaded one logs
+  "NVIDIA neural provider module loaded: <path>".
 - **Without it**, a CUDA run of a model with Conv2D does not start on CUDA:
   under the Compatibility policy it moves to ArrayFire CPU and says why;
   under Strict it refuses with the reason (TOFIX178 1.0(d)).
 - `CYXWIZ_DISABLE_NEURAL_PROVIDERS=1` hides every provider for a process (the
   portable path everywhere), for diagnosis and tests.
+
+## Building with the providers, and saying which path ran
+
+Every provider option is OFF by default, so a plain configure builds none of
+them: a CUDA run of that build computes on ArrayFire alone. Two things keep
+that from going unnoticed.
+
+**The provider table.** Every configure prints which providers the build
+makes and why one is missing:
+
+```text
+-- Neural providers (optional accelerators; ArrayFire runs whatever they do not):
+--   OpenCL (cyxwiz.opencl-cell): built (OpenCL 3.0, compiled into cyxwiz-backend)
+--   oneAPI (cyxwiz.oneapi-sycl-attention): not built (no DPC++ compiler under CYXWIZ_ONEAPI_COMPILER_ROOT='')
+--   NVIDIA (cyxwiz.nvidia-cublas-cell): built (CUDA Toolkit 12.6.20, module cyxwiz-nvidia-provider)
+```
+
+**The `gpu-dev` preset** (`linux-gpu-dev` on Linux) asks for all three
+(`CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER`, `CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER`,
+`CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER`). A provider whose toolkit is missing
+warns and is left out; the configure does not fail, and the table says which.
+The build goes to `build-gpu-dev`.
+Use it for GPU tests, gates and benchmarks, so they measure what the GPU
+packs ship:
+
+```bash
+cmake --preset gpu-dev
+cmake --build --preset gpu-dev --parallel 4
+```
+
+The oneAPI provider needs the DPC++ compiler: set
+`CYXWIZ_ONEAPI_COMPILER_ROOT`, or `CMPLR_ROOT` / `ONEAPI_ROOT` in the
+environment.
+
+**At run time** an absent provider has a reason from the one taxonomy
+(`cyxwiz/backend_fallback_reason.h`): `provider_not_built`,
+`provider_not_installed`, `provider_abi_mismatch`, `provider_disabled` or
+`provider_not_offered` (no provider implements the operation for that device
+family: the designed ArrayFire path). `WhyNoNeuralProviderServes`
+(`neural_provider.h`) decides it. "Built" is judged by the compile define
+only when no module is found: a module that is found is used whatever the
+build flag says. `DispatchNeuralProviderOp` reports an operation no provider
+serves as `NotServed`, once per operation and observer scope (a run), not per
+call, and builds nothing when no one observes.
+
+**In tests**, the device is not the compute path: a comparison of results
+passes on either. `CYXWIZ_EXPECT_PATH=nvidia|opencl|oneapi|<provider id>`
+names the provider every reinforcement-learning operation must have run on.
+With it set, `test_ppo_trainer`, `test_fused_ppo` and
+`cyxwiz-rl-stability-gate` fail, naming the operation and the reason,
+instead of skipping or passing on another path. It is read beside
+`CYXWIZ_TEST_ARRAYFIRE_BACKEND`, which picks the device
+(`cyxwiz-engine/tests/computation_truth/`). Unset, the tests behave as
+before.
 
 ## Why not LibTorch as an additional backend
 

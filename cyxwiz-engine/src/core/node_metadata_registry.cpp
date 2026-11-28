@@ -2915,7 +2915,9 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         "Engine training supports unidirectional and split-path bidirectional "
         "LSTM with dropout=0.0; each direction runs as an independent "
         "single-direction LSTM on ArrayFire (the selected device), or on the "
-        "native neural provider when one serves the run's device.", "",
+        "native neural provider when one serves the run's device. When none "
+        "does, Compile says why and what to do (for example: install the CUDA "
+        "GPU pack).", "",
         {{"Input", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
         {{"Output", PinType::Tensor, true,
@@ -2942,7 +2944,9 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         "Engine training supports unidirectional and split-path bidirectional "
         "GRU with dropout=0.0; each direction runs as an independent "
         "single-direction GRU on ArrayFire (the selected device), or on the "
-        "native neural provider when one serves the run's device.", "",
+        "native neural provider when one serves the run's device. When none "
+        "does, Compile says why and what to do (for example: install the CUDA "
+        "GPU pack).", "",
         {{"Input", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
         {{"Output", PinType::Tensor, true,
@@ -2969,7 +2973,9 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         "Engine training supports stacked simple RNN with tanh or relu "
         "nonlinearity and dropout=0.0, unidirectional or split-path "
         "bidirectional, on ArrayFire (the selected device) or the native "
-        "neural provider (CUDA/OpenCL).", "",
+        "neural provider (CUDA/OpenCL). When no provider serves the device, "
+        "Compile says why and what to do (for example: install the CUDA GPU "
+        "pack).", "",
         {{"Input", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
         {{"Output", PinType::Tensor, true,

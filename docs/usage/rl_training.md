@@ -251,12 +251,25 @@ target), which trains several times
 faster than layer by layer, when the networks fit them: Dense layers (at most 8, each at most 512 units) with ReLU, Leaky
 ReLU, ELU, SELU, GELU, Swish, Tanh or Sigmoid between them. Otherwise (other
 layers such as Dropout or LayerNorm, OpenCL, oneAPI, or CUDA without the
-pack) it runs layer by layer, and small networks
-(every hidden layer at most 256 units, such as the 64-64 pattern) usually
-train faster on the CPU: each environment step runs many small GPU
-operations, and some graphics drivers struggle under that load. Only then
-does Compile add an Info line saying so, and the dashboard repeats it once
-the run reports how it computes; the Engine never switches devices for you.
+pack) it runs layer by layer.
+
+On a GPU, Compile adds a note saying how the networks will compute and why,
+and the dashboard says it again under the header once the run reports how it
+computes. The note names the actual cause:
+
+- **The provider runs them**: "The networks run as fused small-network
+  kernels on cyxwiz.nvidia-cublas-cell."
+- **The provider is missing** (CUDA without the CUDA GPU pack): "The networks
+  run as ArrayFire operations on CUDA, not as fused kernels: NVIDIA provider
+  not installed. Install the CUDA GPU pack." See
+  [When a provider is missing](gpu_providers.md#when-a-provider-is-missing).
+- **The provider declines these networks, or none is offered for them on the
+  device** (OpenCL, oneAPI): the reason, and for small networks (every hidden
+  layer at most 256 units, such as the 64-64 pattern) the advice that they
+  usually train faster on the CPU: each environment step runs many small GPU
+  operations, and some graphics drivers struggle under that load.
+
+The Engine never switches devices for you.
 See [Why small networks are slow on a GPU](gpu_providers.md#why-small-networks-are-slow-on-a-gpu-and-what-cyxwiz-does-about-it). While a PPO
 run is active, the device choices in Preferences are disabled until it ends,
 and a second training run (Train on a model graph) is refused. A run on a GPU
@@ -282,9 +295,12 @@ after the run the steps and the time it took. Then the progress bar, a line
 for the run and its target ("PPO on CartPole-v1 × 8 · stops early at a mean return of
 475 over the last 100 episodes"), a line for where it runs, and when it ends
 a sentence saying how ("Reached its target: mean return 477.4 ... at update
-254"). **Run details** folds out the device route, how the networks compute
-(fused kernels or ArrayFire operations), the steps per update (SAC, TD3, DQN:
-the steps between reports and the updates so far) and the reference.
+254"). **Run details** folds out the device route, how the run computes
+(**Computes as**: the networks as fused kernels or ArrayFire operations with
+the reason, then the Adam step and, for PPO, its sampling, loss and
+advantages, each with the provider that runs it or ArrayFire), the steps per
+update (SAC, TD3, DQN: the steps between reports and the updates so far) and
+the reference.
 
 Buttons: **Pause** / **Resume** and **Stop** while it runs; **Play policy**
 and **Save policy...** after it; **More** has **Export updates (CSV)...**

@@ -16,6 +16,10 @@ changes for you.
 | Attention on oneAPI | `cyxwiz.oneapi-sycl-attention` |
 | PPO's networks (Dense + activations, up to 256 units), its sampling, loss, GAE and Adam on an NVIDIA GPU (CUDA) | `cyxwiz.nvidia-cublas-cell` |
 
+A provider is optional. When the one for your device is not there, the run
+still trains, on ArrayFire alone, and the Engine says so with the reason and
+what to do: see [When a provider is missing](#when-a-provider-is-missing).
+
 ## The NVIDIA provider
 
 `cyxwiz.nvidia-cublas-cell` is CyxWiz's own provider for NVIDIA GPUs (not
@@ -36,10 +40,59 @@ Console says which path a run takes:
 
 > PPO: the networks run as fused small-network kernels (cyxwiz.nvidia-cublas-cell)
 
-and the RL Training Dashboard's device chip says it on hover ("Runs as ...").
+and the RL Training Dashboard says it under **Run details**, in the row
+**Computes as**. The row lists each part of the run with what computes it:
+the networks, the Adam step, and PPO's sampling, loss and advantages (GAE):
+
+> fused small-network kernels (cyxwiz.nvidia-cublas-cell); Adam: cyxwiz.nvidia-cublas-cell; PPO sample, PPO loss, PPO GAE: cyxwiz.nvidia-cublas-cell
+
+On a CUDA device without the provider the same row reads:
+
+> ArrayFire operations (NVIDIA provider not installed. Install the CUDA GPU pack.); Adam: ArrayFire, per tensor; PPO sample, PPO loss, PPO GAE: ArrayFire
+
 The run's trace (Studio Debugger, Runtime) records it as `PPO.ComputePath`
 at the start, and again as a warning if the run falls back to ArrayFire
 operations partway through.
+
+## When a provider is missing
+
+A run on a GPU whose provider is not there computes correctly on ArrayFire,
+and often much more slowly: a PPO run on CUDA without the NVIDIA provider
+leaves the GPU almost idle. The Engine names the cause wherever it shows how
+a run computes, with one sentence saying what to do:
+
+| Reason | What you read | What to do |
+|---|---|---|
+| `provider_not_installed` | NVIDIA provider not installed | Install the CUDA GPU pack. |
+| `provider_not_built` | NVIDIA provider not built | This build has no NVIDIA provider: install the CUDA GPU pack, or build with the `gpu-dev` preset. |
+| `provider_abi_mismatch` | NVIDIA provider from another Engine version | Install the CUDA GPU pack of this Engine version. |
+| `provider_disabled` | Neural providers turned off | Unset `CYXWIZ_DISABLE_NEURAL_PROVIDERS` and start again to use them. |
+| `nvidia_provider_unavailable` | NVIDIA provider found no CUDA device | Check the NVIDIA driver, then start the Engine again. |
+| `provider_not_offered` | No provider is offered for this on OpenCL (or oneAPI, the CPU) | Nothing: ArrayFire runs it by design. |
+
+The OpenCL and oneAPI providers have the same reasons in their own words
+("OpenCL provider not built", "oneAPI kernel library not installed", "oneAPI
+kernel library from another Engine version").
+
+Where you read it:
+
+- **Compile**, on a model graph: the row of a layer that asks for a provider
+  (RNN, LSTM, GRU, Conv2D, attention) says "No native provider runs it:" and
+  the reason.
+- **Compile**, on a reinforcement learning graph on a GPU: a note says how
+  the networks will compute and why.
+- **RL Training Dashboard**: **Run details > Computes as**, and the note
+  under the header.
+- **Console**, once per Engine start: "NVIDIA neural provider module not
+  found ...", and once per run for each operation that runs on ArrayFire for
+  that reason.
+- **Studio Debugger, Runtime**: an event `NeuralProvider.NotServed` for each
+  such operation, once per run. It is information, not a warning: nothing is
+  wrong with the results.
+
+A provider that is there and declines one network or one batch (a layer wider
+than its limit, a shorter last batch) is a different case and reads
+differently: the provider is named, with its own reason.
 
 ## Why small networks are slow on a GPU, and what CyxWiz does about it
 
@@ -83,9 +136,12 @@ HalfCheetah's 1,000,000 steps take 10-13 minutes on that GPU with the
 kernels (about 77 minutes on the CPU, with three runs sharing the computer).
 
 What is left is the environment's round trip: the actions go back to the CPU
-every step, as in any framework with CPU environments. On OpenCL and oneAPI,
-and on CUDA without the CUDA GPU pack, PPO runs layer by layer and the
-advice above holds: small networks may train as fast on the CPU.
+every step, as in any framework with CPU environments. On OpenCL and oneAPI
+no provider is offered for these kernels: PPO runs layer by layer and the
+advice above holds, small networks may train as fast on the CPU. On CUDA
+without the NVIDIA provider PPO runs layer by layer too, and the cause is the
+missing provider, not the size of the networks: install the CUDA GPU pack
+(see [When a provider is missing](#when-a-provider-is-missing)).
 
 ## Strict and the providers
 
@@ -115,6 +171,11 @@ During the run:
 
   A Compatibility run (the default) runs the layer on ArrayFire instead and
   the trace records the failure.
+- **No provider serves the device** (it is not installed, not built, from
+  another version, or turned off): ArrayFire runs the layer on the same
+  device, under both policies. The trace records it once per operation and
+  run as `not_served`, with the reason and what to do. Strict does not stop
+  the run for it: Strict keeps a run on its device, and it is on its device.
 
 Reinforcement learning runs (PPO, SAC, TD3, DQN) count their provider kernels
 in the trace the same way, named `fused MLP` (the policy, value and Q
