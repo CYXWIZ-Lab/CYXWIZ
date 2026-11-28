@@ -91,6 +91,7 @@ const std::vector<cyxwiz::BackendFallbackReason>& AllReasons() {
         cyxwiz::BackendFallbackReason::ProviderDisabled,
         cyxwiz::BackendFallbackReason::ProviderNotOffered,
         cyxwiz::BackendFallbackReason::TargetMismatch,
+        cyxwiz::BackendFallbackReason::ProviderLatched,
     };
     return reasons;
 }
@@ -189,6 +190,9 @@ TEST_CASE("Backend fallback reason names pin the persisted taxonomy contract",
     CHECK(std::string(BackendFallbackReasonName(
               BackendFallbackReason::TargetMismatch)) ==
           "target_mismatch");
+    CHECK(std::string(BackendFallbackReasonName(
+              BackendFallbackReason::ProviderLatched)) ==
+          "provider_latched");
 
 }
 

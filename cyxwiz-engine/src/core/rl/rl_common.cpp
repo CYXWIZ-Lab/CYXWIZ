@@ -41,11 +41,25 @@ NetworkRoute ArrayFireNetworkRoute(const FusedMlp::Refusal& refusal, const std::
     return route;
 }
 
+namespace {
+constexpr const char* kLatchedWords = "turned off for this run after a provider failure";
+}  // namespace
+
 NetworkRoute FailedNetworkRoute(const std::exception& e) {
     NetworkRoute route;
-    route.detail = std::string("the fused kernels failed: ") + e.what();
+    route.reason = BackendFallbackReasonName(BackendFallbackReason::ProviderLatched);
+    route.detail = std::string("the fused kernels failed: ") + e.what() + "; " + kLatchedWords;
     route.text = "ArrayFire operations (" + route.detail + ")";
     return route;
+}
+
+void MarkProviderLatched(ComputePathPart& part) {
+    const std::string failure =
+        part.reason.empty() ? part.detail : part.reason + (part.detail.empty() ? std::string() : ": " + part.detail);
+    part.provider_id.clear();  // ArrayFire from then on, whatever ran before
+    part.mixed = false;
+    part.reason = BackendFallbackReasonName(BackendFallbackReason::ProviderLatched);
+    part.detail = (failure.empty() ? std::string() : failure + "; ") + kLatchedWords;
 }
 
 ComputePathPart NetworksPart(const NetworkRoute& route) {
@@ -84,9 +98,14 @@ std::optional<ComputePathPart> AdamPart(const NeuralDispatchTally& tally, Device
     ComputePathPart part = DispatchedPart("Adam", tally, "Adam", NeuralOp::AdamStep, device, adam.why);
     part.arrayfire = "ArrayFire, per tensor";
     if (!adam.together) {  // per tensor from now on, whatever ran before
-        part.provider_id.clear();
-        part.mixed = false;
-        if (part.detail.empty()) part.detail = adam.why;
+        const NeuralDispatchTally::Entry* entry = tally.Find("Adam", NeuralOp::AdamStep, device);
+        if (entry && entry->failed > 0) {
+            MarkProviderLatched(part);
+        } else {
+            part.provider_id.clear();
+            part.mixed = false;
+            if (part.detail.empty()) part.detail = adam.why;
+        }
     }
     return part;
 }

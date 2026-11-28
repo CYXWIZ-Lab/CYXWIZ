@@ -58,12 +58,17 @@ enum class BackendFallbackReason {
     //    device, is not the device the run bound (or ArrayFire's active
     //    device could not be read): no provider is asked, ArrayFire runs it
     //    where its data is. An Engine fault, never a user's choice.
+    //  - Latched: an earlier provider failure in this run turned the provider
+    //    off for the op (a Compatibility run's per-run latch: a fused network,
+    //    the joint Adam step, a PPO kernel); ArrayFire runs it for the rest of
+    //    the run, and the next run asks the provider again.
     ProviderNotBuilt,
     ProviderNotInstalled,
     ProviderAbiMismatch,
     ProviderDisabled,
     ProviderNotOffered,
     TargetMismatch,
+    ProviderLatched,
 };
 
 constexpr const char* BackendFallbackReasonName(BackendFallbackReason reason) {
@@ -124,6 +129,8 @@ constexpr const char* BackendFallbackReasonName(BackendFallbackReason reason) {
         return "provider_not_offered";
     case BackendFallbackReason::TargetMismatch:
         return "target_mismatch";
+    case BackendFallbackReason::ProviderLatched:
+        return "provider_latched";
     }
     return "backend_internal_error";
 }

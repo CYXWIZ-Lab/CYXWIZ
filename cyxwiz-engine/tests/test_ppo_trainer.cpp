@@ -217,6 +217,10 @@ void CheckFallbackMidRun() {
     Check(after.find("ArrayFire operations (the fused kernels failed") != std::string::npos &&
               after.find("Adam: ArrayFire, per tensor") != std::string::npos,
           "after it, each update says it runs on ArrayFire operations: " + after);
+    Check(after.find("turned off for this run after a provider failure") != std::string::npos &&
+              !outcome.updates.back().compute_parts.empty() &&
+              outcome.updates.back().compute_parts.front().reason == "provider_latched",
+          "and that this run's latch turned the provider off (provider_latched): " + after);
     bool finite = true;
     for (const auto& u : outcome.updates) finite = finite && std::isfinite(u.policy_loss) && std::isfinite(u.value_loss);
     Check(finite, "every update's losses stay finite across the fallback");

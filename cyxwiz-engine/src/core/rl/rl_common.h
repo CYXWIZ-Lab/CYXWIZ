@@ -63,7 +63,7 @@ NetworkRoute FusedNetworkRoute(const FusedMlp& fused);
 // which: the network the refusal is about ("policy"), named when the cause is
 // that network's own; empty when the learner has one kind of reason
 NetworkRoute ArrayFireNetworkRoute(const FusedMlp::Refusal& refusal, const std::string& which = {});
-// A fused call failed mid-run: ArrayFire from then on
+// A fused call failed mid-run: ArrayFire from then on (provider_latched)
 NetworkRoute FailedNetworkRoute(const std::exception& e);
 
 // One part of a run's compute path: its networks, its Adam step, a PPO op.
@@ -96,7 +96,12 @@ struct AdamRoute {
 // tally, so the refusal itself makes the part, and CYXWIZ_EXPECT_PATH fails on
 // it. Nullopt only while the optimizers are still tried together and no step
 // has been asked for yet: nothing is known.
+// A joint step whose provider call failed is provider_latched.
 std::optional<ComputePathPart> AdamPart(const NeuralDispatchTally& tally, DeviceType device, const AdamRoute& adam);
+// A part whose provider this run's latch turned off after a failure: ArrayFire
+// from then on, reason provider_latched, the failure and "turned off for this
+// run after a provider failure" in its detail.
+void MarkProviderLatched(ComputePathPart& part);
 
 // "<networks>; Adam: <where>; PPO sample, PPO loss, PPO GAE: <where>". It
 // starts with the networks' text, so a path on the fused kernels starts with

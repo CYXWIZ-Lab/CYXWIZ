@@ -284,6 +284,10 @@ NeuralProviderAbsence DescribeNeuralProviderAbsence(BackendFallbackReason reason
         absence.name = "Not on the run's device";
         absence.fix = "ArrayFire runs it where its data is; start the run again, and report it if this repeats.";
         break;
+    case R::ProviderLatched:
+        absence.name = std::string("Turned off for this run after a provider failure");
+        absence.fix = "The next run asks the provider again; under Strict a provider failure stops the run instead.";
+        break;
     default:
         absence.reason = R::ProviderNotOffered;
         absence.fixable = false;

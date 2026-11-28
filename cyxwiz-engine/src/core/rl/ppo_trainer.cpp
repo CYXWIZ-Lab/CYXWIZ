@@ -18,6 +18,7 @@
 #include <limits>
 #include <numeric>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz::rl {
@@ -467,9 +468,13 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                 // After an update the optimizers have stepped: the Adam part is known
                 std::vector<ComputePathPart> ops;
                 if (const auto adam = AdamPart(tally, device, adam_route)) ops.push_back(*adam);
-                ops.push_back(DispatchedPart("PPO sample", tally, "PPO", NeuralOp::PpoSample, device));
-                ops.push_back(DispatchedPart("PPO loss", tally, "PPO", NeuralOp::PpoLoss, device));
-                ops.push_back(DispatchedPart("PPO GAE", tally, "PPO", NeuralOp::PpoGae, device));
+                const std::pair<const char*, NeuralOp> ppo_ops[] = {
+                    {"PPO sample", NeuralOp::PpoSample}, {"PPO loss", NeuralOp::PpoLoss}, {"PPO GAE", NeuralOp::PpoGae}};
+                for (int k = 0; k < 3; ++k) {
+                    ComputePathPart part = DispatchedPart(ppo_ops[k].first, tally, "PPO", ppo_ops[k].second, device);
+                    if (ppo_run.IsOff(k)) MarkProviderLatched(part);  // this run's latch turned it off
+                    ops.push_back(std::move(part));
+                }
                 metrics.compute_path = FormatComputePath(network_route_, ops);
                 metrics.compute_parts = ComputePathParts(network_route_, ops);
                 metrics.missing_provider = network_route_.missing_provider;
