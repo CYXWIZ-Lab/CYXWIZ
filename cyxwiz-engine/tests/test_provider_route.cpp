@@ -67,7 +67,8 @@ public:
         const bool tuple = request.hidden == kHidden && request.input == kInput && request.layers == 1;
         const bool op = request.op == cyxwiz::NeuralOp::LstmForward ||
                         (request.op == cyxwiz::NeuralOp::LstmBackward && mode_ != StubMode::DeclineBackward);
-        capability.supported = tuple && op;
+        // and the joint Adam step, whatever its shape (TestAdamPartLatched)
+        capability.supported = (tuple && op) || request.op == cyxwiz::NeuralOp::AdamStep;
         if (!capability.supported) capability.detail = "the stub serves one LSTM tuple";
         return capability;
     }
@@ -697,6 +698,51 @@ void TestRunTarget() {
     TestCompileTargetNeverEnumerates();
 }
 
+// The Adam part of an RL run's compute path once the joint step failed on
+// its provider (rl::AdamPart, the latched branch): the optimizers step per
+// tensor from then on, so the part is ArrayFire with provider_latched and the
+// failure, even though the provider ran the step before.
+void TestAdamPartLatched() {
+    using cyxwiz::DeviceType;
+    RegisterStub(StubMode::Serve);
+    cyxwiz::NeuralOpRequest request;
+    request.target = {DeviceType::CPU, 0};
+    request.op = cyxwiz::NeuralOp::AdamStep;
+    request.dtype = cyxwiz::DataType::Float32;
+    const auto step = [](bool ok) {
+        return [ok](cyxwiz::INeuralNetworkProvider&) {
+            cyxwiz::NeuralOpStatus status;
+            status.ok = ok;
+            if (!ok) status.detail = "the joint step failed on purpose";
+            return status;
+        };
+    };
+    const cyxwiz::NeuralDispatchTally tally;
+    const bool ran = cyxwiz::DispatchNeuralProviderOp(request, "Adam", step(true));
+    const bool failed = !cyxwiz::DispatchNeuralProviderOp(request, "Adam", step(false));
+    const auto* entry = tally.Find("Adam", cyxwiz::NeuralOp::AdamStep, DeviceType::CPU);
+    Check(ran && failed && entry && entry->ran == 1 && entry->failed == 1,
+          "the joint Adam step ran on the provider once, then failed on it");
+    cyxwiz::rl::AdamRoute adam;
+    adam.together = false;  // what the learner sets after the failure
+    adam.why = "the joint step failed";
+    const auto part = cyxwiz::rl::AdamPart(tally, DeviceType::CPU, adam);
+    Check(part && part->what == "Adam" && part->provider_id.empty() && !part->mixed &&
+              part->reason == cyxwiz::BackendFallbackReasonName(cyxwiz::BackendFallbackReason::ProviderLatched) &&
+              part->detail.find("the joint step failed on purpose") != std::string::npos &&
+              part->detail.find("turned off for this run after a provider failure") != std::string::npos,
+          "the part is ArrayFire, provider_latched, with the failure: " +
+              (part ? part->reason + " / " + part->detail : std::string("no part")));
+    // Refused before any failure (no failed call): per tensor with why, not latched
+    const cyxwiz::NeuralDispatchTally refused_tally;
+    (void)cyxwiz::DispatchNeuralProviderOp(request, "Adam", step(true));
+    adam.why = "the optimizers' hyperparameters differ";
+    const auto refused = cyxwiz::rl::AdamPart(refused_tally, DeviceType::CPU, adam);
+    Check(refused && refused->provider_id.empty() && refused->reason.empty() && refused->detail == adam.why,
+          "without a failure the part is per tensor with why, not latched");
+    cyxwiz::NeuralProviderRegistry::Instance().UnregisterForTesting("cyxwiz.test-cpu-stub");
+}
+
 void TestTrace() {
     auto& trace = cyxwiz::TrainingTraceCollector::Instance();
     trace.StartRun("provider-route-test");
@@ -785,6 +831,7 @@ int main() {
     TestNotServed();
     TestRunTarget();
     TestLayer();
+    TestAdamPartLatched();
     TestTrace();
     if (g_failures > 0) {
         std::cerr << g_failures << " check(s) failed\n";
