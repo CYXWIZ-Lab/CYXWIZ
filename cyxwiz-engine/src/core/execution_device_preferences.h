@@ -135,6 +135,13 @@ inline void RememberResolvedExecutionRoute(const PendingExecutionDeviceSelection
     ResolvedExecutionRouteSlot() = ResolvedExecutionRoute{selection, device_id};
 }
 
+// A resolution that failed (the device was unplugged, or another one now has
+// the same identity): no earlier answer may outlive it.
+inline void ForgetResolvedExecutionRoute() {
+    std::lock_guard<std::mutex> lock(PendingExecutionDeviceSelectionMutex());
+    ResolvedExecutionRouteSlot().reset();
+}
+
 // The device `selection` resolved to when an inventory was last read for it;
 // nullopt when none was, or the selection has changed since.
 inline std::optional<int> CachedResolvedExecutionRoute(const PendingExecutionDeviceSelection& selection) {
@@ -454,6 +461,7 @@ inline bool ResolveRequestedExecutionRoute(
                 requested_device_id = resolution.device_id;
                 RememberResolvedExecutionRoute(*pending, resolution.device_id);
             } else {
+                ForgetResolvedExecutionRoute();
                 route_resolution_error =
                     "Saved physical device identity could not be resolved uniquely";
             }
@@ -470,6 +478,7 @@ inline bool ResolveRequestedExecutionRoute(
                 requested_device_id = resolution.device_id;
                 RememberResolvedExecutionRoute(*saved, resolution.device_id);
             } else {
+                ForgetResolvedExecutionRoute();
                 route_resolution_error =
                     "Saved physical device identity could not be resolved uniquely";
             }

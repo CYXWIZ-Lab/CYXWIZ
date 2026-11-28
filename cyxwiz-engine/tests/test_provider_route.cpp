@@ -454,6 +454,18 @@ void TestCompileTargetNeverEnumerates() {
         Check(cyxwiz::SameNeuralDeviceTarget(cyxwiz::RequestedRouteNeuralTarget(), cuda),
               "inside a run the bound target wins over the selection");
     }
+    {
+        // The device is unplugged: an inventory without it clears the cached
+        // target, so Compile never keeps asking about the old device
+        cyxwiz::DeviceType type = DeviceType::CPU;
+        int device_id = 0;
+        std::string error;
+        cyxwiz::ResolveRequestedExecutionRoute({}, type, device_id, error);
+        Check(!error.empty() && !cyxwiz::CachedResolvedExecutionRoute(saved),
+              "a resolution failure clears the cached target");
+        Check(cyxwiz::SameNeuralDeviceTarget(cyxwiz::RequestedRouteNeuralTarget(), opencl1),
+              "after it, the stored backend and index again, not the unplugged device");
+    }
     Check(cyxwiz::detail::DeviceEnumerationCount() == before,
           "Compile's provider target enumerated the devices " +
               std::to_string(cyxwiz::detail::DeviceEnumerationCount() - before) + " times");
