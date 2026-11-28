@@ -755,7 +755,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     }
 
                     const auto next_run_policy =
-                        cyxwiz::GetNextRunExecutionPolicy();
+                        cyxwiz::GetSessionExecutionPolicy();
                     const auto selected_policy =
                         next_run_policy.value_or(
                             cyxwiz::ExecutionPolicy::Compatibility);
@@ -795,7 +795,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 persistence_error);
                             return;
                         }
-                        cyxwiz::SetNextRunExecutionPolicy(policy);
+                        cyxwiz::SetSessionExecutionPolicy(policy);
                         device_selection_error_.clear();
                         spdlog::info("Saved {} as the machine default",
                                      description);

@@ -188,7 +188,7 @@ void PolicyStressTest::Run() {
             // Observed and policed as a training run is (policy playback too)
             const PolicyRunScopes provider_scopes(
                 policy.device_type, policy.device_id,
-                GetNextRunExecutionPolicy().value_or(ExecutionPolicy::Compatibility));
+                GetSessionExecutionPolicy().value_or(ExecutionPolicy::Compatibility));
             for (int level = 0; level < spec_.levels; ++level) {
                 if (stop_) break;
                 const double difficulty = StressDifficulty(spec_, level);

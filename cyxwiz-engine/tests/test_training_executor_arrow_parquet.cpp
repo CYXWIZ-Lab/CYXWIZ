@@ -4181,8 +4181,8 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
     cyxwiz::SetPendingExecutionDeviceSelection(
         cyxwiz::DeviceType::CPU,
         cpu->device_id);
-    cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(
+    cyxwiz::ClearSessionExecutionPolicy();
+    cyxwiz::SetSessionExecutionPolicy(
         cyxwiz::ExecutionPolicy::Strict);
 
     auto strict_config = config;
@@ -4219,7 +4219,7 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
           "metric throttling must not throttle batch progress callbacks");
     Check(!cyxwiz::GetPendingExecutionDeviceSelection().has_value(),
           "strict ArrayFire CPU run should consume pending selection");
-    Check(cyxwiz::GetNextRunExecutionPolicy() ==
+    Check(cyxwiz::GetSessionExecutionPolicy() ==
               cyxwiz::ExecutionPolicy::Strict,
           "GUI execution policy preference should persist for later runs");
 
@@ -4488,7 +4488,7 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
           "strict ArrayFire CPU run should leave ArrayFire CPU active");
     Check(active_device->GetDeviceId() == cpu->device_id,
           "strict ArrayFire CPU run should leave selected CPU device active");
-    cyxwiz::ClearNextRunExecutionPolicy();
+    cyxwiz::ClearSessionExecutionPolicy();
 }
 
 void TestStrictPlacementPreflightRejectsKnownNativeCpuStage(

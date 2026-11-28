@@ -40,8 +40,8 @@ inline void PinTrainingDevice() {
     const RequestedTestDevice device = TrainingTestDevice();
     InstallQualifiedRouteSnapshot();
     CommitExecutionDeviceSelectionState(PendingExecutionDeviceSelection{device.type, device.id, {}});
-    ClearNextRunExecutionPolicy();
-    SetNextRunExecutionPolicy(ExecutionPolicy::Strict);
+    ClearSessionExecutionPolicy();
+    SetSessionExecutionPolicy(ExecutionPolicy::Strict);
 }
 
 // The test and its commit, the test device active in ArrayFire (CPU when

@@ -17,7 +17,7 @@ namespace cyxwiz {
 inline ComputeRuntimeConfigLoadResult ApplyMachineComputePreference() {
     auto result = LoadComputeRuntimeConfig(GetComputeRuntimeConfigPath());
     if (!result.loaded) return result;
-    SetNextRunExecutionPolicy(result.config.default_execution_policy);
+    SetSessionExecutionPolicy(result.config.default_execution_policy);
     if (result.config.preferred_route.has_value()) {
         const auto& preferred = *result.config.preferred_route;
         CommitExecutionDeviceSelectionState(

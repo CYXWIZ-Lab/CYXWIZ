@@ -201,7 +201,7 @@ void Viewport::Render() {
             const auto pending_selection =
                 cyxwiz::GetPendingExecutionDeviceSelection();
             const auto next_run_policy =
-                cyxwiz::GetNextRunExecutionPolicy();
+                cyxwiz::GetSessionExecutionPolicy();
             const auto trace_type = has_run_bound_device
                 ? DeviceTypeFromExecutionBackend(trace.effective_backend)
                 : std::optional<int>{};

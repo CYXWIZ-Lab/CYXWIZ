@@ -348,13 +348,13 @@ int RunBenchmark(const BenchmarkOptions& options) {
     }
     std::filesystem::create_directories(options.trace_root);
     cyxwiz::ClearPendingExecutionDeviceSelection();
-    cyxwiz::ClearNextRunExecutionPolicy();
+    cyxwiz::ClearSessionExecutionPolicy();
     if (const auto device_type = ParseDeviceType(options.device)) {
         cyxwiz::SetPendingExecutionDeviceSelection(
             *device_type,
             ResolveDeviceId(*device_type, options.device_id));
     }
-    cyxwiz::SetNextRunExecutionPolicy(
+    cyxwiz::SetSessionExecutionPolicy(
         cyxwiz::ExecutionPolicy::Strict);
 
     auto dataset = MakeDataset(row_count);
@@ -399,7 +399,7 @@ int RunBenchmark(const BenchmarkOptions& options) {
         [&](const cyxwiz::TrainingMetrics& metrics) {
             completed = metrics.is_complete;
         });
-    cyxwiz::ClearNextRunExecutionPolicy();
+    cyxwiz::ClearSessionExecutionPolicy();
 
     if (!completed || !measurement.started || !measurement.finished) {
         throw std::runtime_error(

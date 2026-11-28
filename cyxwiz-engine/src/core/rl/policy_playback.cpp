@@ -144,7 +144,7 @@ void PolicyPlayback::Run() {
         // Observed and policed as a training run is: the policy's device is
         // the provider target, and under Strict a provider failure stops it
         const PolicyRunScopes provider_scopes(p.device_type, p.device_id,
-                                              GetNextRunExecutionPolicy().value_or(ExecutionPolicy::Compatibility));
+                                              GetSessionExecutionPolicy().value_or(ExecutionPolicy::Compatibility));
         std::string error;
         auto batch = plugin::PluginEnvironmentRegistry::Instance().Create(
             p.config.environment_key, has_conditions_ ? settings_ : p.config.environment_settings, 1, error);

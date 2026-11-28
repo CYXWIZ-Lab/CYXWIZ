@@ -90,7 +90,7 @@ public:
     void PreviewHolds(int& update, long long& steps) const;
 
     // The device the run trains on: the user's route from Preferences >
-    // Devices under the next-run policy, as supervised training resolves it
+    // Devices under the session's execution policy, as supervised training resolves it
     // (run_execution_device). Not valid before the run's preflight.
     ExecutionDeviceContext Device() const;
 

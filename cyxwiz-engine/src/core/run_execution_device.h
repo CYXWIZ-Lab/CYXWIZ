@@ -2,7 +2,7 @@
 
 // The device a training run uses, chosen the same way for every kind of run
 // (supervised training and PPO; TOFIX206): the user's route from Preferences >
-// Devices and the next-run execution policy (Strict refuses a route that fails
+// Devices and the session's execution policy (Strict refuses a route that fails
 // its check, Compatibility falls back to the ArrayFire CPU route and says so),
 // activated on the calling worker thread, and the bind recorded in the runtime
 // log and the training trace with the run's id.
@@ -15,7 +15,7 @@
 
 namespace cyxwiz {
 
-// The run's policy: the queued next-run policy when there is one, else
+// The run's policy: the session's execution policy when there is one, else
 // Strict when `strict_by_default`, else Compatibility.
 ExecutionPolicy ResolveRunExecutionPolicy(bool strict_by_default, const char* who);
 

@@ -252,8 +252,8 @@ void SelectArrayFireCpu() {
     if (cpu == devices.end()) return;
     cyxwiz::ClearPendingExecutionDeviceSelection();
     cyxwiz::SetPendingExecutionDeviceSelection(cyxwiz::DeviceType::CPU, cpu->device_id);
-    cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
+    cyxwiz::ClearSessionExecutionPolicy();
+    cyxwiz::SetSessionExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
 }
 
 void TrainBriefly(const Pattern& pattern, cyxwiz::TrainingConfiguration config, int classes, int vocabulary) {

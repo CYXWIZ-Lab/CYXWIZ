@@ -15,7 +15,7 @@
 // reports and epsilon, a preview of its Q network, its Q network and target
 // saved and loaded, greedy and epsilon-greedy choices, a ghost.
 // The device (TOFIX206): every run takes the route chosen the Engine's way
-// (the pending selection + the next-run policy, here the ArrayFire CPU), and
+// (the pending selection + the session's execution policy, here the ArrayFire CPU), and
 // reports it; Strict refuses a route that cannot start, Compatibility falls
 // back to the CPU and says so.
 //
@@ -61,8 +61,8 @@ void CheckTd3(const rl_graph_test::Graph& ppo_graph);
 void SelectRoute(cyxwiz::DeviceType type, int device_id, cyxwiz::ExecutionPolicy policy) {
     cyxwiz::ClearPendingExecutionDeviceSelection();
     cyxwiz::SetPendingExecutionDeviceSelection(type, device_id);
-    cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(policy);
+    cyxwiz::ClearSessionExecutionPolicy();
+    cyxwiz::SetSessionExecutionPolicy(policy);
 }
 
 void SelectCpu() { SelectRoute(cyxwiz::DeviceType::CPU, 0, cyxwiz::ExecutionPolicy::Strict); }

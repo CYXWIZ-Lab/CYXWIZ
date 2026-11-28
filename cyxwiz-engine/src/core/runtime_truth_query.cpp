@@ -602,7 +602,7 @@ public:
                 ExecutionDeviceSelectionBackendName(pending->type);
             truth.queued_device_id = pending->device_id;
         }
-        const auto policy = GetNextRunExecutionPolicy();
+        const auto policy = GetSessionExecutionPolicy();
         truth.next_run_policy = policy.has_value()
             ? (*policy == ExecutionPolicy::Strict
                    ? "strict"

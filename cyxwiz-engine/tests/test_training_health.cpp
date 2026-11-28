@@ -234,8 +234,8 @@ void SelectArrayFireCpu() {
     cyxwiz::test::InstallQualifiedRouteSnapshot(devices);
     cyxwiz::ClearPendingExecutionDeviceSelection();
     cyxwiz::SetPendingExecutionDeviceSelection(cyxwiz::DeviceType::CPU, cpu->device_id);
-    cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
+    cyxwiz::ClearSessionExecutionPolicy();
+    cyxwiz::SetSessionExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
 }
 
 void CheckExecutor() {

@@ -672,30 +672,39 @@ inline ExecutionDeviceContext PrepareExecutionDeviceForRun(
     return context;
 }
 
-inline std::mutex& NextRunExecutionPolicyMutex() {
+// The session's execution policy: the policy every run started from now on
+// takes (training, Run Test, RL training, policy playback, the stress test),
+// until it is set again. It is a standing choice, not a one-off for the next
+// run: Preferences > Devices sets it ("Next runs") with the machine default,
+// the Engine and headless hosts set it at start from the saved machine
+// preference (ApplyMachineComputePreference), and nothing consumes it.
+// Unset, each runner takes its own default (ResolveRunExecutionPolicy).
+// Clear returns to that; tests use it to start from a known state.
+// (Named "next run" before; renamed because it was never cleared after use.)
+inline std::mutex& SessionExecutionPolicyMutex() {
     static std::mutex mutex;
     return mutex;
 }
 
 inline std::optional<ExecutionPolicy>&
-NextRunExecutionPolicySlot() {
+SessionExecutionPolicySlot() {
     static std::optional<ExecutionPolicy> policy;
     return policy;
 }
 
-inline void SetNextRunExecutionPolicy(ExecutionPolicy policy) {
-    std::lock_guard<std::mutex> lock(NextRunExecutionPolicyMutex());
-    NextRunExecutionPolicySlot() = policy;
+inline void SetSessionExecutionPolicy(ExecutionPolicy policy) {
+    std::lock_guard<std::mutex> lock(SessionExecutionPolicyMutex());
+    SessionExecutionPolicySlot() = policy;
 }
 
-inline std::optional<ExecutionPolicy> GetNextRunExecutionPolicy() {
-    std::lock_guard<std::mutex> lock(NextRunExecutionPolicyMutex());
-    return NextRunExecutionPolicySlot();
+inline std::optional<ExecutionPolicy> GetSessionExecutionPolicy() {
+    std::lock_guard<std::mutex> lock(SessionExecutionPolicyMutex());
+    return SessionExecutionPolicySlot();
 }
 
-inline void ClearNextRunExecutionPolicy() {
-    std::lock_guard<std::mutex> lock(NextRunExecutionPolicyMutex());
-    NextRunExecutionPolicySlot().reset();
+inline void ClearSessionExecutionPolicy() {
+    std::lock_guard<std::mutex> lock(SessionExecutionPolicyMutex());
+    SessionExecutionPolicySlot().reset();
 }
 
 } // namespace cyxwiz

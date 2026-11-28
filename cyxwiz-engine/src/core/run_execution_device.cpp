@@ -26,9 +26,9 @@
 namespace cyxwiz {
 
 ExecutionPolicy ResolveRunExecutionPolicy(bool strict_by_default, const char* who) {
-    const auto queued = GetNextRunExecutionPolicy();
+    const auto queued = GetSessionExecutionPolicy();
     if (queued.has_value())
-        spdlog::info("{}: applied next-run execution policy: {}", who, ExecutionPolicyDisplayName(*queued));
+        spdlog::info("{}: applied the session's execution policy: {}", who, ExecutionPolicyDisplayName(*queued));
     const ExecutionPolicy policy =
         queued.has_value() ? *queued : (strict_by_default ? ExecutionPolicy::Strict : ExecutionPolicy::Compatibility);
     spdlog::info("{}: execution policy {}", who, ExecutionPolicyDisplayName(policy));

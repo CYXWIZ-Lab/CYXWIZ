@@ -38,7 +38,7 @@
 // PPO's recorded target for the same task, and a note says so.
 // CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu picks the device (default
 // CPU). The run takes it the Engine's way (TOFIX206): the pending device
-// selection and a Strict next-run policy, as Preferences > Devices sets them,
+// selection and a Strict session execution policy, as Preferences > Devices sets them,
 // over routes certified the installer's way; the report records the device
 // the run actually trained on. CYXWIZ_GATE_NO_PROVIDERS=1 turns the neural
 // providers off (the networks run as ArrayFire operations) for comparisons;
@@ -116,8 +116,8 @@ bool SelectRequestedRoute() {
     cyxwiz::test::InstallQualifiedRouteSnapshot();
     cyxwiz::ClearPendingExecutionDeviceSelection();
     cyxwiz::SetPendingExecutionDeviceSelection(type, id);
-    cyxwiz::ClearNextRunExecutionPolicy();
-    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
+    cyxwiz::ClearSessionExecutionPolicy();
+    cyxwiz::SetSessionExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
     return true;
 }
 

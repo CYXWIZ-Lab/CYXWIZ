@@ -222,7 +222,7 @@ void TestExecutor::Test(
                     static_cast<int>(owner->type), owner->device_id, activation.message));
             }
         }
-        // The policy a training run resolves too (the queued next-run policy,
+        // The policy a training run resolves too (the session's execution policy,
         // else the graph's): a test after a Strict training run is Strict.
         const auto policy = ResolveRunExecutionPolicy(config_.strict_execution, "TestExecutor");
         const auto context = CaptureCurrentExecutionDeviceContext(policy);

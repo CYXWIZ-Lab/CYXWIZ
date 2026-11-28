@@ -403,7 +403,7 @@ void RLTrainingRun::Run() {
         state_ = State::Failed;
     };
     try {
-        // The device: the user's route under the next-run policy, as supervised
+        // The device: the user's route under the session's execution policy, as supervised
         // training takes it; held on this worker for the whole run, so the
         // Engine knows a training uses it (Preferences > Devices waits)
         ExecutionDeviceContext device;
