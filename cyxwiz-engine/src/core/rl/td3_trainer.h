@@ -61,7 +61,7 @@ public:
     Tensor Warmup(const Tensor& actions, const NextSeed& next_seed) override;
     void Learn(const ReplayBuffer::Batch& batch, int gradient_step, const NextSeed& next_seed) override;
     void Report(OffPolicyUpdateMetrics& metrics) override;
-    const std::string& NetworkPath() const override { return network_path_; }
+    const NetworkRoute& Route() const override { return network_route_; }
 
     Td3Networks& Networks() { return networks_; }
     int64_t Updates() const { return updates_; }
@@ -97,7 +97,7 @@ private:
     std::unique_ptr<FusedMlp> actor_fused_, actor_target_fused_, q1_fused_, q2_fused_, q1_target_fused_,
         q2_target_fused_;
     bool adam_together_ = true;
-    std::string network_path_ = "ArrayFire operations";
+    NetworkRoute network_route_;
     int64_t updates_ = 0;  // gradient steps taken (SB3's _n_updates)
     // Sums since the last report, on the device
     Tensor critic_sum_, actor_sum_, q_sum_;

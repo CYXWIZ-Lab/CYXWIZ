@@ -31,22 +31,28 @@ Td3Learner::Td3Learner(Td3Networks networks, size_t observation_size, size_t act
 
     // The six networks fused on the device's provider, or none of them (one
     // path to report)
-    std::string why;
+    // The path and its reason are logged by the loop when the run starts
+    // (Info, as PPO logs its own)
+    FusedMlp::Refusal why;
+    const char* refused = "actor";
     actor_fused_ = FuseNetwork(*n.actor, why);
     if (actor_fused_) actor_target_fused_ = FuseNetwork(*n.actor_target, why);
-    if (actor_target_fused_) q1_fused_ = FuseNetwork(*n.q1, why);
+    if (actor_target_fused_) {
+        refused = "critic";
+        q1_fused_ = FuseNetwork(*n.q1, why);
+    }
     if (q1_fused_) q2_fused_ = FuseNetwork(*n.q2, why);
     if (q2_fused_) q1_target_fused_ = FuseNetwork(*n.q1_target, why);
     if (q1_target_fused_) q2_target_fused_ = FuseNetwork(*n.q2_target, why);
     if (q2_target_fused_) {
-        network_path_ = "fused small-network kernels (" + actor_fused_->ProviderId() + ")";
+        network_route_ = FusedNetworkRoute(*actor_fused_);
     } else {
         actor_fused_.reset();
         actor_target_fused_.reset();
         q1_fused_.reset();
         q2_fused_.reset();
         q1_target_fused_.reset();
-        spdlog::debug("TD3: the networks run as ArrayFire operations ({})", why);
+        network_route_ = ArrayFireNetworkRoute(why, refused);
     }
 }
 
@@ -61,7 +67,7 @@ void Td3Learner::DropFused(const std::exception& e) {
     q2_fused_.reset();
     q1_target_fused_.reset();
     q2_target_fused_.reset();
-    network_path_ = std::string("ArrayFire operations (the fused kernels failed: ") + e.what() + ")";
+    network_route_ = FailedNetworkRoute(e);
 }
 
 Tensor Td3Learner::Act(const Tensor& observations) {

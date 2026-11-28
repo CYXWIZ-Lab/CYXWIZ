@@ -34,20 +34,26 @@ SacLearner::SacLearner(SacNetworks networks, size_t observation_size, size_t act
 
     // The five networks fused on the device's provider, or none of them (one
     // path to report)
-    std::string why;
+    // The path and its reason are logged by the loop when the run starts
+    // (Info, as PPO logs its own)
+    FusedMlp::Refusal why;
+    const char* refused = "actor";
     actor_fused_ = FuseNetwork(*networks_.actor, why);
-    if (actor_fused_) q1_fused_ = FuseNetwork(*networks_.q1, why);
+    if (actor_fused_) {
+        refused = "critic";
+        q1_fused_ = FuseNetwork(*networks_.q1, why);
+    }
     if (q1_fused_) q2_fused_ = FuseNetwork(*networks_.q2, why);
     if (q2_fused_) q1_target_fused_ = FuseNetwork(*networks_.q1_target, why);
     if (q1_target_fused_) q2_target_fused_ = FuseNetwork(*networks_.q2_target, why);
     if (q2_target_fused_) {
-        network_path_ = "fused small-network kernels (" + actor_fused_->ProviderId() + ")";
+        network_route_ = FusedNetworkRoute(*actor_fused_);
     } else {
         actor_fused_.reset();
         q1_fused_.reset();
         q2_fused_.reset();
         q1_target_fused_.reset();
-        spdlog::debug("SAC: the networks run as ArrayFire operations ({})", why);
+        network_route_ = ArrayFireNetworkRoute(why, refused);
     }
 }
 
@@ -61,7 +67,7 @@ void SacLearner::DropFused(const std::exception& e) {
     q2_fused_.reset();
     q1_target_fused_.reset();
     q2_target_fused_.reset();
-    network_path_ = std::string("ArrayFire operations (the fused kernels failed: ") + e.what() + ")";
+    network_route_ = FailedNetworkRoute(e);
 }
 
 Tensor SacActorActions(IExecutableModel& actor, const Tensor& observations, size_t action_size, const Tensor* noise) {

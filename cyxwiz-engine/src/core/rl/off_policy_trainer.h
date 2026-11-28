@@ -31,10 +31,6 @@
 #include <utility>
 #include <vector>
 
-namespace cyxwiz {
-class FusedMlp;
-}
-
 namespace cyxwiz::rl {
 
 // The loop's own settings, SB3's names; each algorithm's config gives them.
@@ -92,7 +88,13 @@ struct OffPolicyUpdateMetrics {
     uint64_t buffer_bytes = 0;         // the whole table on the device
     float steps_per_second = 0.0f;
     bool reached_target = false;       // the run stops after this report
+    // How the run computes: the networks, then the Adam step, each with the
+    // provider that runs it or ArrayFire with the reason (FormatComputePath)
     std::string compute_path;
+    std::vector<ComputePathPart> compute_parts;  // the same as data
+    // "<name>. <fix>" when the networks are on ArrayFire because a provider
+    // is missing and can be supplied; empty otherwise (NetworkRoute)
+    std::string missing_provider;
     std::vector<plugin::PluginEnvironmentStat> environment_stats;
 };
 
@@ -121,9 +123,11 @@ public:
     // The losses averaged over the gradient steps since the last report into
     // metrics (left as they are when there were none), then starts again
     virtual void Report(OffPolicyUpdateMetrics& metrics) = 0;
-    // How the networks run: "fused small-network kernels (<provider>)" or
-    // "ArrayFire operations" (with the reason a fused call failed)
-    virtual const std::string& NetworkPath() const = 0;
+    // How the networks run, and why when that is not a provider
+    virtual const NetworkRoute& Route() const = 0;
+    // Its words: "fused small-network kernels (<provider>)" or "ArrayFire
+    // operations (<why>)"
+    const std::string& NetworkPath() const { return Route().text; }
 };
 
 // The environment and the loop's settings every off-policy learner needs:

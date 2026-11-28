@@ -9,6 +9,7 @@
 
 #include "../executable_model.h"
 #include "../../plugin/interfaces/i_environment_provider.h"
+#include "rl_common.h"
 #include "training_environment.h"
 #include "vec_normalize.h"
 
@@ -68,10 +69,16 @@ struct PpoUpdateMetrics {
     float std = 0.0f;                 // mean action standard deviation (Gaussian)
     float steps_per_second = 0.0f;
     bool reached_target = false;      // the run stops after this update
-    // How this update ran (TOFIX206 3.2): "fused small-network kernels
-    // (<provider>)" or "ArrayFire operations (<why>)", and ", optimizers per
-    // tensor" when the joint Adam pass did not apply
+    // How this update ran, part by part: the networks first ("fused
+    // small-network kernels (<provider>)" or "ArrayFire operations (<why>)"),
+    // then the Adam step and PPO's sample, loss and GAE, each with the
+    // provider that ran it or ArrayFire (FormatComputePath)
     std::string compute_path;
+    // The same as data: the networks, then each op
+    std::vector<ComputePathPart> compute_parts;
+    // "<name>. <fix>" when the networks are on ArrayFire because a provider
+    // is missing and can be supplied; empty otherwise (NetworkRoute)
+    std::string missing_provider;
     // The environment batch's own numbers at this update (a curriculum's
     // level, how many episodes fell; IEnvironmentBatch::Stats), for the dashboard
     std::vector<plugin::PluginEnvironmentStat> environment_stats;
@@ -141,7 +148,7 @@ private:
     // The networks as whole-network kernels, while the provider serves them
     std::unique_ptr<FusedMlp> policy_fused_;
     std::unique_ptr<FusedMlp> value_fused_;
-    std::string network_path_;  // the worker's own; each update carries a copy (compute_path)
+    NetworkRoute network_route_;  // the worker's own; each update carries its words (compute_path)
     std::atomic<bool> stop_{false};
     std::atomic<bool> paused_{false};
 };

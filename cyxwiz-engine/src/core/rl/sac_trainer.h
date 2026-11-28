@@ -81,7 +81,7 @@ public:
     bool ExportOptimizers(std::map<std::string, OptimizerState>& out, std::string& error) const;
     // How the networks run: "fused small-network kernels (<provider>)" or
     // "ArrayFire operations" (with the reason a fused call failed)
-    const std::string& NetworkPath() const override { return network_path_; }
+    const NetworkRoute& Route() const override { return network_route_; }
 
 private:
     // A step's critic gradients and the actor's draw on the batch (nothing
@@ -123,7 +123,7 @@ private:
     // All five fused, or none
     std::unique_ptr<FusedMlp> actor_fused_, q1_fused_, q2_fused_, q1_target_fused_, q2_target_fused_;
     bool adam_together_ = true;
-    std::string network_path_ = "ArrayFire operations";
+    NetworkRoute network_route_;
     // Sums since the last report, on the device
     Tensor critic_sum_, actor_sum_, alpha_sum_, alpha_loss_sum_, q_sum_;
     int since_report_ = 0;

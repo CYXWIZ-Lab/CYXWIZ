@@ -66,7 +66,7 @@ public:
     void AfterStep(int64_t timesteps, int64_t vector_steps) override;
     void Learn(const ReplayBuffer::Batch& batch, int gradient_step, const NextSeed& next_seed) override;
     void Report(OffPolicyUpdateMetrics& metrics) override;
-    const std::string& NetworkPath() const override { return network_path_; }
+    const NetworkRoute& Route() const override { return network_route_; }
 
     DqnNetworks& Networks() { return networks_; }
     int64_t Updates() const { return updates_; }
@@ -92,7 +92,7 @@ private:
     // Both fused, or neither
     std::unique_ptr<FusedMlp> q_fused_, q_target_fused_;
     bool adam_together_ = true;
-    std::string network_path_ = "ArrayFire operations";
+    NetworkRoute network_route_;
     float epsilon_ = 0.0f;        // the share of random choices now (SB3's exploration_rate: 0 before the first step)
     int64_t updates_ = 0;         // gradient steps taken (SB3's _n_updates)
     int64_t target_updates_ = 0;

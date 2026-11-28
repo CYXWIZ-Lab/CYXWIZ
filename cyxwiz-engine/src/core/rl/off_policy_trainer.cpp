@@ -189,6 +189,9 @@ bool OffPolicyLoop::Run(OffPolicyLearner& learner, const std::function<void(cons
     std::deque<std::pair<float, int>> recent;  // the last 100 episodes
     OffPolicyUpdateMetrics metrics;
 
+    // What the run's provider calls did, for the compute path each report
+    // carries; the run's own observer (its trace) still sees them all
+    const NeuralDispatchTally tally;
     try {
         spdlog::info("{}: the networks run as {}", algorithm_, learner.NetworkPath());
         ReplayBuffer buffer(s.buffer_size, obs_size, act_size, algorithm_);
@@ -212,7 +215,17 @@ bool OffPolicyLoop::Run(OffPolicyLearner& learner, const std::function<void(cons
         const auto report = [&]() {
             ++metrics.report;
             learner.Report(metrics);
-            metrics.compute_path = learner.NetworkPath();
+            {
+                ComputePathPart adam = DispatchedPart("Adam", tally, "Adam", NeuralOp::AdamStep);
+                adam.arrayfire = "ArrayFire, per tensor";
+                // Before the first gradient step nothing is known of the optimizers
+                const std::vector<ComputePathPart> ops = tally.Find("Adam", NeuralOp::AdamStep)
+                                                             ? std::vector<ComputePathPart>{adam}
+                                                             : std::vector<ComputePathPart>{};
+                metrics.compute_path = FormatComputePath(learner.Route(), ops);
+                metrics.compute_parts = ComputePathParts(learner.Route(), ops);
+                metrics.missing_provider = learner.Route().missing_provider;
+            }
             if (recent.empty()) {
                 metrics.mean_episode_return = metrics.mean_episode_length = std::numeric_limits<float>::quiet_NaN();
             } else {

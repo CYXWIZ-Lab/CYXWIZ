@@ -174,17 +174,22 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
     // few launches per forward and backward instead of several per layer
     // (TOFIX206 3.2). Otherwise, or when a fused call fails, the layers run
     // as ArrayFire operations.
-    std::string policy_why, value_why;
-    policy_fused_ = FuseNetwork(*policy_, policy_why);
-    value_fused_ = FuseNetwork(*value_, value_why);
+    // What this run's provider calls did, per op, for the compute path each
+    // update reports; the run's own observer (its trace) still sees them all
+    const NeuralDispatchTally tally;
+    FusedMlp::Refusal policy_refusal, value_refusal;
+    policy_fused_ = FuseNetwork(*policy_, policy_refusal);
+    value_fused_ = FuseNetwork(*value_, value_refusal);
     if (policy_fused_ && value_fused_) {
-        network_path_ = "fused small-network kernels (" + policy_fused_->ProviderId() + ")";
+        network_route_ = FusedNetworkRoute(*policy_fused_);
     } else {
+        const bool policy_refused = !policy_fused_;
         policy_fused_.reset();  // both or neither: one path to report
         value_fused_.reset();
-        network_path_ = "ArrayFire operations (" + (policy_why.empty() ? "value: " + value_why : "policy: " + policy_why) + ")";
+        network_route_ = policy_refused ? ArrayFireNetworkRoute(policy_refusal, "policy network")
+                                        : ArrayFireNetworkRoute(value_refusal, "value network");
     }
-    spdlog::info("PPO: the networks run as {}", network_path_);
+    spdlog::info("PPO: the networks run as {}", network_route_.text);
     const auto forward = [this](IExecutableModel& model, std::unique_ptr<FusedMlp>& fused, const Tensor& x,
                                 bool keep) -> Tensor {
         if (fused) {
@@ -194,7 +199,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                 RethrowProviderRouteError(e);
                 spdlog::warn("PPO: the fused network failed ({}); ArrayFire operations from now on", e.what());
                 fused.reset();  // this network only: its forward and backward stay on one path
-                network_path_ = std::string("ArrayFire operations (the fused kernels failed: ") + e.what() + ")";
+                network_route_ = FailedNetworkRoute(e);
             }
         }
         return model.Forward(x);
@@ -206,6 +211,8 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
     auto* value_adam = dynamic_cast<AdamOptimizer*>(value_optimizer_.get());
     auto* log_std_adam = dynamic_cast<AdamOptimizer*>(log_std_optimizer_.get());
     bool adam_together = policy_adam && value_adam && log_std_adam;
+    // Why the optimizers step per tensor, once they do
+    std::string adam_why = adam_together ? std::string() : "only plain Adam steps together";
     // x: the minibatch's input, to run the layers' own forward when the
     // fused backward fails (the layers have no forward of it cached)
     const auto backward = [this](IExecutableModel& model, std::unique_ptr<FusedMlp>& fused, const Tensor& x,
@@ -217,7 +224,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                 RethrowProviderRouteError(e);
                 spdlog::warn("PPO: the fused network failed ({}); ArrayFire operations from now on", e.what());
                 fused.reset();
-                network_path_ = std::string("ArrayFire operations (the fused kernels failed: ") + e.what() + ")";
+                network_route_ = FailedNetworkRoute(e);
                 model.Forward(x);
             }
         }
@@ -416,6 +423,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                             stepped = true;
                         } else {
                             adam_together = false;
+                            adam_why = why;
                             spdlog::info("PPO: the optimizers step per tensor ({})", why);
                         }
                     }
@@ -447,7 +455,24 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
 
             if (stop_) break;  // a stopped update is not reported as one
             ++metrics.update;
-            metrics.compute_path = network_path_ + (adam_together ? "" : ", optimizers per tensor");
+            // The path as it ran: the networks, then each op with the provider
+            // the dispatch counted for it, or ArrayFire with the reason
+            {
+                ComputePathPart adam = DispatchedPart("Adam", tally, "Adam", NeuralOp::AdamStep, adam_why);
+                adam.arrayfire = "ArrayFire, per tensor";
+                if (!adam_together) {  // per tensor from now on, whatever ran before
+                    adam.provider_id.clear();
+                    adam.mixed = false;
+                    if (adam.detail.empty()) adam.detail = adam_why;
+                }
+                const std::vector<ComputePathPart> ops{
+                    adam, DispatchedPart("PPO sample", tally, "PPO", NeuralOp::PpoSample),
+                    DispatchedPart("PPO loss", tally, "PPO", NeuralOp::PpoLoss),
+                    DispatchedPart("PPO GAE", tally, "PPO", NeuralOp::PpoGae)};
+                metrics.compute_path = FormatComputePath(network_route_, ops);
+                metrics.compute_parts = ComputePathParts(network_route_, ops);
+                metrics.missing_provider = network_route_.missing_provider;
+            }
             if (minibatches > 0) {  // the minibatches' mean, and the last one's loss
                 const PpoLossStatistics mean = ReadPpoLossStatistics(statistics_sum, static_cast<float>(minibatches));
                 metrics.policy_loss = mean.policy_loss;

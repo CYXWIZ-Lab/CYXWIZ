@@ -26,14 +26,16 @@ DqnLearner::DqnLearner(DqnNetworks networks, size_t choices, const DqnConfig& co
     optimizer_ = OffPolicyAdam(config_.learning_rate);
 
     // Both networks fused on the device's provider, or neither (one path to report)
-    std::string why;
+    // The path and its reason are logged by the loop when the run starts
+    // (Info, as PPO logs its own)
+    FusedMlp::Refusal why;
     q_fused_ = FuseNetwork(*n.q, why);
     if (q_fused_) q_target_fused_ = FuseNetwork(*n.q_target, why);
     if (q_target_fused_) {
-        network_path_ = "fused small-network kernels (" + q_fused_->ProviderId() + ")";
+        network_route_ = FusedNetworkRoute(*q_fused_);
     } else {
         q_fused_.reset();
-        spdlog::debug("DQN: the networks run as ArrayFire operations ({})", why);
+        network_route_ = ArrayFireNetworkRoute(why, "Q network");
     }
 }
 
@@ -44,7 +46,7 @@ void DqnLearner::DropFused(const std::exception& e) {
     spdlog::warn("DQN: the fused networks failed ({}); ArrayFire operations from now on", e.what());
     q_fused_.reset();
     q_target_fused_.reset();
-    network_path_ = std::string("ArrayFire operations (the fused kernels failed: ") + e.what() + ")";
+    network_route_ = FailedNetworkRoute(e);
 }
 
 Tensor DqnLearner::Act(const Tensor& observations) {
