@@ -208,7 +208,7 @@ void SacLearner::StepOptimizers(const std::vector<OffPolicyUpdate>& updates) {
     std::vector<OffPolicyUpdate> all = updates;
     for (auto& u : all)
         if (!u.model) u.parameters = &ent;
-    StepOffPolicyOptimizers(all, adam_together_, "SAC");
+    StepOffPolicyOptimizers(all, adam_, "SAC");
     log_ent_coef_ = ent.at("log_ent_coef");
 }
 

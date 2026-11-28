@@ -79,6 +79,18 @@ ComputePathPart DispatchedPart(const char* what, const NeuralDispatchTally& tall
     return part;
 }
 
+std::optional<ComputePathPart> AdamPart(const NeuralDispatchTally& tally, DeviceType device, const AdamRoute& adam) {
+    if (adam.together && !tally.Find("Adam", NeuralOp::AdamStep, device)) return std::nullopt;
+    ComputePathPart part = DispatchedPart("Adam", tally, "Adam", NeuralOp::AdamStep, device, adam.why);
+    part.arrayfire = "ArrayFire, per tensor";
+    if (!adam.together) {  // per tensor from now on, whatever ran before
+        part.provider_id.clear();
+        part.mixed = false;
+        if (part.detail.empty()) part.detail = adam.why;
+    }
+    return part;
+}
+
 namespace {
 
 // Where a part runs, in words; its reason left out when the networks gave the same one

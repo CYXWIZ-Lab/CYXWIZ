@@ -67,6 +67,7 @@ public:
     void Learn(const ReplayBuffer::Batch& batch, int gradient_step, const NextSeed& next_seed) override;
     void Report(OffPolicyUpdateMetrics& metrics) override;
     const NetworkRoute& Route() const override { return network_route_; }
+    const AdamRoute& Adam() const override { return adam_; }
 
     DqnNetworks& Networks() { return networks_; }
     int64_t Updates() const { return updates_; }
@@ -91,7 +92,7 @@ private:
     std::unique_ptr<Optimizer> optimizer_;
     // Both fused, or neither
     std::unique_ptr<FusedMlp> q_fused_, q_target_fused_;
-    bool adam_together_ = true;
+    AdamRoute adam_;
     NetworkRoute network_route_;
     float epsilon_ = 0.0f;        // the share of random choices now (SB3's exploration_rate: 0 before the first step)
     int64_t updates_ = 0;         // gradient steps taken (SB3's _n_updates)

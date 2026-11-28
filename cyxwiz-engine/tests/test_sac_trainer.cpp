@@ -19,8 +19,10 @@
 #include "../src/plugin/plugin_manager.h"
 #include "../src/plugin/registries/plugin_environment_registry.h"
 #include "algorithms/arrayfire_backend_utils.h"
+#include "computation_truth/expected_compute_path.h"
 #include "computation_truth/test_device_selection.h"
 
+#include <cyxwiz/neural_provider_dispatch.h>
 #include <cyxwiz/rl/sac.h>
 #include <cyxwiz/sequential.h>
 
@@ -471,12 +473,45 @@ void CheckPendulum(const std::filesystem::path& plugin) {
 
 }  // namespace
 
+// The joint Adam step of SAC, TD3 and DQN (StepOffPolicyOptimizers) refused
+// before any provider call: two learning rates. Nothing reaches the dispatch,
+// so the run's tally has no Adam entry; the compute path must still name the
+// Adam step as ArrayFire with why, and CYXWIZ_EXPECT_PATH must fail on it
+// (before, the part was left out and an expected path passed).
+void CheckAdamRefusedBeforeDispatch() {
+    const auto fast = rl::OffPolicyAdam(1e-3f), slow = rl::OffPolicyAdam(2e-3f);
+    std::map<std::string, Tensor> fast_params{{"w", Tensor::Zeros({2, 3})}}, slow_params{{"w", Tensor::Zeros({2, 3})}};
+    std::map<std::string, Tensor> fast_grads{{"w", Tensor::Ones({2, 3})}}, slow_grads{{"w", Tensor::Ones({2, 3})}};
+    const NeuralDispatchTally tally;
+    rl::AdamRoute adam;
+    rl::StepOffPolicyOptimizers({{fast.get(), nullptr, &fast_params, &fast_grads},
+                                 {slow.get(), nullptr, &slow_params, &slow_grads}},
+                                adam, "SAC");
+    Check(!adam.together && adam.why == "the optimizers' hyperparameters differ",
+          "a joint step with two learning rates is refused, with why: " + adam.why);
+    Check(Host(fast_params.at("w"))[0] < 0.0f && Host(slow_params.at("w"))[0] < 0.0f,
+          "and each optimizer steps per tensor instead");
+    const DeviceType device = CaptureCurrentNeuralDeviceTarget().platform;
+    Check(tally.Find("Adam", NeuralOp::AdamStep, device) == nullptr, "refused before any provider call: no Adam entry");
+    const auto part = rl::AdamPart(tally, device, adam);
+    Check(part && part->what == "Adam" && part->provider_id.empty() && part->detail == adam.why,
+          "the compute path keeps its Adam part, on ArrayFire with why");
+    const auto violations =
+        test::ComputePathViolations(std::vector<rl::ComputePathPart>{part.value_or(rl::ComputePathPart{})},
+                                    "cyxwiz.nvidia-cublas-cell");
+    Check(violations.size() == 1 && violations[0].find("Adam: ArrayFire") != std::string::npos,
+          "an expected provider path fails on it: " + (violations.empty() ? std::string("none") : violations[0]));
+    // Still together and never asked: nothing is known yet
+    Check(!rl::AdamPart(tally, device, rl::AdamRoute{}), "before the first step there is no Adam part");
+}
+
 int main(int argc, char** argv) {
     if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) return EXIT_FAILURE;
     try {
         CheckReplayBuffer();
         CheckSb3Steps(argv[0]);
         CheckRefusals();
+        CheckAdamRefusedBeforeDispatch();
         CheckReach();
         if (argc > 1) CheckPendulum(std::filesystem::absolute(argv[1]));
     } catch (const std::exception& e) {

@@ -82,6 +82,7 @@ public:
     // How the networks run: "fused small-network kernels (<provider>)" or
     // "ArrayFire operations" (with the reason a fused call failed)
     const NetworkRoute& Route() const override { return network_route_; }
+    const AdamRoute& Adam() const override { return adam_; }
 
 private:
     // A step's critic gradients and the actor's draw on the batch (nothing
@@ -122,7 +123,7 @@ private:
     std::unique_ptr<Optimizer> ent_coef_optimizer_;
     // All five fused, or none
     std::unique_ptr<FusedMlp> actor_fused_, q1_fused_, q2_fused_, q1_target_fused_, q2_target_fused_;
-    bool adam_together_ = true;
+    AdamRoute adam_;
     NetworkRoute network_route_;
     // Sums since the last report, on the device
     Tensor critic_sum_, actor_sum_, alpha_sum_, alpha_loss_sum_, q_sum_;

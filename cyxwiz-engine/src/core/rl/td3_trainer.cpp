@@ -180,7 +180,7 @@ Td3StepLosses Td3Learner::Step(const ReplayBuffer::Batch& batch, const Tensor& n
     losses.critic_loss = c.loss;
     StepOffPolicyOptimizers({{q1_optimizer_.get(), n.q1.get(), nullptr, &c.q1_grads},
                              {q2_optimizer_.get(), n.q2.get(), nullptr, &c.q2_grads}},
-                            adam_together_, "TD3");
+                            adam_, "TD3");
 
     // ---- Every policy_delay-th step: the actor against the updated Q network
     // 1, then every target (SB3's order)
@@ -196,7 +196,7 @@ Td3StepLosses Td3Learner::Step(const ReplayBuffer::Batch& batch, const Tensor& n
         }
     }
     if (!done) p = ActorLayers(batch);
-    StepOffPolicyOptimizers({{actor_optimizer_.get(), n.actor.get(), nullptr, &p.grads}}, adam_together_, "TD3");
+    StepOffPolicyOptimizers({{actor_optimizer_.get(), n.actor.get(), nullptr, &p.grads}}, adam_, "TD3");
     PolyakUpdate(*n.q1, *n.q1_target, config_.tau);
     PolyakUpdate(*n.q2, *n.q2_target, config_.tau);
     PolyakUpdate(*n.actor, *n.actor_target, config_.tau);

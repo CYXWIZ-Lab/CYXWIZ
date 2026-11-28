@@ -216,9 +216,9 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
     auto* policy_adam = dynamic_cast<AdamOptimizer*>(policy_optimizer_.get());
     auto* value_adam = dynamic_cast<AdamOptimizer*>(value_optimizer_.get());
     auto* log_std_adam = dynamic_cast<AdamOptimizer*>(log_std_optimizer_.get());
-    bool adam_together = policy_adam && value_adam && log_std_adam;
-    // Why the optimizers step per tensor, once they do
-    std::string adam_why = adam_together ? std::string() : "only plain Adam steps together";
+    AdamRoute adam_route;
+    adam_route.together = policy_adam && value_adam && log_std_adam;
+    if (!adam_route.together) adam_route.why = "only plain Adam steps together";
     // x: the minibatch's input, to run the layers' own forward when the
     // fused backward fails (the layers have no forward of it cached)
     const auto backward = [this](IExecutableModel& model, std::unique_ptr<FusedMlp>& fused, const Tensor& x,
@@ -414,7 +414,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                     std::map<std::string, Tensor> log_std_grads;
                     if (!discrete) log_std_grads["log_std"] = r.grad_log_std;
                     bool stepped = false;
-                    if (adam_together) {
+                    if (adam_route.together) {
                         auto policy_params = policy_->GetParameters();
                         auto value_params = value_->GetParameters();
                         std::map<std::string, Tensor> log_std_params{{"log_std", log_std_}};
@@ -428,8 +428,8 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                             if (!discrete) log_std_ = log_std_params.at("log_std");
                             stepped = true;
                         } else {
-                            adam_together = false;
-                            adam_why = why;
+                            adam_route.together = false;
+                            adam_route.why = why;
                             spdlog::info("PPO: the optimizers step per tensor ({})", why);
                         }
                     }
@@ -464,17 +464,12 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
             // The path as it ran: the networks, then each op with the provider
             // the dispatch counted for it, or ArrayFire with the reason
             {
-                ComputePathPart adam = DispatchedPart("Adam", tally, "Adam", NeuralOp::AdamStep, device, adam_why);
-                adam.arrayfire = "ArrayFire, per tensor";
-                if (!adam_together) {  // per tensor from now on, whatever ran before
-                    adam.provider_id.clear();
-                    adam.mixed = false;
-                    if (adam.detail.empty()) adam.detail = adam_why;
-                }
-                const std::vector<ComputePathPart> ops{
-                    adam, DispatchedPart("PPO sample", tally, "PPO", NeuralOp::PpoSample, device),
-                    DispatchedPart("PPO loss", tally, "PPO", NeuralOp::PpoLoss, device),
-                    DispatchedPart("PPO GAE", tally, "PPO", NeuralOp::PpoGae, device)};
+                // After an update the optimizers have stepped: the Adam part is known
+                std::vector<ComputePathPart> ops;
+                if (const auto adam = AdamPart(tally, device, adam_route)) ops.push_back(*adam);
+                ops.push_back(DispatchedPart("PPO sample", tally, "PPO", NeuralOp::PpoSample, device));
+                ops.push_back(DispatchedPart("PPO loss", tally, "PPO", NeuralOp::PpoLoss, device));
+                ops.push_back(DispatchedPart("PPO GAE", tally, "PPO", NeuralOp::PpoGae, device));
                 metrics.compute_path = FormatComputePath(network_route_, ops);
                 metrics.compute_parts = ComputePathParts(network_route_, ops);
                 metrics.missing_provider = network_route_.missing_provider;

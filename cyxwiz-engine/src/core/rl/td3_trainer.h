@@ -62,6 +62,7 @@ public:
     void Learn(const ReplayBuffer::Batch& batch, int gradient_step, const NextSeed& next_seed) override;
     void Report(OffPolicyUpdateMetrics& metrics) override;
     const NetworkRoute& Route() const override { return network_route_; }
+    const AdamRoute& Adam() const override { return adam_; }
 
     Td3Networks& Networks() { return networks_; }
     int64_t Updates() const { return updates_; }
@@ -96,7 +97,7 @@ private:
     // All six fused, or none
     std::unique_ptr<FusedMlp> actor_fused_, actor_target_fused_, q1_fused_, q2_fused_, q1_target_fused_,
         q2_target_fused_;
-    bool adam_together_ = true;
+    AdamRoute adam_;
     NetworkRoute network_route_;
     int64_t updates_ = 0;  // gradient steps taken (SB3's _n_updates)
     // Sums since the last report, on the device

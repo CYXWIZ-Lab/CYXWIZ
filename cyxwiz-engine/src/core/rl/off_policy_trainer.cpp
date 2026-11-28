@@ -102,25 +102,29 @@ void PolyakUpdate(IExecutableModel& network, IExecutableModel& target, float tau
 
 float FirstValue(const Tensor& t) { return Host(t).at(0); }
 
-void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, bool& together, const char* learner,
+void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, AdamRoute& adam, const char* learner,
                               float max_grad_norm) {
-    if (together) {
+    if (adam.together) {
         std::vector<std::map<std::string, Tensor>> params(updates.size());
         std::vector<AdamOptimizer::Group> groups;
+        bool plain_adam = true;
         for (size_t i = 0; i < updates.size(); ++i) {
             const OffPolicyUpdate& u = updates[i];
             params[i] = u.model ? u.model->GetParameters() : *u.parameters;
-            groups.push_back({dynamic_cast<AdamOptimizer*>(u.optimizer), &params[i], u.gradients});
+            auto* optimizer = dynamic_cast<AdamOptimizer*>(u.optimizer);
+            plain_adam = plain_adam && optimizer != nullptr;
+            groups.push_back({optimizer, &params[i], u.gradients});
         }
-        std::string why;
-        if (AdamOptimizer::StepTogether(groups, max_grad_norm, why)) {
+        std::string why = "only plain Adam steps together";
+        if (plain_adam && AdamOptimizer::StepTogether(groups, max_grad_norm, why)) {
             for (size_t i = 0; i < updates.size(); ++i) {
                 if (updates[i].model) updates[i].model->SetParameters(params[i]);
                 else *updates[i].parameters = params[i];
             }
             return;
         }
-        together = false;
+        adam.together = false;
+        adam.why = why;
         spdlog::info("{}: the optimizers step per tensor ({})", learner, why);
     }
     // One global norm over every gradient, as one optimizer over all of them clips
@@ -221,12 +225,10 @@ bool OffPolicyLoop::Run(OffPolicyLearner& learner, const std::function<void(cons
             ++metrics.report;
             learner.Report(metrics);
             {
-                ComputePathPart adam = DispatchedPart("Adam", tally, "Adam", NeuralOp::AdamStep, device);
-                adam.arrayfire = "ArrayFire, per tensor";
-                // Before the first gradient step nothing is known of the optimizers
-                const std::vector<ComputePathPart> ops = tally.Find("Adam", NeuralOp::AdamStep, device)
-                                                             ? std::vector<ComputePathPart>{adam}
-                                                             : std::vector<ComputePathPart>{};
+                // The joint Adam step, also when it was refused before any
+                // provider call; before the first gradient step nothing is known
+                std::vector<ComputePathPart> ops;
+                if (const auto adam = AdamPart(tally, device, learner.Adam())) ops.push_back(*adam);
                 metrics.compute_path = FormatComputePath(learner.Route(), ops);
                 metrics.compute_parts = ComputePathParts(learner.Route(), ops);
                 metrics.missing_provider = learner.Route().missing_provider;

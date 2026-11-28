@@ -102,7 +102,7 @@ DqnStepLosses DqnLearner::Step(const ReplayBuffer::Batch& batch) {
         }
     }
     if (!done) p = PassLayers(batch);
-    StepOffPolicyOptimizers({{optimizer_.get(), networks_.q.get(), nullptr, &p.grads}}, adam_together_, "DQN",
+    StepOffPolicyOptimizers({{optimizer_.get(), networks_.q.get(), nullptr, &p.grads}}, adam_, "DQN",
                             config_.max_grad_norm);
     return p.losses;
 }

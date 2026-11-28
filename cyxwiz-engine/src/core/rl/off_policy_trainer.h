@@ -125,6 +125,8 @@ public:
     virtual void Report(OffPolicyUpdateMetrics& metrics) = 0;
     // How the networks run, and why when that is not a provider
     virtual const NetworkRoute& Route() const = 0;
+    // Whether its optimizers still step together on the provider, and why not
+    virtual const AdamRoute& Adam() const = 0;
     // Its words: "fused small-network kernels (<provider>)" or "ArrayFire
     // operations (<why>)"
     const std::string& NetworkPath() const { return Route().text; }
@@ -193,7 +195,8 @@ float FirstValue(const Tensor& t);
 // One Adam step for each of several networks (or loose tensors, as SAC's log
 // entropy weight): in one launch when the device's provider steps Adam
 // (AdamOptimizer::StepTogether), else each through ApplyOptimizerStep.
-// together: whether to try one launch; cleared, for good, when it cannot.
+// adam: whether to try one launch; cleared, for good, with why, when it
+// cannot (refused before any provider call, or the call failed).
 // max_grad_norm > 0: all the gradients' global norm clipped to it first
 // (clip_grad_norm_, DQN's).
 struct OffPolicyUpdate {
@@ -202,7 +205,7 @@ struct OffPolicyUpdate {
     std::map<std::string, Tensor>* parameters;  // these, updated in place
     std::map<std::string, Tensor>* gradients;
 };
-void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, bool& together, const char* learner,
+void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, AdamRoute& adam, const char* learner,
                               float max_grad_norm = 0.0f);
 
 // ---- The trainer around a learner

@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <exception>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -81,6 +82,22 @@ ComputePathPart NetworksPart(const NetworkRoute& route);
 // some did. unasked: why it runs on ArrayFire when the dispatch was never asked.
 ComputePathPart DispatchedPart(const char* what, const NeuralDispatchTally& tally, const char* layer, NeuralOp op,
                                DeviceType device, const std::string& unasked = {});
+// Whether a learner's optimizers step together in one provider launch (the
+// joint Adam step, AdamOptimizer::StepTogether), and why not once they do not.
+struct AdamRoute {
+    bool together = true;  // still tried: one launch while the provider takes it
+    std::string why;       // why the optimizers step per tensor, once they do
+};
+// The Adam part of a run's compute path, as PPO and the off-policy learners
+// report it: what the run's tally counted for the joint step on `device`.
+// Once the optimizers step per tensor it is ArrayFire with why, whatever ran
+// before: a joint step refused before any provider call (shapes, differing
+// hyperparameters, an optimizer that is not plain Adam) is never in the
+// tally, so the refusal itself makes the part, and CYXWIZ_EXPECT_PATH fails on
+// it. Nullopt only while the optimizers are still tried together and no step
+// has been asked for yet: nothing is known.
+std::optional<ComputePathPart> AdamPart(const NeuralDispatchTally& tally, DeviceType device, const AdamRoute& adam);
+
 // "<networks>; Adam: <where>; PPO sample, PPO loss, PPO GAE: <where>". It
 // starts with the networks' text, so a path on the fused kernels starts with
 // "fused". A reason the networks already gave is not repeated.
