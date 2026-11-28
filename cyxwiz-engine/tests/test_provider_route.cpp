@@ -6,6 +6,7 @@
 // Stub providers serve the CPU platform (no real provider does), so the test
 // runs on ArrayFire CPU and never meets a real provider.
 
+#include "../../cyxwiz-backend/src/core/device_enumeration_count.h"
 #include "../src/core/execution_device_preferences.h"
 #include "../src/core/execution_placement_plan.h"
 #include "../src/core/provider_placement.h"
@@ -23,6 +24,7 @@
 #include <iostream>
 #include <optional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -392,6 +394,46 @@ void TestNotServed() {
     Check(executions == 0, "nothing ran on a provider");
 }
 
+// Compile's provider target never enumerates devices (Device::GetAvailableDevices
+// probes every ArrayFire backend; one of them crashes on activation on some
+// machines), and inside a run it is the run's bound device.
+void TestCompileTargetNeverEnumerates() {
+    using cyxwiz::DeviceType;
+    const cyxwiz::NeuralDeviceTarget opencl1{DeviceType::OPENCL, 1};
+    const cyxwiz::NeuralDeviceTarget opencl2{DeviceType::OPENCL, 2};
+    const cyxwiz::NeuralDeviceTarget cuda{DeviceType::CUDA, 0};
+    // A saved selection with a physical identity: the case that used to read the inventory
+    const cyxwiz::PendingExecutionDeviceSelection saved{DeviceType::OPENCL, 1, "pci:0000:01:00.0|test-gpu"};
+    const auto set_saved = [](const cyxwiz::PendingExecutionDeviceSelection& selection) {
+        // The slot itself: a commit would also record the process device for the tests after this one
+        std::lock_guard<std::mutex> lock(cyxwiz::PendingExecutionDeviceSelectionMutex());
+        cyxwiz::SavedExecutionDeviceSelectionSlot() = selection;
+    };
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    set_saved(saved);
+    const uint64_t before = cyxwiz::detail::DeviceEnumerationCount();
+    Check(cyxwiz::SameNeuralDeviceTarget(cyxwiz::RequestedRouteNeuralTarget(), opencl1),
+          "a saved identity not resolved yet gives its stored backend and index");
+    // An inventory read elsewhere (the run preflight) resolved it to another index: that answer is used
+    cyxwiz::RememberResolvedExecutionRoute(saved, 2);
+    Check(cyxwiz::SameNeuralDeviceTarget(cyxwiz::RequestedRouteNeuralTarget(), opencl2),
+          "the device an inventory resolved the saved identity to is used");
+    {
+        const cyxwiz::ScopedNeuralRunTarget run(cuda);
+        Check(cyxwiz::SameNeuralDeviceTarget(cyxwiz::RequestedRouteNeuralTarget(), cuda),
+              "inside a run the bound target wins over the selection");
+    }
+    Check(cyxwiz::detail::DeviceEnumerationCount() == before,
+          "Compile's provider target enumerated the devices " +
+              std::to_string(cyxwiz::detail::DeviceEnumerationCount() - before) + " times");
+    // Another selection never reads the first one's resolution (keyed by the selection)
+    set_saved({DeviceType::OPENCL, 1, "pci:0000:02:00.0|other-gpu"});
+    Check(cyxwiz::SameNeuralDeviceTarget(cyxwiz::RequestedRouteNeuralTarget(), opencl1),
+          "another selection never reads the old one's resolution");
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::ClearSavedExecutionDeviceSelection();
+}
+
 // The run's bound device is the provider target (the done68 rule), and a
 // thread or request off it is never served: target_mismatch, once, a trace
 // warning. Compile asks about the selected route; playback and the stress
@@ -500,6 +542,7 @@ void TestRunTarget() {
     cyxwiz::ClearPendingExecutionDeviceSelection();
     Check(cyxwiz::SameNeuralDeviceTarget(compile_target, cuda),
           "Compile's provider target is the route chosen in Preferences > Devices");
+    TestCompileTargetNeverEnumerates();
 }
 
 void TestTrace() {

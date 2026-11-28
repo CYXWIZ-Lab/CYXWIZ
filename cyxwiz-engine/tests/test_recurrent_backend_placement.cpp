@@ -1,14 +1,17 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/backend_placement_capabilities.h"
+#include "../src/core/execution_device_preferences.h"
 #include "../src/core/execution_placement_plan.h"
 #include "../src/core/provider_placement.h"
 #include "../src/gui/loaders/data_loader.h"
 #include "../../cyxwiz-backend/src/algorithms/arrayfire_backend_utils.h"
+#include "../../cyxwiz-backend/src/core/device_enumeration_count.h"
 #include "cyxwiz/recurrent_cuda_placement.h"
 
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -281,6 +284,26 @@ public:
         return {};
     }
 };
+
+// Compile asks the providers about the selected route without enumerating
+// devices: enumeration probes every ArrayFire backend (one crashes on
+// activation on some machines), and Compile runs on the GUI thread, in NAS,
+// model import and the server node's graph jobs. A saved physical device
+// identity used to make every Compile enumerate.
+void TestCompileNeverEnumeratesDevices() {
+    {
+        std::lock_guard<std::mutex> lock(cyxwiz::PendingExecutionDeviceSelectionMutex());
+        cyxwiz::SavedExecutionDeviceSelectionSlot() =
+            cyxwiz::PendingExecutionDeviceSelection{cyxwiz::DeviceType::CPU, 0, "test-physical-identity"};
+    }
+    const uint64_t before = cyxwiz::detail::DeviceEnumerationCount();
+    const auto config = CompileRecurrentGraph(gui::NodeType::LSTM, 32, false);
+    const uint64_t enumerated = cyxwiz::detail::DeviceEnumerationCount() - before;
+    cyxwiz::ClearSavedExecutionDeviceSelection();
+    Check(config.is_valid && config.backend_placements.size() == 3,
+          "the LSTM graph compiles with its placements under a saved device identity");
+    Check(enumerated == 0, "Compile enumerated the devices " + std::to_string(enumerated) + " times");
+}
 
 void TestNativeProviderSelectionPlacement() {
     cyxwiz::NeuralProviderRegistry::Instance().Register(
@@ -806,6 +829,7 @@ int main() {
           "Supported TimeDistributed should not count as unknown");
 
     cyxwiz::SetNeuralProvidersDisabledForTesting(false);
+    TestCompileNeverEnumeratesDevices();
     TestNativeProviderSelectionPlacement();
 
     std::cout << "Recurrent backend placement tests passed\n";

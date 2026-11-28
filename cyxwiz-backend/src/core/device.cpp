@@ -1,9 +1,11 @@
 #include "cyxwiz/device.h"
+#include "device_enumeration_count.h"
 #include "device_identity.h"
 #include "device_probe.h"
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <mutex>
 #include <set>
@@ -587,7 +589,14 @@ bool Device::IsActive() const {
            active->GetDeviceId() == device_id_;
 }
 
+namespace {
+std::atomic<uint64_t> g_device_enumerations{0};
+}  // namespace
+
+uint64_t detail::DeviceEnumerationCount() { return g_device_enumerations.load(); }
+
 std::vector<DeviceInfo> Device::GetAvailableDevices() {
+    ++g_device_enumerations;
     std::vector<DeviceInfo> devices;
 
     ScopedArrayFireDeviceState restore_state;

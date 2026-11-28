@@ -110,6 +110,40 @@ SavedExecutionDeviceSelectionSlot() {
     return selection;
 }
 
+// The device a selection's saved physical identity last resolved to, from an
+// inventory some caller already read (the run preflight, the readiness
+// preview). Keyed by the whole selection, so a changed selection never reads
+// another's answer; it is also dropped whenever the selection changes. Read
+// by RequestedRouteNeuralTarget, which never enumerates devices itself.
+struct ResolvedExecutionRoute {
+    PendingExecutionDeviceSelection selection;
+    int device_id = 0;
+};
+
+inline std::optional<ResolvedExecutionRoute>& ResolvedExecutionRouteSlot() {
+    static std::optional<ResolvedExecutionRoute> resolved;
+    return resolved;
+}
+
+inline bool SameExecutionDeviceSelection(const PendingExecutionDeviceSelection& a,
+                                         const PendingExecutionDeviceSelection& b) {
+    return a.type == b.type && a.device_id == b.device_id && a.physical_fingerprint == b.physical_fingerprint;
+}
+
+inline void RememberResolvedExecutionRoute(const PendingExecutionDeviceSelection& selection, int device_id) {
+    std::lock_guard<std::mutex> lock(PendingExecutionDeviceSelectionMutex());
+    ResolvedExecutionRouteSlot() = ResolvedExecutionRoute{selection, device_id};
+}
+
+// The device `selection` resolved to when an inventory was last read for it;
+// nullopt when none was, or the selection has changed since.
+inline std::optional<int> CachedResolvedExecutionRoute(const PendingExecutionDeviceSelection& selection) {
+    std::lock_guard<std::mutex> lock(PendingExecutionDeviceSelectionMutex());
+    const auto& resolved = ResolvedExecutionRouteSlot();
+    if (!resolved || !SameExecutionDeviceSelection(resolved->selection, selection)) return std::nullopt;
+    return resolved->device_id;
+}
+
 inline void SetPendingExecutionDeviceSelection(DeviceType type, int device_id) {
     if (!IsArrayFireExecutionDeviceSelection(type)) {
         throw std::invalid_argument(
@@ -119,6 +153,7 @@ inline void SetPendingExecutionDeviceSelection(DeviceType type, int device_id) {
     std::lock_guard<std::mutex> lock(PendingExecutionDeviceSelectionMutex());
     PendingExecutionDeviceSelectionSlot() =
         PendingExecutionDeviceSelection{type, device_id, {}};
+    ResolvedExecutionRouteSlot().reset();
 }
 
 inline std::optional<PendingExecutionDeviceSelection>
@@ -132,6 +167,7 @@ inline void CommitExecutionDeviceSelectionState(
     std::lock_guard<std::mutex> lock(PendingExecutionDeviceSelectionMutex());
     SavedExecutionDeviceSelectionSlot() = selection;
     PendingExecutionDeviceSelectionSlot() = selection;
+    ResolvedExecutionRouteSlot().reset();
     Device::RecordProcessDevice(selection.type, selection.device_id);
 }
 
@@ -144,11 +180,13 @@ GetPendingExecutionDeviceSelection() {
 inline void ClearPendingExecutionDeviceSelection() {
     std::lock_guard<std::mutex> lock(PendingExecutionDeviceSelectionMutex());
     PendingExecutionDeviceSelectionSlot().reset();
+    ResolvedExecutionRouteSlot().reset();
 }
 
 inline void ClearSavedExecutionDeviceSelection() {
     std::lock_guard<std::mutex> lock(PendingExecutionDeviceSelectionMutex());
     SavedExecutionDeviceSelectionSlot().reset();
+    ResolvedExecutionRouteSlot().reset();
 }
 
 inline const char* DeviceSelectionTransactionStageName(
@@ -414,6 +452,7 @@ inline bool ResolveRequestedExecutionRoute(
                 pending->physical_fingerprint);
             if (resolution.status == DeviceRouteResolutionStatus::Resolved) {
                 requested_device_id = resolution.device_id;
+                RememberResolvedExecutionRoute(*pending, resolution.device_id);
             } else {
                 route_resolution_error =
                     "Saved physical device identity could not be resolved uniquely";
@@ -429,6 +468,7 @@ inline bool ResolveRequestedExecutionRoute(
                 saved->physical_fingerprint);
             if (resolution.status == DeviceRouteResolutionStatus::Resolved) {
                 requested_device_id = resolution.device_id;
+                RememberResolvedExecutionRoute(*saved, resolution.device_id);
             } else {
                 route_resolution_error =
                     "Saved physical device identity could not be resolved uniquely";
@@ -446,24 +486,35 @@ inline bool ResolveRequestedExecutionRoute(
     return true;
 }
 
-// The device a run started now would bind, as a neural provider target: the
-// route chosen in Preferences > Devices (pending, else saved, else the
-// process device), never the calling thread's ArrayFire state. For Compile,
-// whose report asks the providers about the run's device. The device
-// inventory is read only when a saved physical identity has to be resolved;
-// when no route resolves, the thread's target, with a warning.
+// The device a run started now would bind, as a neural provider target, for
+// Compile, whose report asks the providers about the run's device. Never
+// enumerates devices (Device::GetAvailableDevices probes every ArrayFire
+// backend, and Compile runs on the GUI thread, in NAS, model import and the
+// server node's graph jobs):
+//  - inside a run (ScopedNeuralRunTarget), the device the run bound;
+//  - else the route chosen in Preferences > Devices (pending, else saved): its
+//    backend and device index as stored, or, for a saved physical identity,
+//    the device an inventory already read resolved it to
+//    (CachedResolvedExecutionRoute);
+//  - else the process device, else the calling thread's ArrayFire device.
 inline NeuralDeviceTarget RequestedRouteNeuralTarget() {
-    const auto pending = GetPendingExecutionDeviceSelection();
-    const auto saved = GetSavedExecutionDeviceSelection();
-    const bool needs_inventory = pending.has_value() ? !pending->physical_fingerprint.empty()
-                                                     : saved.has_value() && !saved->physical_fingerprint.empty();
-    const std::vector<DeviceInfo> inventory =
-        needs_inventory ? Device::GetAvailableDevices() : std::vector<DeviceInfo>{};
     NeuralDeviceTarget target;
-    std::string error;
-    if (ResolveRequestedExecutionRoute(inventory, target.platform, target.device_id, error)) return target;
-    spdlog::warn("Compile: no device route resolves ({}); the report asks the providers about this thread's device",
-                 error.empty() ? std::string("no process device") : error);
+    if (BoundNeuralRunTarget(target)) return target;
+    auto selection = GetPendingExecutionDeviceSelection();
+    if (!selection) selection = GetSavedExecutionDeviceSelection();
+    if (selection) {
+        target.platform = selection->type;
+        target.device_id = selection->device_id;
+        if (!selection->physical_fingerprint.empty()) {
+            if (const auto resolved = CachedResolvedExecutionRoute(*selection)) target.device_id = *resolved;
+        }
+        return target;
+    }
+    if (const auto process = Device::GetProcessDevice()) {
+        target.platform = process->type;
+        target.device_id = process->device_id;
+        return target;
+    }
     return CaptureCurrentNeuralDeviceTarget();
 }
 
