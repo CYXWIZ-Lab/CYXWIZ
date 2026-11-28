@@ -6,17 +6,17 @@ tofix114 (LibTorch question) and done28 (PyTorch reference policy).
 
 ## The decision
 
-CyxWiz executes tensors through **ArrayFire** (CPU, CUDA, OpenCL backends)
+CyxWiz executes tensors through **ArrayFire** (CPU, CUDA, OpenCL, oneAPI backends)
 plus **native neural providers** that register behind one interface
 (`INeuralNetworkProvider`, `cyxwiz-backend/include/cyxwiz/neural_provider.h`)
 and are selected per run by the device the run targets:
 
 | Executor | Role | Selected when |
 | --- | --- | --- |
-| ArrayFire | general tensor execution, transformer blocks, dense/conv/norm | default for every layer it can run |
-| `cyxwiz.nvidia-cublas-cell` | recurrent training (RNN/LSTM/GRU, stacked, bidirectional) and Conv2D forward / backward on CUDA | run targets a CUDA device |
-| `cyxwiz.opencl-cell` | the same recurrent contract on OpenCL GPUs | run targets an OpenCL device and hidden >= 16 |
-| CPU reference | small deterministic tests, portable fallback | strict mode off and nothing else can run |
+| ArrayFire | every layer, loss, optimizer and normalisation on every device, the CPU included (the CPU route is ArrayFire's CPU backend; there is no native CPU path) | default for everything, and whatever no provider runs |
+| `cyxwiz.nvidia-cublas-cell` | recurrent training (RNN/LSTM/GRU, stacked, bidirectional), Conv2D forward / backward, attention, and for RL the fused small networks (Dense + activations), PPO's sampling, loss and GAE and the joint Adam step, on CUDA | run targets a CUDA device and the `cyxwiz-nvidia-provider` module is installed |
+| `cyxwiz.opencl-cell` | recurrent training and attention on OpenCL GPUs | run targets an OpenCL GPU; recurrent hidden >= 16 |
+| `cyxwiz.oneapi-sycl-attention` | attention on oneAPI | run targets a oneAPI device and `cyxwiz-oneapi-kernels` of this version is installed |
 
 **LibTorch is not a backend compute framework of the engine.** It is the
 numerical oracle for parity tests: `test_computation_truth_transformer_primitives`

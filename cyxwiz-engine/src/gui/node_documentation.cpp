@@ -701,7 +701,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"nonlinearity", "Cell activation: tanh or relu"}
         },
         {
-            "Trains on the CPU reference path unless a native provider serves the run's device",
+            "Trains on ArrayFire on the run's device (the CPU included), or on a native provider where one serves it: "
+            "CUDA, or an OpenCL GPU for hidden sizes of 16 and more",
             "The placement audit shows which path was selected for the run"
         },
         "Recurrent"
