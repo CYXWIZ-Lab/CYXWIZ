@@ -22,6 +22,62 @@
 #include <string>
 #include <vector>
 
+#include "algorithms/providers/opencl_device_match.h"
+
+// How the OpenCL provider finds ArrayFire's device among its GPUs, with
+// injected descriptors (no OpenCL device needed). A cl_device_id from another
+// OpenCL loader or a layered driver is not pointer-equal to the provider's,
+// and a GPU that worked before must not be declined for the process.
+TEST_CASE("OpenCL provider matches ArrayFire's device by identity, then hardware, then index",
+          "[neural_provider][opencl]") {
+    using cyxwiz::opencl_match::DeviceDescriptor;
+    using cyxwiz::opencl_match::DeviceKind;
+    using cyxwiz::opencl_match::MatchArrayFireDevice;
+    using cyxwiz::opencl_match::MatchedBy;
+    int a = 0, b = 0, other = 0;
+    const std::vector<DeviceDescriptor> gpus = {
+        {&a, "NVIDIA GeForce GTX 1050 Ti", "NVIDIA Corporation", "0:1:0.0", ""},
+        {&b, "Intel(R) UHD Graphics 630", "Intel(R) Corporation", "", ""},
+    };
+
+    // The same cl_device_id
+    auto match = MatchArrayFireDevice(1, DeviceKind::Gpu, {&b, "renamed", "", "", ""}, gpus);
+    CHECK(match.index == 1);
+    CHECK(match.by == MatchedBy::Identity);
+
+    // Another loader's handle for the same hardware: PCI address, then name and vendor
+    match = MatchArrayFireDevice(1, DeviceKind::Gpu, {&other, "NVIDIA GeForce GTX 1050 Ti", "NVIDIA Corporation", "0:1:0.0", ""},
+                                 gpus);
+    CHECK(match.index == 0);
+    CHECK(match.by == MatchedBy::PciOrUuid);
+    match = MatchArrayFireDevice(0, DeviceKind::Gpu, {&other, "Intel(R) UHD Graphics 630", "Intel(R) Corporation", "", ""},
+                                 gpus);
+    CHECK(match.index == 1);
+    CHECK(match.by == MatchedBy::NameAndVendor);
+
+    // A device ArrayFire says is not a GPU is the only decline by kind
+    match = MatchArrayFireDevice(2, DeviceKind::NotGpu, {&other, "Intel(R) Core(TM) i7", "Intel(R) Corporation", "", ""},
+                                 gpus);
+    CHECK(match.index == -1);
+    CHECK(match.by == MatchedBy::NotGpu);
+    CHECK(match.why.find("not one of the provider's GPU devices") != std::string::npos);
+
+    // Nothing matches (no handle, an unknown name): the provider's own index, as before
+    match = MatchArrayFireDevice(1, DeviceKind::Unknown, {nullptr, "", "", "", ""}, gpus);
+    CHECK(match.index == 1);
+    CHECK(match.by == MatchedBy::Index);
+    // Two identical GPUs: neither name is unique, so the index decides
+    const std::vector<DeviceDescriptor> twins = {{&a, "Same GPU", "Vendor", "", ""}, {&b, "Same GPU", "Vendor", "", ""}};
+    match = MatchArrayFireDevice(1, DeviceKind::Gpu, {&other, "Same GPU", "Vendor", "", ""}, twins);
+    CHECK(match.index == 1);
+    CHECK(match.by == MatchedBy::Index);
+    // Past the provider's GPUs: none, with why
+    match = MatchArrayFireDevice(5, DeviceKind::Gpu, {&other, "Unknown GPU", "Vendor", "", ""}, gpus);
+    CHECK(match.index == -1);
+    CHECK(match.by == MatchedBy::None);
+    CHECK(match.why.find("matches none of the provider's 2 GPU devices") != std::string::npos);
+}
+
 #ifdef CYXWIZ_HAS_OPENCL_DNN_PROVIDER
 
 namespace {

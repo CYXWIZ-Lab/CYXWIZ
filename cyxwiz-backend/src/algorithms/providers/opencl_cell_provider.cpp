@@ -16,13 +16,14 @@
 // device order). ArrayFire orders its devices itself (GPUs first, CPU
 // devices after them, its own ranking among GPUs), so the two indices need
 // not agree on a machine with GPUs of several vendors. The provider maps
-// ArrayFire's id to its GPU by identity (the cl_device_id ArrayFire reports
-// for the device) whenever ArrayFire's active device on the calling thread
-// is the target, which it is for every run-time call, and remembers the
-// mapping. An ArrayFire device that is none of its GPUs (an OpenCL CPU
-// device, say) is declined with that reason. Only for a query about a
-// device ArrayFire has not been on in this process (Compile, before any
-// run) does it fall back to its own index.
+// ArrayFire's id to its GPU whenever ArrayFire's active device on the calling
+// thread is the target, which it is for every run-time call, and remembers
+// the answer for the process (opencl_device_match.h: declined only when
+// ArrayFire says the device is not a GPU; else by cl_device_id, PCI address
+// or UUID, name and vendor, and last by index, with a warning). Only for a
+// query about a device ArrayFire has not been on in this process (Compile,
+// before any run) does it use its own index without remembering it. After
+// the first call on a device, a query or a call costs one map lookup.
 #ifdef CYXWIZ_HAS_OPENCL_DNN_PROVIDER
 
 #include "cyxwiz/neural_provider.h"
@@ -41,6 +42,7 @@
 #include <spdlog/spdlog.h>
 
 #include "../../core/loaded_library.h"
+#include "opencl_device_match.h"
 
 #include <algorithm>
 #include <atomic>
@@ -361,6 +363,8 @@ struct OpenclDeviceInfo {
     std::string name;
     std::string vendor;
     std::string version;
+    std::string pci;   // "domain:bus:device.function", when the driver has cl_khr_pci_bus_info
+    std::string uuid;  // hex, when it has cl_khr_device_uuid
 };
 
 struct OpenclRuntimeProbe {
@@ -381,6 +385,48 @@ std::string DeviceString(cl_device_id device, cl_device_info what) {
         value.pop_back();
     }
     return value;
+}
+
+// The device's PCI address and UUID, from the KHR extensions (empty when the
+// driver has neither): the hardware's identity across OpenCL loaders.
+#ifndef CL_DEVICE_PCI_BUS_INFO_KHR
+#define CL_DEVICE_PCI_BUS_INFO_KHR 0x410F
+#endif
+#ifndef CL_DEVICE_UUID_KHR
+#define CL_DEVICE_UUID_KHR 0x106A
+#endif
+std::string DevicePci(cl_device_id device) {
+    struct {
+        cl_uint domain, bus, slot, function;  // cl_device_pci_bus_info_khr
+    } info{};
+    if (clGetDeviceInfo(device, CL_DEVICE_PCI_BUS_INFO_KHR, sizeof(info), &info, nullptr) != CL_SUCCESS) return {};
+    std::ostringstream out;
+    out << info.domain << ':' << info.bus << ':' << info.slot << '.' << info.function;
+    return out.str();
+}
+
+std::string DeviceUuid(cl_device_id device) {
+    unsigned char uuid[16] = {};
+    if (clGetDeviceInfo(device, CL_DEVICE_UUID_KHR, sizeof(uuid), uuid, nullptr) != CL_SUCCESS) return {};
+    static const char* digits = "0123456789abcdef";
+    std::string hex;
+    bool any = false;
+    for (const unsigned char byte : uuid) {
+        hex += digits[byte >> 4];
+        hex += digits[byte & 15];
+        any = any || byte != 0;
+    }
+    return any ? hex : std::string();
+}
+
+opencl_match::DeviceDescriptor Describe(cl_device_id device) {
+    opencl_match::DeviceDescriptor d;
+    d.id = device;
+    d.name = DeviceString(device, CL_DEVICE_NAME);
+    d.vendor = DeviceString(device, CL_DEVICE_VENDOR);
+    d.pci = DevicePci(device);
+    d.uuid = DeviceUuid(device);
+    return d;
 }
 
 OpenclRuntimeProbe ProbeOpenclRuntime() {
@@ -410,6 +456,8 @@ OpenclRuntimeProbe ProbeOpenclRuntime() {
             info.name = DeviceString(device, CL_DEVICE_NAME);
             info.vendor = DeviceString(device, CL_DEVICE_VENDOR);
             info.version = DeviceString(device, CL_DEVICE_VERSION);
+            info.pci = DevicePci(device);
+            info.uuid = DeviceUuid(device);
             probe.gpu_devices.push_back(info);
         }
     }
@@ -1018,6 +1066,7 @@ class OpenclCellProvider final : public INeuralNetworkProvider {
 public:
     explicit OpenclCellProvider(OpenclRuntimeProbe probe)
         : probe_(std::move(probe)),
+          gpu_descriptors_(Descriptors(probe_)),
           states_(probe_.gpu_devices.size()) {
         for (auto& state : states_) {
             state = std::make_unique<OpenclExecutionState>();
@@ -1944,15 +1993,23 @@ private:
         return Ok();
     }
 
-    // The provider's GPU for ArrayFire's OpenCL device `target.device_id`,
-    // by identity (see the file's head); -1 with why when it has none.
+    // The provider's GPU for ArrayFire's OpenCL device `target.device_id`
+    // (see the file's head); -1 with why when it has none. Once a device is
+    // identified, a lookup.
     int ProbeIndexFor(const NeuralDeviceTarget& target, std::string& why) const {
         const int af_id = target.device_id;
         if (af_id < 0) {
             why = "ArrayFire OpenCL device " + std::to_string(af_id) + " does not exist";
             return -1;
         }
-        std::lock_guard<std::mutex> lock(identity_mutex_);
+        {
+            std::lock_guard<std::mutex> lock(identity_mutex_);
+            const auto known = identified_.find(af_id);
+            if (known != identified_.end()) {
+                if (known->second.index < 0) why = known->second.why;
+                return known->second.index;
+            }
+        }
         // Identify it now when ArrayFire is on it on this thread
         bool on_it = false;
         try {
@@ -1960,24 +2017,22 @@ private:
         } catch (...) {
             on_it = false;
         }
-        using GetDevice = af_err (*)(void**);
-        const auto get_device =
-            on_it ? reinterpret_cast<GetDevice>(detail::FindLoadedSymbol("afopencl", "afcl_get_device_id")) : nullptr;
-        void* identity = nullptr;
-        if (get_device && get_device(&identity) == AF_SUCCESS && identity) {
-            int index = -1;
-            for (size_t i = 0; i < probe_.gpu_devices.size(); ++i)
-                if (static_cast<void*>(probe_.gpu_devices[i].device) == identity) index = static_cast<int>(i);
-            identified_[af_id] = index;
+        if (on_it) {
+            const opencl_match::Match match = IdentifyActiveDevice(af_id);
+            if (match.by == opencl_match::MatchedBy::Index)
+                spdlog::warn("OpenCL provider: ArrayFire OpenCL device {} was not found among the provider's GPUs by "
+                             "identity, PCI address, UUID or name; using the provider's GPU {} ({}) by position",
+                             af_id, match.index, probe_.gpu_devices[static_cast<size_t>(match.index)].name);
+            else if (match.index >= 0)
+                spdlog::debug("OpenCL provider: ArrayFire OpenCL device {} is the provider's GPU {} (by {})", af_id,
+                              match.index, opencl_match::MatchedByName(match.by));
+            std::lock_guard<std::mutex> lock(identity_mutex_);
+            const auto& kept = identified_.emplace(af_id, Identified{match.index, match.why}).first->second;
+            if (kept.index < 0) why = kept.why;
+            return kept.index;
         }
-        const auto known = identified_.find(af_id);
-        if (known != identified_.end()) {
-            if (known->second < 0)
-                why = "ArrayFire OpenCL device " + std::to_string(af_id) +
-                      " is not one of the provider's GPU devices (an OpenCL CPU or accelerator device)";
-            return known->second;
-        }
-        // Not identified yet in this process: the provider's own index
+        // Not identified yet in this process (Compile, before any run): the
+        // provider's own index, not remembered
         if (static_cast<size_t>(af_id) >= probe_.gpu_devices.size()) {
             why = "target OpenCL device index " + std::to_string(af_id) + " is not an enumerated GPU device (" +
                   std::to_string(probe_.gpu_devices.size()) + " available)";
@@ -1986,11 +2041,49 @@ private:
         return af_id;
     }
 
+    // ArrayFire's active OpenCL device (af_id) among the provider's GPUs.
+    // Its OpenCL library is loaded (it is the active backend), so its symbols
+    // are looked up once for the process.
+    opencl_match::Match IdentifyActiveDevice(int af_id) const {
+        std::call_once(symbols_once_, [this] {
+            get_device_ = reinterpret_cast<GetAfDevice>(detail::FindLoadedSymbol("afopencl", "afcl_get_device_id"));
+            get_device_type_ =
+                reinterpret_cast<GetAfDeviceType>(detail::FindLoadedSymbol("afopencl", "afcl_get_device_type"));
+        });
+        opencl_match::DeviceKind kind = opencl_match::DeviceKind::Unknown;
+        int type = -1;  // afcl_device_type: CL_DEVICE_TYPE_* values, -1 unknown
+        if (get_device_type_ && get_device_type_(&type) == AF_SUCCESS && type != -1)
+            kind = type == static_cast<int>(CL_DEVICE_TYPE_GPU) ? opencl_match::DeviceKind::Gpu
+                                                                : opencl_match::DeviceKind::NotGpu;
+        opencl_match::DeviceDescriptor active;
+        void* identity = nullptr;
+        if (kind != opencl_match::DeviceKind::NotGpu && get_device_ && get_device_(&identity) == AF_SUCCESS && identity)
+            active = Describe(static_cast<cl_device_id>(identity));
+        return opencl_match::MatchArrayFireDevice(af_id, kind, active, gpu_descriptors_);
+    }
+
+    static std::vector<opencl_match::DeviceDescriptor> Descriptors(const OpenclRuntimeProbe& probe) {
+        std::vector<opencl_match::DeviceDescriptor> out;
+        for (const auto& d : probe.gpu_devices) out.push_back({d.device, d.name, d.vendor, d.pci, d.uuid});
+        return out;
+    }
+
     OpenclRuntimeProbe probe_;
+    std::vector<opencl_match::DeviceDescriptor> gpu_descriptors_;
     std::vector<std::unique_ptr<OpenclExecutionState>> states_;
-    // ArrayFire OpenCL device id -> index in probe_.gpu_devices (-1: none of them)
+    // ArrayFire OpenCL device id -> index in probe_.gpu_devices (-1: none of
+    // them, with why), for the process, the fallback by index included
+    struct Identified {
+        int index = -1;
+        std::string why;
+    };
     mutable std::mutex identity_mutex_;
-    mutable std::map<int, int> identified_;
+    mutable std::map<int, Identified> identified_;
+    using GetAfDevice = af_err (*)(void**);
+    using GetAfDeviceType = af_err (*)(int*);
+    mutable std::once_flag symbols_once_;
+    mutable GetAfDevice get_device_ = nullptr;
+    mutable GetAfDeviceType get_device_type_ = nullptr;
     DeviceResidentProgram device_program_;
 };
 
