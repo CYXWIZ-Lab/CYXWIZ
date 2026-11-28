@@ -327,13 +327,13 @@ void CrashRunRecorder::MarkActiveModelCheckpoint(
     WriteLocked();
 }
 
-void CrashRunRecorder::MarkCompleted() {
+void CrashRunRecorder::MarkCompleted(const std::string& reason) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!active_) {
         return;
     }
     status_ = "completed";
-    terminal_reason_ = "completed_all_epochs";
+    terminal_reason_ = reason;
     marked_stage_ = nullptr;  // superseded
     last_stage_ = StageName(TrainingTraceStage::Complete);
     last_event_time_ = NowIso8601();

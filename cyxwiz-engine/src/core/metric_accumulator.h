@@ -66,7 +66,6 @@ public:
     // `counts_operation` (decision counts). Throws when a builder reported a
     // target outside the classes or a non-finite logit.
     Totals Read(std::string_view sums_operation, std::string_view counts_operation);
-    uint64_t Batches() const { return batches_; }
 
 private:
     af::array sums_;    // compute precision: [loss_sum, device_weight_sum, |e| sum, e^2 sum]
@@ -80,7 +79,6 @@ private:
     uint64_t batches_ = 0;
     // Restored totals the device sums continue from
     double restored_loss_sum_ = 0.0;
-    double restored_device_weight_ = 0.0;
     double restored_absolute_error_ = 0.0;
     double restored_squared_error_ = 0.0;
 

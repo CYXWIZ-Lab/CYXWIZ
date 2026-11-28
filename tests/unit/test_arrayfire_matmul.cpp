@@ -52,7 +52,9 @@ TEST_CASE("DeviceMatMul does not read a reused result buffer on any backend", "[
     const std::vector<Case> cases = {
         {4, 8, 1, AF_MAT_NONE, AF_MAT_NONE},  {4, 8, 1, AF_MAT_NONE, AF_MAT_TRANS},   // a Dense with 1 unit
         {16, 8, 1, AF_MAT_TRANS, AF_MAT_NONE}, {1, 8, 1, AF_MAT_NONE, AF_MAT_NONE},
-        {3, 5, 7, AF_MAT_NONE, AF_MAT_NONE},  {1, 6, 4, AF_MAT_NONE, AF_MAT_TRANS}};
+        {3, 5, 7, AF_MAT_NONE, AF_MAT_NONE},  {1, 6, 4, AF_MAT_NONE, AF_MAT_TRANS},
+        {3, 5, 1, AF_MAT_TRANS, AF_MAT_TRANS},  // both sides transposed, one column
+        {4, 1, 6, AF_MAT_NONE, AF_MAT_TRANS}};  // a one-column right side, transposed: 6 columns, not widened
     for (const af::Backend backend : {AF_BACKEND_CPU, AF_BACKEND_CUDA, AF_BACKEND_OPENCL}) {
         if ((available & static_cast<int>(backend)) == 0) continue;
         af::setBackend(backend);

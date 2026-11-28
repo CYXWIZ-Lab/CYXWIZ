@@ -688,6 +688,24 @@ int RunChecks(char** argv) {
               "a validated epoch reports the Pair / Retrieval Metrics of the 6 validation rows");
     }
 
+    // A learning rate range test on a graph with an Embedding Output writes no
+    // file: its model trained at rising rates and is thrown away (push review
+    // of TOFIX242 2.2e; the range test ends without a stop request).
+    {
+        const fs::path file = work_dir / "exports" / "range_test_embeddings.parquet";
+        auto config = CompileValid(BuildGraph(gui::NodeType::TripletDatasetBuilder, gui::NodeType::TripletLoss,
+                                              "1", learning_rate, "random", false, 5, "2", file.string()),
+                                   fixture, "the range test graph");
+        config.learning_rate_range.start = 1e-4;
+        config.learning_rate_range.end = 1.0;
+        config.learning_rate_range.steps = 4;
+        config.learning_rate_range.enabled = true;
+        const auto ranged = Train(config, dataset, 4, "the range test");
+        Check(ranged.metrics.terminal_reason == "range_test_finished" && !fs::exists(file) &&
+                  ranged.metrics.embedding_output_file.empty(),
+              "a range test writes no Embedding Output file (" + ranged.metrics.terminal_reason + ")");
+    }
+
     // Embedding Output and Pair Score Output: after training, the file holds
     // every row's embedding from the trained encoder (torch's, from the same
     // trained parameters), with class, partition and row; the pair-score

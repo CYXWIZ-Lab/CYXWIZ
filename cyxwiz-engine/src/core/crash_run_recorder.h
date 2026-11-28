@@ -88,7 +88,7 @@ public:
                                    int checkpoint_step,
                                    const std::string& provenance);
 
-    void MarkCompleted();
+    void MarkCompleted(const std::string& reason = "completed_all_epochs");
     void MarkEarlyStopped(const std::string& reason);
     void MarkCancelled();
     void MarkFailed(const std::string& reason);

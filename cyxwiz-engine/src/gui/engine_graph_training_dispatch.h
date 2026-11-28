@@ -12,8 +12,6 @@
 
 #include "graph_training_launcher.h"
 
-#include <string>
-
 namespace cyxwiz {
 class DataRegistry;
 class TrainingManager;

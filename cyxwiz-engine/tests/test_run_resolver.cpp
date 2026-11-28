@@ -8,6 +8,7 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/run_resolver.h"
+#include "../src/core/sparse_feature_dataset.h"
 
 #include <arrow/api.h>
 #include <arrow/io/file.h>
@@ -99,6 +100,7 @@ cyxwiz::TrainingConfiguration MakeConfig(const std::string& dataset) {
 struct RegistryLike {
     std::map<std::string, std::shared_ptr<cyxwiz::ArrowDataset>> memory;
     std::map<std::string, std::shared_ptr<cyxwiz::ParquetBackedDataset>> disk;
+    std::map<std::string, std::shared_ptr<const cyxwiz::SparseFeatureDataset>> sparse;
 
     cyxwiz::RunDatasets Datasets() const {
         cyxwiz::RunDatasets data;
@@ -110,8 +112,9 @@ struct RegistryLike {
             const auto it = disk.find(name);
             return it == disk.end() ? nullptr : it->second;
         };
-        data.sparse = [](const std::string&) -> std::shared_ptr<const cyxwiz::SparseFeatureDataset> {
-            return nullptr;
+        data.sparse = [this](const std::string& name) -> std::shared_ptr<const cyxwiz::SparseFeatureDataset> {
+            const auto it = sparse.find(name);
+            return it == sparse.end() ? nullptr : it->second;
         };
         data.media = [](const cyxwiz::TrainingConfiguration&,
                         const std::string&) -> std::optional<cyxwiz::TrainingRecipe> { return std::nullopt; };
@@ -136,13 +139,17 @@ cyxwiz::RunDatasets JobLike(const std::map<std::string, std::shared_ptr<cyxwiz::
 }
 
 // The recipe builds a run for a copy of `config`; the reason when it cannot.
-bool Makes(const cyxwiz::TrainingRecipe& recipe, const cyxwiz::TrainingConfiguration& config, std::string& error) {
+// `input_size`, when given, gets the run's model input width as the recipe
+// set it from the data.
+bool Makes(const cyxwiz::TrainingRecipe& recipe, const cyxwiz::TrainingConfiguration& config, std::string& error,
+           size_t* input_size = nullptr) {
     if (!recipe) {
         error = recipe.error;
         return false;
     }
     error.clear();
     const auto executor = recipe.make(config, config.batch_size, error);
+    if (executor && input_size) *input_size = executor->GetConfig().input_size;
     return executor != nullptr;
 }
 
@@ -179,7 +186,11 @@ int main() {
             const auto recipe = cyxwiz::ResolveRun(config, engine);
             Check(static_cast<bool>(recipe), "resolved " + recipe.error);
             Check(recipe.task_name == "Training Model (Arrow)", "it is the Arrow recipe: " + recipe.task_name);
-            Check(Makes(recipe, config, error), "the recipe builds a run " + error);
+            // The run reads the label the configuration names: two inputs
+            // (x0, x1), not three with the label counted as a feature.
+            size_t inputs = 0;
+            Check(Makes(recipe, config, error, &inputs), "the recipe builds a run " + error);
+            Check(inputs == 2, "the label column is kept out of the inputs: " + std::to_string(inputs));
             Check(cyxwiz::ResolveRun(config, job).task_name == recipe.task_name, "the job resolves it the same");
         }
 
@@ -189,7 +200,9 @@ int main() {
             const auto recipe = cyxwiz::ResolveRun(config, engine);
             Check(static_cast<bool>(recipe), "resolved " + recipe.error);
             Check(recipe.task_name == "Training Model (Parquet)", "it is the Parquet recipe: " + recipe.task_name);
-            Check(Makes(recipe, config, error), "the recipe builds a run " + error);
+            size_t inputs = 0;
+            Check(Makes(recipe, config, error, &inputs), "the recipe builds a run " + error);
+            Check(inputs == 2, "the label column is kept out of the inputs: " + std::to_string(inputs));
             Check(cyxwiz::ResolveRun(config, job).task_name == recipe.task_name, "the job resolves it the same");
         }
 
@@ -212,6 +225,38 @@ int main() {
             const auto missing = cyxwiz::ResolveRun(config, engine);
             Check(!Makes(missing, config, error) && Contains(error, "never_loaded"),
                   "a supplied role that is not loaded is refused by name: " + error);
+        }
+
+        std::cout << "a sparse feature set\n";
+        {
+            // Four rows, four features in CSR, a two-class label.
+            cyxwiz::SparseFeatureDataset::Contents contents;
+            contents.name = "tfidf";
+            contents.num_rows = 4;
+            contents.num_features = 4;
+            contents.row_offsets = {0, 1, 2, 3, 4};
+            contents.column_indices = {0, 1, 2, 3};
+            contents.values = {1.0f, 1.0f, 1.0f, 1.0f};
+            contents.feature_names = {"a", "b", "c", "d"};
+            arrow::Int32Builder codes;
+            std::shared_ptr<arrow::Array> code_values;
+            const bool built = codes.AppendValues({0, 1, 0, 1}).ok() && codes.Finish(&code_values).ok();
+            Check(built, "the sparse labels build");
+            contents.labels = std::make_shared<arrow::ChunkedArray>(code_values);
+            contents.label_name = "y";
+            auto sparse = cyxwiz::SparseFeatureDataset::Create(std::move(contents));
+            Check(sparse.ok(), "the sparse fixture is valid");
+            if (sparse.ok()) registry.sparse["tfidf"] = *sparse;
+            const cyxwiz::RunDatasets with_sparse = registry.Datasets();
+            const auto config = MakeConfig("tfidf");
+            const auto recipe = cyxwiz::ResolveRun(config, with_sparse);
+            Check(static_cast<bool>(recipe) && recipe.task_name == "Training Model (Resolved Roles)",
+                  "a sparse set resolves to its own batchers: " + recipe.task_name + recipe.error);
+            Check(Makes(recipe, config, error), "the recipe builds a run " + error);
+            // The job holds no sparse sets: it refuses the name.
+            const auto headless = cyxwiz::ResolveRun(config, job);
+            Check(!headless && Contains(headless.error, "tfidf"),
+                  "a host without sparse sets refuses it: " + headless.error);
         }
 
         std::cout << "a host's media dataset\n";

@@ -2138,8 +2138,9 @@ void TrainingExecutor::Train(
     }
 
     // Embedding Output (TOFIX140 A5): the trained encoder's embeddings of the
-    // chosen partition, written to a Parquet file.
-    if (config_.embedding_output && !stop_requested_.load()) {
+    // chosen partition, written to a Parquet file. Not after a range test: its
+    // model trained at rising rates and is thrown away (TOFIX242 push review).
+    if (config_.embedding_output && after_training) {
         std::vector<EmbeddingExportPart> parts;
         const std::string& partition = config_.embedding_output_partition;
         if (partition == "all" || partition == "train") parts.push_back({"train", metric_eval_train});
@@ -2193,7 +2194,7 @@ void TrainingExecutor::Train(
         CrashRunRecorder::Instance().MarkEarlyStopped(terminal_reason);
         TrainingTraceCollector::Instance().FinishRun("early_stopped");
     } else {
-        CrashRunRecorder::Instance().MarkCompleted();
+        CrashRunRecorder::Instance().MarkCompleted(terminal_reason);
         TrainingTraceCollector::Instance().FinishRun("completed");
     }
     BackendDebugHooks::SetDebugEventCallback({});
@@ -2275,35 +2276,6 @@ Tensor TrainingExecutor::ComputeLossTensor(
     }
 
     return loss_->Forward(predictions, targets);
-}
-
-float TrainingExecutor::ComputeLoss(
-    const Tensor& predictions,
-    const Tensor& targets) {
-    Tensor loss_tensor = ComputeLossTensor(predictions, targets);
-    const ScopedArrayFireHostSyncAttribution loss_sync_attribution(
-        ArrayFireHostSyncCategory::LossScalarReadback,
-        "TrainingExecutor::ComputeLoss");
-    const float* loss_data = loss_tensor.ReadData<float>();
-    return loss_data[0];
-}
-
-float TrainingExecutor::ComputeAccuracy(const Tensor& predictions, const Tensor& targets) {
-    const auto& shape = predictions.Shape();
-    if (shape.size() != 2) return 0.0f;
-
-    size_t batch_size = shape[0];
-    size_t num_classes = shape[1];
-
-    const auto accuracy_count = CountClassificationDecisionScalars(
-        predictions, targets, batch_size, num_classes,
-        ClassificationDecisionModeForLoss(config_.loss_type, config_.metric_mining),
-        ClassificationMetricIgnoreIndex(config_),
-        config_.pair_decision_threshold);
-    return accuracy_count.total > 0
-        ? static_cast<float>(accuracy_count.correct) /
-              static_cast<float>(accuracy_count.total)
-        : 0.0f;
 }
 
 void TrainingExecutor::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -3094,9 +3066,12 @@ size_t TrainingExecutor::RunTrainingEpoch(TrainingPassBatches& batches, int epoc
         }
         last_checked_batch = batch_num;
     };
-    // The epoch so far, for a resume checkpoint saved inside it
+    // The epoch so far, for a resume checkpoint saved inside it. The loss is
+    // checked first: a non-finite one fails the run here, before a checkpoint
+    // (or a generation preview) holds the weights it made.
     const auto progress_now = [&]() {
         read_epoch_sums();
+        check_finite();
         TrainingEpochProgress progress;
         progress.epoch = epoch;
         progress.next_batch = batch_num;
@@ -3376,7 +3351,8 @@ ObjectiveEvaluationMetrics TrainingExecutor::Evaluate(TrainingPassBatches& batch
 
         // Forward pass only (no backprop)
         const Tensor predictions = StepForward(step);
-        metrics.AddLoss(ComputeLossTensor(predictions, *step.targets), StepLossWeight(*loss_, step));
+        const Tensor batch_loss = ComputeLossTensor(predictions, *step.targets);
+        metrics.AddLoss(batch_loss, StepLossWeight(*loss_, step));
         metrics.Add(step, predictions, true);
     }
     if (evaluation.batches == 0) return evaluation;

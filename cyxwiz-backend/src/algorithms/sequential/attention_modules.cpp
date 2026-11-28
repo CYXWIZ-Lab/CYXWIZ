@@ -299,16 +299,16 @@ Tensor LinearAttentionModule::Backward(const Tensor& grad_output) {
         throw std::invalid_argument("LinearAttention backward needs a forward pass with the same shape first");
     }
     const size_t rows = input_shape_[0] * input_shape_[1];
-    const auto matmul = [](const Tensor& a, const Tensor& b) {
+    const auto product = [](const Tensor& a, const Tensor& b) {
         return a.Reshape({1, a.Shape()[0], a.Shape()[1]})
             .BatchMatMul(b.Reshape({1, b.Shape()[0], b.Shape()[1]}))
             .Reshape({a.Shape()[0], b.Shape()[1]});
     };
     // d(rows W^T + b): dW = dY^T X, db = sum dY, dX = dY W.
     const auto project_backward = [&](const Tensor& dy, const Tensor& x, const std::string& name) {
-        grads_["W_" + name] = matmul(dy.Transpose(), x);
+        grads_["W_" + name] = product(dy.Transpose(), x);
         if (use_bias_) grads_["b_" + name] = dy.Sum(0);
-        return matmul(dy, params_.at("W_" + name));
+        return product(dy, params_.at("W_" + name));
     };
     const Tensor dy = grad_output.Reshape({rows, embed_dim_});
     const Tensor d_out = SplitHeads(project_backward(dy, context_, "o"));

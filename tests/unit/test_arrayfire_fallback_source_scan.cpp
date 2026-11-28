@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <string>
@@ -615,7 +616,8 @@ TEST_CASE("Host-vector model evaluation has one native execution owner",
 }
 
 // Every call of `function` (e.g. "af::sort") in the backend and engine sources,
-// outside arrayfire_indexed.h: "path:line" and the call's top-level arguments.
+// outside the wrapper headers arrayfire_indexed.h and arrayfire_matmul.h: "path:line"
+// and the call's top-level arguments.
 struct ScannedCall {
     std::string where;
     std::vector<std::string> arguments;
@@ -665,13 +667,75 @@ TEST_CASE("Matrix products go through DeviceMatMul, not af::matmul",
     // product (its matrix-vector routine computes beta * y with beta 0), so a
     // reused buffer holding NaN made the product NaN (TOFIX242 2.2, ORA-14);
     // DeviceMatMul (arrayfire_matmul.h) forms those products on the
-    // matrix-matrix routine. Flags every af::matmul / matmulNT / matmulTN /
-    // matmulTT call outside arrayfire_matmul.h.
+    // matrix-matrix routine. Flags any use of matmul / matmulNT / matmulTN /
+    // matmulTT outside arrayfire_matmul.h, qualified or not: on af::array an
+    // unqualified matmul(a, b) reaches ArrayFire by argument-dependent lookup,
+    // and a use without a call (a function pointer) counts too. Comments and
+    // string literals are skipped. Every tree with C++ that links ArrayFire is scanned.
+    const fs::path repo_root = FindRepoRoot();
+    const std::regex use(R"((^|[^A-Za-z0-9_.>])matmul(NT|TN|TT)?\b)");
     std::string list;
-    for (const char* function : {"af::matmul", "af::matmulNT", "af::matmulTN", "af::matmulTT"}) {
-        for (const auto& call : ScanArrayFireCalls(function)) list += "\n  " + call.where + " " + function;
+    for (const char* root : {"cyxwiz-backend/src", "cyxwiz-backend/include", "cyxwiz-engine/src",
+                             "cyxwiz-server-node/src", "plugins"}) {
+        if (!fs::exists(repo_root / root)) continue;
+        for (const auto& entry : fs::recursive_directory_iterator(repo_root / root)) {
+            if (!entry.is_regular_file() || !IsSourceFile(entry.path())) continue;
+            const std::string relative = fs::relative(entry.path(), repo_root).generic_string();
+            if (relative == "cyxwiz-backend/src/algorithms/arrayfire_matmul.h" ||
+                relative.find("/build") != std::string::npos ||
+                relative.find("/third_party/") != std::string::npos)
+                continue;
+            std::ifstream in(entry.path(), std::ios::binary);
+            std::string line;
+            bool in_block_comment = false;
+            std::string raw_end;  // inside a raw string: its closing )delim"
+            for (int number = 1; std::getline(in, line); ++number) {
+                // The code part of the line: comments and the text of string
+                // and character literals removed (a node's search keywords,
+                // Python source in a raw string).
+                std::string code;
+                for (size_t i = 0; i < line.size(); ++i) {
+                    if (!raw_end.empty()) {
+                        if (line.compare(i, raw_end.size(), raw_end) == 0) {
+                            i += raw_end.size() - 1;
+                            raw_end.clear();
+                        }
+                        continue;
+                    }
+                    if (in_block_comment) {
+                        if (line.compare(i, 2, "*/") == 0) {
+                            in_block_comment = false;
+                            ++i;
+                        }
+                        continue;
+                    }
+                    if (line.compare(i, 2, "/*") == 0) {
+                        in_block_comment = true;
+                        ++i;
+                        continue;
+                    }
+                    if (line.compare(i, 2, "//") == 0) break;
+                    if (line.compare(i, 2, "R\"") == 0) {
+                        const size_t open = line.find('(', i + 2);
+                        if (open != std::string::npos) {
+                            raw_end = ")" + line.substr(i + 2, open - i - 2) + "\"";
+                            i = open;
+                            continue;
+                        }
+                    }
+                    if (line[i] == '"' || line[i] == '\'') {
+                        const char quote = line[i];
+                        for (++i; i < line.size() && line[i] != quote; ++i)
+                            if (line[i] == '\\') ++i;
+                        continue;
+                    }
+                    code += line[i];
+                }
+                if (std::regex_search(code, use)) list += "\n  " + relative + ":" + std::to_string(number);
+            }
+        }
     }
-    INFO("af::matmul called directly (use cyxwiz::DeviceMatMul):" + list);
+    INFO("matmul used directly (use cyxwiz::DeviceMatMul):" + list);
     REQUIRE(list.empty());
 }
 

@@ -270,11 +270,6 @@ public:
     virtual CompletedLoadDescription DescribeCompletedLoad(
         const AsyncLoadState& state) const = 0;
 
-    // How a loaded dataset trains is not the loader's to say: the run
-    // resolver (core/run_resolver.h) decides it for every host, and the
-    // Engine's dispatch (engine_graph_training_dispatch.h) gives it the
-    // registry's image, audio and text datasets.
-
     // === Compile-gate surface (commit 7) ===
     // Returns the PreprocessingDomain this loader serves. Tabular maps
     // to PreprocessingDomain::Tabular or TimeSeries depending on the

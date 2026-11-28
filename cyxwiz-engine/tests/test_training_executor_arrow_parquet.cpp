@@ -2197,6 +2197,92 @@ void TestSequenceNaNStops() {
               (error.empty() ? std::string("the run did not fail") : error) + ")");
 }
 
+// A checkpoint inside a sequence epoch is never saved over a NaN loss (push
+// review of TOFIX242 2.2): with reports only at the epoch's ends and a resume
+// checkpoint after every optimizer step, the parameters set to NaN after
+// batch 4's step make batch 5's loss NaN; the run fails at batch 5's
+// checkpoint (the check at batch 4's checkpoint passed, so the error names
+// batch 5) instead of saving checkpoints with NaN weights until the report.
+void TestSequenceNaNNoCheckpoint() {
+    std::vector<cyxwiz::NERSequenceRow> rows;
+    for (int copy = 0; copy < 6; ++copy) {
+        rows.push_back({{"John", "lives", "in", "Berlin"}, {}, {"B-PER", "O", "O", "B-LOC"}});
+        rows.push_back({{"Mary", "works", "in", "Paris"}, {}, {"B-PER", "O", "O", "B-LOC"}});
+    }
+    cyxwiz::NERSequenceBuilderConfig builder_config;
+    builder_config.use_pos_tags = false;
+    builder_config.token_vocabulary.lowercase = true;
+    builder_config.batcher.batch_size = 1;
+    builder_config.batcher.max_sequence_length = 4;
+    builder_config.batcher.shuffle = false;
+    builder_config.batcher.tag_ignore_index = -100;
+    const auto built = cyxwiz::BuildNERSequenceData(rows, builder_config);
+
+    cyxwiz::TrainingConfiguration config;
+    config.input_size = 4;
+    config.input_shape = {4};
+    config.output_size = built.tag_vocabulary.Size();
+    config.loss_type = gui::NodeType::CrossEntropyLoss;
+    config.loss_params["ignore_index"] = "-100";
+    config.optimizer_type = gui::NodeType::SGD;
+    config.learning_rate = 0.01f;
+    config.sequence_batch.enabled = true;
+    config.sequence_batch.ignore_index = -100;
+    config.save_best_checkpoint = false;
+    config.log_interval = 1000;  // reports only at the epoch's first and last batch
+    const auto work = std::filesystem::temp_directory_path() / "cyxwiz_sequence_nan_checkpoint";
+    std::filesystem::remove_all(work);
+    config.checkpoint_dir = (work / "best").string();
+    cyxwiz::CompiledLayer embedding;
+    embedding.type = gui::NodeType::Embedding;
+    embedding.parameters["num_embeddings"] = std::to_string(built.token_vocabulary.Size());
+    embedding.parameters["embedding_dim"] = "6";
+    config.layers.push_back(embedding);
+    cyxwiz::CompiledLayer token_head;
+    token_head.type = gui::NodeType::TimeDistributed;
+    token_head.units = static_cast<int>(built.tag_vocabulary.Size());
+    config.layers.push_back(token_head);
+
+    auto batcher = std::make_unique<cyxwiz::SequenceBatcher>(built.samples, built.batcher_config);
+    cyxwiz::TrainingExecutor executor(config, std::move(batcher), built.tag_vocabulary.Values());
+    cyxwiz::TrainingResumeIdentity identity;
+    identity.run_id = "sequence-nan-checkpoint";
+    executor.EnableResumeCheckpoints(work / "resume", identity, 20, 1);
+    constexpr int kPoisonAfter = 4;
+    std::vector<int> saved_at;  // the next batch each checkpoint inside the epoch resumes at
+    executor.SetResumeCheckpointCallback([&](const std::filesystem::path&, int, int next_batch) {
+        if (next_batch > 0) saved_at.push_back(next_batch);
+    });
+    bool poisoned = false;
+    std::string error;
+    try {
+        executor.Train(1, 1, [&](int, int batch, int, float, float) {
+            if (batch != kPoisonAfter) return;
+            auto* model = executor.GetModel();
+            if (model == nullptr) return;
+            auto parameters = model->GetParameters();
+            for (auto& [name, value] : parameters) {
+                const std::vector<float> nans(value.NumElements(), std::numeric_limits<float>::quiet_NaN());
+                value = cyxwiz::Tensor(value.Shape(), nans.data());
+            }
+            model->SetParameters(parameters);
+            poisoned = true;
+        }, nullptr, nullptr);
+    } catch (const std::exception& e) {
+        error = e.what();
+    }
+    // Batch 4's checkpoint is saved after this test's own poisoning (its loss
+    // was finite); none after it, where the loss is NaN.
+    const bool none_after = std::none_of(saved_at.begin(), saved_at.end(), [](int b) { return b > kPoisonAfter; });
+    std::string saved;
+    for (const int b : saved_at) saved += " " + std::to_string(b);
+    Check(poisoned && error.find("training loss became NaN") != std::string::npos &&
+              error.find("batch 5 ") != std::string::npos && none_after,
+          "sequences: a NaN loss fails the run at the next checkpoint, before it is saved (checkpoints at" + saved +
+              "; " + (error.empty() ? std::string("the run did not fail") : error) + ")");
+    std::filesystem::remove_all(work);
+}
+
 void TestSequenceTrainingExecutor() {
     const std::vector<cyxwiz::NERSequenceRow> rows = {
         {{"John", "lives", "in", "Berlin"},
@@ -5491,6 +5577,7 @@ int main(int argc, char** argv) {
     TestNERSequenceBuilder();
     TestSequenceTrainingExecutor();
     TestSequenceNaNStops();
+    TestSequenceNaNNoCheckpoint();
 
     const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(
         MakeTrainingTable(), "training_executor_arrow");

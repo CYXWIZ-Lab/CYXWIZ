@@ -17,10 +17,10 @@ void NormalizeTrainingNumWorkers(TrainingConfiguration& config) {
     const int requested = config.num_workers;
     const int normalized = ClampNumWorkersToPlatform(requested);
     if (normalized != requested) {
-        spdlog::warn("TrainingManager: clamping num_workers from {} to {} based on platform", requested, normalized);
+        spdlog::warn("TrainingRecipe: clamping num_workers from {} to {} based on platform", requested, normalized);
         config.num_workers = normalized;
     } else if (config.num_workers > 0) {
-        spdlog::info("TrainingManager: using num_workers={}", config.num_workers);
+        spdlog::info("TrainingRecipe: using num_workers={}", config.num_workers);
     }
 }
 
@@ -31,13 +31,13 @@ void ResolveTableInputSize(TrainingConfiguration& config, const std::shared_ptr<
     const auto input_resolution = ResolveTabularTrainingInputSize(config, schema, label_column);
     config.input_size = input_resolution.input_size;
     if (input_resolution.used_compiled_override) {
-        spdlog::info("TrainingManager: {} dataset has {} rows, {} cols, input_size={} (from GraphCompiler's "
+        spdlog::info("TrainingRecipe: {} dataset has {} rows, {} cols, input_size={} (from GraphCompiler's "
                      "TimeSeriesWindow override)", kind, rows, columns, config.input_size);
     } else if (input_resolution.has_separate_label_column) {
-        spdlog::info("TrainingManager: {} dataset has {} rows, {} cols, input_size={} (label '{}')", kind, rows,
+        spdlog::info("TrainingRecipe: {} dataset has {} rows, {} cols, input_size={} (label '{}')", kind, rows,
                      columns, config.input_size, label_column);
     } else {
-        spdlog::warn("TrainingManager: {} dataset has no label column '{}' ({} cols, input_size={})", kind,
+        spdlog::warn("TrainingRecipe: {} dataset has no label column '{}' ({} cols, input_size={})", kind,
                      label_column, columns, config.input_size);
     }
 }
