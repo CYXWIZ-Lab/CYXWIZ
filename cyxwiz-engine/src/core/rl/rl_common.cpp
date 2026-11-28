@@ -8,9 +8,10 @@
 
 namespace cyxwiz::rl {
 
-PolicyRunScopes::PolicyRunScopes(DeviceType device_type, int device_id, ExecutionPolicy policy)
+PolicyRunScopes::PolicyRunScopes(DeviceType device_type, int device_id, ExecutionPolicy policy,
+                                 NeuralDispatchObserver observer)
     : target_(NeuralDeviceTarget{device_type, device_id}),
-      observer_(&RecordNeuralDispatchForActiveTrace),
+      observer_(observer),
       failure_policy_(policy == ExecutionPolicy::Strict ? NeuralProviderFailurePolicy::Fail
                                                         : NeuralProviderFailurePolicy::FallBack) {}
 

@@ -566,6 +566,17 @@ void TestRunTarget() {
         Check(cyxwiz::CurrentNeuralProviderFailurePolicy() == cyxwiz::NeuralProviderFailurePolicy::FallBack,
               "under Compatibility it falls back");
     }
+    {
+        // A training run's preview plays with no observer: its calls never
+        // reach the trace the running training records
+        const cyxwiz::rl::PolicyRunScopes scopes(DeviceType::CPU, 0, cyxwiz::ExecutionPolicy::Compatibility, nullptr);
+        trace.StartRun("policy-preview-scopes-test");
+        const bool ran = cyxwiz::DispatchNeuralProviderOp(request, "LSTM", run);
+        const auto previewed = trace.Snapshot();
+        trace.FinishRun("completed");
+        Check(ran && previewed.provider_dispatch_count == 0,
+              "a preview's provider calls are not booked into the running training's trace");
+    }
     Check(!cyxwiz::BoundNeuralRunTarget(bound) &&
               cyxwiz::CurrentNeuralProviderFailurePolicy() == cyxwiz::NeuralProviderFailurePolicy::FallBack,
           "the policy's scopes end with it");

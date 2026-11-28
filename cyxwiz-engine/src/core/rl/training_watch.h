@@ -49,7 +49,9 @@ public:
     Status Get() const;
 
 private:
-    PolicyPlayback playback_;
+    // The preview plays while its training records a trace: its provider
+    // calls are its own, never booked into that training's trace
+    PolicyPlayback playback_{PolicyPlayback::Trace::None};
     RLTrainingRun* run_ = nullptr;
     std::shared_ptr<TrainedPolicy> previewed_;  // the run's preview policy being played
     // Written by the preview's thread at an episode's start

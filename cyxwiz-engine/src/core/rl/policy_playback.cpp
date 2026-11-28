@@ -142,9 +142,13 @@ void PolicyPlayback::Run() {
         // The device is in use while it plays: Preferences > Devices waits, as for a training
         const ScopedActiveExecutionDeviceContext in_use;
         // Observed and policed as a training run is: the policy's device is
-        // the provider target, and under Strict a provider failure stops it
-        const PolicyRunScopes provider_scopes(p.device_type, p.device_id,
-                                              GetSessionExecutionPolicy().value_or(ExecutionPolicy::Compatibility));
+        // the provider target, and under Strict a provider failure stops it.
+        // A preview (Trace::None) observes nothing: the training it plays
+        // beside records its own trace, and the preview's calls are not that
+        // training's
+        const PolicyRunScopes provider_scopes(
+            p.device_type, p.device_id, GetSessionExecutionPolicy().value_or(ExecutionPolicy::Compatibility),
+            trace_ == Trace::Active ? &RecordNeuralDispatchForActiveTrace : nullptr);
         std::string error;
         auto batch = plugin::PluginEnvironmentRegistry::Instance().Create(
             p.config.environment_key, has_conditions_ ? settings_ : p.config.environment_settings, 1, error);

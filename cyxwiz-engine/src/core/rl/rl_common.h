@@ -18,6 +18,11 @@
 #include <string>
 #include <vector>
 
+namespace cyxwiz {
+// The active trace's provider dispatch observer (training_trace_collector.h)
+void RecordNeuralDispatchForActiveTrace(const NeuralDispatchEvent& event);
+}  // namespace cyxwiz
+
 namespace cyxwiz::rl {
 
 // SplitMix64: a learner's own host draws (action, sample and noise seeds,
@@ -118,12 +123,16 @@ void RethrowProviderRouteError(const std::exception& e);
 // What a thread that runs a trained policy's networks outside training opens
 // for as long as it runs (policy playback, the stress test), as a training
 // run does: the device the policy's networks live on as its provider target,
-// the provider dispatch observer (the active trace, when one records), the
-// failure policy (Strict: a provider failure stops it instead of falling back)
-// and its own PPO latch.
+// the provider dispatch observer, the failure policy (Strict: a provider
+// failure stops it instead of falling back) and its own PPO latch.
+// observer: the active trace, when one records (playback, the stress test);
+// null for a thread whose calls must never reach a trace, such as a training
+// run's preview, which plays beside the running training and would book its
+// calls into that training's trace.
 class PolicyRunScopes {
 public:
-    PolicyRunScopes(DeviceType device_type, int device_id, ExecutionPolicy policy);
+    PolicyRunScopes(DeviceType device_type, int device_id, ExecutionPolicy policy,
+                    NeuralDispatchObserver observer = &RecordNeuralDispatchForActiveTrace);
     PolicyRunScopes(const PolicyRunScopes&) = delete;
     PolicyRunScopes& operator=(const PolicyRunScopes&) = delete;
 

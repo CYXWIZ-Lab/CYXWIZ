@@ -62,7 +62,11 @@ public:
         std::vector<double> ghost_returns;  // its finished episodes, oldest first (the last 50)
     };
 
-    PolicyPlayback() = default;
+    // Where its provider calls are counted: the active trace (a playback or a
+    // stress test the user starts), or nowhere (a training run's preview,
+    // which plays while that training records its own trace).
+    enum class Trace { Active, None };
+    explicit PolicyPlayback(Trace trace = Trace::Active) : trace_(trace) {}
     ~PolicyPlayback();
     PolicyPlayback(const PolicyPlayback&) = delete;
     PolicyPlayback& operator=(const PolicyPlayback&) = delete;
@@ -105,6 +109,7 @@ public:
 private:
     void Run();
 
+    Trace trace_ = Trace::Active;
     std::shared_ptr<TrainedPolicy> policy_;
     bool has_conditions_ = false;  // for this Start (SetConditions)
     EpisodeStart episode_start_;   // for this Start (SetEpisodeStart)
