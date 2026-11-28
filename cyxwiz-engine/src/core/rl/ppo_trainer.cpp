@@ -177,6 +177,8 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
     // What this run's provider calls did, per op, for the compute path each
     // update reports; the run's own observer (its trace) still sees them all
     const NeuralDispatchTally tally;
+    // The device family its calls ask for: the run's bound device
+    const DeviceType device = CaptureCurrentNeuralDeviceTarget().platform;
     // This run's latch for PPO's own ops (sampling, loss, GAE): one that
     // fails stays on ArrayFire until the run ends, as a fused network and the
     // joint Adam step do. The next run starts on the provider again.
@@ -462,7 +464,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
             // The path as it ran: the networks, then each op with the provider
             // the dispatch counted for it, or ArrayFire with the reason
             {
-                ComputePathPart adam = DispatchedPart("Adam", tally, "Adam", NeuralOp::AdamStep, adam_why);
+                ComputePathPart adam = DispatchedPart("Adam", tally, "Adam", NeuralOp::AdamStep, device, adam_why);
                 adam.arrayfire = "ArrayFire, per tensor";
                 if (!adam_together) {  // per tensor from now on, whatever ran before
                     adam.provider_id.clear();
@@ -470,9 +472,9 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                     if (adam.detail.empty()) adam.detail = adam_why;
                 }
                 const std::vector<ComputePathPart> ops{
-                    adam, DispatchedPart("PPO sample", tally, "PPO", NeuralOp::PpoSample),
-                    DispatchedPart("PPO loss", tally, "PPO", NeuralOp::PpoLoss),
-                    DispatchedPart("PPO GAE", tally, "PPO", NeuralOp::PpoGae)};
+                    adam, DispatchedPart("PPO sample", tally, "PPO", NeuralOp::PpoSample, device),
+                    DispatchedPart("PPO loss", tally, "PPO", NeuralOp::PpoLoss, device),
+                    DispatchedPart("PPO GAE", tally, "PPO", NeuralOp::PpoGae, device)};
                 metrics.compute_path = FormatComputePath(network_route_, ops);
                 metrics.compute_parts = ComputePathParts(network_route_, ops);
                 metrics.missing_provider = network_route_.missing_provider;

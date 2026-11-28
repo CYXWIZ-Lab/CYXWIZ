@@ -80,9 +80,9 @@ inline std::vector<std::string> DispatchViolations(const NeuralDispatchTally& ta
     std::vector<std::string> violations;
     for (const auto& [layer, op] : required) {
         const std::string what = std::string(layer) + " " + NeuralOpName(op);
-        const NeuralDispatchTally::Entry* entry = tally.Find(layer, op);
+        const NeuralDeviceTarget target = CaptureCurrentNeuralDeviceTarget();
+        const NeuralDispatchTally::Entry* entry = tally.Find(layer, op, target.platform);
         if (!entry) {
-            const NeuralDeviceTarget target = CaptureCurrentNeuralDeviceTarget();
             const NeuralProviderAbsence absence = WhyNoNeuralProviderServes(target.platform, op);
             const bool served = !NeuralProviderRegistry::Instance().ListServing(target).empty();
             violations.push_back(what + ": never asked of a provider" +

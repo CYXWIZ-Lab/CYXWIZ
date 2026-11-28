@@ -59,10 +59,10 @@ ComputePathPart NetworksPart(const NetworkRoute& route) {
 }
 
 ComputePathPart DispatchedPart(const char* what, const NeuralDispatchTally& tally, const char* layer, NeuralOp op,
-                               const std::string& unasked) {
+                               DeviceType device, const std::string& unasked) {
     ComputePathPart part;
     part.what = what;
-    const NeuralDispatchTally::Entry* entry = tally.Find(layer, op);
+    const NeuralDispatchTally::Entry* entry = tally.Find(layer, op, device);
     if (!entry) {
         part.detail = unasked;
         return part;

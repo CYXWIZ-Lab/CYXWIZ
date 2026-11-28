@@ -308,10 +308,11 @@ const std::vector<NeuralDispatchTally::Entry>& NeuralDispatchTally::Entries() co
     return impl_->entries;
 }
 
-const NeuralDispatchTally::Entry* NeuralDispatchTally::Find(const char* layer, NeuralOp op) const {
+const NeuralDispatchTally::Entry* NeuralDispatchTally::Find(const char* layer, NeuralOp op, DeviceType device) const {
     const char* name = NeuralOpName(op);
+    const char* family = NeuralDevicePlatformName(device);
     for (const auto& entry : impl_->entries)
-        if (entry.op == name && entry.layer == (layer ? layer : "")) return &entry;
+        if (entry.op == name && entry.layer == (layer ? layer : "") && entry.device == family) return &entry;
     return nullptr;
 }
 

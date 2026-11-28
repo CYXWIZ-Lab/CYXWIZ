@@ -76,11 +76,11 @@ struct ComputePathPart {
 };
 ComputePathPart NetworksPart(const NetworkRoute& route);
 // The part of an op that goes through the provider dispatch, from what the
-// run's tally counted: the provider when every call ran there, ArrayFire with
-// the last reason when none did, both when some did. unasked: why it runs on
-// ArrayFire when the dispatch was never asked.
+// run's tally counted on the run's device family: the provider when every
+// call ran there, ArrayFire with the last reason when none did, both when
+// some did. unasked: why it runs on ArrayFire when the dispatch was never asked.
 ComputePathPart DispatchedPart(const char* what, const NeuralDispatchTally& tally, const char* layer, NeuralOp op,
-                               const std::string& unasked = {});
+                               DeviceType device, const std::string& unasked = {});
 // "<networks>; Adam: <where>; PPO sample, PPO loss, PPO GAE: <where>". It
 // starts with the networks' text, so a path on the fused kernels starts with
 // "fused". A reason the networks already gave is not repeated.

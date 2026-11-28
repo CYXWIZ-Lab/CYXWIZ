@@ -156,10 +156,22 @@ private:
 CYXWIZ_API NeuralProviderFailurePolicy CurrentNeuralProviderFailurePolicy();
 
 // What ran where, counted: every dispatch outcome on this thread while the
-// tally lives, per (layer, op). It is an observer scope of its own and passes
-// each event on to the observer that was set before it, so a run's trace
-// still sees everything. A trainer uses it to say how its ops computed; a
-// test uses it to require a path (CYXWIZ_EXPECT_PATH).
+// tally lives, per (layer, op, device family). It is an observer scope of its
+// own and passes each event on to the observer that was set before it, so a
+// run's trace still sees everything. A trainer uses it to say how its ops
+// computed; a test uses it to require a path (CYXWIZ_EXPECT_PATH).
+//
+// Why it is kept beside the Engine's trace collector, which counts the same
+// events (training_trace_collector's provider groups): both are fed by the
+// one event stream of DispatchNeuralProviderOp, so they cannot disagree on
+// what ran; they are two views of it for two readers. The tally is the
+// backend's: synchronous, of one thread and one scope, readable while the
+// run goes (a trainer's compute path each report) and present where there is
+// no trace at all (backend and plugin code, tests, a run whose trace is not
+// recording). The trace collector is the Engine's: process-wide, across the
+// run's threads, persisted with the run for the Studio Debugger. Building the
+// trace's counts from tallies would need a tally on every thread of every
+// run kind and a hand-over at its end, and would lose the live counts.
 class CYXWIZ_API NeuralDispatchTally {
 public:
     struct Entry {
@@ -181,8 +193,9 @@ public:
     NeuralDispatchTally& operator=(const NeuralDispatchTally&) = delete;
 
     const std::vector<Entry>& Entries() const;
-    // The entry of (layer, op), or null when it was never dispatched.
-    const Entry* Find(const char* layer, NeuralOp op) const;
+    // The entry of (layer, op) on `device`, or null when it was never
+    // dispatched there. The same op of a layer on two devices is two entries.
+    const Entry* Find(const char* layer, NeuralOp op, DeviceType device) const;
 
     struct Impl;
 

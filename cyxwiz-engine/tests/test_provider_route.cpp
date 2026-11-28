@@ -352,17 +352,32 @@ void TestNotServed() {
             const cyxwiz::NeuralDispatchTally tally;
             cyxwiz::DispatchNeuralProviderOp(forward, "LSTM", run);
             cyxwiz::DispatchNeuralProviderOp(forward, "LSTM", run);
-            const auto* entry = tally.Find("LSTM", cyxwiz::NeuralOp::LstmForward);
+            const auto* entry = tally.Find("LSTM", cyxwiz::NeuralOp::LstmForward, cyxwiz::DeviceType::CPU);
             Check(entry && entry->not_served == 1 && entry->ran == 0 && entry->provider_id.empty() &&
                       entry->reason == BackendFallbackReasonName(BackendFallbackReason::ProviderNotOffered),
                   "a tally counts the unserved op once, with its reason");
-            Check(tally.Find("LSTM", cyxwiz::NeuralOp::LstmBackward) == nullptr, "and knows nothing of an op never asked");
+            Check(tally.Find("LSTM", cyxwiz::NeuralOp::LstmBackward, cyxwiz::DeviceType::CPU) == nullptr,
+                  "and knows nothing of an op never asked");
+            // The same op of the same layer on another device family is another entry
+            cyxwiz::SetNeuralProvidersDisabledForTesting(true);
+            const auto on_cuda = cyxwiz::RecurrentProviderRequest(cyxwiz::NeuralOp::LstmForward, cuda, shape);
+            cyxwiz::DispatchNeuralProviderOp(on_cuda, "LSTM", run);
+            cyxwiz::SetNeuralProvidersDisabledForTesting(false);
+            const auto* on_cpu = tally.Find("LSTM", cyxwiz::NeuralOp::LstmForward, cyxwiz::DeviceType::CPU);
+            const auto* on_gpu = tally.Find("LSTM", cyxwiz::NeuralOp::LstmForward, cyxwiz::DeviceType::CUDA);
+            Check(on_cpu && on_gpu && on_cpu != on_gpu && on_cpu->device == "cpu" && on_gpu->device == "cuda" &&
+                      on_cpu->reason == BackendFallbackReasonName(BackendFallbackReason::ProviderNotOffered) &&
+                      on_gpu->reason == BackendFallbackReasonName(BackendFallbackReason::ProviderDisabled),
+                  "a tally keeps one entry per device family and finds each by its device");
+            Check(tally.Find("LSTM", cyxwiz::NeuralOp::LstmForward, cyxwiz::DeviceType::OPENCL) == nullptr,
+                  "and none for a device the op was never asked on");
         }
-        Check(g_events.size() == 1 && g_events[0].outcome == NeuralDispatchOutcome::NotServed,
-              "the tally passes the event on to the run's observer");
+        Check(g_events.size() == 2 && g_events[0].outcome == NeuralDispatchOutcome::NotServed &&
+                  g_events[1].device == "cuda",
+              "the tally passes the events on to the run's observer");
         // The run's own scope is as it was: it has heard of this op already
         cyxwiz::DispatchNeuralProviderOp(forward, "LSTM", run);
-        Check(g_events.size() == 1, "after the tally the run's scope still knows what it heard");
+        Check(g_events.size() == 2, "after the tally the run's scope still knows what it heard");
     }
     {
         // A provider that is missing and can be supplied: the reason and what to do

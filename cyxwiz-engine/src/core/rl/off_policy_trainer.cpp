@@ -195,6 +195,8 @@ bool OffPolicyLoop::Run(OffPolicyLearner& learner, const std::function<void(cons
     // What the run's provider calls did, for the compute path each report
     // carries; the run's own observer (its trace) still sees them all
     const NeuralDispatchTally tally;
+    // The device family its calls ask for: the run's bound device
+    const DeviceType device = CaptureCurrentNeuralDeviceTarget().platform;
     try {
         spdlog::info("{}: the networks run as {}", algorithm_, learner.NetworkPath());
         ReplayBuffer buffer(s.buffer_size, obs_size, act_size, algorithm_);
@@ -219,10 +221,10 @@ bool OffPolicyLoop::Run(OffPolicyLearner& learner, const std::function<void(cons
             ++metrics.report;
             learner.Report(metrics);
             {
-                ComputePathPart adam = DispatchedPart("Adam", tally, "Adam", NeuralOp::AdamStep);
+                ComputePathPart adam = DispatchedPart("Adam", tally, "Adam", NeuralOp::AdamStep, device);
                 adam.arrayfire = "ArrayFire, per tensor";
                 // Before the first gradient step nothing is known of the optimizers
-                const std::vector<ComputePathPart> ops = tally.Find("Adam", NeuralOp::AdamStep)
+                const std::vector<ComputePathPart> ops = tally.Find("Adam", NeuralOp::AdamStep, device)
                                                              ? std::vector<ComputePathPart>{adam}
                                                              : std::vector<ComputePathPart>{};
                 metrics.compute_path = FormatComputePath(learner.Route(), ops);
