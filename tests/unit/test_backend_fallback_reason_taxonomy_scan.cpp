@@ -85,6 +85,11 @@ const std::vector<cyxwiz::BackendFallbackReason>& AllReasons() {
         cyxwiz::BackendFallbackReason::OneapiProviderUnavailable,
         cyxwiz::BackendFallbackReason::OneapiProviderUnsupportedContract,
         cyxwiz::BackendFallbackReason::OneapiProviderExecutionFailed,
+        cyxwiz::BackendFallbackReason::ProviderNotBuilt,
+        cyxwiz::BackendFallbackReason::ProviderNotInstalled,
+        cyxwiz::BackendFallbackReason::ProviderAbiMismatch,
+        cyxwiz::BackendFallbackReason::ProviderDisabled,
+        cyxwiz::BackendFallbackReason::ProviderNotOffered,
     };
     return reasons;
 }
@@ -165,6 +170,21 @@ TEST_CASE("Backend fallback reason names pin the persisted taxonomy contract",
     CHECK(std::string(BackendFallbackReasonName(
               BackendFallbackReason::OneapiProviderExecutionFailed)) ==
           "oneapi_provider_execution_failed");
+    CHECK(std::string(BackendFallbackReasonName(
+              BackendFallbackReason::ProviderNotBuilt)) ==
+          "provider_not_built");
+    CHECK(std::string(BackendFallbackReasonName(
+              BackendFallbackReason::ProviderNotInstalled)) ==
+          "provider_not_installed");
+    CHECK(std::string(BackendFallbackReasonName(
+              BackendFallbackReason::ProviderAbiMismatch)) ==
+          "provider_abi_mismatch");
+    CHECK(std::string(BackendFallbackReasonName(
+              BackendFallbackReason::ProviderDisabled)) ==
+          "provider_disabled");
+    CHECK(std::string(BackendFallbackReasonName(
+              BackendFallbackReason::ProviderNotOffered)) ==
+          "provider_not_offered");
 
 }
 

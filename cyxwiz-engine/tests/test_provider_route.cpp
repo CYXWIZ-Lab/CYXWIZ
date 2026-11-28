@@ -199,9 +199,18 @@ void TestDispatch() {
         return provider.Execute(request, buffers);
     };
 
+    // No provider serves the device: nothing runs, and the observer hears it
+    // once for the op, however often it is asked for
     g_events.clear();
-    Check(!cyxwiz::DispatchNeuralProviderOp(request, "LSTM", run) && g_events.empty(),
-          "no provider serves the device: nothing runs and nothing is reported");
+    bool ran = false;
+    for (int call = 0; call < 3; ++call) ran = ran || cyxwiz::DispatchNeuralProviderOp(request, "LSTM", run);
+    Check(!ran && g_events.size() == 1 && g_events[0].outcome == cyxwiz::NeuralDispatchOutcome::NotServed &&
+              g_events[0].provider_id.empty() && g_events[0].op == "lstm_forward" && g_events[0].layer == "LSTM" &&
+              g_events[0].device == "cpu",
+          "no provider serves the device: nothing runs, and it is reported once in three calls");
+    Check(!g_events.empty() &&
+              g_events[0].reason == cyxwiz::BackendFallbackReasonName(cyxwiz::BackendFallbackReason::ProviderNotOffered),
+          "the CPU has no provider by design: " + (g_events.empty() ? std::string("no event") : g_events[0].reason));
 
     auto stub = RegisterStub(StubMode::DeclineBackward);
     auto declined = cyxwiz::RecurrentProviderRequest(cyxwiz::NeuralOp::LstmBackward, cpu,
@@ -285,6 +294,102 @@ void TestLayer() {
     cyxwiz::NeuralProviderRegistry::Instance().UnregisterForTesting("cyxwiz.test-cpu-stub");
 }
 
+// An op no provider serves: one event per (layer, op, device family) and
+// observer scope, with the reason and what to do, and nothing unobserved.
+void TestNotServed() {
+    using cyxwiz::BackendFallbackReason;
+    using cyxwiz::BackendFallbackReasonName;
+    using cyxwiz::NeuralDispatchOutcome;
+    const cyxwiz::NeuralDeviceTarget cpu{cyxwiz::DeviceType::CPU, 0};
+    const cyxwiz::NeuralDeviceTarget cuda{cyxwiz::DeviceType::CUDA, 0};
+    const cyxwiz::RecurrentProviderShape shape{kBatch, kSeq, kInput, kHidden, 1};
+    const auto forward = cyxwiz::RecurrentProviderRequest(cyxwiz::NeuralOp::LstmForward, cpu, shape);
+    const auto backward = cyxwiz::RecurrentProviderRequest(cyxwiz::NeuralOp::LstmBackward, cpu, shape);
+    int executions = 0;
+    const auto run = [&](cyxwiz::INeuralNetworkProvider&) {
+        ++executions;
+        return cyxwiz::NeuralOpStatus{};
+    };
+    const auto count = [](NeuralDispatchOutcome outcome, const std::string& op) {
+        size_t n = 0;
+        for (const auto& e : g_events) n += e.outcome == outcome && e.op == op ? 1 : 0;
+        return n;
+    };
+
+    // Unobserved: nothing is reported (and nothing built)
+    g_events.clear();
+    cyxwiz::DispatchNeuralProviderOp(forward, "LSTM", run);
+    Check(g_events.empty() && executions == 0, "without an observer an unserved op reports nothing");
+
+    {
+        const cyxwiz::ScopedNeuralDispatchObserver first_run(&CollectEvent);
+        for (int call = 0; call < 5; ++call) {
+            cyxwiz::DispatchNeuralProviderOp(forward, "LSTM", run);
+            cyxwiz::DispatchNeuralProviderOp(backward, "LSTM", run);
+        }
+        Check(count(NeuralDispatchOutcome::NotServed, "lstm_forward") == 1 &&
+                  count(NeuralDispatchOutcome::NotServed, "lstm_backward") == 1 && g_events.size() == 2,
+              "once per op in a run: two ops, ten calls, two events");
+        // The same op from another layer family is another line of the path
+        cyxwiz::DispatchNeuralProviderOp(forward, "Bidirectional LSTM", run);
+        Check(g_events.size() == 3, "another layer asking for the same op is reported once too");
+    }
+    {
+        // The next run hears it again: "once" is per run, not per process
+        g_events.clear();
+        const cyxwiz::ScopedNeuralDispatchObserver second_run(&CollectEvent);
+        cyxwiz::DispatchNeuralProviderOp(forward, "LSTM", run);
+        cyxwiz::DispatchNeuralProviderOp(forward, "LSTM", run);
+        Check(g_events.size() == 1, "the next run is told once again");
+
+        // A tally inside the run is a scope of its own, and passes on what it hears
+        g_events.clear();
+        {
+            const cyxwiz::NeuralDispatchTally tally;
+            cyxwiz::DispatchNeuralProviderOp(forward, "LSTM", run);
+            cyxwiz::DispatchNeuralProviderOp(forward, "LSTM", run);
+            const auto* entry = tally.Find("LSTM", cyxwiz::NeuralOp::LstmForward);
+            Check(entry && entry->not_served == 1 && entry->ran == 0 && entry->provider_id.empty() &&
+                      entry->reason == BackendFallbackReasonName(BackendFallbackReason::ProviderNotOffered),
+                  "a tally counts the unserved op once, with its reason");
+            Check(tally.Find("LSTM", cyxwiz::NeuralOp::LstmBackward) == nullptr, "and knows nothing of an op never asked");
+        }
+        Check(g_events.size() == 1 && g_events[0].outcome == NeuralDispatchOutcome::NotServed,
+              "the tally passes the event on to the run's observer");
+        // The run's own scope is as it was: it has heard of this op already
+        cyxwiz::DispatchNeuralProviderOp(forward, "LSTM", run);
+        Check(g_events.size() == 1, "after the tally the run's scope still knows what it heard");
+    }
+    {
+        // A provider that is missing and can be supplied: the reason and what to do
+        g_events.clear();
+        const cyxwiz::ScopedNeuralDispatchObserver third_run(&CollectEvent);
+        cyxwiz::SetNeuralProvidersDisabledForTesting(true);
+        const auto on_cuda = cyxwiz::RecurrentProviderRequest(cyxwiz::NeuralOp::LstmForward, cuda, shape);
+        cyxwiz::DispatchNeuralProviderOp(on_cuda, "LSTM", run);
+        cyxwiz::DispatchNeuralProviderOp(on_cuda, "LSTM", run);
+        cyxwiz::SetNeuralProvidersDisabledForTesting(false);
+        Check(g_events.size() == 1 && g_events[0].outcome == NeuralDispatchOutcome::NotServed &&
+                  g_events[0].device == "cuda" &&
+                  g_events[0].reason == BackendFallbackReasonName(BackendFallbackReason::ProviderDisabled) &&
+                  g_events[0].detail == "Neural providers turned off. Unset CYXWIZ_DISABLE_NEURAL_PROVIDERS and start "
+                                        "again to use them.",
+              "providers turned off: " + (g_events.empty() ? std::string("no event") : g_events[0].detail));
+
+        // A probe that will never dispatch reports the same way, and once
+        g_events.clear();
+        cyxwiz::SetNeuralProvidersDisabledForTesting(true);
+        auto probe = on_cuda;
+        probe.op = cyxwiz::NeuralOp::MlpForward;
+        cyxwiz::ReportNeuralProviderProbe(probe, "fused MLP");
+        cyxwiz::ReportNeuralProviderProbe(probe, "fused MLP");
+        cyxwiz::SetNeuralProvidersDisabledForTesting(false);
+        Check(g_events.size() == 1 && g_events[0].layer == "fused MLP" && g_events[0].op == "mlp_forward",
+              "a probe that finds no provider is reported once");
+    }
+    Check(executions == 0, "nothing ran on a provider");
+}
+
 void TestTrace() {
     auto& trace = cyxwiz::TrainingTraceCollector::Instance();
     trace.StartRun("provider-route-test");
@@ -316,6 +421,46 @@ void TestTrace() {
     // A finished run keeps its id; a later dispatch (a Run Test) is not its.
     cyxwiz::RecordNeuralDispatchForActiveTrace(event);
     Check(trace.Snapshot().provider_dispatch_count == 4, "a finished run takes no more dispatches");
+
+    // An op no provider serves: in the trace, and no false alarm.
+    //  - a provider that is missing and can be supplied: one "ok" event with
+    //    the reason and what to do, no warning;
+    //  - nothing offered for the op on the device (the CPU): counted only.
+    // Neither counts as a dispatch a provider answered.
+    trace.StartRun("provider-not-served-test");
+    cyxwiz::NeuralDispatchEvent missing;
+    missing.op = "ppo_sample";
+    missing.layer = "PPO";
+    missing.device = "cuda";
+    missing.outcome = cyxwiz::NeuralDispatchOutcome::NotServed;
+    missing.reason = cyxwiz::BackendFallbackReasonName(cyxwiz::BackendFallbackReason::ProviderNotInstalled);
+    missing.detail = "NVIDIA provider not installed. Install the CUDA GPU pack.";
+    cyxwiz::RecordNeuralDispatchForActiveTrace(missing);
+    cyxwiz::RecordNeuralDispatchForActiveTrace(missing);  // a second thread of the run reporting it
+    cyxwiz::NeuralDispatchEvent designed = missing;
+    designed.op = "lstm_forward";
+    designed.layer = "LSTM";
+    designed.device = "cpu";
+    designed.reason = cyxwiz::BackendFallbackReasonName(cyxwiz::BackendFallbackReason::ProviderNotOffered);
+    designed.detail = "No provider is offered for this on the CPU";
+    cyxwiz::RecordNeuralDispatchForActiveTrace(designed);
+    const auto not_served = trace.Snapshot();
+    trace.FinishRun("completed");
+    Check(not_served.provider_dispatch_count == 0, "an unserved op is no dispatch a provider answered");
+    size_t groups = 0;
+    for (const auto& group : not_served.provider_groups)
+        if (group.reason == "not_served" && group.category == "no provider") ++groups;
+    Check(groups == 2 && not_served.provider_groups.size() == 2, "each unserved op is a group of the trace");
+    Check(not_served.warnings.empty(), "an unserved op is not a warning: " +
+                                           (not_served.warnings.empty() ? std::string() : not_served.warnings.front()));
+    size_t said = 0, said_designed = 0;
+    for (const auto& e : not_served.recent_events) {
+        if (e.stage != "NeuralProvider.NotServed") continue;
+        if (e.message.find("Install the CUDA GPU pack.") != std::string::npos && e.status == "ok") ++said;
+        if (e.message.find("lstm_forward") != std::string::npos) ++said_designed;
+    }
+    Check(said == 1, "a missing provider is said once in the run's events, with what to do");
+    Check(said_designed == 0, "the designed ArrayFire path of the CPU is not an event");
 }
 
 }  // namespace
@@ -330,6 +475,7 @@ int main() {
     TestRequestsMatchTheLayer();
     TestPlacement();
     TestDispatch();
+    TestNotServed();
     TestLayer();
     TestTrace();
     if (g_failures > 0) {

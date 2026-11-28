@@ -10,6 +10,7 @@
 // Gradients are named as the model names them ("layer<i>.weight").
 
 #include "api_export.h"
+#include "neural_provider.h"
 #include "tensor.h"
 
 #include <map>
@@ -28,11 +29,29 @@ public:
     FusedMlp(const FusedMlp&) = delete;
     FusedMlp& operator=(const FusedMlp&) = delete;
 
+    // Why For gave no fused form. The three causes are told apart:
+    //  - the model is not a fusable chain: `text` says what is in the way;
+    //  - a provider serves the device and declines this network: `text` names
+    //    it and gives its reason, `reason` is its reason code;
+    //  - no provider serves the device: `no_provider` is set, `absence` is
+    //    WhyNoNeuralProviderServes' answer (not built, not installed, another
+    //    ABI, turned off, or none offered), `reason` its code, and `text` its
+    //    name with what to do.
+    struct Refusal {
+        std::string text;
+        std::string reason;  // BackendFallbackReasonName; empty for a chain that is not fusable
+        bool no_provider = false;
+        NeuralProviderAbsence absence;
+    };
+
     // The fused form of `model` on the active device, or null with the
     // reason: not a Dense/activation chain (another layer, a layer without
     // bias, two activations in a row), outside the provider's limits (at most
     // 8 layers, inputs up to 1024, layers up to 512 units), or no provider
-    // serves it on this device.
+    // serves it on this device. When a provider was asked and none takes the
+    // network, the thread's dispatch observer is told (layer "fused MLP").
+    static std::unique_ptr<FusedMlp> For(SequentialModel& model, Refusal& refusal);
+    // The same, with the reason in words only.
     static std::unique_ptr<FusedMlp> For(SequentialModel& model, std::string& why);
 
     // Y [rows, outputs] for X [rows, inputs]. `keep` keeps what Backward

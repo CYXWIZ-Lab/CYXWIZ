@@ -5,6 +5,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "algorithms/providers/neural_provider_absence.h"
+
 #include <cyxwiz/neural_provider.h>
 
 #include <memory>
@@ -234,4 +236,214 @@ TEST_CASE("Neural op names are stable identifiers",
     CHECK(std::string(NeuralOpName(NeuralOp::GruForward)) == "gru_forward");
     CHECK(std::string(NeuralOpName(NeuralOp::AttentionForward)) ==
           "attention_forward");
+}
+
+// Why no provider serves a device family (the compute path standard): every
+// reason, decided from the facts of a process. A pure function, so each one
+// is checked on any machine and in any build.
+TEST_CASE("An absent neural provider has a reason",
+          "[gpu_execution][neural_provider][absence]") {
+    using cyxwiz::BackendFallbackReason;
+    using cyxwiz::DeviceType;
+    using cyxwiz::NeuralOp;
+    using cyxwiz::provider_absence::Facts;
+    using cyxwiz::provider_absence::ModuleState;
+    using cyxwiz::provider_absence::Reason;
+
+    SECTION("NVIDIA: built is judged by the define only when no module is found") {
+        Facts facts;
+        CHECK(Reason(DeviceType::CUDA, NeuralOp::MlpForward, facts) == BackendFallbackReason::ProviderNotBuilt);
+        facts.nvidia_built = true;
+        CHECK(Reason(DeviceType::CUDA, NeuralOp::MlpForward, facts) == BackendFallbackReason::ProviderNotInstalled);
+        // A module of another version is found: that is the reason, whatever was built
+        facts.nvidia_module = ModuleState::WrongAbi;
+        CHECK(Reason(DeviceType::CUDA, NeuralOp::MlpForward, facts) == BackendFallbackReason::ProviderAbiMismatch);
+        facts.nvidia_built = false;
+        CHECK(Reason(DeviceType::CUDA, NeuralOp::MlpForward, facts) == BackendFallbackReason::ProviderAbiMismatch);
+        // The module loaded and registered nothing: it found no CUDA device
+        facts.nvidia_module = ModuleState::Present;
+        CHECK(Reason(DeviceType::CUDA, NeuralOp::MlpForward, facts) == BackendFallbackReason::NvidiaProviderUnavailable);
+    }
+    SECTION("OpenCL is compiled into the backend: built or not, never 'not installed'") {
+        Facts facts;
+        CHECK(Reason(DeviceType::OPENCL, NeuralOp::LstmForward, facts) == BackendFallbackReason::ProviderNotBuilt);
+        facts.opencl_built = true;
+        CHECK(Reason(DeviceType::OPENCL, NeuralOp::LstmForward, facts) ==
+              BackendFallbackReason::OpenclProviderUnavailable);
+    }
+    SECTION("oneAPI: its kernel library is absent, or of another version") {
+        Facts facts;
+        CHECK(Reason(DeviceType::ONEAPI, NeuralOp::AttentionForward, facts) == BackendFallbackReason::ProviderNotBuilt);
+        facts.oneapi_built = true;
+        CHECK(Reason(DeviceType::ONEAPI, NeuralOp::AttentionForward, facts) ==
+              BackendFallbackReason::ProviderNotInstalled);
+        facts.oneapi_kernels = ModuleState::WrongAbi;
+        CHECK(Reason(DeviceType::ONEAPI, NeuralOp::AttentionForward, facts) ==
+              BackendFallbackReason::ProviderAbiMismatch);
+        facts.oneapi_kernels = ModuleState::Present;
+        CHECK(Reason(DeviceType::ONEAPI, NeuralOp::AttentionForward, facts) ==
+              BackendFallbackReason::OneapiProviderUnavailable);
+    }
+    SECTION("nothing offered comes first: there is nothing to build, install or turn on") {
+        Facts everything;
+        everything.nvidia_built = everything.opencl_built = everything.oneapi_built = true;
+        everything.disabled = true;
+        CHECK(Reason(DeviceType::CPU, NeuralOp::LstmForward, everything) == BackendFallbackReason::ProviderNotOffered);
+        CHECK(Reason(DeviceType::OPENCL, NeuralOp::MlpForward, everything) == BackendFallbackReason::ProviderNotOffered);
+        CHECK(Reason(DeviceType::ONEAPI, NeuralOp::LstmForward, everything) == BackendFallbackReason::ProviderNotOffered);
+        CHECK(Reason(DeviceType::METAL, NeuralOp::AttentionForward, everything) ==
+              BackendFallbackReason::ProviderNotOffered);
+        // Offered and turned off
+        CHECK(Reason(DeviceType::CUDA, NeuralOp::PpoGae, everything) == BackendFallbackReason::ProviderDisabled);
+        CHECK(Reason(DeviceType::OPENCL, NeuralOp::GruBackward, everything) == BackendFallbackReason::ProviderDisabled);
+    }
+}
+
+TEST_CASE("What each provider family offers is declared",
+          "[gpu_execution][neural_provider][absence]") {
+    using cyxwiz::DeviceType;
+    using cyxwiz::NeuralOp;
+    using cyxwiz::NeuralProviderOfferedFor;
+    const NeuralOp all[] = {NeuralOp::RnnForward,       NeuralOp::RnnBackward,       NeuralOp::LstmForward,
+                            NeuralOp::LstmBackward,     NeuralOp::GruForward,        NeuralOp::GruBackward,
+                            NeuralOp::AttentionForward, NeuralOp::AttentionBackward, NeuralOp::DeviceProbe,
+                            NeuralOp::Conv2dForward,    NeuralOp::Conv2dBackward,    NeuralOp::MlpForward,
+                            NeuralOp::MlpBackward,      NeuralOp::AdamStep,          NeuralOp::PpoSample,
+                            NeuralOp::PpoLoss,          NeuralOp::PpoGae};
+    for (const NeuralOp op : all) {
+        INFO(cyxwiz::NeuralOpName(op));
+        CHECK(NeuralProviderOfferedFor(DeviceType::CUDA, op));
+        CHECK_FALSE(NeuralProviderOfferedFor(DeviceType::CPU, op));
+        const bool recurrent = op == NeuralOp::RnnForward || op == NeuralOp::RnnBackward ||
+                               op == NeuralOp::LstmForward || op == NeuralOp::LstmBackward ||
+                               op == NeuralOp::GruForward || op == NeuralOp::GruBackward;
+        const bool attention =
+            op == NeuralOp::AttentionForward || op == NeuralOp::AttentionBackward || op == NeuralOp::DeviceProbe;
+        CHECK(NeuralProviderOfferedFor(DeviceType::OPENCL, op) == (recurrent || attention));
+        CHECK(NeuralProviderOfferedFor(DeviceType::ONEAPI, op) == attention);
+    }
+    // No registered provider claims an op its family does not declare: the
+    // declaration says what exists, so a provider must not exceed it.
+    // (Checked for the ops a request can be built for without device memory.)
+    for (const auto& provider : cyxwiz::NeuralProviderRegistry::Instance().List()) {
+        if (std::string(provider->ProviderId()).rfind("cyxwiz.test-stub-", 0) == 0) continue;  // this file's stubs
+        for (const NeuralOp op : all) {
+            cyxwiz::NeuralOpRequest request = MakeUnsupportedProbe();
+            request.op = op;
+            request.target = {provider->Platform(), 0};
+            if (provider->QueryCapability(request).supported) {
+                INFO(provider->ProviderId() << " supports " << cyxwiz::NeuralOpName(op));
+                CHECK(NeuralProviderOfferedFor(provider->Platform(), op));
+            }
+        }
+    }
+}
+
+TEST_CASE("An absence reason has a name and one sentence saying what to do",
+          "[gpu_execution][neural_provider][absence]") {
+    using cyxwiz::BackendFallbackReason;
+    using cyxwiz::DescribeNeuralProviderAbsence;
+    using cyxwiz::DeviceType;
+
+    const auto not_installed = DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderNotInstalled, DeviceType::CUDA);
+    CHECK(not_installed.reason == BackendFallbackReason::ProviderNotInstalled);
+    CHECK(not_installed.fixable);
+    CHECK(not_installed.name == "NVIDIA provider not installed");
+    CHECK(not_installed.fix == "Install the CUDA GPU pack.");
+    CHECK(not_installed.Sentence() == "NVIDIA provider not installed. Install the CUDA GPU pack.");
+
+    const auto not_built = DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderNotBuilt, DeviceType::CUDA);
+    CHECK(not_built.name == "NVIDIA provider not built");
+    CHECK(not_built.fix ==
+          "This build has no NVIDIA provider: install the CUDA GPU pack, or build with the gpu-dev preset.");
+    CHECK(DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderNotBuilt, DeviceType::OPENCL).fix ==
+          "This build has no OpenCL provider: build with the gpu-dev preset.");
+
+    const auto mismatch = DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderAbiMismatch, DeviceType::CUDA);
+    CHECK(mismatch.name == "NVIDIA provider from another Engine version");
+    CHECK(mismatch.fix == "Install the CUDA GPU pack of this Engine version.");
+    const auto kernels = DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderAbiMismatch, DeviceType::ONEAPI);
+    CHECK(kernels.name == "oneAPI kernel library from another Engine version");
+    CHECK(kernels.fix == "Rebuild or reinstall cyxwiz-oneapi-kernels for this Engine version.");
+
+    const auto disabled = DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderDisabled, DeviceType::CUDA);
+    CHECK(disabled.fixable);
+    CHECK(disabled.name == "Neural providers turned off");
+
+    // Nothing offered: the designed path, nothing to do
+    const auto designed = DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderNotOffered, DeviceType::CPU);
+    CHECK_FALSE(designed.fixable);
+    CHECK(designed.name == "No provider is offered for this on the CPU");
+    CHECK(designed.fix == "ArrayFire runs it by design; there is nothing to install.");
+
+    // Every reason of the family has words, and they end as a sentence does
+    for (const auto reason :
+         {BackendFallbackReason::ProviderNotBuilt, BackendFallbackReason::ProviderNotInstalled,
+          BackendFallbackReason::ProviderAbiMismatch, BackendFallbackReason::ProviderDisabled,
+          BackendFallbackReason::ProviderNotOffered, BackendFallbackReason::NvidiaProviderUnavailable,
+          BackendFallbackReason::OpenclProviderUnavailable, BackendFallbackReason::OneapiProviderUnavailable}) {
+        for (const auto platform : {DeviceType::CUDA, DeviceType::OPENCL, DeviceType::ONEAPI, DeviceType::CPU}) {
+            const auto words = DescribeNeuralProviderAbsence(reason, platform);
+            INFO(cyxwiz::BackendFallbackReasonName(reason) << " on " << cyxwiz::NeuralDevicePlatformName(platform));
+            CHECK_FALSE(words.name.empty());
+            REQUIRE_FALSE(words.fix.empty());
+            CHECK(words.fix.back() == '.');
+            CHECK(words.name.back() != '.');
+        }
+    }
+}
+
+TEST_CASE("The registry says why no provider serves a device in this process",
+          "[gpu_execution][neural_provider][absence]") {
+    using cyxwiz::BackendFallbackReason;
+    using cyxwiz::DeviceType;
+    using cyxwiz::NeuralOp;
+    using cyxwiz::WhyNoNeuralProviderServes;
+
+    CHECK(WhyNoNeuralProviderServes(DeviceType::CPU, NeuralOp::LstmForward).reason ==
+          BackendFallbackReason::ProviderNotOffered);
+    CHECK(WhyNoNeuralProviderServes(DeviceType::OPENCL, NeuralOp::PpoSample).reason ==
+          BackendFallbackReason::ProviderNotOffered);
+
+    struct Restore {
+        ~Restore() { cyxwiz::SetNeuralProvidersDisabledForTesting(false); }
+    } restore;
+    cyxwiz::SetNeuralProvidersDisabledForTesting(true);
+    CHECK(WhyNoNeuralProviderServes(DeviceType::CUDA, NeuralOp::MlpForward).reason ==
+          BackendFallbackReason::ProviderDisabled);
+    CHECK(WhyNoNeuralProviderServes(DeviceType::CPU, NeuralOp::MlpForward).reason ==
+          BackendFallbackReason::ProviderNotOffered);
+    cyxwiz::SetNeuralProvidersDisabledForTesting(false);
+
+    // What this build made decides the rest. With no provider serving a
+    // family, the reason is one of the family's; with one serving it, the
+    // question is not asked.
+    auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
+    if (registry.ListServing({DeviceType::CUDA, 0}).empty()) {
+        const auto reason = WhyNoNeuralProviderServes(DeviceType::CUDA, NeuralOp::MlpForward).reason;
+#ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER
+        // The build made the module: it is beside the backend, so "not built"
+        // and "not installed" cannot be the answer on a build tree
+        CHECK((reason == BackendFallbackReason::NvidiaProviderUnavailable ||
+               reason == BackendFallbackReason::ProviderAbiMismatch ||
+               reason == BackendFallbackReason::ProviderNotInstalled));
+        CHECK(reason != BackendFallbackReason::ProviderNotBuilt);
+#else
+        CHECK((reason == BackendFallbackReason::ProviderNotBuilt ||
+               reason == BackendFallbackReason::ProviderAbiMismatch ||
+               reason == BackendFallbackReason::NvidiaProviderUnavailable));
+#endif
+    }
+    if (registry.ListServing({DeviceType::OPENCL, 0}).empty()) {
+        const auto reason = WhyNoNeuralProviderServes(DeviceType::OPENCL, NeuralOp::LstmForward).reason;
+#ifdef CYXWIZ_HAS_OPENCL_DNN_PROVIDER
+        CHECK(reason == BackendFallbackReason::OpenclProviderUnavailable);
+#else
+        CHECK(reason == BackendFallbackReason::ProviderNotBuilt);
+#endif
+    }
+#ifndef CYXWIZ_HAS_ONEAPI_DNN_PROVIDER
+    CHECK(WhyNoNeuralProviderServes(DeviceType::ONEAPI, NeuralOp::AttentionForward).reason ==
+          BackendFallbackReason::ProviderNotBuilt);
+#endif
 }

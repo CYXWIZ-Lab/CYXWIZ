@@ -174,8 +174,11 @@ struct TrainingTraceSummary {
     std::vector<TrainingTraceHostSyncGroup> host_upload_groups;
     std::string host_upload_summary;
     // Native provider dispatches (cyxwiz/neural_provider_dispatch.h), grouped:
-    // category = provider, operation = "<layer> <op>", reason = ran /
-    // declined / failed, layout = device.
+    // category = provider ("no provider" when none serves the device),
+    // operation = "<layer> <op>", reason = ran / declined / failed /
+    // not_served, layout = device. A not_served group counts reports, not
+    // calls (the dispatch reports it once per op and run), and is left out of
+    // provider_dispatch_count, which counts the calls a provider answered.
     uint64_t provider_dispatch_count = 0;
     std::vector<TrainingTraceHostSyncGroup> provider_groups;
     std::string provider_summary;
@@ -281,10 +284,17 @@ public:
     // One host-to-device upload (event_count and bytes of `upload` added to
     // its group); nothing when no run is recording.
     void RecordHostUpload(const TrainingTraceHostSyncGroup& upload);
-    // One provider dispatch outcome; the first declined or failed outcome of
-    // a group is also a runtime warning with its detail.
+    // How the first outcome of a provider group shows in the run's events.
+    enum class ProviderDispatchNote {
+        Warning,      // a provider declined or failed: worth a look
+        Information,  // no provider serves the device, and something can be done: said once, never a warning
+        None,         // counted only (ran; or nothing is offered for the op on the device, the designed path)
+    };
+    // One provider dispatch outcome. The first outcome of a group is also a
+    // runtime event with its detail, as `note` says: a warning for a
+    // declined or failed call, an "ok" event for an op no provider serves.
     void RecordProviderDispatch(const TrainingTraceHostSyncGroup& dispatch,
-                                const std::string& detail);
+                                const std::string& detail, ProviderDispatchNote note);
     void RecordTrainingRandomness(const TrainingRandomness& randomness);
     void RecordExecutionDeviceContext(
         const ExecutionDeviceContext& context);

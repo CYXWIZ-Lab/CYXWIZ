@@ -41,6 +41,24 @@ enum class BackendFallbackReason {
     OneapiProviderUnavailable,
     OneapiProviderUnsupportedContract,
     OneapiProviderExecutionFailed,
+    // Why no provider serves a device family at all (the compute path
+    // standard). Before these, an absent provider had no reason: the
+    // operation ran on ArrayFire and nothing said why.
+    //  - NotBuilt: this build made no provider for the family (its compile
+    //    define is off) and none is installed beside it.
+    //  - NotInstalled: the build has the provider, its module or kernel
+    //    library is absent at run time.
+    //  - AbiMismatch: the module or kernel library was found and belongs to
+    //    another version of the provider interface.
+    //  - Disabled: providers are turned off for the process
+    //    (CYXWIZ_DISABLE_NEURAL_PROVIDERS, or a test).
+    //  - NotOffered: no provider implements this operation for this device
+    //    family, in any build. ArrayFire is the designed path; nothing to fix.
+    ProviderNotBuilt,
+    ProviderNotInstalled,
+    ProviderAbiMismatch,
+    ProviderDisabled,
+    ProviderNotOffered,
 };
 
 constexpr const char* BackendFallbackReasonName(BackendFallbackReason reason) {
@@ -89,6 +107,16 @@ constexpr const char* BackendFallbackReasonName(BackendFallbackReason reason) {
         return "oneapi_provider_unsupported_contract";
     case BackendFallbackReason::OneapiProviderExecutionFailed:
         return "oneapi_provider_execution_failed";
+    case BackendFallbackReason::ProviderNotBuilt:
+        return "provider_not_built";
+    case BackendFallbackReason::ProviderNotInstalled:
+        return "provider_not_installed";
+    case BackendFallbackReason::ProviderAbiMismatch:
+        return "provider_abi_mismatch";
+    case BackendFallbackReason::ProviderDisabled:
+        return "provider_disabled";
+    case BackendFallbackReason::ProviderNotOffered:
+        return "provider_not_offered";
     }
     return "backend_internal_error";
 }

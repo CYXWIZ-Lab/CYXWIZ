@@ -1,5 +1,7 @@
 #include "cyxwiz/neural_provider.h"
 
+#include "neural_provider_absence.h"
+
 #include <atomic>
 #include <cstdlib>
 #include <filesystem>
@@ -48,6 +50,9 @@ constexpr const char* kNvidiaProviderModule = "libcyxwiz-nvidia-provider.so";
 struct NvidiaProviderModule {
     void (*register_fn)(NeuralProviderRegistry*) = nullptr;
     bool (*device_memory_fn)(size_t*, size_t*) = nullptr;
+    // What the one load attempt of the process found (the reason an NVIDIA
+    // device has no provider: WhyNoNeuralProviderServes)
+    provider_absence::ModuleState state = provider_absence::ModuleState::NotFound;
 };
 
 void* NvidiaProviderSymbol(void* module, const char* name) {
@@ -109,17 +114,22 @@ const NvidiaProviderModule& LoadNvidiaProviderModule() {
         const auto register_fn = reinterpret_cast<void (*)(NeuralProviderRegistry*)>(
             NvidiaProviderSymbol(handle, "cyxwiz_nvidia_provider_register"));
         if (!abi || !register_fn) {
-            spdlog::warn("NVIDIA neural provider module {} lacks its entry points; not used", where);
+            loaded.state = provider_absence::ModuleState::WrongAbi;
+            spdlog::warn("NVIDIA neural provider module {} lacks its entry points; not used (reason={})", where,
+                         BackendFallbackReasonName(BackendFallbackReason::ProviderAbiMismatch));
             return loaded;
         }
         if (abi() != CYXWIZ_NEURAL_PROVIDER_MODULE_ABI) {
-            spdlog::warn("NVIDIA neural provider module {} has ABI {}, this Engine needs {}; not used (install the "
-                         "CUDA GPU pack of this version)",
-                         where, abi(), CYXWIZ_NEURAL_PROVIDER_MODULE_ABI);
+            loaded.state = provider_absence::ModuleState::WrongAbi;
+            spdlog::warn("NVIDIA neural provider module {} has ABI {}, this Engine needs {}; not used (reason={}). {}",
+                         where, abi(), CYXWIZ_NEURAL_PROVIDER_MODULE_ABI,
+                         BackendFallbackReasonName(BackendFallbackReason::ProviderAbiMismatch),
+                         DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderAbiMismatch, DeviceType::CUDA).fix);
             return loaded;
         }
         // The module stays loaded for the process: its provider lives in
         // the registry until exit.
+        loaded.state = provider_absence::ModuleState::Present;
         loaded.register_fn = register_fn;
         loaded.device_memory_fn = reinterpret_cast<bool (*)(size_t*, size_t*)>(
             NvidiaProviderSymbol(handle, "cyxwiz_nvidia_provider_device_memory"));
@@ -147,7 +157,138 @@ void RegisterOpenclCellNeuralProvider(NeuralProviderRegistry& registry);
 // Defined in oneapi_sycl_provider.cpp; registers when the SYCL kernel
 // library is installed next to the backend. Tenant #3.
 void RegisterOneapiSyclNeuralProvider(NeuralProviderRegistry& registry);
+// How the process found the kernel library (oneapi_sycl_provider.cpp).
+provider_absence::ModuleState OneapiKernelLibraryState();
 #endif
+
+static bool NeuralProvidersDisabledByEnvironment();
+
+bool NeuralProviderOfferedFor(DeviceType platform, NeuralOp op) {
+    switch (platform) {
+    case DeviceType::CUDA:
+        return true;  // the NVIDIA provider implements every op
+    case DeviceType::OPENCL:
+        switch (op) {
+        case NeuralOp::RnnForward:
+        case NeuralOp::RnnBackward:
+        case NeuralOp::LstmForward:
+        case NeuralOp::LstmBackward:
+        case NeuralOp::GruForward:
+        case NeuralOp::GruBackward:
+        case NeuralOp::AttentionForward:
+        case NeuralOp::AttentionBackward:
+        case NeuralOp::DeviceProbe:
+            return true;
+        default:
+            return false;
+        }
+    case DeviceType::ONEAPI:
+        return op == NeuralOp::AttentionForward || op == NeuralOp::AttentionBackward || op == NeuralOp::DeviceProbe;
+    default:
+        return false;  // no provider serves the CPU, Metal or Vulkan
+    }
+}
+
+namespace {
+
+const char* PlatformWord(DeviceType platform) {
+    switch (platform) {
+    case DeviceType::CPU: return "the CPU";
+    case DeviceType::CUDA: return "CUDA";
+    case DeviceType::OPENCL: return "OpenCL";
+    case DeviceType::ONEAPI: return "oneAPI";
+    case DeviceType::METAL: return "Metal";
+    case DeviceType::VULKAN: return "Vulkan";
+    }
+    return "this device";
+}
+
+// The provider family of a device family, as the user knows it.
+const char* ProviderWord(DeviceType platform) {
+    switch (platform) {
+    case DeviceType::CUDA: return "NVIDIA";
+    case DeviceType::OPENCL: return "OpenCL";
+    case DeviceType::ONEAPI: return "oneAPI";
+    default: return "neural";
+    }
+}
+
+}  // namespace
+
+NeuralProviderAbsence DescribeNeuralProviderAbsence(BackendFallbackReason reason, DeviceType platform) {
+    using R = BackendFallbackReason;
+    NeuralProviderAbsence absence;
+    absence.reason = reason;
+    absence.fixable = true;
+    const std::string provider = ProviderWord(platform);
+    const bool cuda = platform == DeviceType::CUDA;
+    const bool oneapi = platform == DeviceType::ONEAPI;
+    switch (reason) {
+    case R::ProviderNotBuilt:
+        absence.name = provider + " provider not built";
+        absence.fix = cuda     ? "This build has no NVIDIA provider: install the CUDA GPU pack, or build with the "
+                                 "gpu-dev preset."
+                      : oneapi ? "This build has no oneAPI provider: build with the gpu-dev preset and the DPC++ "
+                                 "compiler."
+                               : "This build has no " + provider + " provider: build with the gpu-dev preset.";
+        break;
+    case R::ProviderNotInstalled:
+        absence.name = oneapi ? std::string("oneAPI kernel library not installed") : provider + " provider not installed";
+        absence.fix = cuda     ? "Install the CUDA GPU pack."
+                      : oneapi ? "Put cyxwiz-oneapi-kernels beside the Engine's backend library; a gpu-dev build "
+                                 "makes it."
+                               : "Reinstall the Engine: its " + provider + " provider is missing.";
+        break;
+    case R::ProviderAbiMismatch:
+        absence.name = (oneapi ? std::string("oneAPI kernel library") : provider + " provider") +
+                       " from another Engine version";
+        absence.fix = cuda     ? "Install the CUDA GPU pack of this Engine version."
+                      : oneapi ? "Rebuild or reinstall cyxwiz-oneapi-kernels for this Engine version."
+                               : "Reinstall the " + provider + " provider of this Engine version.";
+        break;
+    case R::ProviderDisabled:
+        absence.name = "Neural providers turned off";
+        absence.fix = "Unset CYXWIZ_DISABLE_NEURAL_PROVIDERS and start again to use them.";
+        break;
+    case R::NvidiaProviderUnavailable:
+        absence.name = "NVIDIA provider found no CUDA device";
+        absence.fix = "Check the NVIDIA driver, then start the Engine again.";
+        break;
+    case R::OpenclProviderUnavailable:
+        absence.name = "OpenCL provider found no GPU device";
+        absence.fix = "Check the GPU's OpenCL driver, then start the Engine again.";
+        break;
+    case R::OneapiProviderUnavailable:
+        absence.name = "oneAPI provider not available";
+        absence.fix = "Check the oneAPI runtime and the GPU driver, then start the Engine again.";
+        break;
+    default:
+        absence.reason = R::ProviderNotOffered;
+        absence.fixable = false;
+        absence.name = std::string("No provider is offered for this on ") + PlatformWord(platform);
+        absence.fix = "ArrayFire runs it by design; there is nothing to install.";
+        break;
+    }
+    return absence;
+}
+
+NeuralProviderAbsence WhyNoNeuralProviderServes(DeviceType platform, NeuralOp op) {
+    provider_absence::Facts facts;
+    facts.disabled = g_neural_providers_disabled_for_testing.load() || NeuralProvidersDisabledByEnvironment();
+#ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER
+    facts.nvidia_built = true;
+#endif
+#ifdef CYXWIZ_HAS_OPENCL_DNN_PROVIDER
+    facts.opencl_built = true;
+#endif
+#ifdef CYXWIZ_HAS_ONEAPI_DNN_PROVIDER
+    facts.oneapi_built = true;
+    if (platform == DeviceType::ONEAPI) facts.oneapi_kernels = OneapiKernelLibraryState();
+#endif
+    // The one load attempt of the process, made here if nothing asked before
+    if (platform == DeviceType::CUDA && !facts.disabled) facts.nvidia_module = LoadNvidiaProviderModule().state;
+    return DescribeNeuralProviderAbsence(provider_absence::Reason(platform, op, facts), platform);
+}
 
 const char* NeuralOpName(NeuralOp op) {
     switch (op) {

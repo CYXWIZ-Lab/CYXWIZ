@@ -989,8 +989,9 @@ void TrainingTraceCollector::RecordHostUpload(
 }
 
 void TrainingTraceCollector::RecordProviderDispatch(
-    const TrainingTraceHostSyncGroup& dispatch, const std::string& detail) {
-    bool first_problem = false;
+    const TrainingTraceHostSyncGroup& dispatch, const std::string& detail, ProviderDispatchNote note) {
+    bool first_of_group = false;
+    const bool not_served = dispatch.reason == NeuralDispatchOutcomeName(NeuralDispatchOutcome::NotServed);
     {
         std::lock_guard<std::mutex> lock(mutex_);
         // A finished run keeps its id: a later Run Test must not add to it.
@@ -999,21 +1000,27 @@ void TrainingTraceCollector::RecordProviderDispatch(
         }
         // Counted, not logged as events: a provider layer dispatches every batch
         // (an RL run, thousands a second), so one key and no copy for a known group.
-        provider_dispatch_count_ += dispatch.event_count;
+        // An op no provider serves is reported once per run, not per call:
+        // it is no dispatch a provider answered
+        if (!not_served) provider_dispatch_count_ += dispatch.event_count;
         const std::string key = HostSyncGroupKey(dispatch);
         const auto known = provider_groups_.find(key);
         if (known != provider_groups_.end()) {
             known->second.event_count += dispatch.event_count;
             known->second.bytes += dispatch.bytes;
         } else {
-            first_problem = dispatch.reason != "ran";
+            first_of_group = true;
             provider_groups_.emplace(key, dispatch);
         }
     }
-    if (first_problem) {
-        RecordRuntimeWarning("NeuralProvider." + dispatch.category,
-                             dispatch.operation + " " + dispatch.reason + " on " + dispatch.layout +
-                                 ": " + detail);
+    if (!first_of_group || note == ProviderDispatchNote::None) return;
+    const std::string message = dispatch.operation + " " + dispatch.reason + " on " + dispatch.layout + ": " + detail;
+    if (note == ProviderDispatchNote::Warning) {
+        RecordRuntimeWarning("NeuralProvider." + dispatch.category, message);
+    } else {
+        // Not a warning: the run computes correctly on ArrayFire. It is in the
+        // run's events so the path and what to do about it can be read there.
+        RecordRuntimeEvent("NeuralProvider.NotServed", message, "ok");
     }
 }
 
@@ -1984,15 +1991,26 @@ std::string TrainingTraceCollector::ThreadIdString() {
 }
 
 void RecordNeuralDispatchForActiveTrace(const NeuralDispatchEvent& event) {
+    using Note = TrainingTraceCollector::ProviderDispatchNote;
     TrainingTraceHostSyncGroup dispatch;
-    dispatch.category = event.provider_id;
+    dispatch.category = event.provider_id.empty() ? std::string("no provider") : event.provider_id;
     dispatch.reason = NeuralDispatchOutcomeName(event.outcome);
     dispatch.operation = event.layer + " " + event.op;
     dispatch.dtype = "float32";
     dispatch.layout = event.device;
     dispatch.event_count = 1;
+    Note note = Note::Warning;
+    if (event.outcome == NeuralDispatchOutcome::Ran) {
+        note = Note::None;
+    } else if (event.outcome == NeuralDispatchOutcome::NotServed) {
+        // Nothing offered for the op on this device family (every op on the
+        // CPU) is the designed path: counted, and said nowhere. A provider
+        // that is missing and can be supplied is said once, as information.
+        const bool designed = event.reason == BackendFallbackReasonName(BackendFallbackReason::ProviderNotOffered);
+        note = designed ? Note::None : Note::Information;
+    }
     TrainingTraceCollector::Instance().RecordProviderDispatch(
-        dispatch, event.reason.empty() ? event.detail : event.reason + ": " + event.detail);
+        dispatch, event.reason.empty() ? event.detail : event.reason + ": " + event.detail, note);
 }
 
 } // namespace cyxwiz

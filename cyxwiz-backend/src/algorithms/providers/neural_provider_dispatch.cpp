@@ -14,6 +14,17 @@ namespace {
 thread_local NeuralDispatchObserver g_dispatch_observer = nullptr;
 thread_local NeuralProviderFailurePolicy g_failure_policy = NeuralProviderFailurePolicy::FallBack;
 
+// What each observer scope on this thread has already heard is not served:
+// one list per ScopedNeuralDispatchObserver, innermost last. A scope is a run
+// (or a tally inside it), so "once per (layer, op, device family) and run".
+// A list holds a handful of entries: a run asks for a few ops.
+struct NotServedKey {
+    NeuralOp op;
+    DeviceType platform;
+    std::string layer;
+};
+thread_local std::vector<std::vector<NotServedKey>> g_not_served_reported;
+
 bool IsBackwardRecurrentOp(NeuralOp op) {
     return op == NeuralOp::LstmBackward || op == NeuralOp::GruBackward || op == NeuralOp::RnnBackward;
 }
@@ -41,14 +52,54 @@ const std::string& ProviderVersion(const std::shared_ptr<INeuralNetworkProvider>
 NeuralDispatchEvent MakeEvent(const NeuralOpRequest& request, const char* layer,
                               const std::shared_ptr<INeuralNetworkProvider>& provider, NeuralDispatchOutcome outcome) {
     NeuralDispatchEvent event;
-    event.provider_id = provider->ProviderId();
-    event.provider_version = ProviderVersion(provider);
+    if (provider) {
+        event.provider_id = provider->ProviderId();
+        event.provider_version = ProviderVersion(provider);
+    }
     event.op = NeuralOpName(request.op);
     event.layer = layer ? layer : "";
     event.device = NeuralDevicePlatformName(request.target.platform);
     event.outcome = outcome;
     return event;
 }
+
+// No provider serves the request's device family: tells the observer why,
+// the first time its scope asks for this (layer, op, device family). Called
+// only with an observer set, so an unobserved call builds nothing.
+void ReportNotServedOnce(const NeuralOpRequest& request, const char* layer) {
+    if (g_not_served_reported.empty()) g_not_served_reported.emplace_back();  // an observer set without a scope
+    auto& reported = g_not_served_reported.back();
+    const char* name = layer ? layer : "";
+    for (const auto& key : reported)
+        if (key.op == request.op && key.platform == request.target.platform && key.layer == name) return;
+    reported.push_back({request.op, request.target.platform, name});
+    const NeuralProviderAbsence absence = WhyNoNeuralProviderServes(request.target.platform, request.op);
+    NeuralDispatchEvent event = MakeEvent(request, layer, nullptr, NeuralDispatchOutcome::NotServed);
+    event.reason = BackendFallbackReasonName(absence.reason);
+    event.detail = absence.Sentence();
+    // The path taken, once per op and run: Info when a provider is missing
+    // and can be supplied; Debug for the designed ArrayFire path (the CPU)
+    if (absence.fixable)
+        spdlog::info("{} {} runs on ArrayFire on {}: {} ({})", event.layer, event.op, event.device, event.detail,
+                     event.reason);
+    else
+        spdlog::debug("{} {} runs on ArrayFire on {}: {} ({})", event.layer, event.op, event.device, event.detail,
+                      event.reason);
+    Notify(event);
+}
+
+void ReportDeclined(const NeuralOpRequest& request, const char* layer,
+                    const std::shared_ptr<INeuralNetworkProvider>& serving) {
+    const NeuralCapability capability = serving->QueryCapability(request);
+    NeuralDispatchEvent event = MakeEvent(request, layer, serving, NeuralDispatchOutcome::Declined);
+    event.reason = BackendFallbackReasonName(capability.reason);
+    event.detail = capability.detail;
+    Notify(event);
+}
+
+// The innermost tally of this thread, and the function it observes with
+thread_local NeuralDispatchTally::Impl* g_tally = nullptr;
+void TallyObserver(const NeuralDispatchEvent& event);
 
 }  // namespace
 
@@ -139,6 +190,7 @@ const char* NeuralDispatchOutcomeName(NeuralDispatchOutcome outcome) {
         case NeuralDispatchOutcome::Ran: return "ran";
         case NeuralDispatchOutcome::Declined: return "declined";
         case NeuralDispatchOutcome::Failed: return "failed";
+        case NeuralDispatchOutcome::NotServed: return "not_served";
     }
     return "unknown";
 }
@@ -146,10 +198,84 @@ const char* NeuralDispatchOutcomeName(NeuralDispatchOutcome outcome) {
 ScopedNeuralDispatchObserver::ScopedNeuralDispatchObserver(NeuralDispatchObserver observer)
     : previous_(g_dispatch_observer) {
     g_dispatch_observer = observer;
+    g_not_served_reported.emplace_back();  // this scope has heard nothing yet
 }
 
 ScopedNeuralDispatchObserver::~ScopedNeuralDispatchObserver() {
     g_dispatch_observer = previous_;
+    if (!g_not_served_reported.empty()) g_not_served_reported.pop_back();
+}
+
+struct NeuralDispatchTally::Impl {
+    std::vector<Entry> entries;
+    Impl* outer = nullptr;  // the tally this one is nested in
+    NeuralDispatchObserver previous = nullptr;
+
+    void Record(const NeuralDispatchEvent& event) {
+        Entry* entry = nullptr;
+        for (auto& known : entries)
+            if (known.op == event.op && known.layer == event.layer && known.device == event.device) entry = &known;
+        if (!entry) {
+            entries.emplace_back();
+            entry = &entries.back();
+            entry->layer = event.layer;
+            entry->op = event.op;
+            entry->device = event.device;
+        }
+        if (!event.provider_id.empty() || event.outcome == NeuralDispatchOutcome::NotServed)
+            entry->provider_id = event.provider_id;
+        switch (event.outcome) {
+            case NeuralDispatchOutcome::Ran: ++entry->ran; return;
+            case NeuralDispatchOutcome::Declined: ++entry->declined; break;
+            case NeuralDispatchOutcome::Failed: ++entry->failed; break;
+            case NeuralDispatchOutcome::NotServed: ++entry->not_served; break;
+        }
+        entry->reason = event.reason;
+        entry->detail = event.detail;
+    }
+};
+
+namespace {
+
+void TallyObserver(const NeuralDispatchEvent& event) {
+    NeuralDispatchTally::Impl* tally = g_tally;
+    if (!tally) return;
+    tally->Record(event);
+    if (tally->previous == &TallyObserver) {
+        // The tally around this one: it records, then passes on in its turn
+        g_tally = tally->outer;
+        TallyObserver(event);
+        g_tally = tally;
+    } else if (tally->previous) {
+        tally->previous(event);
+    }
+}
+
+}  // namespace
+
+NeuralDispatchTally::NeuralDispatchTally() : impl_(std::make_unique<Impl>()) {
+    impl_->outer = g_tally;
+    impl_->previous = g_dispatch_observer;
+    g_tally = impl_.get();
+    g_dispatch_observer = &TallyObserver;
+    g_not_served_reported.emplace_back();
+}
+
+NeuralDispatchTally::~NeuralDispatchTally() {
+    g_dispatch_observer = impl_->previous;
+    g_tally = impl_->outer;
+    if (!g_not_served_reported.empty()) g_not_served_reported.pop_back();
+}
+
+const std::vector<NeuralDispatchTally::Entry>& NeuralDispatchTally::Entries() const {
+    return impl_->entries;
+}
+
+const NeuralDispatchTally::Entry* NeuralDispatchTally::Find(const char* layer, NeuralOp op) const {
+    const char* name = NeuralOpName(op);
+    for (const auto& entry : impl_->entries)
+        if (entry.op == name && entry.layer == (layer ? layer : "")) return &entry;
+    return nullptr;
 }
 
 ScopedNeuralProviderFailurePolicy::ScopedNeuralProviderFailurePolicy(NeuralProviderFailurePolicy policy)
@@ -176,12 +302,10 @@ bool DispatchNeuralProviderOp(const NeuralOpRequest& request, const char* layer,
     if (!provider) {
         const auto serving = registry.ListServing(request.target);
         if (!serving.empty()) {
-            const NeuralCapability capability = serving.front()->QueryCapability(request);
-            NeuralDispatchEvent event =
-                MakeEvent(request, layer, serving.front(), NeuralDispatchOutcome::Declined);
-            event.reason = BackendFallbackReasonName(capability.reason);
-            event.detail = capability.detail;
-            Notify(event);
+            ReportDeclined(request, layer, serving.front());
+        } else if (g_dispatch_observer) {
+            // Unobserved, this costs what it did before: nothing is built
+            ReportNotServedOnce(request, layer);
         }
         return false;
     }
@@ -201,6 +325,15 @@ bool DispatchNeuralProviderOp(const NeuralOpRequest& request, const char* layer,
     spdlog::warn("{}: provider {} {} failed ({}): {}; running the ArrayFire path", event.layer,
                  event.provider_id, event.op, event.reason, event.detail);
     return false;
+}
+
+void ReportNeuralProviderProbe(const NeuralOpRequest& request, const char* layer) {
+    if (!g_dispatch_observer) return;
+    auto& registry = NeuralProviderRegistry::Instance();
+    if (registry.FindSupporting(request)) return;
+    const auto serving = registry.ListServing(request.target);
+    if (serving.empty()) ReportNotServedOnce(request, layer);
+    else ReportDeclined(request, layer, serving.front());
 }
 
 } // namespace cyxwiz

@@ -13,6 +13,8 @@
 // host float arrays; the kernels still run on the oneAPI device.
 #include "cyxwiz/neural_provider.h"
 
+#include "neural_provider_absence.h"
+
 #include "../../../oneapi/cyxwiz_oneapi_kernels.h"
 #include "../../core/loaded_library.h"
 
@@ -315,12 +317,21 @@ private:
 
 }  // namespace
 
+// How the process found the kernel library, for the reason a oneAPI device
+// has no provider (WhyNoNeuralProviderServes)
+provider_absence::ModuleState OneapiKernelLibraryState() {
+    std::error_code ec;
+    return std::filesystem::exists(BackendDirectory() / kKernelLibrary, ec) ? provider_absence::ModuleState::Present
+                                                                            : provider_absence::ModuleState::NotFound;
+}
+
 void RegisterOneapiSyclNeuralProvider(NeuralProviderRegistry& registry) {
     const std::filesystem::path library = BackendDirectory() / kKernelLibrary;
     std::error_code ec;
     if (!std::filesystem::exists(library, ec)) {
-        spdlog::info("oneAPI neural provider not registered (reason={}): {} is not installed",
-                     BackendFallbackReasonName(BackendFallbackReason::OneapiProviderUnavailable), library.string());
+        spdlog::info("oneAPI neural provider not registered (reason={}): {} is not installed. {}",
+                     BackendFallbackReasonName(BackendFallbackReason::ProviderNotInstalled), library.string(),
+                     DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderNotInstalled, DeviceType::ONEAPI).fix);
         return;
     }
     auto provider = std::make_shared<OneapiSyclProvider>(library);

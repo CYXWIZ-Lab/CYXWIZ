@@ -423,6 +423,45 @@ CYXWIZ_API size_t OpenclProviderRetentionFloorHidden();
 CYXWIZ_API void SetOpenclProviderRetentionFloorForTesting(size_t hidden_floor);
 #endif
 
+// Why no provider serves a device family, with the words shown wherever the
+// reason is shown: a display name ("NVIDIA provider not installed") and one
+// sentence saying what to do ("Install the CUDA GPU pack."). `fixable` is
+// false when there is nothing to do: no provider is offered for the operation
+// on that family, and ArrayFire is the designed path.
+struct NeuralProviderAbsence {
+    BackendFallbackReason reason = BackendFallbackReason::ProviderNotOffered;
+    bool fixable = false;
+    std::string name;
+    std::string fix;
+    // "<name>. <fix>"
+    std::string Sentence() const { return fix.empty() ? name : name + ". " + fix; }
+};
+
+// Whether any provider implements `op` for a device family, in any build:
+// every op on CUDA, recurrent layers and attention on OpenCL, attention on
+// oneAPI, nothing on the CPU. It says what exists, not what is installed.
+CYXWIZ_API bool NeuralProviderOfferedFor(DeviceType platform, NeuralOp op);
+
+// Why no registered provider serves `platform` for `op` in this process,
+// decided in this order:
+//  - no provider is offered for the op on that family: provider_not_offered;
+//  - providers are turned off for the process: provider_disabled;
+//  - NVIDIA (CUDA): the module was found with another ABI or without its
+//    entry points: provider_abi_mismatch; it loaded and found no CUDA device:
+//    nvidia_provider_unavailable; it was not found: provider_not_installed
+//    when this build made the module (CYXWIZ_HAS_NVIDIA_DNN_PROVIDER), else
+//    provider_not_built. A module that is found is used whatever the build
+//    flag says, so "built" is judged by the define only when none is found;
+//  - OpenCL: compiled out: provider_not_built; compiled in and no OpenCL GPU
+//    was found: opencl_provider_unavailable;
+//  - oneAPI: compiled out: provider_not_built; the kernel library is absent:
+//    provider_not_installed; it has another ABI: provider_abi_mismatch.
+// Meant for the case where ListServing is empty; when a provider does serve
+// the family, ask its QueryCapability instead.
+CYXWIZ_API NeuralProviderAbsence WhyNoNeuralProviderServes(DeviceType platform, NeuralOp op);
+// The words of `reason` on a device family, for any of the reasons above.
+CYXWIZ_API NeuralProviderAbsence DescribeNeuralProviderAbsence(BackendFallbackReason reason, DeviceType platform);
+
 // The single provider registry (no parallel provider lists anywhere else).
 // Built-in providers self-register on first access when their build flag
 // is enabled AND their runtime probe succeeds; an empty registry is the

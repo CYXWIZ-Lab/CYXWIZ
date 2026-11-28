@@ -7,17 +7,19 @@
 //    with it, and the Engine's placement builds the same request from the
 //    compiled shapes, so the placement and the run ask the same question.
 //  - One dispatch: find the provider, run it, report the outcome. A run can
-//    observe every outcome (ran, declined, failed) and can make a provider
-//    failure stop the run instead of falling back to ArrayFire.
+//    observe every outcome (ran, declined, failed, not served) and can make a
+//    provider failure stop the run instead of falling back to ArrayFire.
 
 #include "api_export.h"
 #include "neural_provider.h"
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -90,23 +92,32 @@ enum class NeuralDispatchOutcome {
     Ran,       // the provider ran the op
     Declined,  // a provider serves the device but not this request: ArrayFire runs it on the same device
     Failed,    // the provider was chosen and failed
+    // No provider serves the request's device family: ArrayFire runs the op.
+    // Reported once per (layer, op, device family) in an observer's scope, not
+    // per call, with the reason (provider_not_built, provider_not_installed,
+    // provider_abi_mismatch, provider_disabled, provider_not_offered, or the
+    // family's *_provider_unavailable) and its words in `detail`.
+    NotServed,
 };
 CYXWIZ_API const char* NeuralDispatchOutcomeName(NeuralDispatchOutcome outcome);
 
 struct NeuralDispatchEvent {
-    std::string provider_id;
+    std::string provider_id;       // empty for NotServed: there is no provider
     std::string provider_version;
     std::string op;      // NeuralOpName
     std::string layer;   // the layer family asking ("LSTM", "Conv2D", ...)
     std::string device;  // NeuralDevicePlatformName of the request's target
     NeuralDispatchOutcome outcome = NeuralDispatchOutcome::Ran;
-    std::string reason;  // BackendFallbackReasonName, for Declined and Failed
+    std::string reason;  // BackendFallbackReasonName, for every outcome but Ran
     std::string detail;
 };
 
 // Called on the thread that dispatches (as the host-sync observer is).
 using NeuralDispatchObserver = void (*)(const NeuralDispatchEvent& event);
 
+// An observer's scope on this thread: a run, or a test. It is also the scope
+// of "once" for NotServed: each scope hears of an unserved (layer, op, device
+// family) one time, however often the op is asked for.
 class CYXWIZ_API ScopedNeuralDispatchObserver {
 public:
     explicit ScopedNeuralDispatchObserver(NeuralDispatchObserver observer);
@@ -139,6 +150,41 @@ private:
 
 CYXWIZ_API NeuralProviderFailurePolicy CurrentNeuralProviderFailurePolicy();
 
+// What ran where, counted: every dispatch outcome on this thread while the
+// tally lives, per (layer, op). It is an observer scope of its own and passes
+// each event on to the observer that was set before it, so a run's trace
+// still sees everything. A trainer uses it to say how its ops computed; a
+// test uses it to require a path (CYXWIZ_EXPECT_PATH).
+class CYXWIZ_API NeuralDispatchTally {
+public:
+    struct Entry {
+        std::string layer;        // "PPO", "Adam", "fused MLP", "LSTM", ...
+        std::string op;           // NeuralOpName
+        std::string device;       // NeuralDevicePlatformName
+        std::string provider_id;  // the provider that ran or answered last; empty when none serves the device
+        uint64_t ran = 0;
+        uint64_t declined = 0;
+        uint64_t failed = 0;
+        uint64_t not_served = 0;  // reports, not calls: NotServed is reported once per scope
+        std::string reason;       // of the last outcome that was not Ran
+        std::string detail;
+    };
+
+    NeuralDispatchTally();
+    ~NeuralDispatchTally();
+    NeuralDispatchTally(const NeuralDispatchTally&) = delete;
+    NeuralDispatchTally& operator=(const NeuralDispatchTally&) = delete;
+
+    const std::vector<Entry>& Entries() const;
+    // The entry of (layer, op), or null when it was never dispatched.
+    const Entry* Find(const char* layer, NeuralOp op) const;
+
+    struct Impl;
+
+private:
+    std::unique_ptr<Impl> impl_;
+};
+
 // Thrown by DispatchNeuralProviderOp under NeuralProviderFailurePolicy::Fail.
 class NeuralProviderRouteError : public std::runtime_error {
 public:
@@ -159,7 +205,9 @@ CYXWIZ_API bool IsNeuralProviderRouteError(const std::exception& e);
 
 // Runs `execute` on the first provider that serves request.target and
 // supports the request. Returns true when it ran.
-//  - No provider serves the device: false; nothing is reported.
+//  - No provider serves the device: false; NotServed is reported, once per
+//    (layer, op, device family) in the observer's scope, with the reason
+//    WhyNoNeuralProviderServes gives. Without an observer nothing is built.
 //  - Every serving provider declines: false; Declined is reported.
 //  - execute returns !ok: Failed is reported and logged; under the Fail
 //    policy NeuralProviderRouteError is thrown, otherwise false.
@@ -167,5 +215,12 @@ CYXWIZ_API bool IsNeuralProviderRouteError(const std::exception& e);
 using NeuralProviderExecute = std::function<NeuralOpStatus(INeuralNetworkProvider& provider)>;
 CYXWIZ_API bool DispatchNeuralProviderOp(const NeuralOpRequest& request, const char* layer,
                                          const NeuralProviderExecute& execute);
+
+// For a caller that asks the registry once and then never dispatches when no
+// provider takes the request (FusedMlp::For): reports to the thread's
+// observer why not, as the dispatch would (NotServed once per scope, or
+// Declined with the serving provider's reason). Nothing when a provider
+// supports the request, and nothing without an observer.
+CYXWIZ_API void ReportNeuralProviderProbe(const NeuralOpRequest& request, const char* layer);
 
 } // namespace cyxwiz

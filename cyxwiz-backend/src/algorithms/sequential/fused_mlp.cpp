@@ -75,7 +75,7 @@ std::vector<Tensor> RunFused(const NeuralOpRequest& r, const std::vector<const T
     std::string why = status.detail;
     if (!asked) {  // declined: the serving provider's own reason (a row limit, say)
         const auto serving = NeuralProviderRegistry::Instance().ListServing(r.target);
-        why = serving.empty() ? std::string("no neural provider serves ") + NeuralDevicePlatformName(r.target.platform)
+        why = serving.empty() ? WhyNoNeuralProviderServes(r.target.platform, r.op).Sentence()
                               : std::string(serving.front()->ProviderId()) + " declined it: " +
                                     serving.front()->QueryCapability(r).detail;
     }
@@ -88,6 +88,15 @@ FusedMlp::FusedMlp(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 FusedMlp::~FusedMlp() = default;
 
 std::unique_ptr<FusedMlp> FusedMlp::For(SequentialModel& model, std::string& why) {
+    Refusal refusal;
+    auto fused = For(model, refusal);
+    why = refusal.text;
+    return fused;
+}
+
+std::unique_ptr<FusedMlp> FusedMlp::For(SequentialModel& model, Refusal& refusal) {
+    refusal = Refusal{};
+    std::string& why = refusal.text;
     auto impl = std::make_unique<Impl>();
     impl->model = &model;
     NeuralOpRequest& r = impl->request;
@@ -162,15 +171,31 @@ std::unique_ptr<FusedMlp> FusedMlp::For(SequentialModel& model, std::string& why
     r.mlp_layers = layers;
     for (size_t l = 0; l < layers; ++l) impl->z_width += r.mlp_widths[l + 1];
     // A probe, not a run: the calls themselves go through the dispatch
-    const auto provider = NeuralProviderRegistry::Instance().FindSupporting(r);
+    auto& registry = NeuralProviderRegistry::Instance();
+    const auto provider = registry.FindSupporting(r);
     if (!provider) {
-        why = std::string("no neural provider runs this network on ") + NeuralDevicePlatformName(r.target.platform);
+        // An absent provider and a provider that declines this network are
+        // different causes with different remedies: say which
+        const auto serving = registry.ListServing(r.target);
+        if (serving.empty()) {
+            refusal.no_provider = true;
+            refusal.absence = WhyNoNeuralProviderServes(r.target.platform, r.op);
+            refusal.reason = BackendFallbackReasonName(refusal.absence.reason);
+            why = refusal.absence.fixable ? refusal.absence.Sentence() : refusal.absence.name;
+        } else {
+            const NeuralCapability capability = serving.front()->QueryCapability(r);
+            refusal.reason = BackendFallbackReasonName(capability.reason);
+            why = std::string(serving.front()->ProviderId()) + " declined this network: " + capability.detail;
+        }
+        ReportNeuralProviderProbe(r, "fused MLP");
         return nullptr;
     }
     NeuralOpRequest backward = r;
     backward.op = NeuralOp::MlpBackward;
-    if (!provider->QueryCapability(backward).supported) {
+    if (const NeuralCapability capability = provider->QueryCapability(backward); !capability.supported) {
+        refusal.reason = BackendFallbackReasonName(capability.reason);
         why = std::string(provider->ProviderId()) + " has no mlp_backward for this network";
+        ReportNeuralProviderProbe(backward, "fused MLP");
         return nullptr;
     }
     impl->provider_id = provider->ProviderId();
