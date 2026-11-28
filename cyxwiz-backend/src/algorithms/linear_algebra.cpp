@@ -22,6 +22,7 @@
 #include <utility>
 
 #include <arrayfire.h>
+#include "arrayfire_matmul.h"
 
 #ifdef min
 #undef min
@@ -120,7 +121,7 @@ bool CholeskyLower(const af::array& a, af::array& lower) {
     if (af::cholesky(lower, a, /*is_upper=*/false) != 0) return false;
     if (!af::allTrue<bool>(af::isInf(lower) == 0 && af::isNaN(lower) == 0)) return false;
     if (!af::allTrue<bool>(af::diag(lower) > 0.0)) return false;
-    const af::array residual = af::matmul(lower, lower, AF_MAT_NONE, AF_MAT_TRANS) - a;
+    const af::array residual = cyxwiz::DeviceMatMul(lower, lower, AF_MAT_NONE, AF_MAT_TRANS) - a;
     const double scale = std::sqrt(af::sum<double>(a * a));
     return std::sqrt(af::sum<double>(residual * residual)) <= std::sqrt(SingularTolerance()) * (1.0 + scale);
 }
@@ -204,7 +205,7 @@ MatrixResult LinearAlgebra::Multiply(const std::vector<std::vector<double>>& A, 
         return result;
     }
     try {
-        return MatrixFromDevice(af::matmul(ToDevice(A), ToDevice(B)), "LinearAlgebra::Multiply");
+        return MatrixFromDevice(cyxwiz::DeviceMatMul(ToDevice(A), ToDevice(B)), "LinearAlgebra::Multiply");
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::Multiply", e));
     }
@@ -466,7 +467,7 @@ MatrixResult LinearAlgebra::LowRankApproximation(const std::vector<std::vector<d
         const af::seq top(0, k - 1);
         const af::array scaled =  // column j times s_j
             u(af::span, top) * af::tile(af::transpose(s(top)), static_cast<unsigned>(A.size()));
-        return MatrixFromDevice(af::matmul(scaled, vt(top, af::span)), "LinearAlgebra::LowRankApproximation");
+        return MatrixFromDevice(cyxwiz::DeviceMatMul(scaled, vt(top, af::span)), "LinearAlgebra::LowRankApproximation");
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::LowRankApproximation", e));
     }
@@ -509,7 +510,7 @@ ColumnSummaryResult SummaryOf(const af::array& a) {
     const af::array sd = af::sqrt(af::mean(centred * centred, 0));
     result.mean = DeviceToHostValues(mean, "LinearAlgebra::ColumnSummary");
     result.sd = DeviceToHostValues(sd, "LinearAlgebra::ColumnSummary");
-    result.cross = ToHostMatrix(af::matmul(centred, centred, AF_MAT_TRANS, AF_MAT_NONE), "LinearAlgebra::ColumnSummary");
+    result.cross = ToHostMatrix(cyxwiz::DeviceMatMul(centred, centred, AF_MAT_TRANS, AF_MAT_NONE), "LinearAlgebra::ColumnSummary");
     result.rows = static_cast<int>(a.dims(0));
     result.precision = a.type() == f64 ? std::numeric_limits<double>::epsilon() : std::numeric_limits<float>::epsilon();
     result.success = true;
@@ -520,7 +521,7 @@ af::array AffineOf(af::array a, const std::vector<double>& shift, const std::vec
     const unsigned n = static_cast<unsigned>(a.dims(0));
     if (!shift.empty()) a -= af::tile(RowOf(shift, a.dims(1), 0.0), n);
     if (!divisor.empty()) a /= af::tile(RowOf(divisor, a.dims(1), 1.0), n);
-    return af::matmul(a, ToDevice(W));
+    return cyxwiz::DeviceMatMul(a, ToDevice(W));
 }
 
 std::string AffineRefusal(size_t d, const std::vector<double>& shift, const std::vector<double>& divisor, const Matrix& W) {
@@ -563,20 +564,20 @@ SVDResult LinearAlgebra::LeadingEigenvectors(const std::vector<std::vector<doubl
         af::array q = cyxwiz::DeviceNormal(af::dim4(d, l), s.type(), engine);
         // Orthonormal columns by Cholesky QR (l x l only; a ridge keeps a rank-deficient block solvable).
         const auto orthonormal = [&](const af::array& z) {
-            af::array g = af::matmul(z, z, AF_MAT_TRANS, AF_MAT_NONE);
+            af::array g = cyxwiz::DeviceMatMul(z, z, AF_MAT_TRANS, AF_MAT_NONE);
             g += af::identity(l, l, g.type()) * (1e-12 * af::sum<double>(af::diag(g)) + 1e-300);
             af::array r;
             if (af::cholesky(r, g, /*is_upper=*/true) != 0) throw af::exception("Cholesky QR failed");
-            return af::matmul(z, af::inverse(r));
+            return cyxwiz::DeviceMatMul(z, af::inverse(r));
         };
         q = orthonormal(q);
-        for (int it = 0; it < iterations; ++it) q = orthonormal(af::matmul(s, q));
+        for (int it = 0; it < iterations; ++it) q = orthonormal(cyxwiz::DeviceMatMul(s, q));
         // Rayleigh-Ritz: the small l x l problem gives the vectors within the subspace.
-        const af::array within = af::matmul(q, af::matmul(s, q), AF_MAT_TRANS, AF_MAT_NONE);
+        const af::array within = cyxwiz::DeviceMatMul(q, cyxwiz::DeviceMatMul(s, q), AF_MAT_TRANS, AF_MAT_NONE);
         af::array u, sv, vt;
         af::svd(u, sv, vt, within);
         const af::seq top(0, k - 1);
-        const af::array vectors = af::matmul(q, u(af::span, top));  // d x k
+        const af::array vectors = cyxwiz::DeviceMatMul(q, u(af::span, top));  // d x k
         result.S = DeviceToHostValues(sv(top), "LinearAlgebra::LeadingEigenvectors");
         result.Vt = ToHostMatrix(af::transpose(vectors), "LinearAlgebra::LeadingEigenvectors");
         result.m = result.n = d;
@@ -682,7 +683,7 @@ MatrixResult LinearAlgebra::SparseGram(const CsrView& X) {
             if (!place.empty())
                 block(af::array(static_cast<dim_t>(place.size()), place.data())) = af::array(static_cast<dim_t>(values.size()), values.data());
             block = af::moddims(block, X.rows, last - first);
-            gram(af::span, af::seq(first, last - 1)) = af::matmul(x, block, AF_MAT_TRANS, AF_MAT_NONE);
+            gram(af::span, af::seq(first, last - 1)) = cyxwiz::DeviceMatMul(x, block, AF_MAT_TRANS, AF_MAT_NONE);
         }
         return MatrixFromDevice(gram, "LinearAlgebra::SparseGram");
     } catch (const af::exception& e) {
@@ -703,7 +704,7 @@ MatrixResult LinearAlgebra::SparseMultiply(const CsrView& X, const std::vector<s
         if (nnz == 0) return MatrixFromDevice(af::constant(0.0, X.rows, b.dims(1), f32), "LinearAlgebra::SparseMultiply");
         const af::array x = af::sparse(X.rows, X.cols, af::array(nnz, X.values), af::array(static_cast<dim_t>(X.rows + 1), X.row_offsets),
                                        af::array(nnz, X.column_indices), AF_STORAGE_CSR);
-        return MatrixFromDevice(af::matmul(x, b), "LinearAlgebra::SparseMultiply");
+        return MatrixFromDevice(cyxwiz::DeviceMatMul(x, b), "LinearAlgebra::SparseMultiply");
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::SparseMultiply", e));
     }
@@ -847,7 +848,7 @@ bool LinearAlgebra::IsOrthogonal(const std::vector<std::vector<double>>& A, doub
     if (!IsRectangularMatrix(A) || A.size() < A[0].size()) return false;
     try {
         const af::array a = ToDevice(A);
-        const af::array gram = af::matmul(a, a, AF_MAT_TRANS, AF_MAT_NONE);
+        const af::array gram = cyxwiz::DeviceMatMul(a, a, AF_MAT_TRANS, AF_MAT_NONE);
         const af::array eye = af::identity(gram.dims(0), gram.dims(1), gram.type());
         // float32 devices cannot reach the float64 default tolerance.
         const double effective = DeviceHasDouble() ? tolerance : std::max(tolerance, 1e-5);

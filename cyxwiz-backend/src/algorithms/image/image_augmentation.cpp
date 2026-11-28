@@ -11,6 +11,7 @@
 #include <stdexcept>
 
 #include <arrayfire.h>
+#include "../arrayfire_matmul.h"
 
 namespace cyxwiz::image {
 
@@ -344,9 +345,9 @@ af::array ResizedCrop(const af::array& images, const ImageOpDraws& draws, int he
     const af::array rows_op = ResampleWeights(h, draws.top, draws.box_height, height, interpolation);
     const af::array cols_op = ResampleWeights(w, draws.left, draws.box_width, width, interpolation);
     const af::array along_h =
-        af::moddims(af::matmul(rows_op, af::moddims(images, h, w * c, 1, n)), height, w, c, n);
+        af::moddims(cyxwiz::DeviceMatMul(rows_op, af::moddims(images, h, w * c, 1, n)), height, w, c, n);
     const af::array by_width = af::moddims(af::reorder(along_h, 1, 0, 2, 3), w, height * c, 1, n);
-    const af::array along_w = af::moddims(af::matmul(cols_op, by_width), width, height, c, n);
+    const af::array along_w = af::moddims(cyxwiz::DeviceMatMul(cols_op, by_width), width, height, c, n);
     return af::reorder(along_w, 1, 0, 2, 3);
 }
 
@@ -555,11 +556,11 @@ af::array BlurOperator(size_t size, int kernel_size, float sigma) {
 af::array GaussianBlur(const af::array& images, int kernel_size, float sigma) {
     const dim_t h = images.dims(0), w = images.dims(1), c = images.dims(2), n = images.dims(3);
     const af::array along_h = af::moddims(
-        af::matmul(BlurOperator(static_cast<size_t>(h), kernel_size, sigma), af::moddims(images, h, w * c * n)),
+        cyxwiz::DeviceMatMul(BlurOperator(static_cast<size_t>(h), kernel_size, sigma), af::moddims(images, h, w * c * n)),
         h, w, c, n);
     const af::array by_width = af::moddims(af::reorder(along_h, 1, 0, 2, 3), w, h * c * n);
     const af::array along_w = af::moddims(
-        af::matmul(BlurOperator(static_cast<size_t>(w), kernel_size, sigma), by_width), w, h, c, n);
+        cyxwiz::DeviceMatMul(BlurOperator(static_cast<size_t>(w), kernel_size, sigma), by_width), w, h, c, n);
     return af::reorder(along_w, 1, 0, 2, 3);
 }
 

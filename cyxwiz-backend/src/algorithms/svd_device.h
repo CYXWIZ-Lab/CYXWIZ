@@ -18,6 +18,7 @@
 #include <limits>
 
 #include <arrayfire.h>
+#include "arrayfire_matmul.h"
 
 namespace cyxwiz::detail {
 
@@ -40,7 +41,7 @@ inline void ThinSvd(const af::array& a, af::array& u, af::array& s, af::array& v
         vt = vt(af::seq(0, static_cast<double>(k - 1)), af::span);
         return;
     }
-    const af::array gram = af::matmul(a, a, AF_MAT_TRANS, AF_MAT_NONE);
+    const af::array gram = cyxwiz::DeviceMatMul(a, a, AF_MAT_TRANS, AF_MAT_NONE);
     af::array gu, gs;
     af::svd(gu, gs, vt, gram);  // symmetric PSD: gs = s^2, the rows of vt are V's columns
     s = af::sqrt(af::max(gs, 0.0));
@@ -50,7 +51,7 @@ inline void ThinSvd(const af::array& a, af::array& u, af::array& s, af::array& v
     }
     const af::array kept = (s > 0.0).as(s.type());
     const af::array inverse = kept / (s + (1.0 - kept));
-    u = af::matmul(a, vt, AF_MAT_NONE, AF_MAT_TRANS) * af::tile(af::transpose(inverse), static_cast<unsigned>(a.dims(0)));
+    u = cyxwiz::DeviceMatMul(a, vt, AF_MAT_NONE, AF_MAT_TRANS) * af::tile(af::transpose(inverse), static_cast<unsigned>(a.dims(0)));
 }
 
 inline af::array LeastSquaresSvd(const af::array& a, const af::array& b) {
@@ -65,9 +66,9 @@ inline af::array LeastSquaresSvd(const af::array& a, const af::array& b) {
     const double cutoff = noise * af::max<double>(s);
     const af::array kept = (s > cutoff).as(s.type());
     const af::array inverse = kept / (s + (1.0 - kept));  // 1 / s where kept, 0 elsewhere
-    const af::array ub = af::matmul(u, b, AF_MAT_TRANS, AF_MAT_NONE);
+    const af::array ub = cyxwiz::DeviceMatMul(u, b, AF_MAT_TRANS, AF_MAT_NONE);
     const af::array scaled = ub * af::tile(inverse, 1, static_cast<unsigned>(b.dims(1)));
-    return af::matmul(vt, scaled, AF_MAT_TRANS, AF_MAT_NONE);
+    return cyxwiz::DeviceMatMul(vt, scaled, AF_MAT_TRANS, AF_MAT_NONE);
 }
 
 }  // namespace cyxwiz::detail

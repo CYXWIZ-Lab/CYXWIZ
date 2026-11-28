@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <spdlog/spdlog.h>
+#include "../arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -177,7 +178,7 @@ Tensor LSTMLayer::ForwardArrayFire(const Tensor& input, bool use_initial_state) 
             const dim_t in = layer_input.dims(2);
 
             // Input projections for every time step at once: [seq, batch, 4H].
-            af::array input_proj = af::matmul(
+            af::array input_proj = cyxwiz::DeviceMatMul(
                 af::moddims(layer_input, af::dim4(static_cast<dim_t>(seq_i) * batch_i, in)),
                 af::transpose(W_ih));
             input_proj.eval();
@@ -198,7 +199,7 @@ Tensor LSTMLayer::ForwardArrayFire(const Tensor& input, bool use_initial_state) 
                 // Pre-activation gates [i | f | g | o]: [batch, 4H].
                 af::array gates = af::moddims(input_proj(t, af::span, af::span),
                                               af::dim4(batch_i, G)) +
-                                  af::matmul(h, W_hh_t) + b_hh_rows;
+                                  cyxwiz::DeviceMatMul(h, W_hh_t) + b_hh_rows;
                 gates.eval();
                 const af::array i_gate = af::sigmoid(gates(af::span, af::seq(0, H - 1)));
                 const af::array f_gate = af::sigmoid(gates(af::span, af::seq(H, 2 * H - 1)));

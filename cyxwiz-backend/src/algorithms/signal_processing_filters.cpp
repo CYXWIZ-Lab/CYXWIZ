@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <arrayfire.h>
+#include "arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -147,10 +148,10 @@ void SignalProcessing::ComputeFrequencyResponse(FilterCoefficients& filter, int 
     for (int i = 0; i < num_points; ++i) omega[static_cast<size_t>(i)] = PI * i / (num_points - 1);
     for (int k = 0; k < taps; ++k) index[static_cast<size_t>(k)] = k;
     try {
-        const af::array phase = af::matmul(ToDevice(omega), af::transpose(ToDevice(index)));  // [points, taps]
+        const af::array phase = cyxwiz::DeviceMatMul(ToDevice(omega), af::transpose(ToDevice(index)));  // [points, taps]
         const af::array b = ToDevice(filter.b);
-        const af::array re = af::matmul(af::cos(phase), b);
-        const af::array im = af::matmul(-af::sin(phase), b);
+        const af::array re = cyxwiz::DeviceMatMul(af::cos(phase), b);
+        const af::array im = cyxwiz::DeviceMatMul(-af::sin(phase), b);
         filter.freq_response_mag = ToHost(af::sqrt(re * re + im * im), "SignalProcessing::ComputeFrequencyResponse");
         filter.freq_response_phase = ToHost(af::atan2(im, re), "SignalProcessing::ComputeFrequencyResponse");
     } catch (const af::exception& e) {

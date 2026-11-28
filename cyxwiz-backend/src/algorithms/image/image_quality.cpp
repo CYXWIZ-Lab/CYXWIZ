@@ -7,6 +7,7 @@
 #include <arrayfire.h>
 
 #include "../arrayfire_host_materialization.h"
+#include "../arrayfire_matmul.h"
 
 namespace cyxwiz::image {
 
@@ -67,9 +68,9 @@ af::array AreaWeights(size_t in, int out) {
 // Difference-hash bits [8 (column), 8 (row), N] as 0/1.
 af::array HashBits(const af::array& luma) {
     const dim_t h = luma.dims(0), w = luma.dims(1), n = luma.dims(2);
-    const af::array rows = af::matmul(AreaWeights(static_cast<size_t>(h), kHashRows), af::moddims(luma, h, w * n));
+    const af::array rows = cyxwiz::DeviceMatMul(AreaWeights(static_cast<size_t>(h), kHashRows), af::moddims(luma, h, w * n));
     const af::array by_column = af::moddims(af::reorder(af::moddims(rows, kHashRows, w, n), 1, 0, 2), w, kHashRows * n);
-    const af::array shrunk = af::moddims(af::matmul(AreaWeights(static_cast<size_t>(w), kHashCols), by_column),
+    const af::array shrunk = af::moddims(cyxwiz::DeviceMatMul(AreaWeights(static_cast<size_t>(w), kHashCols), by_column),
                                         kHashCols, kHashRows, n);
     return shrunk(af::seq(1, kHashCols - 1), af::span, af::span) > shrunk(af::seq(0, kHashCols - 2), af::span, af::span);
 }
@@ -143,7 +144,7 @@ std::vector<int64_t> FindNearDuplicates(const std::vector<uint64_t>& hashes, int
     const size_t tile = std::clamp<size_t>((size_t{1} << 24) / n, 1, n);
     for (size_t t0 = 0; t0 < n; t0 += tile) {
         const size_t rows = (std::min)(tile, n - t0);
-        const af::array dots = af::matmul(all(af::span, af::seq(static_cast<double>(t0), static_cast<double>(t0 + rows - 1))),
+        const af::array dots = cyxwiz::DeviceMatMul(all(af::span, af::seq(static_cast<double>(t0), static_cast<double>(t0 + rows - 1))),
                                           all, AF_MAT_TRANS, AF_MAT_NONE);
         const af::dim4 dims(static_cast<dim_t>(rows), static_cast<dim_t>(n));
         const af::array later = af::range(dims, 1) > (af::range(dims, 0) + static_cast<int>(t0));

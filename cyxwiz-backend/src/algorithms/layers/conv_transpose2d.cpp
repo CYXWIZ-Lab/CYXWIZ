@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#include "../arrayfire_matmul.h"
 
 namespace cyxwiz {
 namespace {
@@ -225,8 +226,8 @@ Tensor ConvTranspose2DLayer::Forward(const Tensor &input) {
     const af::array filters_t = af::tile(
         af::transpose(af::moddims(weights_.GetSemanticArray(), static_cast<dim_t>(g.filter_rows), in_channels_)),
         1, 1, static_cast<unsigned>(n));
-    const af::array patches = af::moddims(af::matmul(x, filters_t), positions * area, out_channels_ * n);
-    af::array output = af::moddims(af::matmul(scatter_->place, patches), static_cast<dim_t>(g.native.out_h),
+    const af::array patches = af::moddims(cyxwiz::DeviceMatMul(x, filters_t), positions * area, out_channels_ * n);
+    af::array output = af::moddims(cyxwiz::DeviceMatMul(scatter_->place, patches), static_cast<dim_t>(g.native.out_h),
                                    static_cast<dim_t>(g.native.out_w), out_channels_, n);
     if (use_bias_) {
       output += af::tile(
@@ -265,14 +266,14 @@ Tensor ConvTranspose2DLayer::Backward(const Tensor &grad_output) {
     const af::array dy = grad_output.GetSemanticArray();
     // Each pixel's patch gradient: [P*k*k, Cout*N] -> [P, k*k*Cout, N].
     const af::array dy_flat = af::moddims(dy, static_cast<dim_t>(g.native.out_h * g.native.out_w), out_channels_ * n);
-    const af::array dpatches = af::moddims(af::matmul(scatter_->lift, dy_flat), positions,
+    const af::array dpatches = af::moddims(cyxwiz::DeviceMatMul(scatter_->lift, dy_flat), positions,
                                            static_cast<dim_t>(g.filter_rows), n);
     const af::array filters = af::moddims(weights_.GetSemanticArray(), static_cast<dim_t>(g.filter_rows), in_channels_);
-    af::array dx = af::moddims(af::matmul(dpatches, af::tile(filters, 1, 1, static_cast<unsigned>(n))),
+    af::array dx = af::moddims(cyxwiz::DeviceMatMul(dpatches, af::tile(filters, 1, 1, static_cast<unsigned>(n))),
                                static_cast<dim_t>(g.native.in_h), static_cast<dim_t>(g.native.in_w), in_channels_, n);
     const af::array x = af::moddims(cached_input_.GetSemanticArray(), positions, in_channels_, n);
     // dW: sum over samples of x^T . dpatches -> [Cin, k*k*Cout] -> [k, k, Cout, Cin]
-    af::array dw = af::moddims(af::transpose(af::sum(af::matmulTN(x, dpatches), 2)), kernel_size_, kernel_size_,
+    af::array dw = af::moddims(af::transpose(af::sum(cyxwiz::DeviceMatMulTN(x, dpatches), 2)), kernel_size_, kernel_size_,
                                out_channels_, in_channels_);
     dx.eval();
     dw.eval();

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <spdlog/spdlog.h>
+#include "../arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -234,7 +235,7 @@ Tensor GRULayer::ForwardArrayFire(const Tensor& input, bool use_initial_state) {
                                                  static_cast<unsigned int>(batch_i));
             const dim_t in = layer_input.dims(2);
 
-            af::array input_proj = af::matmul(
+            af::array input_proj = cyxwiz::DeviceMatMul(
                 af::moddims(layer_input, af::dim4(static_cast<dim_t>(seq_i) * batch_i, in)),
                 af::transpose(W_ih));
             input_proj.eval();
@@ -250,7 +251,7 @@ Tensor GRULayer::ForwardArrayFire(const Tensor& input, bool use_initial_state) {
 
             for (int t = 0; t < seq_i; ++t) {
                 const af::array x_t = af::moddims(input_proj(t, af::span, af::span), af::dim4(batch_i, G));
-                af::array h_proj = af::matmul(h, W_hh_t) + b_hh_rows;
+                af::array h_proj = cyxwiz::DeviceMatMul(h, W_hh_t) + b_hh_rows;
                 h_proj.eval();
                 const af::array r = af::sigmoid(x_t(af::span, af::seq(0, H - 1)) +
                                                 h_proj(af::span, af::seq(0, H - 1)));

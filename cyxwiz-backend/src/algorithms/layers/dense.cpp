@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <spdlog/spdlog.h>
+#include "../arrayfire_matmul.h"
 
 #ifdef max
 #undef max
@@ -85,7 +86,7 @@ Tensor DenseLayer::Forward(const Tensor& input) {
         // Matrix multiply: output = x @ W^T
         // Where W is [out_features, in_features]
         af::array output =
-            af::matmul(x, w, AF_MAT_NONE, AF_MAT_TRANS);
+            cyxwiz::DeviceMatMul(x, w, AF_MAT_NONE, AF_MAT_TRANS);
         output.eval();
 
         if (use_bias_) {
@@ -148,7 +149,7 @@ Tensor DenseLayer::Backward(const Tensor& grad_output) {
 
         // Gradient w.r.t weights: dW = grad_out^T @ x
         af::array dW =
-            af::matmul(grad_out, x, AF_MAT_TRANS, AF_MAT_NONE);
+            cyxwiz::DeviceMatMul(grad_out, x, AF_MAT_TRANS, AF_MAT_NONE);
         dW.eval();
         grad_weights_ = Tensor::FromArrayRowMajor2D(dW);
 
@@ -163,7 +164,7 @@ Tensor DenseLayer::Backward(const Tensor& grad_output) {
         }
 
         // Gradient w.r.t input: dx = grad_out @ W
-        af::array dx = af::matmul(grad_out, w);
+        af::array dx = cyxwiz::DeviceMatMul(grad_out, w);
         dx.eval();
 
         return is_batched

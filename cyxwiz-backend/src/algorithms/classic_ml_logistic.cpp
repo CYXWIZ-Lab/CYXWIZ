@@ -23,6 +23,7 @@
 #include <limits>
 #include <string>
 #include <vector>
+#include "arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -46,7 +47,7 @@ af::array WithBias(const af::array& x) {
 // Logits [n, k_out] from the flat parameters [(d + 1) * k_out] (column-major
 // [d + 1, k_out]: coefficients then the intercept, per output).
 af::array Logits(const af::array& xb, const af::array& w, dim_t k_out) {
-    return af::matmul(xb, af::moddims(w, xb.dims(1), k_out));
+    return cyxwiz::DeviceMatMul(xb, af::moddims(w, xb.dims(1), k_out));
 }
 
 // Row-wise log-sum-exp of [n, k].
@@ -80,7 +81,7 @@ struct Objective {
         }
         const af::array penalised = w * penal;
         loss += 0.5 * l2 * Dot(penalised, penalised);
-        grad = af::flat(af::matmul(xb, residual, AF_MAT_TRANS)) / n + l2 * penalised;
+        grad = af::flat(cyxwiz::DeviceMatMul(xb, residual, AF_MAT_TRANS)) / n + l2 * penalised;
         grad.eval();
         return loss;
     }
@@ -241,7 +242,7 @@ ClassicPrediction ClassicML::PredictLogistic(const LogisticModel& model, const C
             params.back().push_back(model.intercept[r]);
         }
         const af::array w = MatrixToDevice(params).as(x.type()).T();  // [d + 1, k_out]
-        const af::array z = af::matmul(WithBias(x), w);
+        const af::array z = cyxwiz::DeviceMatMul(WithBias(x), w);
         af::array proba;
         if (model.coef.size() == 1) {
             const af::array p = af::sigmoid(z);

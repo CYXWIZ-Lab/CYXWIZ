@@ -15,6 +15,7 @@
 #include <limits>
 #include <string>
 #include <vector>
+#include "arrayfire_matmul.h"
 
 #ifdef min
 #undef min
@@ -85,21 +86,21 @@ Mixture MStep(const af::array& x, const af::array& resp, const std::string& type
     const af::array nk_col = af::tile(nk.T(), 1, static_cast<unsigned>(d));                  // [k, d]
     Mixture m;
     m.log_weights = af::log(nk / static_cast<double>(n));
-    m.means = af::matmul(resp, x, AF_MAT_TRANS, AF_MAT_NONE) / nk_col;
+    m.means = cyxwiz::DeviceMatMul(resp, x, AF_MAT_TRANS, AF_MAT_NONE) / nk_col;
     m.means.eval();
     if (type == "tied") {
-        const af::array avg_x2 = af::matmul(x, x, AF_MAT_TRANS, AF_MAT_NONE);
-        const af::array avg_means2 = af::matmul(nk_col * m.means, m.means, AF_MAT_TRANS, AF_MAT_NONE);
+        const af::array avg_x2 = cyxwiz::DeviceMatMul(x, x, AF_MAT_TRANS, AF_MAT_NONE);
+        const af::array avg_means2 = cyxwiz::DeviceMatMul(nk_col * m.means, m.means, AF_MAT_TRANS, AF_MAT_NONE);
         m.covs.push_back((avg_x2 - avg_means2) / af::sum<double>(nk) + kRegCovar * eye);
     } else if (type == "full") {
         for (int c = 0; c < static_cast<int>(k); ++c) {
             const af::array diff = x - af::tile(m.means(c, af::span), static_cast<unsigned>(n), 1);
             const af::array weighted = diff * af::tile(resp(af::span, c), 1, static_cast<unsigned>(d));
             const double count = af::sum<double>(nk(c));
-            m.covs.push_back(af::matmul(weighted, diff, AF_MAT_TRANS, AF_MAT_NONE) / count + kRegCovar * eye);
+            m.covs.push_back(cyxwiz::DeviceMatMul(weighted, diff, AF_MAT_TRANS, AF_MAT_NONE) / count + kRegCovar * eye);
         }
     } else {  // diag, spherical: per-feature variances [k, d]
-        const af::array avg_x2 = af::matmul(resp, x * x, AF_MAT_TRANS, AF_MAT_NONE) / nk_col;
+        const af::array avg_x2 = cyxwiz::DeviceMatMul(resp, x * x, AF_MAT_TRANS, AF_MAT_NONE) / nk_col;
         af::array variances = avg_x2 - m.means * m.means + kRegCovar;
         if (type == "spherical") variances = af::tile(af::mean(variances, 1), 1, static_cast<unsigned>(d));
         for (int c = 0; c < static_cast<int>(k); ++c) {

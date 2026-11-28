@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <spdlog/spdlog.h>
+#include "../arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -148,12 +149,12 @@ Tensor LSTMLayer::BackwardArrayFire(const Tensor& grad_output) {
 
                 const af::array dgates = af::join(1, di_pre, df_pre, dg_pre, do_pre);
                 const af::array x_t = af::moddims(cached_input(t, af::span, af::span), af::dim4(batch_i, in_i));
-                dW_ih = dW_ih + af::matmul(af::transpose(dgates), x_t);
-                dW_hh = dW_hh + af::matmul(af::transpose(dgates), h_prev);
+                dW_ih = dW_ih + cyxwiz::DeviceMatMul(af::transpose(dgates), x_t);
+                dW_hh = dW_hh + cyxwiz::DeviceMatMul(af::transpose(dgates), h_prev);
                 db = db + af::moddims(af::sum(dgates, 0), af::dim4(G));
                 d_layer_input(t, af::span, af::span) =
-                    af::moddims(af::matmul(dgates, W_ih), af::dim4(1, batch_i, in_i));
-                dh_next = af::matmul(dgates, W_hh);
+                    af::moddims(cyxwiz::DeviceMatMul(dgates, W_ih), af::dim4(1, batch_i, in_i));
+                dh_next = cyxwiz::DeviceMatMul(dgates, W_hh);
                 const int reverse_step = seq_i - 1 - t;
                 if (eval_interval <= 1 || reverse_step % eval_interval == 0 || t == 0) {
                     dW_ih.eval();

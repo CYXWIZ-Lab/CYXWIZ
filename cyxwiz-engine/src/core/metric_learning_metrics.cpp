@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "algorithms/arrayfire_matmul.h"
 
 #ifdef max
 #undef max
@@ -256,7 +257,7 @@ RetrievalMetricResult ComputeRetrievalArrayFire(const Tensor& embeddings,
     af::array squared_distances =
         af::tile(squared_norms, 1U, count) +
         af::tile(af::transpose(squared_norms), count, 1U) -
-        2.0f * af::matmul(matrix, matrix, AF_MAT_NONE, AF_MAT_TRANS);
+        2.0f * cyxwiz::DeviceMatMul(matrix, matrix, AF_MAT_NONE, AF_MAT_TRANS);
     squared_distances = af::max(squared_distances, 0.0f);
 
     const dim_t dimension = static_cast<dim_t>(shape.batch);

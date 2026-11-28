@@ -15,6 +15,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "../arrayfire_matmul.h"
 
 
 namespace cyxwiz {
@@ -279,7 +280,7 @@ Tensor Conv2DLayer::Forward(const Tensor& input) {
             TensorToAf(weights_),
             static_cast<dim_t>(geometry.kernel_elements),
             static_cast<dim_t>(out_channels_));
-        const af::array output_columns = af::matmulTN(filters, columns);
+        const af::array output_columns = cyxwiz::DeviceMatMulTN(filters, columns);
         af::array output = af::reorder(
             af::moddims(
                 output_columns,
@@ -353,7 +354,7 @@ Tensor Conv2DLayer::Backward(const Tensor& grad_output) {
             static_cast<dim_t>(out_channels_));
 
         af::array grad_weight = af::moddims(
-            af::matmulNT(columns, grad_columns),
+            cyxwiz::DeviceMatMulNT(columns, grad_columns),
             kernel_size_,
             kernel_size_,
             in_channels_,
@@ -372,7 +373,7 @@ Tensor Conv2DLayer::Backward(const Tensor& grad_output) {
 
         af::array grad_patches = af::reorder(
             af::moddims(
-                af::matmul(filters, grad_columns),
+                cyxwiz::DeviceMatMul(filters, grad_columns),
                 static_cast<dim_t>(
                     geometry.kernel_elements / geometry.in_channels),
                 in_channels_,

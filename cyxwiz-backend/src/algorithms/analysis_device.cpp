@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <random>
+#include "arrayfire_matmul.h"
 
 #ifdef min
 #undef min
@@ -82,7 +83,7 @@ af::array PairwiseDistances(const af::array& rows, const af::array& all, const s
         };
         // Clipped to [0, 2] as scikit-learn: rounding can leave a row's distance
         // to itself at -2e-16, which would flip a 1/d weight.
-        return af::clamp(1.0 - af::matmul(unit(rows), unit(all), AF_MAT_NONE, AF_MAT_TRANS), 0.0, 2.0);
+        return af::clamp(1.0 - cyxwiz::DeviceMatMul(unit(rows), unit(all), AF_MAT_NONE, AF_MAT_TRANS), 0.0, 2.0);
     }
     const bool manhattan = metric == "manhattan";
     af::array total = af::constant(0.0, b, n, rows.type());

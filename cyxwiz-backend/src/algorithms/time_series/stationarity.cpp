@@ -13,13 +13,13 @@
 #include "cyxwiz/statistical_tests.h"
 #include "mackinnon.h"
 #include "series_device.h"
-#include "../device_matvec.h"
 
 #include <arrayfire.h>
 
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include "../arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -116,11 +116,11 @@ int AdfAutolag(const std::vector<double>& x, const std::vector<double>& xdiff, i
     }
     for (size_t a = 0; a < blocks.size(); ++a) {
         const int a0 = static_cast<int>(a) * kBlock;
-        const std::vector<double> gy = series_detail::ToHost(DeviceMatVec(blocks[a], y, true), "TimeSeries ADF autolag");
+        const std::vector<double> gy = series_detail::ToHost(cyxwiz::DeviceMatMul(blocks[a], y, AF_MAT_TRANS), "TimeSeries ADF autolag");
         for (size_t i = 0; i < gy.size(); ++i) g[static_cast<size_t>(a0) + i] = gy[i];
         for (size_t b = a; b < blocks.size(); ++b) {
             const int b0 = static_cast<int>(b) * kBlock;
-            const af::array gab = af::matmulTN(blocks[a], blocks[b]);
+            const af::array gab = cyxwiz::DeviceMatMulTN(blocks[a], blocks[b]);
             const int rows = static_cast<int>(gab.dims(0)), cols = static_cast<int>(gab.dims(1));
             const std::vector<double> host = series_detail::ToHost(gab, "TimeSeries ADF autolag");  // column-major rows x cols
             for (int j = 0; j < cols; ++j)

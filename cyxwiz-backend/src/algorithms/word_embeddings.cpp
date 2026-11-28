@@ -29,6 +29,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include "arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -242,7 +243,7 @@ std::vector<std::pair<std::string, double>> NearestRows(const WordVectors& vecto
         const af::array norms = af::max(af::sqrt(af::sum(table * table, 0)), 1e-12f);
         const af::array unit = table / af::tile(norms, static_cast<unsigned>(dim), 1);
         const af::array q = query / af::max(af::sqrt(af::sum(query * query)), 1e-12f);
-        af::array similarity = af::flat(af::matmul(q, unit, AF_MAT_TRANS, AF_MAT_NONE));
+        af::array similarity = af::flat(cyxwiz::DeviceMatMul(q, unit, AF_MAT_TRANS, AF_MAT_NONE));
         if (self >= 0) similarity(self) = -2.0f;  // leave the word itself out
         af::array sorted, order;
         SortWithIndex(sorted, order, similarity, 0, false);

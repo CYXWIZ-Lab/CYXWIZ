@@ -2,7 +2,6 @@
 
 #include "arrayfire_host_values.h"
 #include "arrayfire_indexed.h"
-#include "device_matvec.h"
 
 #include <arrayfire.h>
 
@@ -10,6 +9,7 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include "arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -577,7 +577,7 @@ ChiSquareResult StatisticalTests::ChiSquareIndependence(const std::vector<std::v
             out.test = Fail("a value has no rows in the other column");
             return out;
         }
-        const af::array e = af::matmul(row_sum, col_sum) / total;
+        const af::array e = cyxwiz::DeviceMatMul(row_sum, col_sum) / total;
         const af::array d = o - e;
         TestResult r;
         r.statistic = af::sum<double>(d * d / e);
@@ -626,9 +626,9 @@ bool SolveOls(const af::array& x, const af::array& y, af::array& beta, af::array
         const af::array z = af::solve(r_factor.T(), rhs, AF_MAT_LOWER);
         return af::solve(r_factor, z, AF_MAT_UPPER);
     };
-    beta = solve_normal(DeviceMatVec(x, y, true));
-    const af::array residual = y - DeviceMatVec(x, beta);
-    beta += solve_normal(DeviceMatVec(x, residual, true));
+    beta = solve_normal(cyxwiz::DeviceMatMul(x, y, AF_MAT_TRANS));
+    const af::array residual = y - cyxwiz::DeviceMatMul(x, beta);
+    beta += solve_normal(cyxwiz::DeviceMatMul(x, residual, AF_MAT_TRANS));
     return true;
 }
 
@@ -637,7 +637,7 @@ LinearFit Summarise(const af::array& x, const af::array& y, const af::array& bet
     LinearFit f;
     const double n = static_cast<double>(x.dims(0)), p = static_cast<double>(x.dims(1));
     const double k = intercept ? p - 1.0 : p;  // model degrees of freedom
-    const af::array fitted = DeviceMatVec(x, beta);
+    const af::array fitted = cyxwiz::DeviceMatMul(x, beta);
     const af::array residual = y - fitted;
     const double sse = af::sum<double>(residual * residual);
     const double ymean = intercept ? af::mean<double>(y) : 0.0;  // uncentred without an intercept
@@ -650,7 +650,7 @@ LinearFit Summarise(const af::array& x, const af::array& y, const af::array& bet
     // (X'X)^-1 = R^-1 R^-T
     const af::array r_inv = af::solve(r_factor, af::identity(r_factor.dims(0), r_factor.dims(1), r_factor.type()),
                                       AF_MAT_UPPER);
-    const af::array cov = af::matmul(r_inv, r_inv.T()) * s2;
+    const af::array cov = cyxwiz::DeviceMatMul(r_inv, r_inv.T()) * s2;
     f.coef = DeviceToHostValues(beta, "StatisticalTests::FitLinear");
     const std::vector<double> var = DeviceToHostValues(af::diag(cov), "StatisticalTests::FitLinear");
     const double tc = CriticalT(confidence, n - p);
@@ -760,9 +760,9 @@ LinearFit StatisticalTests::FitPolynomial(const std::vector<double>& x, const st
         const af::array tm = af::moddims(Device(t), p, p).as(type);
         const double s2 = fz.rse * fz.rse;
         const af::array r_inv = af::solve(r_factor, af::identity(p, p, type), AF_MAT_UPPER);
-        const af::array cov_z = af::matmul(r_inv, r_inv.T()) * s2;
-        const af::array beta_raw = DeviceMatVec(tm, beta);
-        const af::array cov_raw = af::matmul(af::matmul(tm, cov_z), tm.T());
+        const af::array cov_z = cyxwiz::DeviceMatMul(r_inv, r_inv.T()) * s2;
+        const af::array beta_raw = cyxwiz::DeviceMatMul(tm, beta);
+        const af::array cov_raw = cyxwiz::DeviceMatMul(cyxwiz::DeviceMatMul(tm, cov_z), tm.T());
         fz.coef = DeviceToHostValues(beta_raw, "StatisticalTests::FitPolynomial");
         const std::vector<double> var = DeviceToHostValues(af::diag(cov_raw), "StatisticalTests::FitPolynomial");
         const double df = static_cast<double>(fz.df_resid), tc = CriticalT(confidence, df);

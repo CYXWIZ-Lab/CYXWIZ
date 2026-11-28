@@ -16,6 +16,7 @@
 #include <limits>
 #include <string>
 #include <vector>
+#include "arrayfire_matmul.h"
 
 #ifdef min
 #undef min
@@ -70,11 +71,11 @@ Projection Project(af::array x, int k, bool center, bool scale) {
         // matrix X X^T / (n - 1) has the covariance's nonzero eigenvalues, and each
         // eigenvector u gives the component X^T u / sqrt((n - 1) lambda). The d x d
         // SVD takes minutes where this takes well under a second.
-        const af::array gram = af::matmul(x, x, AF_MAT_NONE, AF_MAT_TRANS) / static_cast<double>(n - 1);
+        const af::array gram = cyxwiz::DeviceMatMul(x, x, AF_MAT_NONE, AF_MAT_TRANS) / static_cast<double>(n - 1);
         af::svd(u, s, vt, gram);
         const af::array lambda = s(af::seq(0, k - 1));
         const af::array norm = af::sqrt(af::max(lambda * static_cast<double>(n - 1), Constant(1e-300, lambda)));
-        components = af::matmul(u(af::span, af::seq(0, k - 1)), x, AF_MAT_TRANS, AF_MAT_NONE) /
+        components = cyxwiz::DeviceMatMul(u(af::span, af::seq(0, k - 1)), x, AF_MAT_TRANS, AF_MAT_NONE) /
                      af::tile(norm, 1, static_cast<unsigned>(d));
         // n items span at most n - 1 directions once centred: an eigenvalue at
         // rounding level has no direction, and its component is zero, not noise.
@@ -82,7 +83,7 @@ Projection Project(af::array x, int k, bool center, bool scale) {
         components = components * af::tile(real, 1, static_cast<unsigned>(d));
         total_variance = af::sum<double>(af::diag(gram));
     } else {
-        const af::array covariance = af::matmul(x, x, AF_MAT_TRANS, AF_MAT_NONE) / static_cast<double>(n - 1);
+        const af::array covariance = cyxwiz::DeviceMatMul(x, x, AF_MAT_TRANS, AF_MAT_NONE) / static_cast<double>(n - 1);
         af::svd(u, s, vt, covariance);
         components = vt(af::seq(0, k - 1), af::span);
         total_variance = af::sum<double>(af::diag(covariance));
@@ -95,7 +96,7 @@ Projection Project(af::array x, int k, bool center, bool scale) {
     components = components * af::tile(sign, 1, static_cast<unsigned>(d));
     Projection result;
     result.components = components;
-    result.transformed = af::matmul(x, components, AF_MAT_NONE, AF_MAT_TRANS);
+    result.transformed = cyxwiz::DeviceMatMul(x, components, AF_MAT_NONE, AF_MAT_TRANS);
     result.variances = s(af::seq(0, k - 1));
     result.total_variance = total_variance;
     return result;
@@ -153,7 +154,7 @@ Gradient KlGradient(const af::array& y, const af::array& p, double dof) {
     const af::array pq = WithoutDiagonal((p - q) * weights);
     const dim_t dims = y.dims(1);
     result.grad = (2.0 * (dof + 1.0) / dof) *
-                  (y * af::tile(af::sum(pq, 1), 1, static_cast<unsigned>(dims)) - af::matmul(pq, y));
+                  (y * af::tile(af::sum(pq, 1), 1, static_cast<unsigned>(dims)) - cyxwiz::DeviceMatMul(pq, y));
     return result;
 }
 

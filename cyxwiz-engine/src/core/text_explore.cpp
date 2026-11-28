@@ -22,6 +22,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include "algorithms/arrayfire_matmul.h"
 
 namespace cyxwiz::text {
 namespace {
@@ -394,7 +395,7 @@ TermsAnswer RunTerms(const std::string& table, const TermsRequest& request, cons
             std::vector<float> dense;
             dense.reserve(row_dense.size());
             for (const double x : row_dense) dense.push_back(static_cast<float>(x));
-            const af::array product = af::matmul(csr, af::array(static_cast<dim_t>(dense.size()), dense.data()));
+            const af::array product = cyxwiz::DeviceMatMul(csr, af::array(static_cast<dim_t>(dense.size()), dense.data()));
             similarity.resize(d.texts.size());
             MaterializeArrayFireToHost(product, similarity.data(), ArrayFireHostSyncCategory::OutputMaterialization, "text::RunTerms",
                                        "arrayfire_vector", "bounded_output_readback", "one row's TF-IDF similarity to every row");

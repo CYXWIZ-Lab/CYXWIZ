@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <arrayfire.h>
+#include "arrayfire_matmul.h"
 
 // Undefine Windows macros that conflict with std::min/max
 #ifdef min
@@ -52,7 +53,7 @@ TensorResult LinearAlgebra::Multiply(const Tensor& A, const Tensor& B) {
             aB = aB.as(af::dtype::f64);
         }
 
-        af::array aC = af::matmul(aA, aB);
+        af::array aC = cyxwiz::DeviceMatMul(aA, aB);
         aC.eval();
         result.tensor = Tensor::FromArrayRowMajor2D(aC);
         result.success = true;

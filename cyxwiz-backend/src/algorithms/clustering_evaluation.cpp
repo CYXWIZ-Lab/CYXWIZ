@@ -16,6 +16,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "arrayfire_matmul.h"
 
 #ifdef min
 #undef min
@@ -79,7 +80,7 @@ ClusterMetrics Clustering::EvaluateClustering(
             const dim_t stop = std::min<dim_t>(m, start + block);
             const af::seq rows(static_cast<double>(start), static_cast<double>(stop - 1));
             const unsigned b = static_cast<unsigned>(stop - start);
-            const af::array totals = af::matmul(PairwiseDistances(x(rows, af::span), x, "euclidean"), one_hot);  // [b, k]
+            const af::array totals = cyxwiz::DeviceMatMul(PairwiseDistances(x(rows, af::span), x, "euclidean"), one_hot);  // [b, k]
             const af::array own = one_hot(rows, af::span);
             const af::array block_counts = af::tile(counts, b, 1);
             const af::array own_count = af::sum(own * block_counts, 1);
@@ -95,14 +96,14 @@ ClusterMetrics Clustering::EvaluateClustering(
         for (int i = 0; i < m; ++i) result.per_sample_silhouette[static_cast<size_t>(kept[static_cast<size_t>(i)])] = samples[static_cast<size_t>(i)];
         result.silhouette_score = af::mean<double>(silhouette);
         result.cluster_silhouettes =
-            DeviceToHostValues(af::matmul(one_hot, silhouette, AF_MAT_TRANS, AF_MAT_NONE).T() / counts,
+            DeviceToHostValues(cyxwiz::DeviceMatMul(one_hot, silhouette, AF_MAT_TRANS, AF_MAT_NONE).T() / counts,
                                "Clustering::EvaluateClustering");
 
         // Centroids, within-cluster distances and dispersions.
-        const af::array centroids = af::matmul(one_hot, x, AF_MAT_TRANS, AF_MAT_NONE) / af::tile(counts.T(), 1, static_cast<unsigned>(d));
-        const af::array residual = x - af::matmul(one_hot, centroids);
+        const af::array centroids = cyxwiz::DeviceMatMul(one_hot, x, AF_MAT_TRANS, AF_MAT_NONE) / af::tile(counts.T(), 1, static_cast<unsigned>(d));
+        const af::array residual = x - cyxwiz::DeviceMatMul(one_hot, centroids);
         const af::array squared = af::sum(residual * residual, 1);  // [m, 1]
-        const af::array intra = af::matmul(one_hot, af::sqrt(squared), AF_MAT_TRANS, AF_MAT_NONE).T() / counts;  // [1, k]
+        const af::array intra = cyxwiz::DeviceMatMul(one_hot, af::sqrt(squared), AF_MAT_TRANS, AF_MAT_NONE).T() / counts;  // [1, k]
 
         // Davies-Bouldin: mean over clusters of max_j (s_i + s_j) / |c_i - c_j|.
         const af::array centroid_distance = PairwiseDistances(centroids, centroids, "euclidean");  // [k, k]

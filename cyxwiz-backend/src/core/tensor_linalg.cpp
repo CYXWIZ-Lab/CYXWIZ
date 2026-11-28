@@ -10,6 +10,7 @@
 #include <arrayfire.h>
 #include "../algorithms/arrayfire_backend_utils.h"
 #include "../algorithms/arrayfire_host_values.h"
+#include "../algorithms/arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -44,7 +45,7 @@ af::array IntegerMatMul(const af::array& left, const af::array& right, DataType 
     const af::array a = left.as(f64);
     const af::array b = right.as(f64);
     constexpr double kExactLimit = 9007199254740992.0;  // 2^53
-    const af::array bound = (af::max)(af::flat(af::matmul(af::abs(a), af::abs(b))));
+    const af::array bound = (af::max)(af::flat(cyxwiz::DeviceMatMul(af::abs(a), af::abs(b))));
     const Tensor bound_tensor = Tensor::FromSemanticArray(bound, {});
     {
         const ScopedArrayFireHostSyncAttribution attribution(
@@ -54,7 +55,7 @@ af::array IntegerMatMul(const af::array& left, const af::array& right, DataType 
                 "Tensor::BatchMatMul: integer products reach 2^53 and cannot be computed exactly in float64");
         }
     }
-    af::array product = af::matmul(a, b);
+    af::array product = cyxwiz::DeviceMatMul(a, b);
     if (dtype == DataType::UInt8) {
         product = af::mod(product, 256.0);
         product = af::select(product < 0.0, product + 256.0, product);
@@ -74,7 +75,7 @@ Tensor BatchMatMulArrayFire(const Tensor& left,
     const af::array right_matrices = af::reorder(right.GetArrayRowMajor3D(), 1, 2, 0);
     const DataType dtype = left.GetDataType();
     const af::array output_matrices = (dtype == DataType::Float32 || dtype == DataType::Float64)
-        ? af::matmul(left_matrices, right_matrices)
+        ? cyxwiz::DeviceMatMul(left_matrices, right_matrices)
         : IntegerMatMul(left_matrices, right_matrices, dtype);
     af::array output = af::reorder(output_matrices, 2, 0, 1);
     output.eval();

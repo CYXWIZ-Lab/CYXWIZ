@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "../arrayfire_matmul.h"
 
 
 #ifdef max
@@ -557,7 +558,7 @@ Tensor AdaptiveAvgPool2DLayer::Forward(const Tensor& input) {
         const unsigned n = static_cast<unsigned>(batch_size);
         const af::array rows = af::tile(AdaptiveAverageMatrix(in_h, out_h), 1, 1, c, n);
         const af::array cols_t = af::tile(af::transpose(AdaptiveAverageMatrix(in_w, out_w)), 1, 1, c, n);
-        af::array output = af::matmul(af::matmul(rows, TensorToAf(input)), cols_t);
+        af::array output = cyxwiz::DeviceMatMul(cyxwiz::DeviceMatMul(rows, TensorToAf(input)), cols_t);
         output.eval();
         Tensor result = Tensor::FromSemanticArray(output, output_shape);
         cached_input_ = input;
@@ -594,7 +595,7 @@ Tensor AdaptiveAvgPool2DLayer::Backward(const Tensor& grad_output) {
         const unsigned n = static_cast<unsigned>(batch_size);
         const af::array rows_t = af::tile(af::transpose(AdaptiveAverageMatrix(in_h, out_h)), 1, 1, c, n);
         const af::array cols = af::tile(AdaptiveAverageMatrix(in_w, out_w), 1, 1, c, n);
-        af::array grad_input = af::matmul(af::matmul(rows_t, TensorToAf(grad_output)), cols);
+        af::array grad_input = cyxwiz::DeviceMatMul(cyxwiz::DeviceMatMul(rows_t, TensorToAf(grad_output)), cols);
         grad_input.eval();
         return Tensor::FromSemanticArray(grad_input, input_shape);
     } catch (const af::exception& e) {

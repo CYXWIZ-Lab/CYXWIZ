@@ -13,6 +13,7 @@
 #include <limits>
 #include <string>
 #include <vector>
+#include "arrayfire_matmul.h"
 
 #ifdef min
 #undef min
@@ -55,7 +56,7 @@ KMeansRun RunLloyd(const af::array& data, af::array centers, int max_iter, doubl
 
         const af::array one_hot = (af::tile(labels, 1, static_cast<unsigned>(k)) == cluster_ids).as(data.type());
         const af::array counts = af::sum(one_hot, 0).T();  // [k, 1]
-        const af::array sums = af::matmul(one_hot, data, AF_MAT_TRANS, AF_MAT_NONE);  // [k, d]
+        const af::array sums = cyxwiz::DeviceMatMul(one_hot, data, AF_MAT_TRANS, AF_MAT_NONE);  // [k, d]
         const af::array occupied = af::tile(counts > 0.0, 1, static_cast<unsigned>(d));
         const af::array safe_counts = af::max(counts, af::constant(1.0, counts.dims(), counts.type()));
         const af::array updated = af::select(occupied, sums / af::tile(safe_counts, 1, static_cast<unsigned>(d)), centers);

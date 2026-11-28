@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "../arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -134,8 +135,8 @@ Tensor Conv3DModule::Forward(const Tensor& input) {
         const dim_t k = static_cast<dim_t>(column_size_);
         const dim_t p = static_cast<dim_t>(patches_);
         const dim_t f = static_cast<dim_t>(filters_);
-        af::array columns = af::moddims(af::matmul(device_->gather, af::transpose(TensorToAf(input))), k, p * n);
-        af::array y = af::matmul(TensorToAf(weight_), columns);  // [F, P*N]
+        af::array columns = af::moddims(cyxwiz::DeviceMatMul(device_->gather, af::transpose(TensorToAf(input))), k, p * n);
+        af::array y = cyxwiz::DeviceMatMul(TensorToAf(weight_), columns);  // [F, P*N]
         if (use_bias_) y += af::tile(af::moddims(TensorToAf(bias_), f, 1), 1, static_cast<unsigned>(p * n));
         y = af::transpose(af::moddims(af::reorder(af::moddims(y, f, p, n), 1, 0, 2), p * f, n));
         y.eval();
@@ -163,20 +164,20 @@ Tensor Conv3DModule::Backward(const Tensor& grad_output) {
         const dim_t f = static_cast<dim_t>(filters_);
         af::array columns = device_->columns;
         if (columns.isempty())
-            columns = af::moddims(af::matmul(device_->gather, af::transpose(TensorToAf(input_))), k, p * n);
+            columns = af::moddims(cyxwiz::DeviceMatMul(device_->gather, af::transpose(TensorToAf(input_))), k, p * n);
         // rows [N, F*P] -> [F, P*N]
         const af::array g = af::moddims(af::reorder(af::moddims(af::transpose(TensorToAf(grad_output)), p, f, n),
                                                     1, 0, 2),
                                         f, p * n);
-        af::array grad_weight = af::matmulNT(g, columns);
+        af::array grad_weight = cyxwiz::DeviceMatMulNT(g, columns);
         grad_weight.eval();
         if (use_bias_) {
             af::array grad_bias = af::moddims(af::sum(g, 1), f);
             grad_bias.eval();
             grad_bias_ = Tensor::FromSemanticArray(grad_bias, {filters_});
         }
-        const af::array grad_columns = af::moddims(af::matmulTN(TensorToAf(weight_), g), k * p, n);
-        af::array grad_input = af::transpose(af::matmul(device_->scatter, grad_columns));
+        const af::array grad_columns = af::moddims(cyxwiz::DeviceMatMulTN(TensorToAf(weight_), g), k * p, n);
+        af::array grad_input = af::transpose(cyxwiz::DeviceMatMul(device_->scatter, grad_columns));
         grad_input.eval();
         grad_weight_ = Tensor::FromSemanticArray(grad_weight, {filters_, column_size_});
         return Tensor::FromSemanticArray(grad_input, input_.Shape());

@@ -25,6 +25,7 @@
 #include <limits>
 #include <string>
 #include <vector>
+#include "arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -53,7 +54,7 @@ af::array IntegerPower(const af::array& base, int degree) {
 // Kernel values [b, n] between `rows` [b, d] and `data` [n, d]. RBF uses
 // |u|^2 + |v|^2 - 2 u.v, as libsvm does.
 af::array KernelBlock(const af::array& rows, const af::array& data, const Kernel& k) {
-    const af::array dot = af::matmul(rows, data, AF_MAT_NONE, AF_MAT_TRANS);
+    const af::array dot = cyxwiz::DeviceMatMul(rows, data, AF_MAT_NONE, AF_MAT_TRANS);
     if (k.kind == "linear") return dot;
     if (k.kind == "poly") return IntegerPower(k.gamma * dot + k.coef0, k.degree);
     if (k.kind == "sigmoid") return af::tanh(k.gamma * dot + k.coef0);
@@ -467,7 +468,7 @@ ClassicMatrix ClassicML::SVMDecision(const SVMModel& model, const ClassicMatrix&
             for (dim_t start = 0; start < n; start += block) {
                 const dim_t end = std::min(n, start + block);
                 const af::seq rows(static_cast<double>(start), static_cast<double>(end - 1));
-                decision(rows, af::span) = af::matmul(KernelBlock(x(rows, af::span), sv, k), coef_dev);
+                decision(rows, af::span) = cyxwiz::DeviceMatMul(KernelBlock(x(rows, af::span), sv, k), coef_dev);
             }
         }
         const af::array rho = HostValuesToDevice(model.rho).as(x.type()).T();

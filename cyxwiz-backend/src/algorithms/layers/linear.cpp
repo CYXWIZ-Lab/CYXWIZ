@@ -12,6 +12,7 @@
 #include <cyxwiz/error_codes.h>
 
 #include <arrayfire.h>
+#include "../arrayfire_matmul.h"
 
 namespace cyxwiz {
 namespace {
@@ -148,7 +149,7 @@ Tensor LinearLayer::Forward(const Tensor& input) {
         af::array weight_gpu =
             weight_.GetArrayRowMajor2D().as(af::dtype::f32);
         af::array output_gpu =
-            af::matmul(input_gpu, weight_gpu, AF_MAT_NONE, AF_MAT_TRANS);
+            cyxwiz::DeviceMatMul(input_gpu, weight_gpu, AF_MAT_NONE, AF_MAT_TRANS);
         output_gpu.eval();
 
         if (use_bias_) {
@@ -224,7 +225,7 @@ Tensor LinearLayer::ForwardSparseCsr(
             const af::array& sparse_input = SparseCsrFor(input, false).matrix;
             af::array weight_transposed = af::transpose(
                 weight_.GetArrayRowMajor2D().as(af::dtype::f32));
-            output_gpu = af::matmul(
+            output_gpu = cyxwiz::DeviceMatMul(
                 sparse_input,
                 weight_transposed,
                 AF_MAT_NONE,
@@ -257,7 +258,7 @@ Tensor LinearLayer::ForwardSequence(const Tensor& input) {
         const af::array x = af::moddims(input.GetSemanticArray().as(af::dtype::f32),
                                         static_cast<dim_t>(positions), static_cast<dim_t>(in_features_));
         const af::array w = weight_.GetArrayRowMajor2D().as(af::dtype::f32);
-        af::array y = af::matmul(x, w, AF_MAT_NONE, AF_MAT_TRANS);
+        af::array y = cyxwiz::DeviceMatMul(x, w, AF_MAT_NONE, AF_MAT_TRANS);
         if (use_bias_) {
             const af::array b = af::moddims(bias_.GetArray(), 1, static_cast<dim_t>(out_features_)).as(af::dtype::f32);
             y = y + af::tile(b, static_cast<unsigned int>(positions), 1);
@@ -287,7 +288,7 @@ Tensor LinearLayer::BackwardSequence(const Tensor& grad_output) {
             const af::array w = weight_.GetArrayRowMajor2D().as(af::dtype::f32);
             {
                 ScopedProfileSpan span("Linear.sequence_backward.dw");
-                af::array dw = af::matmul(dy, x, AF_MAT_TRANS, AF_MAT_NONE);
+                af::array dw = cyxwiz::DeviceMatMul(dy, x, AF_MAT_TRANS, AF_MAT_NONE);
                 dw.eval();
                 weight_grad_ = Tensor::FromArrayRowMajor2D(dw);
             }
@@ -298,7 +299,7 @@ Tensor LinearLayer::BackwardSequence(const Tensor& grad_output) {
                 bias_grad_ = Tensor(db);
             }
             ScopedProfileSpan span("Linear.sequence_backward.dx");
-            af::array dx = af::moddims(af::matmul(dy, w), static_cast<dim_t>(shape[0]),
+            af::array dx = af::moddims(cyxwiz::DeviceMatMul(dy, w), static_cast<dim_t>(shape[0]),
                                        static_cast<dim_t>(shape[1]), static_cast<dim_t>(in_features_));
             dx.eval();
             return Tensor::FromSemanticArray(dx, {shape[0], shape[1], in_features_});
@@ -340,7 +341,7 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
             weight_.GetArrayRowMajor2D().as(af::dtype::f32);
 
         af::array weight_grad_gpu =
-            af::matmul(grad_gpu, input_gpu, AF_MAT_TRANS, AF_MAT_NONE);
+            cyxwiz::DeviceMatMul(grad_gpu, input_gpu, AF_MAT_TRANS, AF_MAT_NONE);
         weight_grad_gpu.eval();
         weight_grad_ = Tensor::FromArrayRowMajor2D(weight_grad_gpu);
 
@@ -350,7 +351,7 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
             bias_grad_ = Tensor(bias_grad_gpu);
         }
 
-        af::array grad_input_gpu = af::matmul(grad_gpu, weight_gpu);
+        af::array grad_input_gpu = cyxwiz::DeviceMatMul(grad_gpu, weight_gpu);
         grad_input_gpu.eval();
 
         if (is_batched) {
@@ -387,7 +388,7 @@ void LinearLayer::BackwardSparseCsr(
                 f32);
         } else {
             const af::array& sparse_input = SparseCsrFor(input, true).matrix;
-            af::array feature_by_output = af::matmul(
+            af::array feature_by_output = cyxwiz::DeviceMatMul(
                 sparse_input,
                 grad_gpu,
                 AF_MAT_TRANS,

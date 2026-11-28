@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <arrayfire.h>
+#include "../arrayfire_matmul.h"
 #ifdef max
 #undef max
 #endif
@@ -191,7 +192,7 @@ Tensor MultiHeadAttentionLayer::ForwardArrayFire(
         const af::array x = input.GetSemanticArray();
         const dim_t rows = x.elements() / embed_dim_;
         const dim_t out = static_cast<dim_t>(weight.Shape()[0]);
-        af::array result = af::matmul(af::moddims(x, rows, embed_dim_),
+        af::array result = cyxwiz::DeviceMatMul(af::moddims(x, rows, embed_dim_),
                                      weight.GetSemanticArray(), AF_MAT_NONE, AF_MAT_TRANS);
         if (use_bias_) {
             result = result + af::tile(af::moddims(bias.GetSemanticArray(), 1, out), af::dim4(rows));
@@ -245,7 +246,7 @@ Tensor MultiHeadAttentionLayer::ForwardArrayFire(
     cached_fused_ = false;
     kh = ExpandKvHeads(kh, groups);
     vh = ExpandKvHeads(vh, groups);
-    af::array scores = af::matmul(qh, kh, AF_MAT_NONE, AF_MAT_TRANS) * scale_;
+    af::array scores = cyxwiz::DeviceMatMul(qh, kh, AF_MAT_NONE, AF_MAT_TRANS) * scale_;
     if (logit_softcap_ > 0.0f) {
         scores = logit_softcap_ * af::tanh(scores / logit_softcap_);
     }
@@ -286,7 +287,7 @@ Tensor MultiHeadAttentionLayer::ForwardArrayFire(
             {query.Shape()[1], key.Shape()[1], query.Shape()[0], static_cast<size_t>(num_heads_)});
         used_attention = attention * keep * (1.0f / (1.0f - dropout_));
     }
-    Tensor context = Tensor::FromSemanticArray(JoinHeads(af::matmul(used_attention, vh)), query.Shape());
+    Tensor context = Tensor::FromSemanticArray(JoinHeads(cyxwiz::DeviceMatMul(used_attention, vh)), query.Shape());
     Tensor output = project(context, W_o_, b_o_);
     // Realize the returned projection at the exception boundary; this is also
     // the last projection consumed by subsequent layers, not a host readback.
@@ -319,13 +320,13 @@ Tensor MultiHeadAttentionLayer::BackwardArrayFire(const Tensor& grad_output) {
         const af::array dy = af::moddims(grad, rows, out);
         const af::array x = af::moddims(input.GetSemanticArray(), rows, embed_dim_);
         grad_weight = Tensor::FromSemanticArray(
-            af::matmul(dy, x, AF_MAT_TRANS), weight.Shape());
+            cyxwiz::DeviceMatMul(dy, x, AF_MAT_TRANS), weight.Shape());
         if (use_bias_) {
             grad_bias = Tensor::FromSemanticArray(af::flat(af::sum(dy, 0)),
                                                  {static_cast<size_t>(out)});
         }
         return Tensor::FromSemanticArray(
-            af::moddims(af::matmul(dy, weight.GetSemanticArray()), input.GetSemanticArray().dims()),
+            af::moddims(cyxwiz::DeviceMatMul(dy, weight.GetSemanticArray()), input.GetSemanticArray().dims()),
             input.Shape());
     };
     const int groups = num_heads_ / num_kv_heads_;
@@ -396,7 +397,7 @@ Tensor MultiHeadAttentionLayer::BackwardArrayFire(const Tensor& grad_output) {
     k = ExpandKvHeads(k, groups);
     const af::array v = ExpandKvHeads(SplitHeads(cached_V_.GetSemanticArray(), head_dim_, num_kv_heads_), groups);
     const af::array a = cached_attn_weights_.GetSemanticArray();
-    af::array da = af::matmul(dch, v, AF_MAT_NONE, AF_MAT_TRANS);
+    af::array da = cyxwiz::DeviceMatMul(dch, v, AF_MAT_NONE, AF_MAT_TRANS);
     af::array used_attention = a;
     if (cached_attention_dropout_) {
         const af::array multiplier = dropout_mask_.GetSemanticArray() * (1.0f / (1.0f - dropout_));
@@ -406,12 +407,12 @@ Tensor MultiHeadAttentionLayer::BackwardArrayFire(const Tensor& grad_output) {
     af::array ds = a * (da - af::tile(af::sum(a * da, 1), af::dim4(1, k.dims(0)))) * scale_;
     if (logit_softcap_ > 0.0f) {
         // scores = cap * tanh(raw / cap): d raw = d scores * (1 - tanh^2).
-        const af::array t = af::tanh(af::matmul(q, k, AF_MAT_NONE, AF_MAT_TRANS) * (scale_ / logit_softcap_));
+        const af::array t = af::tanh(cyxwiz::DeviceMatMul(q, k, AF_MAT_NONE, AF_MAT_TRANS) * (scale_ / logit_softcap_));
         ds = ds * (1.0f - t * t);
     }
-    dq_heads = af::matmul(ds, k);
-    dk_heads = ReduceKvHeads(af::matmul(ds, q, AF_MAT_TRANS), groups);
-    dv_heads = ReduceKvHeads(af::matmul(used_attention, dch, AF_MAT_TRANS), groups);
+    dq_heads = cyxwiz::DeviceMatMul(ds, k);
+    dk_heads = ReduceKvHeads(cyxwiz::DeviceMatMul(ds, q, AF_MAT_TRANS), groups);
+    dv_heads = ReduceKvHeads(cyxwiz::DeviceMatMul(used_attention, dch, AF_MAT_TRANS), groups);
     }
     if (rope_) {
         dq_heads = ApplyRotary(dq_heads, rope_base_, -1.0f, RotaryDims());
@@ -460,7 +461,7 @@ Tensor MultiHeadAttentionLayer::ForwardIncrementalArrayFire(const Tensor& input)
         const af::array x = x_tensor.GetSemanticArray();
         const dim_t rows = x.elements() / embed_dim_;
         const dim_t out = static_cast<dim_t>(weight.Shape()[0]);
-        af::array result = af::matmul(af::moddims(x, rows, embed_dim_), weight.GetSemanticArray(),
+        af::array result = cyxwiz::DeviceMatMul(af::moddims(x, rows, embed_dim_), weight.GetSemanticArray(),
                                       AF_MAT_NONE, AF_MAT_TRANS);
         if (use_bias_) {
             result = result + af::tile(af::moddims(bias.GetSemanticArray(), 1, out), af::dim4(rows));
@@ -513,7 +514,7 @@ Tensor MultiHeadAttentionLayer::ForwardIncrementalArrayFire(const Tensor& input)
     }
     const af::array k_all = ExpandKvHeads(keys, groups);
     const af::array v_all = ExpandKvHeads(values, groups);
-    af::array scores = af::matmul(qh, k_all, AF_MAT_NONE, AF_MAT_TRANS) * scale_;
+    af::array scores = cyxwiz::DeviceMatMul(qh, k_all, AF_MAT_NONE, AF_MAT_TRANS) * scale_;
     if (logit_softcap_ > 0.0f) {
         scores = logit_softcap_ * af::tanh(scores / logit_softcap_);
     }
@@ -531,7 +532,7 @@ Tensor MultiHeadAttentionLayer::ForwardIncrementalArrayFire(const Tensor& input)
     const af::array row_max = af::max(scores, 1);
     const af::array exps = af::exp(scores - af::tile(row_max, af::dim4(1, total)));
     const af::array attention = exps / af::tile(af::sum(exps, 1), af::dim4(1, total));
-    const af::array context = JoinHeads(af::matmul(attention, v_all));
+    const af::array context = JoinHeads(cyxwiz::DeviceMatMul(attention, v_all));
     const af::array output = project(Tensor::FromSemanticArray(context, shape), W_o_, b_o_);
     output.eval();
     keys.eval();

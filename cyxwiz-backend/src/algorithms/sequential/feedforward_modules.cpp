@@ -8,6 +8,7 @@
 #include <limits>
 #include <stdexcept>
 #include <utility>
+#include "../arrayfire_matmul.h"
 
 #ifdef max
 #undef max
@@ -492,7 +493,7 @@ Tensor TiedOutputProjectionModule::Forward(const Tensor& input) {
     try {
         const af::array x = input.GetSemanticArray();
         const dim_t rows = static_cast<dim_t>(shape[0] * shape[1]);
-        af::array logits = af::matmul(af::moddims(x, rows, static_cast<dim_t>(width)),
+        af::array logits = cyxwiz::DeviceMatMul(af::moddims(x, rows, static_cast<dim_t>(width)),
                                       embedding_.GetLayer().GetWeight().GetSemanticArray(), AF_MAT_NONE, AF_MAT_TRANS);
         if (use_bias_) {
             logits = logits + af::tile(af::moddims(bias_.GetSemanticArray(), 1, static_cast<dim_t>(vocab)),
@@ -518,8 +519,8 @@ Tensor TiedOutputProjectionModule::Backward(const Tensor& grad_output) {
         const af::array dy = af::moddims(grad_output.GetSemanticArray(), rows, static_cast<dim_t>(vocab));
         const af::array x = af::moddims(cached_input_.GetSemanticArray(), rows, static_cast<dim_t>(width));
         const af::array weight = embedding_.GetLayer().GetWeight().GetSemanticArray();
-        af::array dweight = af::matmul(dy, x, AF_MAT_TRANS);  // [vocab, width]
-        af::array dx = af::moddims(af::matmul(dy, weight), cached_input_.GetSemanticArray().dims());
+        af::array dweight = cyxwiz::DeviceMatMul(dy, x, AF_MAT_TRANS);  // [vocab, width]
+        af::array dx = af::moddims(cyxwiz::DeviceMatMul(dy, weight), cached_input_.GetSemanticArray().dims());
         dweight.eval();
         dx.eval();
         if (use_bias_) {

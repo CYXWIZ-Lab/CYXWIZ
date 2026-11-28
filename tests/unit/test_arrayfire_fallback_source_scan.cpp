@@ -629,7 +629,9 @@ std::vector<ScannedCall> ScanArrayFireCalls(const std::string& function) {
         for (const auto& entry : fs::recursive_directory_iterator(repo_root / root)) {
             if (!entry.is_regular_file() || !IsSourceFile(entry.path())) continue;
             const std::string relative = fs::relative(entry.path(), repo_root).generic_string();
-            if (relative == "cyxwiz-backend/src/algorithms/arrayfire_indexed.h") continue;
+            if (relative == "cyxwiz-backend/src/algorithms/arrayfire_indexed.h" ||
+                relative == "cyxwiz-backend/src/algorithms/arrayfire_matmul.h")
+                continue;
             std::ifstream in(entry.path(), std::ios::binary);
             const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
             for (size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) {
@@ -655,6 +657,22 @@ std::vector<ScannedCall> ScanArrayFireCalls(const std::string& function) {
         }
     }
     return calls;
+}
+
+TEST_CASE("Matrix products go through DeviceMatMul, not af::matmul",
+          "[arrayfire][source_scan]") {
+    // ArrayFire's OpenCL backend reads the result buffer of a one-column
+    // product (its matrix-vector routine computes beta * y with beta 0), so a
+    // reused buffer holding NaN made the product NaN (TOFIX242 2.2, ORA-14);
+    // DeviceMatMul (arrayfire_matmul.h) forms those products on the
+    // matrix-matrix routine. Flags every af::matmul / matmulNT / matmulTN /
+    // matmulTT call outside arrayfire_matmul.h.
+    std::string list;
+    for (const char* function : {"af::matmul", "af::matmulNT", "af::matmulTN", "af::matmulTT"}) {
+        for (const auto& call : ScanArrayFireCalls(function)) list += "\n  " + call.where + " " + function;
+    }
+    INFO("af::matmul called directly (use cyxwiz::DeviceMatMul):" + list);
+    REQUIRE(list.empty());
 }
 
 TEST_CASE("Argsorts go through SortWithIndex, not ArrayFire's sort-with-index",

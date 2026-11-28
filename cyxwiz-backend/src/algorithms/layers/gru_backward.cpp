@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <spdlog/spdlog.h>
+#include "../arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -131,13 +132,13 @@ Tensor GRULayer::BackwardArrayFire(const Tensor& grad_output) {
                 const af::array dgates_x = af::join(1, d_r_pre, d_z_pre, dn_pre);
                 const af::array dgates_h = af::join(1, d_r_pre, d_z_pre, dn_pre * r);
 
-                dW_ih = dW_ih + af::matmul(af::transpose(dgates_x), x_t);
-                dW_hh = dW_hh + af::matmul(af::transpose(dgates_h), h_prev);
+                dW_ih = dW_ih + cyxwiz::DeviceMatMul(af::transpose(dgates_x), x_t);
+                dW_hh = dW_hh + cyxwiz::DeviceMatMul(af::transpose(dgates_h), h_prev);
                 db_ih = db_ih + af::moddims(af::sum(dgates_x, 0), af::dim4(G));
                 db_hh = db_hh + af::moddims(af::sum(dgates_h, 0), af::dim4(G));
                 d_layer_input(t, af::span, af::span) =
-                    af::moddims(af::matmul(dgates_x, W_ih), af::dim4(1, batch_i, in_i));
-                dh_next = dh * z + af::matmul(dgates_h, W_hh);
+                    af::moddims(cyxwiz::DeviceMatMul(dgates_x, W_ih), af::dim4(1, batch_i, in_i));
+                dh_next = dh * z + cyxwiz::DeviceMatMul(dgates_h, W_hh);
                 dW_ih.eval();
                 dW_hh.eval();
                 db_ih.eval();

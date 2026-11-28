@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <spdlog/spdlog.h>
+#include "../arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -176,7 +177,7 @@ Tensor RNNLayer::ForwardArrayFire(const Tensor& input) {
             const dim_t in = layer_input.dims(2);
 
             // Input projections of every step at once: [seq * batch, H].
-            af::array input_proj = af::matmul(
+            af::array input_proj = cyxwiz::DeviceMatMul(
                 af::moddims(layer_input, af::dim4(static_cast<dim_t>(seq_i) * batch_i, in)),
                 af::transpose(W_ih_[layer].GetSemanticArray()));
             input_proj = af::moddims(input_proj + b_rows, af::dim4(seq_i, batch_i, H));
@@ -187,7 +188,7 @@ Tensor RNNLayer::ForwardArrayFire(const Tensor& input) {
             for (int t = 0; t < seq_i; ++t) {
                 const af::array pre =
                     af::moddims(input_proj(t, af::span, af::span), af::dim4(batch_i, H)) +
-                    af::matmul(h, W_hh_t);
+                    cyxwiz::DeviceMatMul(h, W_hh_t);
                 h = use_tanh_ ? af::tanh(pre) : (af::max)(pre, 0.0f);
                 h.eval();
                 h_states(t + 1, af::span, af::span) = af::moddims(h, af::dim4(1, batch_i, H));
@@ -312,12 +313,12 @@ Tensor RNNLayer::BackwardArrayFire(const Tensor& grad_output) {
                     af::moddims(layer_grad(t, af::span, af::span), af::dim4(batch_i, H)) + dh_next;
                 const af::array da = use_tanh_ ? dh * (1.0f - h_t * h_t)
                                                : dh * (h_t > 0.0f).as(f32);
-                dW_ih = dW_ih + af::matmul(af::transpose(da), x_t);
-                dW_hh = dW_hh + af::matmul(af::transpose(da), h_prev);
+                dW_ih = dW_ih + cyxwiz::DeviceMatMul(af::transpose(da), x_t);
+                dW_hh = dW_hh + cyxwiz::DeviceMatMul(af::transpose(da), h_prev);
                 db = db + af::moddims(af::sum(da, 0), af::dim4(H));
                 d_layer_input(t, af::span, af::span) =
-                    af::moddims(af::matmul(da, W_ih), af::dim4(1, batch_i, in_i));
-                dh_next = af::matmul(da, W_hh);
+                    af::moddims(cyxwiz::DeviceMatMul(da, W_ih), af::dim4(1, batch_i, in_i));
+                dh_next = cyxwiz::DeviceMatMul(da, W_hh);
                 dW_ih.eval();
                 dW_hh.eval();
                 db.eval();

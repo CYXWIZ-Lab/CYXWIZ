@@ -8,6 +8,7 @@
 
 #include <arrayfire.h>
 #include "algorithms/arrayfire_host_values.h"
+#include "algorithms/arrayfire_matmul.h"
 
 namespace cyxwiz {
 
@@ -124,7 +125,7 @@ Tensor MiningDistances(const Tensor& embeddings, MiningDistance kind) {
         } else {
             // As the backend Cosine Embedding loss.
             constexpr double kCosineEpsilon = 1.0e-12;
-            const af::array dot = af::matmul(x, x, AF_MAT_NONE, AF_MAT_TRANS);
+            const af::array dot = cyxwiz::DeviceMatMul(x, x, AF_MAT_NONE, AF_MAT_TRANS);
             const af::array squares = af::sum(x * x, 1) + kCosineEpsilon;
             distances = 1.0 - dot / af::sqrt(af::tile(squares, 1, rows) * af::tile(squares.T(), rows, 1));
         }
@@ -233,7 +234,7 @@ Tensor ScatterAddRows(const Tensor& stacked, const Tensor& source_rows, size_t r
         const af::array selection =
             (af::range(af::dim4(static_cast<dim_t>(rows), source.dims(1)), 0, s32) ==
              af::tile(source, static_cast<unsigned>(rows), 1)).as(f32);
-        af::array summed = af::matmul(selection, stacked.GetArrayRowMajor2D().as(f32));
+        af::array summed = cyxwiz::DeviceMatMul(selection, stacked.GetArrayRowMajor2D().as(f32));
         summed.eval();
         return Tensor::FromSemanticArray(summed, {rows, stacked.Shape()[1]});
     });

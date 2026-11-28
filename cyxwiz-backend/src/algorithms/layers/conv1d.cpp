@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "../arrayfire_matmul.h"
 
 
 namespace cyxwiz {
@@ -287,7 +288,7 @@ void EnsureConv1DGather(size_t& cached_length, af::array& gather, af::array& sca
 af::array Conv1DColumns(const af::array& gather, const Tensor& input, const Conv1DGeometry& geometry) {
     const af::array x = af::moddims(TensorToAf(input), static_cast<dim_t>(geometry.input_length * geometry.in_channels),
                                     static_cast<dim_t>(geometry.batch_size));
-    return af::moddims(af::matmul(gather, x), static_cast<dim_t>(geometry.kernel_elements),
+    return af::moddims(cyxwiz::DeviceMatMul(gather, x), static_cast<dim_t>(geometry.kernel_elements),
                        static_cast<dim_t>(geometry.output_length), static_cast<dim_t>(geometry.batch_size));
 }
 
@@ -320,7 +321,7 @@ Tensor Conv1DLayer::Forward(const Tensor& input) {
         EnsureConv1DGather(gather_->length, gather_->gather, gather_->scatter, geometry, kernel_size_, stride_,
                            padding_, dilation_);
         // Per sample: [L_out, C*k] x [C*k, F] -> [L_out, F, N], the output layout.
-        af::array output = af::matmulTN(Conv1DColumns(gather_->gather, input, geometry),
+        af::array output = cyxwiz::DeviceMatMulTN(Conv1DColumns(gather_->gather, input, geometry),
                                         Conv1DFilters(weights_, geometry, out_channels_));
         if (use_bias_) {
             output += af::tile(af::moddims(TensorToAf(bias_), 1, out_channels_, 1),
@@ -363,7 +364,7 @@ Tensor Conv1DLayer::Backward(const Tensor& grad_output) {
         const af::array grad = TensorToAf(grad_output);                               // [L_out, F, N]
 
         // dW: sum over samples of columns . grad -> [C*k, F] -> [F, C, k]
-        const af::array grad_filters = af::sum(af::matmul(columns, grad), 2);
+        const af::array grad_filters = af::sum(cyxwiz::DeviceMatMul(columns, grad), 2);
         af::array grad_weight = af::moddims(af::transpose(grad_filters), static_cast<dim_t>(out_channels_),
                                             static_cast<dim_t>(in_channels_), static_cast<dim_t>(kernel_size_));
         grad_weight.eval();
@@ -376,10 +377,10 @@ Tensor Conv1DLayer::Backward(const Tensor& grad_output) {
 
         // dX: each window's gradient [C*k, L_out, N], scattered back by G^T.
         const af::array grad_columns = af::moddims(
-            af::matmulNT(filters, grad),
+            cyxwiz::DeviceMatMulNT(filters, grad),
             static_cast<dim_t>(geometry.kernel_elements * geometry.output_length),
             static_cast<dim_t>(geometry.batch_size));
-        af::array grad_input = af::moddims(af::matmul(gather_->scatter, grad_columns),
+        af::array grad_input = af::moddims(cyxwiz::DeviceMatMul(gather_->scatter, grad_columns),
                                            static_cast<dim_t>(geometry.input_length),
                                            static_cast<dim_t>(geometry.in_channels),
                                            static_cast<dim_t>(geometry.batch_size));
