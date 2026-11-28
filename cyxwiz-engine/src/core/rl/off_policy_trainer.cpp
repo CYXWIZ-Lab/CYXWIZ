@@ -3,6 +3,7 @@
 #include "../optimizer_step.h"
 
 #include <cyxwiz/fused_mlp.h>
+#include "algorithms/arrayfire_host_materialization.h"
 #include <cyxwiz/optimizers/adam.h>
 #include <cyxwiz/optimizers/gradient_clipping.h>
 #include <cyxwiz/rl/sac.h>
@@ -69,7 +70,9 @@ void InitializeLikeTorchLinear(IExecutableModel& model) {
         af::array u = (af::randu(af::dim4(static_cast<dim_t>(tensor.NumElements())), f32) * 2.0f - 1.0f) * bound;
         u.eval();
         std::vector<float> host(tensor.NumElements());
-        u.host(host.data());
+        MaterializeArrayFireToHost(u, host.data(), ArrayFireHostSyncCategory::LayoutConversion,
+                                   "InitializeLikeTorchLinear", "arrayfire_flat_vector",
+                                   "weight_initialization", "uniform fan-in draw into a parameter");
         tensor = Tensor(tensor.Shape(), host.data());
     }
     model.SetParameters(params);
