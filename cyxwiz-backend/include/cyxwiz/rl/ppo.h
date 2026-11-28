@@ -91,10 +91,40 @@ CYXWIZ_API Tensor SampleCategorical(const Tensor& logits, uint64_t seed);       
 CYXWIZ_API Tensor PpoSampleStep(const Tensor& head, const Tensor& value, const Tensor& log_std, bool discrete,
                                 uint64_t seed);
 
+// A PPO run's provider latch. Under the FallBack provider policy (a
+// Compatibility run) an op (sampling, the loss, GAE) whose provider call
+// failed stays on ArrayFire for the rest of that run: the run that opened
+// this scope on its thread. The latch ends with the scope, so a failure in
+// one run never changes the path of a later run in the same process: the
+// next run asks the provider again. This is the scope of a run's other
+// provider latches too (its fused networks, its joint Adam step).
+//
+// Outside any scope nothing is remembered: every call asks the provider.
+// Under the Fail policy (a Strict run) nothing is latched or read: the run
+// always asks the provider and stops at its failure.
+class CYXWIZ_API ScopedPpoProviderRun {
+public:
+    ScopedPpoProviderRun();
+    ~ScopedPpoProviderRun();
+    ScopedPpoProviderRun(const ScopedPpoProviderRun&) = delete;
+    ScopedPpoProviderRun& operator=(const ScopedPpoProviderRun&) = delete;
+
+    // Whether this run turned an op off after a failure. op: 0 sampling,
+    // 1 the loss, 2 GAE (the op minus NeuralOp::PpoSample).
+    bool IsOff(int op) const { return op >= 0 && op < 3 && off_[op]; }
+    void TurnOff(int op) {
+        if (op >= 0 && op < 3) off_[op] = true;
+    }
+
+private:
+    ScopedPpoProviderRun* previous_ = nullptr;
+    bool off_[3] = {false, false, false};
+};
+
 // Test-only: how many PPO ops (sampling, loss, GAE) ran on a neural provider,
 // and how many fell back to ArrayFire after the provider failed, since the
-// process started. After a failure that op stays on ArrayFire, except under
-// the Fail provider policy (a Strict run), which always asks the provider.
+// process started (counts only; the latch itself is per run,
+// ScopedPpoProviderRun).
 struct CYXWIZ_API PpoProviderCounts {
     long long ran = 0;
     long long failed = 0;

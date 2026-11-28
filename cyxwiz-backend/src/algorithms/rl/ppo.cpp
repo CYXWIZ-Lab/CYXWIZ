@@ -116,26 +116,27 @@ Common SurrogateAndValue(const af::array& log_prob, const af::array& value, cons
     return out;
 }
 
-// PPO ops on a provider (TOFIX206 3.2 B): ran, failed, and the ops turned
-// off after a failure (index: the op minus PpoSample)
+// PPO ops on a provider (TOFIX206 3.2 B): how many ran and failed in the
+// process (test counts), and the run whose latch this thread's calls use
 std::atomic<long long> ppo_ran{0}, ppo_failed{0};
-std::atomic<bool> ppo_off[3] = {};
+thread_local ScopedPpoProviderRun* g_ppo_run = nullptr;
 
-std::atomic<bool>& PpoOff(NeuralOp op) {
-    return ppo_off[static_cast<int>(op) - static_cast<int>(NeuralOp::PpoSample)];
-}
+int PpoOpIndex(NeuralOp op) { return static_cast<int>(op) - static_cast<int>(NeuralOp::PpoSample); }
 
 // A PPO op on the device's neural provider, through the provider dispatch
 // (TOFIX233 B): the run's observer sees it, and under the Fail policy (a
 // Strict run) a failure throws NeuralProviderRouteError. False: the caller
 // runs the ArrayFire path. Under FallBack an op whose provider call failed
-// once stays on ArrayFire (the dispatch logs the failure); under Fail the
-// latch is neither read nor set, so a Strict run always asks the provider and
-// stops at its failure, whatever an earlier run met.
+// stays on ArrayFire for the rest of the run (ScopedPpoProviderRun; the
+// dispatch logs the failure): per run, never per process, so a later run
+// asks the provider again. Under Fail the latch is neither read nor set, so a
+// Strict run always asks the provider and stops at its failure.
 bool RunPpoOp(NeuralOpRequest& r, const std::vector<const Tensor*>& inputs,
               const std::vector<std::vector<size_t>>& shapes, std::vector<Tensor>& outputs) {
     const bool strict = CurrentNeuralProviderFailurePolicy() == NeuralProviderFailurePolicy::Fail;
-    if (!strict && PpoOff(r.op)) return false;
+    ScopedPpoProviderRun* const run = g_ppo_run;
+    const int op = PpoOpIndex(r.op);
+    if (!strict && run && run->IsOff(op)) return false;
     r.target = CaptureCurrentNeuralDeviceTarget();
     r.device_resident = true;
     r.dtype = DataType::Float32;
@@ -143,7 +144,7 @@ bool RunPpoOp(NeuralOpRequest& r, const std::vector<const Tensor*>& inputs,
         const NeuralOpStatus status = ExecuteNeuralOpOnDevice(provider, r, inputs, shapes, outputs);
         if (!status.ok) {  // before the dispatch reports it (and may throw)
             ++ppo_failed;
-            if (!strict) PpoOff(r.op) = true;
+            if (!strict && run) run->TurnOff(op);
         }
         return status;
     });
@@ -327,6 +328,9 @@ Tensor SampleCategorical(const Tensor& logits, uint64_t seed) {
 }
 
 PpoProviderCounts PpoProviderCountsForTesting() { return {ppo_ran.load(), ppo_failed.load()}; }
+
+ScopedPpoProviderRun::ScopedPpoProviderRun() : previous_(g_ppo_run) { g_ppo_run = this; }
+ScopedPpoProviderRun::~ScopedPpoProviderRun() { g_ppo_run = previous_; }
 
 Tensor PpoSampleStep(const Tensor& head, const Tensor& value, const Tensor& log_std, bool discrete, uint64_t seed) {
     Require(head.Shape().size() == 2, "PPO: the policy output must be [B, W]");

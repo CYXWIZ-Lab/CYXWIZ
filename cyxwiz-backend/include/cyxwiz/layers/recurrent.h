@@ -93,6 +93,11 @@ private:
     // When the native neural provider ran Forward, Backward uses the
     // provider's self-contained recompute+BPTT op.
     bool provider_forward_used_ = false;
+    // Keeps this layer on ArrayFire once its provider path could not finish
+    // a step (the provider ran the forward and then not the backward). Scope:
+    // this layer object, until it is destroyed. A run builds its own model,
+    // so a new run asks the provider again; a model object used again (Run
+    // Test on the trained model, training continued on it) keeps the latch.
     bool provider_disabled_after_failure_ = false;
 
     void InitializeWeights();
@@ -166,6 +171,11 @@ private:
     // When the native neural provider ran Forward, Backward uses the
     // provider's self-contained recompute+BPTT op.
     bool provider_forward_used_ = false;
+    // Keeps this layer on ArrayFire once its provider path could not finish
+    // a step (the provider ran the forward and then not the backward). Scope:
+    // this layer object, until it is destroyed. A run builds its own model,
+    // so a new run asks the provider again; a model object used again (Run
+    // Test on the trained model, training continued on it) keeps the latch.
     bool provider_disabled_after_failure_ = false;
 
     void InitializeWeights();
@@ -237,6 +247,11 @@ private:
     std::vector<Tensor> dropout_masks_;
 
     bool provider_forward_used_ = false;
+    // Keeps this layer on ArrayFire once its provider path could not finish
+    // a step (the provider ran the forward and then not the backward). Scope:
+    // this layer object, until it is destroyed. A run builds its own model,
+    // so a new run asks the provider again; a model object used again (Run
+    // Test on the trained model, training continued on it) keeps the latch.
     bool provider_disabled_after_failure_ = false;
 
     void InitializeWeights();

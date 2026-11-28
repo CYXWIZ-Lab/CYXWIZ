@@ -218,31 +218,50 @@ void CheckPpo(const cyxwiz::Tensor& want_advantages, const cyxwiz::Tensor& want_
     const auto dones = cyxwiz::Tensor::Zeros({5, 2}, cyxwiz::DataType::Float32);
     const auto last = Filled({2}, 0.2f);
 
-    // FallBack: the ArrayFire GAE, the same as with no provider
-    events.clear();
     cyxwiz::Tensor advantages, returns;
-    Check(Run([&] { cyxwiz::rl::ComputeGae(rewards, values, dones, last, 0.99f, 0.95f, advantages, returns); }) ==
-              Thrown::Nothing,
-          "FallBack: GAE does not throw");
-    Check(MaxDifference(advantages, want_advantages) < 1e-6 && MaxDifference(returns, want_returns) < 1e-6,
-          "FallBack: GAE equals the ArrayFire path");
-    Check(OneEvent("PPO", "ppo_gae", cyxwiz::NeuralDispatchOutcome::Failed, kStub),
-          "FallBack: GAE reports Failed: " + Describe());
-    // The op stays on ArrayFire after a failure: no provider call again
-    events.clear();
-    cyxwiz::rl::ComputeGae(rewards, values, dones, last, 0.99f, 0.95f, advantages, returns);
-    Check(events.empty(), "after a failure GAE stays on ArrayFire: " + Describe());
-    // ... but not for a Strict run, which asks the provider whatever an
-    // earlier run met, and stops at its failure (without setting the latch)
-    events.clear();
+    const auto gae = [&] { cyxwiz::rl::ComputeGae(rewards, values, dones, last, 0.99f, 0.95f, advantages, returns); };
     {
-        const cyxwiz::ScopedNeuralProviderFailurePolicy strict(cyxwiz::NeuralProviderFailurePolicy::Fail);
-        Check(Run([&] { cyxwiz::rl::ComputeGae(rewards, values, dones, last, 0.99f, 0.95f, advantages, returns); }) ==
-                  Thrown::Route,
-              "Fail: GAE after an earlier failure still asks the provider and stops");
+        // Run 1, FallBack: the ArrayFire GAE, the same as with no provider
+        const cyxwiz::rl::ScopedPpoProviderRun first_run;
+        events.clear();
+        Check(Run(gae) == Thrown::Nothing, "FallBack: GAE does not throw");
+        Check(MaxDifference(advantages, want_advantages) < 1e-6 && MaxDifference(returns, want_returns) < 1e-6,
+              "FallBack: GAE equals the ArrayFire path");
+        Check(OneEvent("PPO", "ppo_gae", cyxwiz::NeuralDispatchOutcome::Failed, kStub),
+              "FallBack: GAE reports Failed: " + Describe());
+        Check(first_run.IsOff(2) && !first_run.IsOff(0) && !first_run.IsOff(1),
+              "the run turns off the op that failed, and only that one");
+        // The op stays on ArrayFire for the rest of this run: no provider call again
+        events.clear();
+        gae();
+        gae();
+        Check(events.empty(), "after a failure GAE stays on ArrayFire for the rest of the run: " + Describe());
+        // ... but not for a Strict run, which asks the provider whatever was
+        // met before, and stops at its failure (without setting the latch)
+        events.clear();
+        {
+            const cyxwiz::ScopedNeuralProviderFailurePolicy strict(cyxwiz::NeuralProviderFailurePolicy::Fail);
+            Check(Run(gae) == Thrown::Route, "Fail: GAE after an earlier failure still asks the provider and stops");
+        }
+        Check(OneEvent("PPO", "ppo_gae", cyxwiz::NeuralDispatchOutcome::Failed, kStub),
+              "Fail: GAE after an earlier failure reports Failed: " + Describe());
     }
-    Check(OneEvent("PPO", "ppo_gae", cyxwiz::NeuralDispatchOutcome::Failed, kStub),
-          "Fail: GAE after an earlier failure reports Failed: " + Describe());
+    {
+        // Run 2 in the same process: run 1's failure did not change its path.
+        // It asks the provider again (the latch was run 1's, not the process's).
+        const cyxwiz::rl::ScopedPpoProviderRun second_run;
+        Check(!second_run.IsOff(2), "a new run starts with nothing turned off");
+        events.clear();
+        Check(Run(gae) == Thrown::Nothing, "run 2: GAE does not throw");
+        Check(OneEvent("PPO", "ppo_gae", cyxwiz::NeuralDispatchOutcome::Failed, kStub),
+              "run 2 asks the provider again after run 1's failure: " + Describe());
+        Check(MaxDifference(advantages, want_advantages) < 1e-6, "run 2: GAE equals the ArrayFire path");
+    }
+    // Outside any run nothing is remembered: every call asks the provider
+    events.clear();
+    gae();
+    gae();
+    Check(events.size() == 2, "outside a run every call asks the provider: " + Describe());
 
     // Fail: sampling stops with the provider route error
     const auto head = Filled({3, 2}, 0.0f);

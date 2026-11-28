@@ -91,6 +91,12 @@ private:
     bool has_forward_ = false;
     // Device-resident provider path (TOFIX140 A1b): tried before ArrayFire;
     // a failed provider is not retried for this layer.
+    // A provider failure keeps this layer on ArrayFire. Scope: this layer
+    // object, from the failure until the object is destroyed (a decline does
+    // not set it). A run builds its own model, so a new run starts on the
+    // provider again; a model object used again (Run Test on the trained
+    // model, training continued on it) keeps the latch. A Strict run stops at
+    // the failure instead (the dispatch throws before this is set).
     bool provider_disabled_ = false;
     bool provider_logged_ = false;
     bool TryProviderForward(const Tensor& input, const std::vector<size_t>& output_shape, Tensor& output);

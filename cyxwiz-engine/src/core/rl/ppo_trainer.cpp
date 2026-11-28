@@ -177,6 +177,10 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
     // What this run's provider calls did, per op, for the compute path each
     // update reports; the run's own observer (its trace) still sees them all
     const NeuralDispatchTally tally;
+    // This run's latch for PPO's own ops (sampling, loss, GAE): one that
+    // fails stays on ArrayFire until the run ends, as a fused network and the
+    // joint Adam step do. The next run starts on the provider again.
+    const ScopedPpoProviderRun ppo_run;
     FusedMlp::Refusal policy_refusal, value_refusal;
     policy_fused_ = FuseNetwork(*policy_, policy_refusal);
     value_fused_ = FuseNetwork(*value_, value_refusal);

@@ -143,7 +143,13 @@ private:
     bool fused_declared_ = false;
     bool fused_causal_ = false;
     int fused_window_ = 0;
-    bool fused_disabled_ = false;  // a provider failure keeps this layer on ArrayFire
+    // A provider failure keeps this layer on ArrayFire. Scope: this layer
+    // object, from the failure until the object is destroyed (a decline does
+    // not set it). A run builds its own model, so a new run starts on the
+    // provider again; a model object used again (Run Test on the trained
+    // model, training continued on it) keeps the latch. Not read under the
+    // Fail provider policy: a Strict run stops at the failure instead.
+    bool fused_disabled_ = false;
     bool fused_logged_ = false;
     bool cached_fused_ = false;
     Tensor cached_fused_q_, cached_fused_k_, cached_fused_v_, cached_fused_o_, cached_fused_lse_;

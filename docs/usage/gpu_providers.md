@@ -170,7 +170,10 @@ During the run:
   > provider_route_changed: cyxwiz.nvidia-cublas-cell lstm_forward failed in LSTM (...): ...
 
   A Compatibility run (the default) runs the layer on ArrayFire instead and
-  the trace records the failure.
+  the trace records the failure. That layer then stays on ArrayFire for as
+  long as the model lives: the rest of the run, and a Run Test or more
+  training on the same trained model. A new run builds a new model and asks
+  the provider again.
 - **No provider serves the device** (it is not installed, not built, from
   another version, or turned off): ArrayFire runs the layer on the same
   device, under both policies. The trace records it once per operation and
@@ -183,9 +186,9 @@ networks), `Adam` (the joint optimizer step) and `PPO` (sampling, the loss,
 the advantages), and a Strict run stops at a provider failure in the same
 words. Two things differ: an RL run declares no placement before its first
 batch (it asks the provider as it goes), and under Compatibility a fused
-network or the joint Adam step whose provider failed or declined stays on
-ArrayFire for the rest of the run, and a failed PPO kernel for the rest of the
-Engine session. See
+network, the joint Adam step or a PPO kernel whose provider failed stays on
+ArrayFire for the rest of that run. The next run asks the provider again: a
+failure in one run never changes the path of a later one. See
 [Where it trains](rl_training.md#where-it-trains).
 
 ## One training run per GPU
