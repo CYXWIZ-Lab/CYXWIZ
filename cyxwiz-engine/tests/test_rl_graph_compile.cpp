@@ -639,15 +639,15 @@ void CheckSac() {
                   !c.normalize_observations && std::isnan(c.target_return),
               "SAC's defaults are Stable-Baselines3's, the target entropy minus the actions");
         // The actor and the Q chain on [observation | action], at SAC's batch
-        Check(!cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CPU, 0), "SAC: no fused kernels on the CPU");
+        Check(!cyxwiz::ForecastRLNetworks(rl, cyxwiz::DeviceType::CPU, 0).fused, "SAC: no fused kernels on the CPU");
         const bool cuda_provider =
             !cyxwiz::NeuralProviderRegistry::Instance().ListServing({cyxwiz::DeviceType::CUDA, 0}).empty();
-        Check(cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CUDA, 0) == cuda_provider,
+        Check(cyxwiz::ForecastRLNetworks(rl, cyxwiz::DeviceType::CUDA, 0).fused == cuda_provider,
               "SAC's actor and Q networks are expected fused on CUDA exactly when a provider serves CUDA");
         if (cuda_provider) {
             auto huge = rl;  // a batch past the backward's rows
             huge.sac.batch_size = 70000;
-            Check(!cyxwiz::FusedNetworksExpected(huge, cyxwiz::DeviceType::CUDA, 0),
+            Check(!cyxwiz::ForecastRLNetworks(huge, cyxwiz::DeviceType::CUDA, 0).fused,
                   "a SAC batch past the backward's 65,536 rows is not expected fused");
         }
 
@@ -796,10 +796,10 @@ void CheckTd3() {
                   c.action_noise_std == 0.1f && c.target_policy_noise == 0.2f && c.target_noise_clip == 0.5f &&
                   !c.normalize_observations && std::isnan(c.target_return),
               "TD3's defaults are Stable-Baselines3's, with RL Zoo's Gaussian noise 0.1");
-        Check(!cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CPU, 0), "TD3: no fused kernels on the CPU");
+        Check(!cyxwiz::ForecastRLNetworks(rl, cyxwiz::DeviceType::CPU, 0).fused, "TD3: no fused kernels on the CPU");
         const bool cuda_provider =
             !cyxwiz::NeuralProviderRegistry::Instance().ListServing({cyxwiz::DeviceType::CUDA, 0}).empty();
-        Check(cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CUDA, 0) == cuda_provider,
+        Check(cyxwiz::ForecastRLNetworks(rl, cyxwiz::DeviceType::CUDA, 0).fused == cuda_provider,
               "TD3's 256-unit actor and Q networks are expected fused on CUDA exactly when a provider serves CUDA");
 
         g.At(id.ppo).parameters["action_noise"] = "none";
@@ -897,7 +897,7 @@ void CheckTd3() {
         if (config.rl) {
             const bool cuda_provider =
                 !cyxwiz::NeuralProviderRegistry::Instance().ListServing({cyxwiz::DeviceType::CUDA, 0}).empty();
-            Check(cyxwiz::FusedNetworksExpected(*config.rl, cyxwiz::DeviceType::CUDA, 0) == cuda_provider,
+            Check(cyxwiz::ForecastRLNetworks(*config.rl, cyxwiz::DeviceType::CUDA, 0).fused == cuda_provider,
                   "RL Zoo's 400-unit TD3 networks are expected fused on CUDA exactly when a provider serves CUDA");
         }
     }
@@ -935,10 +935,10 @@ void CheckDqn() {
               "DQN's defaults are Stable-Baselines3's");
         const auto [first, second] = cyxwiz::RLNetworkUnits(rl);
         Check(first == std::vector<int>{64, 64} && second == first, "DQN's networks for the device notes: Q and target");
-        Check(!cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CPU, 0), "DQN: no fused kernels on the CPU");
+        Check(!cyxwiz::ForecastRLNetworks(rl, cyxwiz::DeviceType::CPU, 0).fused, "DQN: no fused kernels on the CPU");
         const bool cuda_provider =
             !cyxwiz::NeuralProviderRegistry::Instance().ListServing({cyxwiz::DeviceType::CUDA, 0}).empty();
-        Check(cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CUDA, 0) == cuda_provider,
+        Check(cyxwiz::ForecastRLNetworks(rl, cyxwiz::DeviceType::CUDA, 0).fused == cuda_provider,
               "DQN's Q network is expected fused on CUDA exactly when a provider serves CUDA");
 
         g.At(id.ppo).parameters["exploration_fraction"] = "0.16";

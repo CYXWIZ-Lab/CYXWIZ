@@ -198,27 +198,31 @@ inline std::vector<NeuralOpRequest> ProviderRequestsForLayer(const TrainingConfi
 struct LayerProviderSelection {
     // The provider that serves every request; null: ArrayFire runs the layer.
     std::shared_ptr<INeuralNetworkProvider> provider;
-    // Why, for the placement's explanation (empty when no provider is registered).
+    // Why, for the placement's explanation. Empty when the layer asks no
+    // provider, and when none is offered for it on the device family (the
+    // CPU): ArrayFire is the designed path there.
     std::string note;
+    // "<name>. <fix>" when no provider serves the device and one can be
+    // supplied ("NVIDIA provider not installed. Install the CUDA GPU pack.")
+    std::string missing_provider;
 };
 
 inline LayerProviderSelection SelectLayerProvider(const std::vector<NeuralOpRequest>& requests) {
     LayerProviderSelection selection;
     if (requests.empty()) return selection;
     auto& registry = NeuralProviderRegistry::Instance();
-    const auto providers = registry.List();
-    if (providers.empty()) return selection;
     const NeuralDeviceTarget& target = requests.front().target;
     const auto serving = registry.ListServing(target);
     if (serving.empty()) {
-        std::string registered;
-        for (const auto& provider : providers) {
-            if (!registered.empty()) registered += ", ";
-            registered += std::string(provider->ProviderId()) + ": " + NeuralDevicePlatformName(provider->Platform());
+        // No provider serves the device family: the reason (not built, not
+        // installed, another ABI, turned off), with what to do about it
+        const NeuralProviderAbsence absence = WhyNoNeuralProviderServes(target.platform, requests.front().op);
+        if (absence.fixable) {
+            selection.missing_provider = absence.Sentence();
+            selection.note = std::string(" No native provider serves the run's device (") +
+                             NeuralDevicePlatformName(target.platform) + ", " +
+                             BackendFallbackReasonName(absence.reason) + "): " + selection.missing_provider;
         }
-        selection.note = " Native provider(s) registered (" + registered +
-                         ") do not serve the run's target device (" + NeuralDevicePlatformName(target.platform) +
-                         "); portable path retained.";
         return selection;
     }
     std::shared_ptr<INeuralNetworkProvider> chosen;
@@ -242,10 +246,11 @@ inline LayerProviderSelection SelectLayerProvider(const std::vector<NeuralOpRequ
 
 // The Compile report's entry: names the provider when one serves every
 // request of the layer; otherwise records why not. A provider failure runs
-// the layer's ArrayFire path in a Compatibility run.
+// the layer's ArrayFire path in a Compatibility run and stops a Strict run.
 inline void ApplyProviderPlacement(BackendPlacementEntry& placement, const std::vector<NeuralOpRequest>& requests) {
     const LayerProviderSelection selection = SelectLayerProvider(requests);
     placement.explanation += selection.note;
+    placement.missing_provider = selection.missing_provider;
     if (!selection.provider) return;
     placement.expected_backend = std::string("native provider ") + selection.provider->ProviderId();
     placement.fallback_backend = "ArrayFire";

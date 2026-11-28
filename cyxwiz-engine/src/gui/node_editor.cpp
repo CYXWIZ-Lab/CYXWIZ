@@ -4381,6 +4381,7 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     rl_device_shown_ = false;
     rl_run_device_ = {};
     rl_compute_path_.clear();
+    rl_missing_provider_.clear();
 
     if (!rl_dashboard_) rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
     cyxwiz::TrainingDashboardPanel::RunInfo info;
@@ -4503,10 +4504,12 @@ void NodeEditor::PollRLTraining() {
     if (!rl_run_ || !rl_dashboard_) return;
     const auto* config = rl_run_->Config();
     const std::string learner = config ? cyxwiz::RLAlgorithmName(config->algorithm) : "PPO";
-    // The dashboard's note on small networks: the learner's two networks' widths
+    // The dashboard's note on how the networks compute: a missing provider,
+    // or the small-network advice (the learner's two networks' widths)
     const auto note = [&]() {
         const auto [first, second] = cyxwiz::RLNetworkUnits(*config);
-        return cyxwiz::rl_device::DashboardNote(rl_run_device_, first, second, rl_compute_path_);
+        return cyxwiz::rl_device::DashboardNote(rl_run_device_, first, second, rl_compute_path_,
+                                                rl_missing_provider_);
     };
     // Another training run holds the GPU: the run waits and says so (TOFIX206 3.2 E)
     if (!rl_device_shown_) {
@@ -4545,21 +4548,22 @@ void NodeEditor::PollRLTraining() {
         }
     }
     // How the run computes, once known (or changed by a fallback): the note follows it
-    const auto follow_path = [&](const std::string& path) {
+    const auto follow_path = [&](const std::string& path, const std::string& missing_provider) {
         if (path.empty() || path == rl_compute_path_) return;
         rl_compute_path_ = path;
+        rl_missing_provider_ = missing_provider;
         rl_dashboard_->SetRunComputePath(path);
         if (rl_run_device_.valid && config) rl_dashboard_->SetRunNote(note());
     };
     for (const auto& m : rl_run_->TakeUpdates()) {
         rl_dashboard_->AddPpoUpdate(m);
-        follow_path(m.compute_path);
+        follow_path(m.compute_path, m.missing_provider);
         rl_status_ = "PPO update " + std::to_string(m.update) + " \xC2\xB7 " +
                      cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps" + rl_device_suffix_;
     }
     for (const auto& m : rl_run_->TakeOffPolicyReports()) {
         rl_dashboard_->AddOffPolicyReport(m);
-        follow_path(m.compute_path);
+        follow_path(m.compute_path, m.missing_provider);
         rl_status_ = learner + " " + cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps" +
                      rl_device_suffix_;
     }

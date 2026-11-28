@@ -68,7 +68,8 @@ RunFacts Training(const std::vector<Update>& updates) {
     f.target = 100;
     f.running = true;
     f.device = Cpu();
-    f.compute_path = "ArrayFire operations (policy: no neural provider runs this network on cpu), optimizers per tensor";
+    f.compute_path = "ArrayFire operations (NVIDIA provider not installed. Install the CUDA GPU pack.); Adam: ArrayFire, "
+                     "per tensor; PPO sample, PPO loss, PPO GAE: ArrayFire";
     f.reference_label = "SB3 2.7.1, 3 seeds";
     f.reference_now = 118.31;
     f.updates = updates;

@@ -6,6 +6,7 @@
 // (rl_graph_compile.cpp); the run builds the networks from it.
 
 #include "graph_compiler.h"
+#include "rl_device_presentation.h"
 #include <cyxwiz/device.h>
 #include "rl/ppo_trainer.h"
 #include "rl/sac_config.h"
@@ -95,9 +96,14 @@ const char* RLLearnerName(gui::NodeType type);
 // activations, one LeakyReLU slope and one ELU alpha per network, the
 // minibatch within the backward's rows): asked of the provider registry's
 // capability checks; no kernel runs. The first use of the registry loads the
-// provider modules (as supervised Compile's placement does). A prediction
-// for Compile; the run's compute path says what it did.
-bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType platform, int device_id);
+// provider modules (as supervised Compile's placement does). When they would
+// not, the forecast says which cause it is: a provider that is missing (not
+// built, not installed, another ABI, turned off) with what to do, or another
+// (the provider declines these networks, the networks are not a fusable
+// chain, no provider is offered for them on that device family). A
+// prediction for Compile; the run's compute path says what it did.
+rl_device::NetworkForecast ForecastRLNetworks(const RLTrainingConfiguration& config, DeviceType platform,
+                                              int device_id);
 
 // The units of a network's layers that have them (its hidden widths)
 std::vector<int> HiddenUnits(const std::vector<CompiledLayer>& layers);

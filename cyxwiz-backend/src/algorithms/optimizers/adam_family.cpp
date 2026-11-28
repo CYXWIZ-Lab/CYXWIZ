@@ -399,9 +399,19 @@ bool AdamOptimizer::StepTogether(const std::vector<Group>& groups, float max_gra
             status = ExecuteNeuralOpOnDevice(provider, r, inputs, shapes, outputs);
             return status;
         })) {
-        why = provider_id.empty()
-                  ? std::string("no neural provider steps Adam on ") + NeuralDevicePlatformName(r.target.platform)
-                  : provider_id + " adam_step failed: " + status.detail;
+        if (!provider_id.empty()) {
+            why = provider_id + " adam_step failed: " + status.detail;
+        } else {
+            // An absent provider and one that declines the step are told apart
+            const auto serving = NeuralProviderRegistry::Instance().ListServing(r.target);
+            if (serving.empty()) {
+                const NeuralProviderAbsence absence = WhyNoNeuralProviderServes(r.target.platform, r.op);
+                why = absence.fixable ? absence.Sentence() : absence.name;
+            } else {
+                why = std::string(serving.front()->ProviderId()) + " declined the step: " +
+                      serving.front()->QueryCapability(r).detail;
+            }
+        }
         return false;
     }
     for (size_t i = 0; i < items.size(); ++i) {

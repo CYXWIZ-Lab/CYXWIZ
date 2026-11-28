@@ -242,23 +242,23 @@ void CheckCartPole() {
     // Compile's prediction of the fused small-network kernels: never on the
     // CPU; on CUDA exactly when a provider serves CUDA; not for a layer
     // wider than the kernels take
-    Check(!cyxwiz::FusedNetworksExpected(*config, cyxwiz::DeviceType::CPU, 0), "no fused kernels on the CPU");
+    Check(!cyxwiz::ForecastRLNetworks(*config, cyxwiz::DeviceType::CPU, 0).fused, "no fused kernels on the CPU");
     const bool cuda_provider = !cyxwiz::NeuralProviderRegistry::Instance().ListServing({cyxwiz::DeviceType::CUDA, 0}).empty();
-    Check(cyxwiz::FusedNetworksExpected(*config, cyxwiz::DeviceType::CUDA, 0) == cuda_provider,
+    Check(cyxwiz::ForecastRLNetworks(*config, cyxwiz::DeviceType::CUDA, 0).fused == cuda_provider,
           "CartPole's 64-64 networks are expected fused on CUDA exactly when a provider serves CUDA");
     auto wide = *config;
     wide.policy_layers.front().units = 600;  // the kernels take up to 512 units
-    Check(!cyxwiz::FusedNetworksExpected(wide, cyxwiz::DeviceType::CUDA, 0), "a 600-unit layer is not expected fused");
+    Check(!cyxwiz::ForecastRLNetworks(wide, cyxwiz::DeviceType::CUDA, 0).fused, "a 600-unit layer is not expected fused");
     if (cuda_provider) {
         auto mixed = *config;  // two LeakyReLU slopes in one network: FusedMlp refuses them
         for (auto& layer : mixed.policy_layers)
             if (layer.type != gui::NodeType::Dense) layer.type = gui::NodeType::LeakyReLU;
         mixed.policy_layers.back().negative_slope = 0.2f;
-        Check(!cyxwiz::FusedNetworksExpected(mixed, cyxwiz::DeviceType::CUDA, 0),
+        Check(!cyxwiz::ForecastRLNetworks(mixed, cyxwiz::DeviceType::CUDA, 0).fused,
               "LeakyReLU layers with different slopes are not expected fused");
         auto huge = *config;  // a minibatch past the backward's rows
         huge.ppo.batch_size = 70000;
-        Check(!cyxwiz::FusedNetworksExpected(huge, cyxwiz::DeviceType::CUDA, 0),
+        Check(!cyxwiz::ForecastRLNetworks(huge, cyxwiz::DeviceType::CUDA, 0).fused,
               "a minibatch past the backward's 65,536 rows is not expected fused");
     }
 

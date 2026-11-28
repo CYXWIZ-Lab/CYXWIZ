@@ -170,8 +170,28 @@ int RLBatchSize(const RLTrainingConfiguration& c) {
 
 }  // namespace
 
-bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType platform, int device_id) {
-    if (platform == DeviceType::CPU) return false;
+rl_device::NetworkForecast ForecastRLNetworks(const RLTrainingConfiguration& config, DeviceType platform,
+                                              int device_id) {
+    rl_device::NetworkForecast forecast;
+    auto& registry = NeuralProviderRegistry::Instance();
+    // Why no provider takes a request: none serves the device (missing, or
+    // none offered), or the one that does declines it
+    const auto refused = [&](const NeuralOpRequest& r, const char* what) {
+        const auto serving = registry.ListServing(r.target);
+        if (serving.empty()) {
+            const NeuralProviderAbsence absence = WhyNoNeuralProviderServes(r.target.platform, r.op);
+            if (absence.fixable) forecast.missing_provider = absence.Sentence();
+            else forecast.why = absence.name;
+        } else {
+            forecast.why = std::string(serving.front()->ProviderId()) + " declined " + what + ": " +
+                           serving.front()->QueryCapability(r).detail;
+        }
+        return forecast;
+    };
+    if (platform == DeviceType::CPU) {
+        forecast.why = WhyNoNeuralProviderServes(platform, NeuralOp::MlpForward).name;
+        return forecast;
+    }
     const bool sac = config.algorithm == RLAlgorithm::SAC;
     const size_t observations = std::max<size_t>(config.observation_size, 1);
     const size_t actions = std::max<size_t>(config.policy_outputs, 1);
@@ -202,14 +222,19 @@ bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType pla
         r.dtype = DataType::Float32;
         r.batch = 1;
         if (!MlpChain(*n.layers, n.inputs, n.outputs, r.mlp_layers, r.mlp_widths, r.mlp_activations,
-                      r.mlp_negative_slope, r.mlp_elu_alpha))
-            return false;
-        if (!NeuralProviderRegistry::Instance().FindSupporting(r)) return false;
+                      r.mlp_negative_slope, r.mlp_elu_alpha)) {
+            forecast.why = "a network is not a chain of Dense layers and fused activations";
+            return forecast;
+        }
+        const auto provider = registry.FindSupporting(r);
+        if (!provider) return refused(r, "this network");
         r.op = NeuralOp::MlpBackward;  // the minibatch's backward, with its row limit
         r.batch = static_cast<size_t>(std::max(batch, 1));
-        if (!NeuralProviderRegistry::Instance().FindSupporting(r)) return false;
+        if (!registry.FindSupporting(r)) return refused(r, "the minibatch's backward");
+        if (forecast.provider_id.empty()) forecast.provider_id = provider->ProviderId();
     }
-    return true;
+    forecast.fused = true;
+    return forecast;
 }
 
 bool IsRLLearnerNode(gui::NodeType type) {

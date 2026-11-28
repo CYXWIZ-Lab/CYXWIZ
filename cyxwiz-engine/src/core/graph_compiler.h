@@ -323,6 +323,11 @@ struct BackendPlacementEntry {
     std::string reason_code;
     std::string explanation;
     std::string suggested_action;
+    // "<name>. <fix>" when the layer asks a native provider and none serves
+    // the device because it is missing and can be supplied ("NVIDIA provider
+    // not installed. Install the CUDA GPU pack."); the layer runs on
+    // ArrayFire. Empty otherwise. Shown with the row's reason, not persisted.
+    std::string missing_provider;
     // Run-time metadata of execution-plan entries (execution_placement_plan.h).
     std::string observation_device;
     std::string observation_dtype;

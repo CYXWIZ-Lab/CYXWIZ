@@ -5670,7 +5670,9 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         compile_result_rl_ = config.rl;
         // Launch readiness (data columns, device qualification, row limits):
         // reported by Compile, and therefore also before Train starts.
-        // An RL graph on a GPU route with small networks: advice, never a switch (TOFIX206)
+        // An RL graph on a GPU route: how its networks will compute and why
+        // (a missing provider with what to do, or the small-network advice
+        // where that is the cause); a note, never a switch (TOFIX206)
         if (config.is_valid && config.rl) {
             const auto [first_units, second_units] = cyxwiz::RLNetworkUnits(*config.rl);
             const auto route = cyxwiz::PreviewRequestedRouteTrainingReadiness();
@@ -5678,7 +5680,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
                 ? cyxwiz::rl_device::CompileAdvice(
                       cyxwiz::rl_device::BackendWord(cyxwiz::ExecutionDeviceSelectionBackendName(route.type)),
                       first_units, second_units,
-                      cyxwiz::FusedNetworksExpected(*config.rl, route.type, route.device_id))
+                      cyxwiz::ForecastRLNetworks(*config.rl, route.type, route.device_id))
                 : std::string();
             if (!advice.empty()) {
                 cyxwiz::ValidationIssue issue;

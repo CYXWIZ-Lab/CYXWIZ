@@ -84,12 +84,18 @@ std::string Why(const BackendPlacementEntry& p) {
     if (p.reason_code == ArrayFireTensorOpCapable) why = "ArrayFire tensor operations on the selected device.";
     else if (p.reason_code == GraphRuntimeArrayFire) why = "An ArrayFire graph operation on the selected device.";
     else if (p.reason_code == NativeProviderSelected)
-        why = "A native provider is installed and selected; ArrayFire runs it if the provider fails.";
+        // True under both policies: Compile does not know which the run will use
+        why = "A native provider is installed and selected. If the provider fails, a Compatibility run continues on "
+              "ArrayFire and a Strict run stops.";
     else if (p.reason_code == BackendCapabilityUnclassified) why = "No placement rule exists for this layer yet.";
     else if (p.reason_code == TimeDistributedSequenceWrapper)
         why = "Runs inside a time-distributed wrapper on the sequence path.";
     else if (p.reason_code == UnsupportedSequentialModelLayer) why = "The sequential model does not support this layer.";
     else why = p.explanation;
+    // The layer asked for a native provider and none serves the device: the
+    // actual path is ArrayFire, with the reason and what to do
+    if (!p.missing_provider.empty() && why.find(p.missing_provider) == std::string::npos)
+        why += (why.empty() ? "" : " ") + ("No native provider runs it: " + p.missing_provider);
     if (p.NeedsUserAttention() && !p.suggested_action.empty() && p.suggested_action != "No action needed.")
         why += (why.empty() ? "" : " ") + p.suggested_action;
     return why;

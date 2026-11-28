@@ -123,6 +123,12 @@ void CheckFailedCompile() {
               lstm.engine == "native provider cyxwiz.nvidia-cublas-cell" &&
               Contains(lstm.why, "native provider is installed and selected"),
           "LSTM row in plain words: " + lstm.why);
+    // What a provider failure does depends on the policy; the row says both
+    // (a Strict run stops: it does not continue on ArrayFire)
+    Check(lstm.why == "A native provider is installed and selected. If the provider fails, a Compatibility run continues "
+                      "on ArrayFire and a Strict run stops.",
+          "the provider row is true under both policies: " + lstm.why);
+    Check(!Contains(lstm.why, "ArrayFire runs it if the provider fails"), "the old sentence, wrong under Strict, is gone");
     Check(r.placements[0].engine == "ArrayFire" && r.placements[0].why == "ArrayFire tensor operations on the selected device.",
           "ArrayFire row");
     bool code_in_details = false;
@@ -303,6 +309,26 @@ void CheckTextNotTokenized() {
 
 // Missing values (TOFIX223 0.3): the card is the verdict; "Fix and train"
 // while it is open, "Train" once it is fixed; Copy report lists the columns.
+// A layer that asks a native provider when none serves the device: the row
+// says the actual path (ArrayFire), the reason and what to do.
+void CheckMissingProvider() {
+    Input in;
+    in.mode = Mode::Compile;
+    in.compiled_ok = true;
+    BackendPlacementEntry conv = Gpu(3, "Conv2D 32", "Conv2D");
+    conv.missing_provider = "NVIDIA provider not installed. Install the CUDA GPU pack.";
+    in.placements = {conv, Gpu(4, "Dense 10", "Dense")};
+    const Report r = BuildReport(in);
+    Check(r.placements.size() == 2, "two rows");
+    Check(r.placements[0].engine == "ArrayFire" &&
+              r.placements[0].why == "ArrayFire tensor operations on the selected device. No native provider runs it: "
+                                     "NVIDIA provider not installed. Install the CUDA GPU pack.",
+          "the row of a layer whose provider is missing: " + r.placements[0].why);
+    Check(r.placements[1].why == "ArrayFire tensor operations on the selected device.",
+          "a layer that asks no provider says nothing of one: " + r.placements[1].why);
+    Check(Contains(r.copy_text, "No native provider runs it: NVIDIA provider not installed"), "and Copy carries it");
+}
+
 void CheckMissingValues() {
     namespace mv = cyxwiz::missing_values_fix;
     mv::Input card_in;
@@ -355,8 +381,9 @@ int main() {
     CheckAttentionFirst();
     CheckMemoryRisk();
     CheckTextNotTokenized();
+    CheckMissingProvider();
     CheckMissingValues();
     std::cout << "compile report presentation: failed, ready, training memory, blocked, placement, memory risk, text not "
-                 "tokenized, missing values. OK\n";
+                 "tokenized, missing provider, missing values. OK\n";
     return 0;
 }
