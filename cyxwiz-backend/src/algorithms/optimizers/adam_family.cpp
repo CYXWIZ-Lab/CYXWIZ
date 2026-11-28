@@ -321,8 +321,16 @@ bool AdamOptimizer::StepTogether(const std::vector<Group>& groups, float max_gra
             const auto g = group.gradients->find(name);
             if (g == group.gradients->end()) continue;
             if (parameter.GetDataType() != DataType::Float32 || g->second.GetDataType() != DataType::Float32 ||
-                parameter.NumElements() != g->second.NumElements() || parameter.NumElements() == 0) {
+                parameter.NumElements() == 0) {
                 why = "parameter '" + name + "' and its gradient do not match as Float32 tensors";
+                return false;
+            }
+            // The shapes, not only the counts: the kernel pairs elements by
+            // position, so a gradient of the same count in another layout
+            // ([in, out] against [out, in]) would step every weight with
+            // another weight's gradient. Step refuses it; so does this.
+            if (parameter.Shape() != g->second.Shape()) {
+                why = "parameter '" + name + "' and its gradient differ in shape";
                 return false;
             }
             const auto s = o->parameter_steps_.find(name);
@@ -331,9 +339,10 @@ bool AdamOptimizer::StepTogether(const std::vector<Group>& groups, float max_gra
                 why = "parameter '" + name + "' has incomplete Adam state";
                 return false;
             }
-            if (has_m && (o->m_.at(name).NumElements() != parameter.NumElements() ||
-                          o->v_.at(name).NumElements() != parameter.NumElements())) {
-                why = "parameter '" + name + "' and its Adam moments differ in size";
+            if (has_m && (o->m_.at(name).Shape() != parameter.Shape() || o->v_.at(name).Shape() != parameter.Shape() ||
+                          o->m_.at(name).GetDataType() != DataType::Float32 ||
+                          o->v_.at(name).GetDataType() != DataType::Float32)) {
+                why = "parameter '" + name + "' and its Adam moments differ in shape";
                 return false;
             }
             const int at = s == o->parameter_steps_.end() ? 0 : s->second;

@@ -24,6 +24,7 @@
 #include <limits>
 #include <map>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -146,6 +147,39 @@ void CheckRefusals(bool provider) {
     Check(!cyxwiz::AdamOptimizer::StepTogether({{&x, &a, &ga}, {&y, &b, &gb}}, 0.5f, why) &&
               why.find("hyperparameters") != std::string::npos,
           "different learning rates are refused: " + why);
+    {
+        // A gradient with the parameter's count in another layout: the kernel
+        // pairs elements by position, so it would step every weight with
+        // another weight's gradient. Refused before any provider is asked
+        // (on every device), and nothing is changed; Step refuses it too.
+        std::map<std::string, cyxwiz::Tensor> weights, transposed;
+        std::vector<float> values(6);
+        for (size_t i = 0; i < values.size(); ++i) values[i] = 0.1f * static_cast<float>(i + 1);
+        weights["w"] = cyxwiz::Tensor({2, 3}, values.data(), cyxwiz::DataType::Float32);
+        transposed["w"] = cyxwiz::Tensor({3, 2}, values.data(), cyxwiz::DataType::Float32);
+        const auto host = [](const cyxwiz::Tensor& t) {
+            const float* d = t.ReadData<float>();
+            return std::vector<float>(d, d + t.NumElements());
+        };
+        const std::vector<float> before = host(weights.at("w"));
+        cyxwiz::AdamOptimizer shaped(1e-3);
+        Check(!cyxwiz::AdamOptimizer::StepTogether({{&shaped, &weights, &transposed}}, 0.5f, why) &&
+                  why == "parameter 'w' and its gradient differ in shape",
+              "a gradient of the same count and another shape is refused: " + why);
+        Check(host(weights.at("w")) == before, "and the parameter is left as it was");
+        bool step_refuses = false;
+        try {
+            shaped.Step(weights, transposed);
+        } catch (const std::invalid_argument&) {
+            step_refuses = true;
+        }
+        Check(step_refuses, "as the per-tensor Step refuses it");
+        std::map<std::string, cyxwiz::Tensor> flat;
+        flat["w"] = cyxwiz::Tensor({6}, values.data(), cyxwiz::DataType::Float32);
+        Check(!cyxwiz::AdamOptimizer::StepTogether({{&shaped, &weights, &flat}}, 0.0f, why) &&
+                  why.find("differ in shape") != std::string::npos,
+              "a flattened gradient is refused too: " + why);
+    }
     if (!provider) return;
     cyxwiz::AdamOptimizer one(1e-3), two(1e-3);
     one.Step(a, ga);  // a at step 1, b at step 0
