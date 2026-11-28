@@ -272,7 +272,7 @@ bool OptimizerStates(const std::map<std::string, std::vector<uint8_t>>& files,
 
 PolicyDeviceScope::PolicyDeviceScope(const TrainedPolicy& p) : PolicyDeviceScope(p.device_type, p.device_id) {}
 
-PolicyDeviceScope::PolicyDeviceScope(DeviceType type, int id) {
+PolicyDeviceScope::PolicyDeviceScope(DeviceType type, int id) : target_(NeuralDeviceTarget{type, id}) {
     const auto* current = Device::GetCurrentDevice();
     if (current && current->GetType() == type && current->GetDeviceId() == id) return;
     if (current) previous_ = std::make_pair(current->GetType(), current->GetDeviceId());

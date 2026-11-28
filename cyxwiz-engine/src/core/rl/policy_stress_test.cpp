@@ -2,6 +2,8 @@
 
 #include "../../plugin/registries/plugin_environment_registry.h"
 #include "../execution_device_context.h"
+#include "../execution_device_preferences.h"
+#include "rl_common.h"
 
 #include <spdlog/spdlog.h>
 
@@ -183,6 +185,10 @@ void PolicyStressTest::Run() {
             const auto activation = Device(policy.device_type, policy.device_id).ActivateExact(false);
             if (!activation.success) return fail("the policy's device did not start: " + activation.message);
             const ScopedActiveExecutionDeviceContext in_use;
+            // Observed and policed as a training run is (policy playback too)
+            const PolicyRunScopes provider_scopes(
+                policy.device_type, policy.device_id,
+                GetNextRunExecutionPolicy().value_or(ExecutionPolicy::Compatibility));
             for (int level = 0; level < spec_.levels; ++level) {
                 if (stop_) break;
                 const double difficulty = StressDifficulty(spec_, level);

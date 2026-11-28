@@ -110,9 +110,39 @@ struct NeuralDeviceTarget {
     int device_id = 0;
 };
 
-// The run's current target: the active ArrayFire backend and device (the
-// same source ExecutionDeviceContext reads); CPU when ArrayFire is absent
-// or the query fails.
+inline bool SameNeuralDeviceTarget(const NeuralDeviceTarget& a, const NeuralDeviceTarget& b) {
+    return a.platform == b.platform && a.device_id == b.device_id;
+}
+
+// The device the calling thread's run bound, as a provider target. A run's
+// target is the device the run selected and bound (its
+// ExecutionDeviceContext), never a thread's incidental ArrayFire state. The
+// Engine opens this scope wherever it binds a run's device: training, Run
+// Test, RL training, policy playback and the stress test. Nested scopes
+// restore the outer target.
+class CYXWIZ_API ScopedNeuralRunTarget {
+public:
+    explicit ScopedNeuralRunTarget(NeuralDeviceTarget target);
+    ~ScopedNeuralRunTarget();
+    ScopedNeuralRunTarget(const ScopedNeuralRunTarget&) = delete;
+    ScopedNeuralRunTarget& operator=(const ScopedNeuralRunTarget&) = delete;
+
+private:
+    bool had_previous_ = false;
+    NeuralDeviceTarget previous_;
+};
+// The target this thread's run bound; false outside a run.
+CYXWIZ_API bool BoundNeuralRunTarget(NeuralDeviceTarget& target);
+// The calling thread's active ArrayFire backend and device; false, with
+// why, when the query fails.
+CYXWIZ_API bool QueryArrayFireNeuralTarget(NeuralDeviceTarget& target, std::string& error);
+
+// The target of a request made now: the run's bound device inside a run
+// (ScopedNeuralRunTarget), else the thread's active ArrayFire backend and
+// device. A failed query outside a run is logged as a warning (once per
+// process, reason target_mismatch) and gives the CPU target, which no
+// provider serves; inside a run the dispatch reports a thread whose
+// ArrayFire state differs from the bound device as target_mismatch.
 CYXWIZ_API NeuralDeviceTarget CaptureCurrentNeuralDeviceTarget();
 // Stable lowercase names ("cpu", "cuda", "opencl", "oneapi", ...) matching
 // CurrentArrayFireBackendName's vocabulary.

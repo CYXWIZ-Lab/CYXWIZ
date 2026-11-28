@@ -5,9 +5,11 @@
 // how a run computes (its compute path). GUI-free.
 
 #include "../executable_model.h"
+#include "../execution_policy.h"
 
 #include <cyxwiz/fused_mlp.h>
 #include <cyxwiz/neural_provider_dispatch.h>
+#include <cyxwiz/rl/ppo.h>
 
 #include <cstdint>
 #include <exception>
@@ -90,5 +92,24 @@ std::vector<ComputePathPart> ComputePathParts(const NetworkRoute& route, const s
 // run's NeuralProviderRouteError is not a failure to fall back from, so it is
 // rethrown and stops the run (TOFIX233 B). Anything else returns.
 void RethrowProviderRouteError(const std::exception& e);
+
+// What a thread that runs a trained policy's networks outside training opens
+// for as long as it runs (policy playback, the stress test), as a training
+// run does: the device the policy's networks live on as its provider target,
+// the provider dispatch observer (the active trace, when one records), the
+// failure policy (Strict: a provider failure stops it instead of falling back)
+// and its own PPO latch.
+class PolicyRunScopes {
+public:
+    PolicyRunScopes(DeviceType device_type, int device_id, ExecutionPolicy policy);
+    PolicyRunScopes(const PolicyRunScopes&) = delete;
+    PolicyRunScopes& operator=(const PolicyRunScopes&) = delete;
+
+private:
+    ScopedNeuralRunTarget target_;
+    ScopedNeuralDispatchObserver observer_;
+    ScopedNeuralProviderFailurePolicy failure_policy_;
+    ScopedPpoProviderRun ppo_run_;
+};
 
 }  // namespace cyxwiz::rl

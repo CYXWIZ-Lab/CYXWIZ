@@ -6,8 +6,10 @@
 // Stub providers serve the CPU platform (no real provider does), so the test
 // runs on ArrayFire CPU and never meets a real provider.
 
+#include "../src/core/execution_device_preferences.h"
 #include "../src/core/execution_placement_plan.h"
 #include "../src/core/provider_placement.h"
+#include "../src/core/rl/rl_common.h"
 #include "../src/core/training_trace_collector.h"
 #include "../src/gui/loaders/data_loader.h"
 #include "oracle/oracle_test.h"
@@ -390,6 +392,116 @@ void TestNotServed() {
     Check(executions == 0, "nothing ran on a provider");
 }
 
+// The run's bound device is the provider target (the done68 rule), and a
+// thread or request off it is never served: target_mismatch, once, a trace
+// warning. Compile asks about the selected route; playback and the stress
+// test open the same scopes as a run.
+void TestRunTarget() {
+    using cyxwiz::BackendFallbackReason;
+    using cyxwiz::BackendFallbackReasonName;
+    using cyxwiz::DeviceType;
+    using cyxwiz::NeuralDispatchOutcome;
+    const cyxwiz::NeuralDeviceTarget cpu{DeviceType::CPU, 0};
+    const cyxwiz::NeuralDeviceTarget cuda{DeviceType::CUDA, 0};
+    const cyxwiz::RecurrentProviderShape shape{kBatch, kSeq, kInput, kHidden, 1};
+    const auto request = cyxwiz::RecurrentProviderRequest(cyxwiz::NeuralOp::LstmForward, cpu, shape);
+    int executions = 0;
+    const auto run = [&](cyxwiz::INeuralNetworkProvider&) {
+        ++executions;
+        cyxwiz::NeuralOpStatus status;
+        status.ok = true;
+        return status;
+    };
+    RegisterStub(StubMode::Serve);
+
+    // Outside a run: the thread's ArrayFire device (this test runs on the CPU)
+    cyxwiz::NeuralDeviceTarget bound;
+    Check(!cyxwiz::BoundNeuralRunTarget(bound), "no run target outside a run");
+    Check(cyxwiz::SameNeuralDeviceTarget(cyxwiz::CaptureCurrentNeuralDeviceTarget(), cpu),
+          "outside a run the target is the thread's ArrayFire device");
+    {
+        // A run bound to CUDA on a thread whose ArrayFire state is the CPU
+        const cyxwiz::ScopedNeuralRunTarget run_target(cuda);
+        Check(cyxwiz::SameNeuralDeviceTarget(cyxwiz::CaptureCurrentNeuralDeviceTarget(), cuda),
+              "inside a run the target is the bound device, not the thread's ArrayFire state");
+        g_events.clear();
+        const cyxwiz::ScopedNeuralDispatchObserver observer(&CollectEvent);
+        // The request names the CPU, which the stub serves: still not asked
+        const bool ran = cyxwiz::DispatchNeuralProviderOp(request, "LSTM", run) ||
+                         cyxwiz::DispatchNeuralProviderOp(request, "LSTM", run);
+        Check(!ran && executions == 0, "a request off the run's device is never served");
+        Check(g_events.size() == 1 && g_events[0].outcome == NeuralDispatchOutcome::NotServed &&
+                  g_events[0].reason == BackendFallbackReasonName(BackendFallbackReason::TargetMismatch) &&
+                  g_events[0].detail.find("the run is bound to cuda device 0") != std::string::npos &&
+                  g_events[0].detail.find("the thread's ArrayFire device is cpu device 0") != std::string::npos,
+              "it is reported once as target_mismatch, with both devices: " +
+                  (g_events.empty() ? std::string("no event") : g_events[0].detail));
+        Check(!cyxwiz::CheckNeuralRunTarget(request, "LSTM"), "CheckNeuralRunTarget says the same");
+    }
+    {
+        // A run bound to the device the thread is on: served as before
+        const cyxwiz::ScopedNeuralRunTarget run_target(cpu);
+        g_events.clear();
+        const cyxwiz::ScopedNeuralDispatchObserver observer(&CollectEvent);
+        Check(cyxwiz::DispatchNeuralProviderOp(request, "LSTM", run) && executions == 1,
+              "a request on the run's device is served");
+        Check(g_events.size() == 1 && g_events[0].outcome == NeuralDispatchOutcome::Ran, "and reported as ran");
+        {
+            const cyxwiz::ScopedNeuralRunTarget inner(cuda);  // nested: the inner one decides, then the outer is back
+            Check(!cyxwiz::CheckNeuralRunTarget(request, "Inner"), "a nested target decides inside its scope");
+        }
+        Check(cyxwiz::CheckNeuralRunTarget(request, "LSTM"), "and the outer target is back after it");
+    }
+    Check(!cyxwiz::BoundNeuralRunTarget(bound), "the run target ends with its scope");
+
+    // The trace: a target mismatch is a warning (an Engine fault)
+    auto& trace = cyxwiz::TrainingTraceCollector::Instance();
+    trace.StartRun("provider-target-mismatch-test");
+    cyxwiz::NeuralDispatchEvent mismatch;
+    mismatch.op = "lstm_forward";
+    mismatch.layer = "LSTM";
+    mismatch.device = "cpu";
+    mismatch.outcome = NeuralDispatchOutcome::NotServed;
+    mismatch.reason = BackendFallbackReasonName(BackendFallbackReason::TargetMismatch);
+    mismatch.detail = "Not on the run's device: the run is bound to cuda device 0";
+    cyxwiz::RecordNeuralDispatchForActiveTrace(mismatch);
+    const auto snapshot = trace.Snapshot();
+    trace.FinishRun("completed");
+    Check(snapshot.warnings.size() == 1 && snapshot.warnings[0].find("target_mismatch") != std::string::npos,
+          "a target mismatch is a trace warning");
+
+    // Policy playback and the stress test: the run's scopes, on the policy's device
+    {
+        const cyxwiz::rl::PolicyRunScopes scopes(DeviceType::CPU, 0, cyxwiz::ExecutionPolicy::Strict);
+        Check(cyxwiz::BoundNeuralRunTarget(bound) && cyxwiz::SameNeuralDeviceTarget(bound, cpu),
+              "a policy's run binds its device as the provider target");
+        Check(cyxwiz::CurrentNeuralProviderFailurePolicy() == cyxwiz::NeuralProviderFailurePolicy::Fail,
+              "under Strict a provider failure stops it");
+        trace.StartRun("policy-playback-scopes-test");
+        cyxwiz::DispatchNeuralProviderOp(request, "LSTM", run);  // the stub serves it: observed
+        const auto played = trace.Snapshot();
+        trace.FinishRun("completed");
+        Check(played.provider_dispatch_count == 1, "its provider calls reach the trace");
+    }
+    {
+        const cyxwiz::rl::PolicyRunScopes scopes(DeviceType::CPU, 0, cyxwiz::ExecutionPolicy::Compatibility);
+        Check(cyxwiz::CurrentNeuralProviderFailurePolicy() == cyxwiz::NeuralProviderFailurePolicy::FallBack,
+              "under Compatibility it falls back");
+    }
+    Check(!cyxwiz::BoundNeuralRunTarget(bound) &&
+              cyxwiz::CurrentNeuralProviderFailurePolicy() == cyxwiz::NeuralProviderFailurePolicy::FallBack,
+          "the policy's scopes end with it");
+    cyxwiz::NeuralProviderRegistry::Instance().UnregisterForTesting("cyxwiz.test-cpu-stub");
+
+    // Compile asks the providers about the selected route, not about this
+    // thread's ArrayFire device
+    cyxwiz::SetPendingExecutionDeviceSelection(DeviceType::CUDA, 0);
+    const cyxwiz::NeuralDeviceTarget compile_target = cyxwiz::RequestedRouteNeuralTarget();
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    Check(cyxwiz::SameNeuralDeviceTarget(compile_target, cuda),
+          "Compile's provider target is the route chosen in Preferences > Devices");
+}
+
 void TestTrace() {
     auto& trace = cyxwiz::TrainingTraceCollector::Instance();
     trace.StartRun("provider-route-test");
@@ -476,6 +588,7 @@ int main() {
     TestPlacement();
     TestDispatch();
     TestNotServed();
+    TestRunTarget();
     TestLayer();
     TestTrace();
     if (g_failures > 0) {

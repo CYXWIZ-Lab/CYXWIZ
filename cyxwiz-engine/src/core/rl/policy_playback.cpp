@@ -2,6 +2,8 @@
 
 #include "../../plugin/registries/plugin_environment_registry.h"
 #include "../execution_device_context.h"
+#include "../execution_device_preferences.h"
+#include "rl_common.h"
 
 #include <spdlog/spdlog.h>
 
@@ -139,6 +141,10 @@ void PolicyPlayback::Run() {
         if (!activation.success) return fail("the policy's device did not start: " + activation.message);
         // The device is in use while it plays: Preferences > Devices waits, as for a training
         const ScopedActiveExecutionDeviceContext in_use;
+        // Observed and policed as a training run is: the policy's device is
+        // the provider target, and under Strict a provider failure stops it
+        const PolicyRunScopes provider_scopes(p.device_type, p.device_id,
+                                              GetNextRunExecutionPolicy().value_or(ExecutionPolicy::Compatibility));
         std::string error;
         auto batch = plugin::PluginEnvironmentRegistry::Instance().Create(
             p.config.environment_key, has_conditions_ ? settings_ : p.config.environment_settings, 1, error);

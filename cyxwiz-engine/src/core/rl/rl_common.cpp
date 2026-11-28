@@ -4,7 +4,15 @@
 #include <cyxwiz/neural_provider_dispatch.h>
 #include <cyxwiz/sequential.h>
 
+#include "../training_trace_collector.h"
+
 namespace cyxwiz::rl {
+
+PolicyRunScopes::PolicyRunScopes(DeviceType device_type, int device_id, ExecutionPolicy policy)
+    : target_(NeuralDeviceTarget{device_type, device_id}),
+      observer_(&RecordNeuralDispatchForActiveTrace),
+      failure_policy_(policy == ExecutionPolicy::Strict ? NeuralProviderFailurePolicy::Fail
+                                                        : NeuralProviderFailurePolicy::FallBack) {}
 
 std::unique_ptr<FusedMlp> FuseNetwork(IExecutableModel& model, FusedMlp::Refusal& refusal) {
     SequentialModel* sequential = model.AsSequentialModel();

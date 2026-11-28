@@ -24,17 +24,6 @@
 
 namespace cyxwiz {
 
-// The device a run bound, as a provider target.
-inline NeuralDeviceTarget NeuralTargetOfExecutionContext(const ExecutionDeviceContext& context) {
-    NeuralDeviceTarget target;
-    target.device_id = context.effective_device_id;
-    if (context.effective_backend == "arrayfire_cuda") target.platform = DeviceType::CUDA;
-    else if (context.effective_backend == "arrayfire_opencl") target.platform = DeviceType::OPENCL;
-    else if (context.effective_backend == "arrayfire_oneapi") target.platform = DeviceType::ONEAPI;
-    else target.platform = DeviceType::CPU;
-    return target;
-}
-
 namespace provider_placement_detail {
 
 inline std::string Param(const CompiledLayer& layer, const char* key) {

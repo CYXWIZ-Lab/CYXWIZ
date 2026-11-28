@@ -120,6 +120,16 @@ build flag says. `DispatchNeuralProviderOp` reports an operation no provider
 serves as `NotServed`, once per operation and observer scope (a run), not per
 call, and builds nothing when no one observes.
 
+**The target is the run's bound device.** Wherever the Engine binds a run's
+device (`ScopedExecutionDeviceContext`: training, Run Test, RL training; the
+policy's device for playback and the stress test), it also binds the
+provider target (`ScopedNeuralRunTarget`). `CaptureCurrentNeuralDeviceTarget`
+returns that device inside a run, and the dispatch serves a request only
+when both the request and the thread's ArrayFire device are on it; otherwise
+it reports `NotServed` with `target_mismatch` (a trace warning) and ArrayFire
+runs the operation where its data is. Compile's placement report asks about
+the route chosen in Preferences > Devices (`RequestedRouteNeuralTarget`).
+
 **In tests**, the device is not the compute path: a comparison of results
 passes on either. `CYXWIZ_EXPECT_PATH=nvidia|opencl|oneapi|<provider id>`
 names the provider every reinforcement-learning operation must have run on.

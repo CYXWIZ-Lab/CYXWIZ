@@ -54,11 +54,16 @@ enum class BackendFallbackReason {
     //    (CYXWIZ_DISABLE_NEURAL_PROVIDERS, or a test).
     //  - NotOffered: no provider implements this operation for this device
     //    family, in any build. ArrayFire is the designed path; nothing to fix.
+    //  - TargetMismatch: the request's device, or the thread's ArrayFire
+    //    device, is not the device the run bound (or ArrayFire's active
+    //    device could not be read): no provider is asked, ArrayFire runs it
+    //    where its data is. An Engine fault, never a user's choice.
     ProviderNotBuilt,
     ProviderNotInstalled,
     ProviderAbiMismatch,
     ProviderDisabled,
     ProviderNotOffered,
+    TargetMismatch,
 };
 
 constexpr const char* BackendFallbackReasonName(BackendFallbackReason reason) {
@@ -117,6 +122,8 @@ constexpr const char* BackendFallbackReasonName(BackendFallbackReason reason) {
         return "provider_disabled";
     case BackendFallbackReason::ProviderNotOffered:
         return "provider_not_offered";
+    case BackendFallbackReason::TargetMismatch:
+        return "target_mismatch";
     }
     return "backend_internal_error";
 }

@@ -18,6 +18,7 @@
 #include "dqn_trainer.h"
 
 #include <cyxwiz/device.h>
+#include <cyxwiz/neural_provider.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -71,7 +72,8 @@ struct TrainedPolicy {
 // ArrayFire arrays belong to the backend that made them: work on a policy's
 // networks happens on its device, whatever this thread was on; the thread's
 // device comes back after (and nothing changes when it already matches).
-// Throws when the device does not start.
+// The policy's device is also the provider target of the work done in the
+// scope (ScopedNeuralRunTarget). Throws when the device does not start.
 class PolicyDeviceScope {
 public:
     explicit PolicyDeviceScope(const TrainedPolicy& p);
@@ -81,6 +83,7 @@ public:
     PolicyDeviceScope& operator=(const PolicyDeviceScope&) = delete;
 
 private:
+    ScopedNeuralRunTarget target_;
     std::optional<std::pair<DeviceType, int>> previous_;
     bool switched_ = false;
 };

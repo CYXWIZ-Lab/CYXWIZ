@@ -13,6 +13,7 @@
 #include "error_codes.h"
 #include "backend_placement_capabilities.h"
 #include "execution_placement_plan.h"
+#include "execution_device_preferences.h"
 #include "provider_placement.h"
 #include "extension_node_registry.h"
 #include "guarded_extension_module.h"
@@ -2106,9 +2107,11 @@ size_t ParseSizeParam(const std::map<std::string, std::string>& params,
 }
 
 void AddBackendPlacementReports(TrainingConfiguration& config) {
-    // The Compile report asks the providers about the device active now; the
-    // executable plan asks again for the device the run binds.
-    const NeuralDeviceTarget compile_target = CaptureCurrentNeuralDeviceTarget();
+    // The Compile report asks the providers about the device a run would
+    // bind (the route chosen in Preferences > Devices), not about the calling
+    // thread's ArrayFire state; the executable plan asks again for the device
+    // the run binds.
+    const NeuralDeviceTarget compile_target = RequestedRouteNeuralTarget();
     for (size_t layer_index = 0; layer_index < config.layers.size(); ++layer_index) {
         const auto& layer = config.layers[layer_index];
         if (layer.type == gui::NodeType::PluginCustom) {

@@ -6,6 +6,8 @@
 
 #include <cyxwiz/cyxwiz.h>
 
+#include <spdlog/spdlog.h>
+
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -442,6 +444,27 @@ inline bool ResolveRequestedExecutionRoute(
         return false;
     }
     return true;
+}
+
+// The device a run started now would bind, as a neural provider target: the
+// route chosen in Preferences > Devices (pending, else saved, else the
+// process device), never the calling thread's ArrayFire state. For Compile,
+// whose report asks the providers about the run's device. The device
+// inventory is read only when a saved physical identity has to be resolved;
+// when no route resolves, the thread's target, with a warning.
+inline NeuralDeviceTarget RequestedRouteNeuralTarget() {
+    const auto pending = GetPendingExecutionDeviceSelection();
+    const auto saved = GetSavedExecutionDeviceSelection();
+    const bool needs_inventory = pending.has_value() ? !pending->physical_fingerprint.empty()
+                                                     : saved.has_value() && !saved->physical_fingerprint.empty();
+    const std::vector<DeviceInfo> inventory =
+        needs_inventory ? Device::GetAvailableDevices() : std::vector<DeviceInfo>{};
+    NeuralDeviceTarget target;
+    std::string error;
+    if (ResolveRequestedExecutionRoute(inventory, target.platform, target.device_id, error)) return target;
+    spdlog::warn("Compile: no device route resolves ({}); the report asks the providers about this thread's device",
+                 error.empty() ? std::string("no process device") : error);
+    return CaptureCurrentNeuralDeviceTarget();
 }
 
 struct RequestedRouteTrainingReadiness {

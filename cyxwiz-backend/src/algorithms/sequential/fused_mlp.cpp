@@ -171,6 +171,11 @@ std::unique_ptr<FusedMlp> FusedMlp::For(SequentialModel& model, Refusal& refusal
     r.mlp_layers = layers;
     for (size_t l = 0; l < layers; ++l) impl->z_width += r.mlp_widths[l + 1];
     // A probe, not a run: the calls themselves go through the dispatch
+    if (!CheckNeuralRunTarget(r, "fused MLP")) {  // reported as target_mismatch
+        refusal.reason = BackendFallbackReasonName(BackendFallbackReason::TargetMismatch);
+        why = DescribeNeuralProviderAbsence(BackendFallbackReason::TargetMismatch, r.target.platform).Sentence();
+        return nullptr;
+    }
     auto& registry = NeuralProviderRegistry::Instance();
     const auto provider = registry.FindSupporting(r);
     if (!provider) {

@@ -2006,8 +2006,10 @@ void RecordNeuralDispatchForActiveTrace(const NeuralDispatchEvent& event) {
         // Nothing offered for the op on this device family (every op on the
         // CPU) is the designed path: counted, and said nowhere. A provider
         // that is missing and can be supplied is said once, as information.
+        // A thread off the run's bound device is an Engine fault: a warning.
         const bool designed = event.reason == BackendFallbackReasonName(BackendFallbackReason::ProviderNotOffered);
-        note = designed ? Note::None : Note::Information;
+        const bool mismatch = event.reason == BackendFallbackReasonName(BackendFallbackReason::TargetMismatch);
+        note = mismatch ? Note::Warning : designed ? Note::None : Note::Information;
     }
     TrainingTraceCollector::Instance().RecordProviderDispatch(
         dispatch, event.reason.empty() ? event.detail : event.reason + ": " + event.detail, note);

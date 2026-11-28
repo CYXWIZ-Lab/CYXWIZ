@@ -66,13 +66,20 @@ NeuralDispatchEvent MakeEvent(const NeuralOpRequest& request, const char* layer,
 // No provider serves the request's device family: tells the observer why,
 // the first time its scope asks for this (layer, op, device family). Called
 // only with an observer set, so an unobserved call builds nothing.
-void ReportNotServedOnce(const NeuralOpRequest& request, const char* layer) {
+// Whether this scope hears of (layer, op, device family) for the first time;
+// it is remembered from then on.
+bool FirstInScope(const NeuralOpRequest& request, const char* layer) {
     if (g_not_served_reported.empty()) g_not_served_reported.emplace_back();  // an observer set without a scope
     auto& reported = g_not_served_reported.back();
     const char* name = layer ? layer : "";
     for (const auto& key : reported)
-        if (key.op == request.op && key.platform == request.target.platform && key.layer == name) return;
+        if (key.op == request.op && key.platform == request.target.platform && key.layer == name) return false;
     reported.push_back({request.op, request.target.platform, name});
+    return true;
+}
+
+void ReportNotServedOnce(const NeuralOpRequest& request, const char* layer) {
+    if (!FirstInScope(request, layer)) return;
     const NeuralProviderAbsence absence = WhyNoNeuralProviderServes(request.target.platform, request.op);
     NeuralDispatchEvent event = MakeEvent(request, layer, nullptr, NeuralDispatchOutcome::NotServed);
     event.reason = BackendFallbackReasonName(absence.reason);
@@ -86,6 +93,10 @@ void ReportNotServedOnce(const NeuralOpRequest& request, const char* layer) {
         spdlog::debug("{} {} runs on ArrayFire on {}: {} ({})", event.layer, event.op, event.device, event.detail,
                       event.reason);
     Notify(event);
+}
+
+std::string TargetWords(const NeuralDeviceTarget& target) {
+    return std::string(NeuralDevicePlatformName(target.platform)) + " device " + std::to_string(target.device_id);
 }
 
 void ReportDeclined(const NeuralOpRequest& request, const char* layer,
@@ -295,8 +306,33 @@ bool IsNeuralProviderRouteError(const std::exception& e) {
     return dynamic_cast<const NeuralProviderRouteError*>(&e) != nullptr;
 }
 
+bool CheckNeuralRunTarget(const NeuralOpRequest& request, const char* layer) {
+    NeuralDeviceTarget bound;
+    if (!BoundNeuralRunTarget(bound)) return true;  // outside a run: the request's own target
+    NeuralDeviceTarget thread;
+    std::string error;
+    const bool known = QueryArrayFireNeuralTarget(thread, error);
+    if (known && SameNeuralDeviceTarget(thread, bound) && SameNeuralDeviceTarget(request.target, bound)) return true;
+    if (!FirstInScope(request, layer)) return false;
+    // A provider would read tensors that are not where it runs: none is
+    // asked, ArrayFire runs the op where its data is
+    std::string detail = "the run is bound to " + TargetWords(bound);
+    if (!known) detail += ", and ArrayFire's active device could not be read (" + error + ")";
+    else if (!SameNeuralDeviceTarget(thread, bound)) detail += ", the thread's ArrayFire device is " + TargetWords(thread);
+    if (!SameNeuralDeviceTarget(request.target, bound)) detail += ", the request names " + TargetWords(request.target);
+    const NeuralProviderAbsence absence =
+        DescribeNeuralProviderAbsence(BackendFallbackReason::TargetMismatch, request.target.platform);
+    NeuralDispatchEvent event = MakeEvent(request, layer, nullptr, NeuralDispatchOutcome::NotServed);
+    event.reason = BackendFallbackReasonName(BackendFallbackReason::TargetMismatch);
+    event.detail = absence.name + ": " + detail + ". " + absence.fix;
+    spdlog::warn("{} {}: no neural provider is asked ({}): {}", event.layer, event.op, event.reason, event.detail);
+    Notify(event);
+    return false;
+}
+
 bool DispatchNeuralProviderOp(const NeuralOpRequest& request, const char* layer,
                               const NeuralProviderExecute& execute) {
+    if (!CheckNeuralRunTarget(request, layer)) return false;
     auto& registry = NeuralProviderRegistry::Instance();
     const auto provider = registry.FindSupporting(request);
     if (!provider) {
@@ -328,6 +364,7 @@ bool DispatchNeuralProviderOp(const NeuralOpRequest& request, const char* layer,
 }
 
 void ReportNeuralProviderProbe(const NeuralOpRequest& request, const char* layer) {
+    if (!CheckNeuralRunTarget(request, layer)) return;  // reported as target_mismatch
     if (!g_dispatch_observer) return;
     auto& registry = NeuralProviderRegistry::Instance();
     if (registry.FindSupporting(request)) return;

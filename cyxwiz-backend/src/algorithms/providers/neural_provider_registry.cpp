@@ -279,6 +279,10 @@ NeuralProviderAbsence DescribeNeuralProviderAbsence(BackendFallbackReason reason
         absence.name = "oneAPI provider not available";
         absence.fix = "Check the oneAPI runtime and the GPU driver, then start the Engine again.";
         break;
+    case R::TargetMismatch:
+        absence.name = "Not on the run's device";
+        absence.fix = "ArrayFire runs it where its data is; start the run again, and report it if this repeats.";
+        break;
     default:
         absence.reason = R::ProviderNotOffered;
         absence.fixable = false;
@@ -342,8 +346,34 @@ const char* NeuralDevicePlatformName(DeviceType platform) {
     return "unknown";
 }
 
-NeuralDeviceTarget CaptureCurrentNeuralDeviceTarget() {
-    NeuralDeviceTarget target;
+namespace {
+
+// The bound target of this thread's run (ScopedNeuralRunTarget)
+thread_local bool g_run_target_bound = false;
+thread_local NeuralDeviceTarget g_run_target;
+std::atomic<bool> g_target_query_failure_logged{false};
+
+}  // namespace
+
+ScopedNeuralRunTarget::ScopedNeuralRunTarget(NeuralDeviceTarget target)
+    : had_previous_(g_run_target_bound), previous_(g_run_target) {
+    g_run_target_bound = true;
+    g_run_target = target;
+}
+
+ScopedNeuralRunTarget::~ScopedNeuralRunTarget() {
+    g_run_target_bound = had_previous_;
+    g_run_target = previous_;
+}
+
+bool BoundNeuralRunTarget(NeuralDeviceTarget& target) {
+    if (!g_run_target_bound) return false;
+    target = g_run_target;
+    return true;
+}
+
+bool QueryArrayFireNeuralTarget(NeuralDeviceTarget& target, std::string& error) {
+    target = NeuralDeviceTarget{};
     try {
         switch (af::getActiveBackend()) {
         case AF_BACKEND_CUDA: target.platform = DeviceType::CUDA; break;
@@ -352,12 +382,30 @@ NeuralDeviceTarget CaptureCurrentNeuralDeviceTarget() {
         default: target.platform = DeviceType::CPU; break;
         }
         target.device_id = af::getDevice();
+        return true;
+    } catch (const std::exception& e) {
+        error = e.what();
     } catch (...) {
-        // Query failure is not a placement: fail closed to the CPU target
-        // (no provider serves it), the portable path decides.
-        target = NeuralDeviceTarget{};
+        error = "unknown ArrayFire error";
     }
-    return target;
+    target = NeuralDeviceTarget{};
+    return false;
+}
+
+NeuralDeviceTarget CaptureCurrentNeuralDeviceTarget() {
+    // A run's target is the device it bound, not the thread's ArrayFire
+    // state; the dispatch checks that the two agree
+    NeuralDeviceTarget target;
+    if (BoundNeuralRunTarget(target)) return target;
+    std::string error;
+    if (QueryArrayFireNeuralTarget(target, error)) return target;
+    // Not a placement, and never silent: the CPU target (no provider serves
+    // it), and a warning that says why
+    if (!g_target_query_failure_logged.exchange(true))
+        spdlog::warn("Neural providers: ArrayFire's active device could not be read ({}); no provider is used for "
+                     "requests made outside a run until it can (reason={})",
+                     error, BackendFallbackReasonName(BackendFallbackReason::TargetMismatch));
+    return NeuralDeviceTarget{};
 }
 
 struct NeuralProviderRegistry::State {

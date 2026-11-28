@@ -6,6 +6,7 @@
 #include "../../../redist/bootstrapper/runtime_mutation_gate.h"
 
 #include <cyxwiz/device.h>
+#include <cyxwiz/neural_provider.h>
 
 #include <atomic>
 #include <cstdint>
@@ -164,6 +165,17 @@ inline ExecutionDeviceContext CaptureCurrentExecutionDeviceContext(
     return context;
 }
 
+// The device a run bound, as a provider target.
+inline NeuralDeviceTarget NeuralTargetOfExecutionContext(const ExecutionDeviceContext& context) {
+    NeuralDeviceTarget target;
+    target.device_id = context.effective_device_id;
+    if (context.effective_backend == "arrayfire_cuda") target.platform = DeviceType::CUDA;
+    else if (context.effective_backend == "arrayfire_opencl") target.platform = DeviceType::OPENCL;
+    else if (context.effective_backend == "arrayfire_oneapi") target.platform = DeviceType::ONEAPI;
+    else target.platform = DeviceType::CPU;
+    return target;
+}
+
 inline const ExecutionDeviceContext*& CurrentExecutionDeviceContextSlot() {
     thread_local const ExecutionDeviceContext* context = nullptr;
     return context;
@@ -204,10 +216,14 @@ private:
     runtime::RuntimeExecutionLease runtime_execution_lease_;
 };
 
+// Binds a run's device context to this thread, and with it the run's neural
+// provider target (ScopedNeuralRunTarget): every provider request of the run
+// takes the bound device, and a thread whose ArrayFire state differs from it
+// is reported as target_mismatch instead of being served.
 class ScopedExecutionDeviceContext {
 public:
     explicit ScopedExecutionDeviceContext(const ExecutionDeviceContext& context)
-        : previous_(CurrentExecutionDeviceContextSlot()) {
+        : previous_(CurrentExecutionDeviceContextSlot()), neural_target_(NeuralTargetOfExecutionContext(context)) {
         CurrentExecutionDeviceContextSlot() = &context;
     }
 
@@ -221,6 +237,7 @@ public:
 
 private:
     const ExecutionDeviceContext* previous_ = nullptr;
+    ScopedNeuralRunTarget neural_target_;
 };
 
 } // namespace cyxwiz

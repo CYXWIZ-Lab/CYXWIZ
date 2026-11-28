@@ -203,8 +203,19 @@ private:
 // where type identity does not cross a shared-library boundary.
 CYXWIZ_API bool IsNeuralProviderRouteError(const std::exception& e);
 
+// Inside a run (ScopedNeuralRunTarget): whether the request's device and the
+// thread's ArrayFire device are both the device the run bound. When not, no
+// provider may be asked (it would read tensors that are not where it runs):
+// false, logged as a warning and reported to the observer as NotServed with
+// reason target_mismatch, once per (layer, op, device family) and scope.
+// Outside a run: true.
+CYXWIZ_API bool CheckNeuralRunTarget(const NeuralOpRequest& request, const char* layer);
+
 // Runs `execute` on the first provider that serves request.target and
 // supports the request. Returns true when it ran.
+//  - Inside a run, the request or the thread is not on the run's bound
+//    device: false; NotServed (target_mismatch) is reported once, as
+//    CheckNeuralRunTarget says.
 //  - No provider serves the device: false; NotServed is reported, once per
 //    (layer, op, device family) in the observer's scope, with the reason
 //    WhyNoNeuralProviderServes gives. Without an observer nothing is built.
