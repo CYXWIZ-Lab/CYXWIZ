@@ -364,7 +364,7 @@ TEST_CASE("An absence reason has a name and one sentence saying what to do",
     CHECK(mismatch.fix == "Install the CUDA GPU pack of this Engine version.");
     const auto kernels = DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderAbiMismatch, DeviceType::ONEAPI);
     CHECK(kernels.name == "oneAPI kernel library from another Engine version");
-    CHECK(kernels.fix == "Rebuild or reinstall cyxwiz-oneapi-kernels for this Engine version.");
+    CHECK(kernels.fix == "Rebuild or reinstall cyxwiz-oneapi-kernels for this Engine version, then restart the Engine.");
 
     const auto disabled = DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderDisabled, DeviceType::CUDA);
     CHECK(disabled.fixable);
@@ -450,6 +450,7 @@ TEST_CASE("The registry says why no provider serves a device in this process",
 
 #ifdef CYXWIZ_HAS_ONEAPI_DNN_PROVIDER
 #include "../oneapi/cyxwiz_oneapi_kernels.h"
+#include "algorithms/providers/oneapi_kernel_library_check.h"
 
 // The oneAPI kernel library's version check: a library of another version, or
 // one without the entry points, is provider_abi_mismatch (not a failure of a
@@ -485,6 +486,6 @@ TEST_CASE("The oneAPI kernel library is checked for its version",
     CHECK(cyxwiz::DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderAbiMismatch, cyxwiz::DeviceType::ONEAPI)
               .Sentence() ==
           "oneAPI kernel library from another Engine version. Rebuild or reinstall cyxwiz-oneapi-kernels for this "
-          "Engine version.");
+          "Engine version, then restart the Engine.");
 }
 #endif

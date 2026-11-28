@@ -453,18 +453,6 @@ CYXWIZ_API size_t OpenclProviderRetentionFloorHidden();
 CYXWIZ_API void SetOpenclProviderRetentionFloorForTesting(size_t hidden_floor);
 #endif
 
-#ifdef CYXWIZ_HAS_ONEAPI_DNN_PROVIDER
-// Why the oneAPI kernel library at `path` cannot be used, from what loading it
-// finds: BackendInternalError when it can; ProviderAbiMismatch when an entry
-// point is missing or its ABI number is not this Engine's
-// (CYXWIZ_ONEAPI_KERNELS_ABI); OneapiProviderUnavailable when it does not
-// load. The registry checks the installed library the same way.
-CYXWIZ_API BackendFallbackReason OneapiKernelLibraryVerdict(bool loaded, bool entry_points, int abi);
-// Test-only: loads `path` as the kernel library and gives the verdict, with
-// why in detail, whether or not ArrayFire's oneAPI backend is loaded.
-CYXWIZ_API BackendFallbackReason CheckOneapiKernelLibraryForTesting(const std::string& path, std::string& detail);
-#endif
-
 // Why no provider serves a device family, with the words shown wherever the
 // reason is shown: a display name ("NVIDIA provider not installed") and one
 // sentence saying what to do ("Install the CUDA GPU pack."). `fixable` is

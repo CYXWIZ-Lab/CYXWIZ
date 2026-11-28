@@ -253,15 +253,16 @@ NeuralProviderAbsence DescribeNeuralProviderAbsence(BackendFallbackReason reason
     case R::ProviderNotInstalled:
         absence.name = oneapi ? std::string("oneAPI kernel library not installed") : provider + " provider not installed";
         absence.fix = cuda     ? "Install the CUDA GPU pack."
-                      : oneapi ? "Put cyxwiz-oneapi-kernels beside the Engine's backend library; a gpu-dev build "
-                                 "makes it."
+                      : oneapi ? "Put cyxwiz-oneapi-kernels beside the Engine's backend library (a gpu-dev build "
+                                 "makes it), then restart the Engine."
                                : "Reinstall the Engine: its " + provider + " provider is missing.";
         break;
     case R::ProviderAbiMismatch:
         absence.name = (oneapi ? std::string("oneAPI kernel library") : provider + " provider") +
                        " from another Engine version";
         absence.fix = cuda     ? "Install the CUDA GPU pack of this Engine version."
-                      : oneapi ? "Rebuild or reinstall cyxwiz-oneapi-kernels for this Engine version."
+                      : oneapi ? "Rebuild or reinstall cyxwiz-oneapi-kernels for this Engine version, then restart "
+                                 "the Engine."
                                : "Reinstall the " + provider + " provider of this Engine version.";
         break;
     case R::ProviderDisabled:

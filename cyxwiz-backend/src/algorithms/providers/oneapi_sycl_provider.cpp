@@ -7,13 +7,19 @@
 // builds with any compiler and users without oneAPI never load SYCL.
 //
 // The library is loaded only while ArrayFire's oneAPI backend is loaded, so
-// it binds the SYCL runtime ArrayFire already uses (same sycl8.dll). Data is
+// it binds the SYCL runtime ArrayFire already uses (same sycl8.dll). It is
+// loaded and its version checked once, when the provider registers (the
+// registry's first use); capability queries and calls only read that
+// verdict, so a query never loads a library (Compile asks on the GUI thread).
+// A failed verdict is kept, with its reason, for the process: installing or
+// replacing the library takes effect when the Engine is started again. Data is
 // host-staged by ExecuteNeuralOpOnDevice (ArrayFire 3.10 exposes no SYCL
 // queue or context to share buffers safely), so buffer handles here are
 // host float arrays; the kernels still run on the oneAPI device.
 #include "cyxwiz/neural_provider.h"
 
 #include "neural_provider_absence.h"
+#include "oneapi_kernel_library_check.h"
 
 #include "../../../oneapi/cyxwiz_oneapi_kernels.h"
 #include "../../core/loaded_library.h"
@@ -28,6 +34,11 @@
 #else
 #include <dlfcn.h>
 #endif
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <arrayfire.h>
 
 #include <atomic>
 #include <filesystem>
@@ -99,8 +110,22 @@ public:
 
     const std::filesystem::path& Path() const { return path_; }
 
-    // True once the entry points are bound; failure is sticky and explained,
-    // with its reason (OneapiKernelLibraryVerdict) in failure_reason.
+    // The verdict of the one load, without loading: true once the entry
+    // points are bound; false with why and the reason when the load failed or
+    // has not happened (the provider is then not registered).
+    bool Ready(std::string& failure, BackendFallbackReason& failure_reason) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (loaded_) return true;
+        failure_reason = failure_.empty() ? BackendFallbackReason::OneapiProviderUnavailable : reason_;
+        failure = failure_.empty() ? std::string("the oneAPI kernel library was not loaded when the providers "
+                                                 "registered; restart the Engine to load it")
+                                   : failure_;
+        return false;
+    }
+
+    // Loads and checks the library, once: true once the entry points are
+    // bound; a failure is kept and explained for the process, with its reason
+    // (OneapiKernelLibraryVerdict) in failure_reason. Called at registration.
     bool Ensure(std::string& failure, BackendFallbackReason* failure_reason = nullptr) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (loaded_) return true;
@@ -269,14 +294,13 @@ public:
             capability.detail = "the oneAPI provider covers device_probe and attention";
             return capability;
         }
-        if (ArrayFireOneapiLoaded()) {
-            std::string failure;
-            BackendFallbackReason reason = BackendFallbackReason::OneapiProviderUnavailable;
-            if (!library_.Ensure(failure, &reason)) {
-                capability.reason = reason;
-                capability.detail = failure;
-                return capability;
-            }
+        // The registration's verdict; nothing is loaded here
+        std::string failure;
+        BackendFallbackReason reason = BackendFallbackReason::OneapiProviderUnavailable;
+        if (!library_.Ready(failure, reason)) {
+            capability.reason = reason;
+            capability.detail = failure;
+            return capability;
         }
         capability.supported = true;
         capability.reason = BackendFallbackReason::BackendInternalError;
@@ -285,14 +309,16 @@ public:
 
     NeuralResourceEstimate EstimateResources(const NeuralOpRequest&) const override { return {}; }
 
-    // Loads and checks the kernel library now; false, logged with the reason
-    // and what to do, when it cannot be used.
+    // Loads and checks the kernel library, once for the process; false,
+    // logged with the reason and what to do, when it cannot be used.
     bool CheckKernels() {
         std::string failure;
         BackendFallbackReason reason = BackendFallbackReason::OneapiProviderUnavailable;
         if (library_.Ensure(failure, &reason)) return true;
-        spdlog::warn("oneAPI neural provider not registered (reason={}): {}. {}", BackendFallbackReasonName(reason),
-                     failure, DescribeNeuralProviderAbsence(reason, DeviceType::ONEAPI).fix);
+        spdlog::warn("oneAPI neural provider not registered (reason={}): {}. {} The kernel library is checked once, "
+                     "when the Engine starts.",
+                     BackendFallbackReasonName(reason), failure,
+                     DescribeNeuralProviderAbsence(reason, DeviceType::ONEAPI).fix);
         return false;
     }
 
@@ -311,7 +337,7 @@ public:
         }
         std::string failure;
         BackendFallbackReason reason = BackendFallbackReason::OneapiProviderUnavailable;
-        if (!library_.Ensure(failure, &reason)) return Fail(reason, failure);
+        if (!library_.Ready(failure, reason)) return Fail(reason, failure);
         CyxOneapiDevice device{};
         device.name = buffers.queue.oneapi_device_name.c_str();
         device.platform = buffers.queue.oneapi_platform_name.c_str();
@@ -418,13 +444,27 @@ void RegisterOneapiSyclNeuralProvider(NeuralProviderRegistry& registry) {
                      DescribeNeuralProviderAbsence(BackendFallbackReason::ProviderNotInstalled, DeviceType::ONEAPI).fix);
         return;
     }
+    // The kernels load only beside ArrayFire's oneAPI backend (the library
+    // must share its SYCL runtime). ArrayFire's unified library loads its
+    // backend libraries on its first use; asking which are available makes
+    // sure it has, without starting any device.
+    try {
+        (void)af::getAvailableBackends();
+    } catch (...) {
+    }
+    if (!ArrayFireOneapiLoaded()) {
+        spdlog::info("oneAPI neural provider not registered (reason={}): ArrayFire's oneAPI backend is not loaded in "
+                     "this process",
+                     BackendFallbackReasonName(BackendFallbackReason::OneapiProviderUnavailable));
+        return;
+    }
     auto provider = std::make_shared<OneapiSyclProvider>(library);
-    // The kernels' version is checked as soon as it can be: now when
-    // ArrayFire's oneAPI backend is loaded (the library must share its SYCL
-    // runtime), else at the first request once it is. A library of another
-    // version is not registered: a oneAPI device then has no provider, with
-    // the reason provider_abi_mismatch.
-    if (ArrayFireOneapiLoaded() && !provider->CheckKernels()) return;
+    // Loaded and checked once, now: queries and calls read this verdict. A
+    // library that does not load, or is of another version, is not
+    // registered: a oneAPI device then has no provider, with the reason
+    // (provider_abi_mismatch, oneapi_provider_unavailable), until the Engine
+    // is started again.
+    if (!provider->CheckKernels()) return;
     spdlog::info("oneAPI neural provider registered: {}", provider->Version());
     registry.Register(std::move(provider));
 }

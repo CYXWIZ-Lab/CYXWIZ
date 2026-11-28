@@ -74,6 +74,12 @@ The OpenCL and oneAPI providers have the same reasons in their own words
 ("OpenCL provider not built", "oneAPI kernel library not installed", "oneAPI
 kernel library from another Engine version").
 
+The oneAPI kernel library (`cyxwiz-oneapi-kernels`) is loaded and its version
+checked once, when the Engine starts: Compile and a run only read that
+verdict. A library that is missing, does not load or is from another Engine
+version stays unused until the Engine is started again, so restart the Engine
+after installing or replacing it.
+
 Where you read it:
 
 - **Compile**, on a model graph: the row of a layer that asks for a provider
