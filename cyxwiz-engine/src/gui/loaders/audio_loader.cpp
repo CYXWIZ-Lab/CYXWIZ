@@ -6,7 +6,6 @@
 #include "../../core/dataset_audit.h"
 #include "../../core/formats/audio_dataset.h"
 #include "../../core/graph_compiler.h"  // PreprocessingDomain
-#include "../../core/training_recipe.h"
 
 #include <spdlog/spdlog.h>
 
@@ -172,20 +171,6 @@ CompletedLoadDescription AudioLoader::DescribeCompletedLoad(
 cyxwiz::PreprocessingDomain AudioLoader::Domain(
     const std::string& /*file_category*/) const {
     return cyxwiz::PreprocessingDomain::Audio;
-}
-
-cyxwiz::TrainingRecipe AudioLoader::TrainingRecipeFor(
-    const cyxwiz::TrainingConfiguration& config,
-    const std::string& dataset_name,
-    const std::string& /*label_column*/) const {
-    auto* entry = cyxwiz::DataRegistry::Instance().GetAudioDatasetEntry(dataset_name);
-    if (!entry) {
-        return cyxwiz::FailedTrainingRecipe("audio dataset '" + dataset_name +
-                                            "' is registered but its entry could not be retrieved");
-    }
-    spdlog::info("AudioLoader: audio training: dataset={}, {} samples, {} classes, feature_type={}", dataset_name,
-                 entry->num_samples, entry->num_classes, static_cast<int>(config.audio_preprocessing.feature_type));
-    return cyxwiz::AudioTrainingRecipe(*entry);
 }
 
 std::vector<ParamSchema> AudioLoader::NodeParams() const {

@@ -10,9 +10,8 @@
 #include "parquet_backed_dataset.h"
 #include "project_data_path.h"
 #include "pipeline_runtime_capabilities.h"
-#include "sequence_arrow_batcher.h"
+#include "run_resolver.h"
 #include "sha256_digest.h"
-#include "training_batcher_setup.h"
 #include "training_resume_checkpoint.h"
 
 #include <nlohmann/json.hpp>
@@ -262,79 +261,23 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     const int batch_size = std::max(1, config.batch_size);
     const int tokens_per_sample = config.sequence_batch.enabled ? config.sequence_batch.max_sequence_length : 0;
 
-    const auto role = [&datasets](const DatasetSourceRef& source) -> std::shared_ptr<ArrowDataset> {
-        if (!source.IsSupplied()) return nullptr;
-        const auto it = datasets.find(source.dataset_name);
+    // Which batchers the run reads through is the decision the Engine's Train
+    // makes (run_resolver.h), over this job's own tables: in memory, or kept
+    // on disk. A job has no sparse sets and no image, audio or text datasets.
+    RunDatasets data;
+    data.arrow = [&datasets](const std::string& name) -> std::shared_ptr<ArrowDataset> {
+        const auto it = datasets.find(name);
         return it == datasets.end() ? nullptr : it->second;
     };
-    const auto disk = [&disk_datasets](const std::string& name) -> std::shared_ptr<ParquetBackedDataset> {
+    data.parquet = [&disk_datasets](const std::string& name) -> std::shared_ptr<ParquetBackedDataset> {
         const auto it = disk_datasets.find(name);
         return it == disk_datasets.end() ? nullptr : it->second;
     };
-    const auto roles = config.dataset_roles;
-    const bool train_on_disk = disk(config.dataset_name) != nullptr;
-    const bool role_on_disk = (roles.dev.IsSupplied() && disk(roles.dev.dataset_name)) ||
-                              (roles.test.IsSupplied() && disk(roles.test.dataset_name));
-    const auto train_it = datasets.find(config.dataset_name);
-
-    std::unique_ptr<TrainingExecutor> executor;
-    if (config.sequence_batch.enabled && (train_on_disk || role_on_disk)) {
-        if (!train_on_disk) {
-            return Fail(TrainingFailureKind::DataError,
-                        "a supplied role is kept on disk, so the training set must be too: raise the data budget "
-                        "or keep all of them in memory");
-        }
-        // Token windows on disk stream a row group at a time (ParquetSequenceBatcher).
-        const auto source_of = [&](const DatasetSourceRef& source) {
-            SequenceWindowSource window_source;
-            if (!source.IsSupplied()) return window_source;
-            if (auto memory = role(source)) window_source.table = memory->GetArrowTable();
-            else window_source.file = disk(source.dataset_name);
-            return window_source;
-        };
-        SequenceWindowSource train_source;
-        train_source.file = disk(config.dataset_name);
-        auto sequence = BuildSequenceBatcherFromWindowSources(train_source, config, batch_size,
-                                                              source_of(roles.dev), source_of(roles.test));
-        if (!sequence.success()) return Fail(TrainingFailureKind::DataError, "sequence batcher: " + sequence.error_message);
-        ApplySequenceBatcherBuildResultToTrainingConfig(sequence, config);
-        executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(sequence.batcher),
-                                                      std::move(sequence.id_to_label));
-    } else if (config.sequence_batch.enabled) {
-        auto dev = role(config.dataset_roles.dev);
-        auto test = role(config.dataset_roles.test);
-        auto sequence = BuildSequenceBatcherFromArrowDataset(train_it->second, config, batch_size, dev, test);
-        if (!sequence.success()) return Fail(TrainingFailureKind::DataError, "sequence batcher: " + sequence.error_message);
-        ApplySequenceBatcherBuildResultToTrainingConfig(sequence, config);
-        executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(sequence.batcher),
-                                                      std::move(sequence.id_to_label));
-    } else if (roles.dev.IsSupplied() || roles.test.IsSupplied()) {
-        // Supplied roles: one batcher per role, each from memory or from its
-        // file, as the Engine's TabularLoader does. In memory too (TOFIX223
-        // 0.17: with every role in memory the job trained the plain table,
-        // whose split gives a supplied role no rows, and never validated).
-        ResolvedTabularDatasets resolved;
-        const auto pick = [&](const std::string& name, std::shared_ptr<ArrowDataset>& memory,
-                              std::shared_ptr<ParquetBackedDataset>& file) {
-            if (name.empty()) return;
-            if (const auto it = datasets.find(name); it != datasets.end()) memory = it->second;
-            file = disk(name);
-        };
-        pick(config.dataset_name, resolved.train_arrow, resolved.train_parquet);
-        if (roles.dev.IsSupplied()) pick(roles.dev.dataset_name, resolved.dev_arrow, resolved.dev_parquet);
-        if (roles.test.IsSupplied()) pick(roles.test.dataset_name, resolved.test_arrow, resolved.test_parquet);
-        auto built = BuildResolvedTabularTrainingBatchers(config, resolved, batch_size);
-        if (!built.ok()) return Fail(TrainingFailureKind::DataError, "training batchers: " + built.error_message);
-        executor = std::make_unique<TrainingExecutor>(std::move(config),
-                                                      TakeResolvedExternalBatchers(std::move(built.batchers)));
-    } else if (train_on_disk) {
-        const std::string label = config.dataset_roles.train.label_column;
-        auto file = disk(config.dataset_name);
-        executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(file), label);
-    } else {
-        const std::string label = config.dataset_roles.train.label_column;
-        executor = std::make_unique<TrainingExecutor>(std::move(config), train_it->second, label);
-    }
+    const TrainingRecipe recipe = ResolveRun(config, data);
+    if (!recipe) return Fail(TrainingFailureKind::DataError, recipe.error);
+    std::string executor_error;
+    const std::unique_ptr<TrainingExecutor> executor = recipe.make(std::move(config), batch_size, executor_error);
+    if (!executor) return Fail(TrainingFailureKind::DataError, executor_error);
 
     // Resume checkpoints (TOFIX118 P4e): the graph and data files identify the
     // run, so a checkpoint cannot be resumed into a different job.

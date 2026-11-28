@@ -37,11 +37,6 @@ public:
     CompletedLoadDescription DescribeCompletedLoad(
         const AsyncLoadState& state) const override;
 
-    cyxwiz::TrainingRecipe TrainingRecipeFor(
-        const cyxwiz::TrainingConfiguration& config,
-        const std::string& dataset_name,
-        const std::string& label_column) const override;
-
     cyxwiz::PreprocessingDomain Domain(
         const std::string& file_category) const override;
     bool LabelsFromStructure() const override { return true; }

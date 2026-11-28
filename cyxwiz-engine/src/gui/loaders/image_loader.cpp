@@ -6,7 +6,6 @@
 #include "../../core/dataset_audit.h"
 #include "../../core/image_index_service.h"
 #include "../../core/graph_compiler.h"  // PreprocessingDomain
-#include "../../core/training_recipe.h"
 #include "../node_editor.h"  // gui::MLNode for RestoreFromRegistry
 
 #include <spdlog/spdlog.h>
@@ -199,20 +198,6 @@ CompletedLoadDescription ImageLoader::DescribeCompletedLoad(
 cyxwiz::PreprocessingDomain ImageLoader::Domain(
     const std::string& /*file_category*/) const {
     return cyxwiz::PreprocessingDomain::Image;
-}
-
-cyxwiz::TrainingRecipe ImageLoader::TrainingRecipeFor(
-    const cyxwiz::TrainingConfiguration& /*config*/,
-    const std::string& dataset_name,
-    const std::string& /*label_column*/) const {
-    auto* entry = cyxwiz::DataRegistry::Instance().GetImageDatasetEntry(dataset_name);
-    if (!entry) {
-        return cyxwiz::FailedTrainingRecipe("image dataset '" + dataset_name +
-                                            "' is registered but its entry could not be retrieved");
-    }
-    spdlog::info("ImageLoader: image training: dataset={}, {} images, {} classes", dataset_name, entry->num_images,
-                 entry->num_classes);
-    return cyxwiz::ImageTrainingRecipe(*entry);
 }
 
 std::vector<ParamSchema> ImageLoader::NodeParams() const {

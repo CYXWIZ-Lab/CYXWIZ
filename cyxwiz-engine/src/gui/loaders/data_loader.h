@@ -30,16 +30,15 @@
 // into this header.
 namespace gui { struct MLNode; }
 
-// Forward declarations for TrainingRecipeFor. The full types come from
-// core/graph_compiler.h + core/training_recipe.h; forward-declaring them
-// keeps this header from pulling in the whole training toolchain for
-// callers that only use the Apply-time surface.
+// Forward declarations. The full types come from core/graph_compiler.h and
+// the dataset headers; forward-declaring them keeps this header from pulling
+// in the whole training toolchain for callers that only use the Apply-time
+// surface.
 namespace cyxwiz {
     struct TrainingConfiguration;
     class ArrowDataset;
     class ParquetBackedDataset;
     enum class PreprocessingDomain;  // defined in core/graph_compiler.h
-    struct TrainingRecipe;           // defined in core/training_recipe.h
 }
 
 namespace cyxwiz::loaders {
@@ -271,16 +270,10 @@ public:
     virtual CompletedLoadDescription DescribeCompletedLoad(
         const AsyncLoadState& state) const = 0;
 
-    // === Training dispatch (commit 6) ===
-    // How to train on `dataset_name` (training_recipe.h): which registry
-    // entry to read and how its batches are made. Train starts the recipe
-    // through TrainingManager; a hyperparameter or architecture search
-    // builds a fresh run from it per trial. A recipe without `make` carries
-    // the reason in `error` (entry missing, or the data cannot train as is).
-    virtual cyxwiz::TrainingRecipe TrainingRecipeFor(
-        const cyxwiz::TrainingConfiguration& config,
-        const std::string& dataset_name,
-        const std::string& label_column) const = 0;
+    // How a loaded dataset trains is not the loader's to say: the run
+    // resolver (core/run_resolver.h) decides it for every host, and the
+    // Engine's dispatch (engine_graph_training_dispatch.h) gives it the
+    // registry's image, audio and text datasets.
 
     // === Compile-gate surface (commit 7) ===
     // Returns the PreprocessingDomain this loader serves. Tabular maps

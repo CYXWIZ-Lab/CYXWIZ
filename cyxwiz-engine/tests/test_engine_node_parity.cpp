@@ -13,7 +13,6 @@
 #include "../src/core/training_manager.h"
 #include "../src/gui/engine_graph_training_dispatch.h"
 #include "../src/gui/graph_training_launcher.h"
-#include "../src/gui/loaders/data_loader.h"
 #include "causal_lm_token_window_fixture.h"
 #include "route_qualification_test_fixture.h"
 
@@ -24,6 +23,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <thread>
 #include <vector>
@@ -31,14 +31,6 @@
 #ifndef CYXWIZ_SOURCE_ROOT
 #error "CYXWIZ_SOURCE_ROOT must name the repository root"
 #endif
-
-// No file loaders in this test: the dataset is registered as an Arrow table,
-// and sequence graphs never reach the loader dispatch.
-namespace cyxwiz::loaders {
-DataLoader* GetByCategory(FileCategory) { return nullptr; }
-DataLoader* GetByRegisteredDataset(const std::string&) { return nullptr; }
-FileCategory FileCategoryFromString(const std::string&) { return FileCategory::Tabular; }
-}  // namespace cyxwiz::loaders
 
 namespace fs = std::filesystem;
 

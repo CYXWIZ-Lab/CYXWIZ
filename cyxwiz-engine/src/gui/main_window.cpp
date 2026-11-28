@@ -3813,8 +3813,9 @@ void MainWindow::StartTrialsFromGraph(SearchRunner runner, std::vector<MLNode> n
                                                             std::function<void(const std::string&)> not_started) {
     return [nodes = std::move(nodes), links = std::move(links), begin = std::move(begin),
             not_started = std::move(not_started)](
-               cyxwiz::TrainingConfiguration config, const std::string& dataset_name, const std::string& label_column,
-               int epochs, int batch_size, std::weak_ptr<cyxwiz::TrainingPlotPanel>, std::function<void(bool)>) -> bool {
+               cyxwiz::TrainingConfiguration config, const std::string& /*dataset_name*/,
+               const std::string& /*label_column*/, int epochs, int batch_size,
+               std::weak_ptr<cyxwiz::TrainingPlotPanel>, std::function<void(bool)>) -> bool {
         if (cyxwiz::TrainingManager::Instance().IsTrainingActive()) {
             not_started("Not started: Train is running; start again when it has finished.");
             throw std::runtime_error("Train is running; start again when it has finished.");
@@ -3822,7 +3823,7 @@ void MainWindow::StartTrialsFromGraph(SearchRunner runner, std::vector<MLNode> n
         config.epochs = epochs;
         config.batch_size = batch_size;
         cyxwiz::TrialSetup setup;
-        setup.recipe = ::gui::GraphTrainingRecipe(cyxwiz::DataRegistry::Instance(), config, dataset_name, label_column);
+        setup.recipe = ::gui::GraphTrainingRecipe(cyxwiz::DataRegistry::Instance(), config);
         if (!setup.recipe) {
             const std::string why = setup.recipe.error.empty() ? "the prepared data cannot train" : setup.recipe.error;
             not_started("Not started: " + why + ".");

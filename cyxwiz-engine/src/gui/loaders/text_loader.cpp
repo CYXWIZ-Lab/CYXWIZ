@@ -4,7 +4,6 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/arrow_dataset.h"
 #include "../../core/data_registry.h"
-#include "../../core/training_recipe.h"
 #include "../../core/dataset_audit.h"
 #include "../../core/formats/text_dataset.h"
 #include "../../core/graph_compiler.h"  // PreprocessingDomain
@@ -306,15 +305,6 @@ CompletedLoadDescription TextLoader::DescribeCompletedLoad(
 cyxwiz::PreprocessingDomain TextLoader::Domain(
     const std::string& /*file_category*/) const {
     return cyxwiz::PreprocessingDomain::Text;
-}
-
-cyxwiz::TrainingRecipe TextLoader::TrainingRecipeFor(
-    const cyxwiz::TrainingConfiguration& /*config*/,
-    const std::string& dataset_name,
-    const std::string& /*label_column*/) const {
-    return cyxwiz::FailedTrainingRecipe("text dataset '" + dataset_name +
-                                        "' cannot train as raw text. Add a Text Tokenizer (or TF-IDF / Count "
-                                        "Vectorizer) node; text trains through its tokenized table.");
 }
 
 std::vector<ParamSchema> TextLoader::NodeParams() const {

@@ -355,7 +355,7 @@ set(ENGINE_SOURCES
     src/core/layer_capture_settings.cpp
     src/core/layer_tensor_reader.cpp
     src/core/training_manager.cpp
-    src/core/training_recipe.cpp
+    src/core/media_training_recipe.cpp
     src/core/trial_runner.cpp
     src/core/active_model_use.cpp
     src/core/cross_validation_runner.cpp
@@ -6124,7 +6124,6 @@ configure_training_executor_harness(test_training_scheduler_lifecycle)
 add_executable(test_training_manager_session
     tests/test_training_manager_session.cpp
     src/core/training_manager.cpp
-    src/core/training_recipe.cpp
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
@@ -6162,7 +6161,6 @@ add_executable(test_training_manager_session
 )
 configure_training_executor_harness(test_training_manager_session)
 target_compile_definitions(test_training_manager_session PRIVATE
-    CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
     CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 )
 target_link_libraries(test_training_manager_session PRIVATE
@@ -9284,6 +9282,12 @@ add_test(NAME extension_loss COMMAND test_extension_loss)
 add_executable(test_graph_training_job tests/test_graph_training_job.cpp)
 target_link_libraries(test_graph_training_job PRIVATE cyxwiz-training-core)
 
+# ===== Test: one run resolver for the Engine's Train and the headless job =====
+# The same configuration resolves to the same recipe whatever the host's
+# dataset stores look like; on the training core alone, as a Server Node links.
+add_executable(test_run_resolver tests/test_run_resolver.cpp)
+target_link_libraries(test_run_resolver PRIVATE cyxwiz-training-core)
+
 # ===== Test: standard training benchmark (TOFIX118 P3) =====
 add_executable(test_training_benchmark tests/test_training_benchmark.cpp)
 target_link_libraries(test_training_benchmark PRIVATE cyxwiz-training-core)
@@ -9419,7 +9423,6 @@ endif()
 set(CYXWIZ_TRAIN_PATH_TEST_SOURCES
     src/gui/engine_graph_training_dispatch.cpp
     src/core/training_manager.cpp
-    src/core/training_recipe.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
@@ -9695,6 +9698,7 @@ set(CYXWIZ_ORACLE_TESTS
     test_scheduler_node_training
     test_engine_node_parity
     test_graph_training_job
+    test_run_resolver
     test_modality_batcher_drop_last
     test_sparse_feature_dataset_batcher
     test_sparse_training_executor

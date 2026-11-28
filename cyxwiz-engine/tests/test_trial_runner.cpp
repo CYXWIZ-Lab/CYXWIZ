@@ -14,7 +14,6 @@
 #include "../src/core/trial_runner.h"
 #include "../src/gui/engine_graph_training_dispatch.h"
 #include "../src/gui/graph_training_launcher.h"
-#include "../src/gui/loaders/data_loader.h"
 #include "causal_lm_token_window_fixture.h"
 #include "route_qualification_test_fixture.h"
 
@@ -25,6 +24,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <thread>
@@ -32,14 +32,6 @@
 #ifndef CYXWIZ_SOURCE_ROOT
 #error "CYXWIZ_SOURCE_ROOT must name the repository root"
 #endif
-
-// The dataset is registered as an Arrow table and the graph is a sequence
-// graph, so the loader dispatch is never reached.
-namespace cyxwiz::loaders {
-DataLoader* GetByCategory(FileCategory) { return nullptr; }
-DataLoader* GetByRegisteredDataset(const std::string&) { return nullptr; }
-FileCategory FileCategoryFromString(const std::string&) { return FileCategory::Tabular; }
-}  // namespace cyxwiz::loaders
 
 namespace fs = std::filesystem;
 
@@ -157,9 +149,9 @@ int main() {
     {
         std::atomic<bool> done{false};
         const auto launch = launch_with(
-            [&](cyxwiz::TrainingConfiguration config, const std::string& dataset_name, const std::string& label,
-                int, int, std::weak_ptr<cyxwiz::TrainingPlotPanel>, std::function<void(bool)>) {
-                setup.recipe = gui::GraphTrainingRecipe(registry, config, dataset_name, label);
+            [&](cyxwiz::TrainingConfiguration config, const std::string&, const std::string&, int, int,
+                std::weak_ptr<cyxwiz::TrainingPlotPanel>, std::function<void(bool)>) {
+                setup.recipe = gui::GraphTrainingRecipe(registry, config);
                 setup.launched = std::move(config);
                 captured = true;
                 return true;

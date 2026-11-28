@@ -4,7 +4,8 @@
 # registry, shared by the plugin SDK and the core (linked once per exe).
 # cyxwiz-training-core: graph loader and compiler, launch preparation, model
 # builder, training/test executors, Arrow/Parquet/sequence/sparse batchers,
-# checkpoints, trace, route qualification and the headless graph training job.
+# checkpoints, trace, route qualification, the training recipes with the run
+# resolver that picks one, and the headless graph training job.
 #
 # Included by the Engine and the Server Node (whichever is configured first
 # defines the targets). Also sets CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
@@ -171,6 +172,9 @@ add_library(cyxwiz-training-core STATIC
     ${_cyxwiz_engine_src}/core/extension_node_document.cpp
     ${_cyxwiz_engine_src}/core/graph_training_prep.cpp
     ${_cyxwiz_engine_src}/core/graph_training_job.cpp
+    # How a run reads its data, for the job above and the Engine's Train alike.
+    ${_cyxwiz_engine_src}/core/run_resolver.cpp
+    ${_cyxwiz_engine_src}/core/training_recipe.cpp
     ${_cyxwiz_engine_src}/core/compiled_graph_plan.cpp
     ${_cyxwiz_engine_src}/core/code_export.cpp
     ${_cyxwiz_engine_src}/core/graph_topology_utils.cpp

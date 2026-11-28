@@ -7,8 +7,11 @@
 // does, for every kind of data. `make` finishes the configuration where the
 // data decides it (input size, class weights, audio feature shape) and builds
 // the executor; it returns null with `error` set when it cannot.
+//
+// Part of the training core, so the Engine and a headless job build their
+// runs from the same recipes (run_resolver.h picks the recipe). The recipes
+// for the datasets only the Engine hosts are in media_training_recipe.h.
 
-#include "data_registry.h"
 #include "training_executor.h"
 
 #include <functional>
@@ -34,6 +37,13 @@ struct TrainingRecipe {
 
 TrainingRecipe FailedTrainingRecipe(std::string error);
 
+// A recipe from its parts. Its `make` first clamps the worker count to the
+// platform, so every kind of data runs with a count this machine has.
+TrainingRecipe MakeTrainingRecipe(
+    std::string task_name, std::string start_message,
+    std::function<std::unique_ptr<TrainingExecutor>(TrainingConfiguration config, int batch_size, std::string& error)>
+        make);
+
 // In-memory and disk-backed tables, read by the executor's own batchers.
 TrainingRecipe ArrowTrainingRecipe(std::shared_ptr<ArrowDataset> dataset, std::string label_column);
 TrainingRecipe ParquetTrainingRecipe(std::shared_ptr<ParquetBackedDataset> dataset, std::string label_column);
@@ -53,12 +63,5 @@ using SequenceBatcherBuilder =
     std::function<bool(TrainingConfiguration& config, int batch_size, std::unique_ptr<ISequenceBatcher>& batcher,
                        std::vector<std::string>& id_to_label, std::string& error)>;
 TrainingRecipe SequenceTrainingRecipe(SequenceBatcherBuilder build);
-
-#ifndef CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
-// An image folder: decoded on the training thread at the graph's Resize size.
-TrainingRecipe ImageTrainingRecipe(DataRegistry::ImageDatasetEntry entry);
-// Audio clips: features from the graph's Spectrogram / Mel / MFCC nodes.
-TrainingRecipe AudioTrainingRecipe(DataRegistry::AudioDatasetEntry entry);
-#endif
 
 }  // namespace cyxwiz
