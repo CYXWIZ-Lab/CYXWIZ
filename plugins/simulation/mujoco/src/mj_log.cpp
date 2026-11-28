@@ -4,6 +4,7 @@
 
 #include <cctype>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <mutex>
 #include <set>
@@ -80,6 +81,20 @@ void InstallMuJoCoLogHandlers(PluginContext& ctx) {
     state.ctx = &ctx;
     mju_user_warning = OnWarning;
     mju_user_error = OnError;
+}
+
+void PluginLog(PluginLogLevel level, const std::string& message) {
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    if (!state.ctx) {
+        std::fprintf(stderr, "%s\n", message.c_str());
+        return;
+    }
+    switch (level) {
+        case PluginLogLevel::Info: state.ctx->LogInfo(message); break;
+        case PluginLogLevel::Warn: state.ctx->LogWarn(message); break;
+        case PluginLogLevel::Error: state.ctx->LogError(message); break;
+    }
 }
 
 void RemoveMuJoCoLogHandlers() {

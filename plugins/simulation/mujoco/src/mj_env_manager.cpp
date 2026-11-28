@@ -1,6 +1,6 @@
 #include "mj_env_manager.h"
 
-#include <spdlog/spdlog.h>
+#include "mj_log.h"
 #include <algorithm>
 
 namespace cyxwiz::plugin::mujoco {
@@ -74,7 +74,7 @@ bool MjEnvManager::LoadModel(const std::string& path, const MjScene& wanted) {
     std::string error;
     if (builder_.Load(mjcf_path, error)) model_ = builder_.Build(scene, error);
     if (!model_) {
-        spdlog::error("[MuJoCo] Failed to load model '{}': {}", mjcf_path, error);
+        LogError("[MuJoCo] Failed to load model '{}': {}", mjcf_path, error);
         builder_ = {};
         return false;
     }
@@ -82,14 +82,14 @@ bool MjEnvManager::LoadModel(const std::string& path, const MjScene& wanted) {
 
     data_ = mj_makeData(model_);
     if (!data_) {
-        spdlog::error("[MuJoCo] Failed to create mjData for '{}'", mjcf_path);
+        LogError("[MuJoCo] Failed to create mjData for '{}'", mjcf_path);
         mj_deleteModel(model_);
         model_ = nullptr;
         return false;
     }
 
-    spdlog::info("[MuJoCo] Loaded model '{}' — nq={}, nv={}, nu={}, nsensordata={}",
-                 mjcf_path, model_->nq, model_->nv, model_->nu, model_->nsensordata);
+    LogInfo("[MuJoCo] Loaded model '{}' — nq={}, nv={}, nu={}, nsensordata={}",
+            mjcf_path, model_->nq, model_->nv, model_->nu, model_->nsensordata);
     return true;
 }
 
@@ -155,7 +155,7 @@ bool MjEnvManager::LoadModelFromString(const std::string& xml) {
     // TODO: Use mjVFS (mj_defaultVFS + mj_addBufferVFS) for in-memory loading.
     // mj_loadXML requires a file path — passing nullptr would crash.
     (void)xml;
-    spdlog::warn("[MuJoCo] LoadModelFromString not yet implemented — use LoadModel with file path");
+    LogWarn("[MuJoCo] LoadModelFromString not yet implemented — use LoadModel with file path");
     return false;
 }
 
@@ -184,7 +184,7 @@ StepResult MjEnvManager::Step(const std::vector<float>& action) {
     StepResult result;
 
     if (!model_ || !data_) {
-        spdlog::error("[MuJoCo] Step() called on unloaded environment");
+        LogError("[MuJoCo] Step() called on unloaded environment");
         result.terminated = true;
         return result;
     }
@@ -242,7 +242,7 @@ StepResult MjEnvManager::Step(const std::vector<float>& action) {
 
 StepResult MjEnvManager::Reset() {
     if (!model_ || !data_) {
-        spdlog::error("[MuJoCo] Reset() called on unloaded environment");
+        LogError("[MuJoCo] Reset() called on unloaded environment");
         return {};
     }
 

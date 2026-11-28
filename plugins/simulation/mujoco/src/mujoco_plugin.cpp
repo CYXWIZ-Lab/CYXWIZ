@@ -5,7 +5,6 @@
 #include "rl/observation_filter.h"
 #include "env/mj_env_batch.h"
 
-#include <spdlog/spdlog.h>
 #include <mujoco/mujoco.h>
 #include <GLFW/glfw3.h>
 
@@ -226,10 +225,10 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
     // directly (avoids cross-DLL glad/GL function pointer issues).
     renderer_needs_init_ = true;
 
-    spdlog::info("[MuJoCo] Environment loaded — obs_dim={}, act_dim={}, max_steps={}",
-                 env_manager_.GetObservationDim(),
-                 env_manager_.GetActionDim(),
-                 env_manager_.GetMaxEpisodeSteps());
+    LogInfo("[MuJoCo] Environment loaded — obs_dim={}, act_dim={}, max_steps={}",
+            env_manager_.GetObservationDim(),
+            env_manager_.GetActionDim(),
+            env_manager_.GetMaxEpisodeSteps());
     return true;
 }
 
@@ -337,7 +336,7 @@ void MuJoCoPlugin::SyncPlayback() {
         }
         if (loaded_mjcf_path_ != path) {
             if (!LoadEnvironment(path)) {
-                spdlog::warn("[MuJoCo] Policy playback: the model {} did not load", path);
+                LogWarn("[MuJoCo] Policy playback: the model {} did not load", path);
                 return;
             }
             state.clear();
@@ -422,7 +421,7 @@ void MuJoCoPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
         renderer_needs_init_ = false;
         renderer_.SetPhysicsMutex(&env_manager_.GetPhysicsMutex());
         if (!renderer_.Initialize(env_manager_.GetModel(), 640, 480, main_window_)) {
-            spdlog::warn("[MuJoCo] Renderer initialization failed — viewport disabled");
+            LogWarn("[MuJoCo] Renderer initialization failed — viewport disabled");
         } else {
             renderer_.ResetCamera(env_manager_.GetModel());
             viewport_panel_.OnRendererReady();
@@ -454,7 +453,7 @@ bool MuJoCoPlugin::ReloadModel(std::string& error) {
     local_episodes_seen_ = 0;
     viewport_panel_.ResetStress();
     if (renderer_.IsInitialized() && !renderer_.ChangeModel(env_manager_.GetModel())) renderer_needs_init_ = true;
-    spdlog::info("[MuJoCo] Reloaded {}", loaded_mjcf_path_);
+    LogInfo("[MuJoCo] Reloaded {}", loaded_mjcf_path_);
     return true;
 }
 
@@ -464,7 +463,7 @@ void MuJoCoPlugin::MirrorPlaybackScene(const MjScene& scene) {
         std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
         std::string error;
         built = env_manager_.ChangeScene(scene, error);
-        if (!built) spdlog::warn("[MuJoCo] Policy playback: the stress scene did not build here: {}", error);
+        if (!built) LogWarn("[MuJoCo] Policy playback: the stress scene did not build here: {}", error);
     }
     // Not tried again until the played copy's scene changes
     if (built) failed_scene_.reset();
@@ -1107,7 +1106,7 @@ DynamicPinResult MuJoCoPlugin::ResolveDynamicPins(
     // Parse the MJCF file to discover actuators and sensors
     MjcfModelInfo info = ParseMjcfFile(mjcf_path);
     if (!info.valid) {
-        spdlog::warn("MuJoCoPlant: Failed to parse MJCF '{}': {}", mjcf_path, info.error);
+        LogWarn("MuJoCoPlant: Failed to parse MJCF '{}': {}", mjcf_path, info.error);
         result.metadata["model_status"] = "missing";
         result.metadata["model_note"] = "The model file does not read: " + info.error;
         return result;
@@ -1166,8 +1165,8 @@ DynamicPinResult MuJoCoPlugin::ResolveDynamicPins(
     result.metadata["nsensor"] = std::to_string(info.nsensor);
     result.metadata["timestep"] = std::to_string(info.timestep);
 
-    spdlog::info("MuJoCoPlant: Resolved {} pins for '{}' ({})",
-                 result.pins.size(), mjcf_path, info.model_name);
+    LogInfo("MuJoCoPlant: Resolved {} pins for '{}' ({})",
+            result.pins.size(), mjcf_path, info.model_name);
     return result;
 }
 

@@ -1,5 +1,5 @@
 #include "mj_simulation_executor.h"
-#include <spdlog/spdlog.h>
+#include "mj_log.h"
 #include <mujoco/mujoco.h>
 #include <chrono>
 #include <cmath>
@@ -14,7 +14,7 @@ void MjSimulationExecutor::StartManualControl() {
     Stop();  // Ensure any previous session is cleaned up
 
     if (!env_ || !env_->IsLoaded()) {
-        spdlog::error("SimExecutor: Cannot start — no model loaded");
+        LogError("SimExecutor: Cannot start — no model loaded");
         return;
     }
 
@@ -31,7 +31,7 @@ void MjSimulationExecutor::StartManualControl() {
     env_->Reset();
 
     sim_thread_ = std::thread([this]() { ManualControlLoop(); });
-    spdlog::info("SimExecutor: Manual control started");
+    LogInfo("SimExecutor: Manual control started");
 }
 
 void MjSimulationExecutor::Stop() {
@@ -41,20 +41,20 @@ void MjSimulationExecutor::Stop() {
         sim_thread_.join();
     }
     mode_ = SimMode::Stopped;
-    spdlog::info("SimExecutor: Stopped");
+    LogInfo("SimExecutor: Stopped");
 }
 
 void MjSimulationExecutor::Pause() {
     if (state_ == SimState::Running) {
         state_ = SimState::Paused;
-        spdlog::info("SimExecutor: Paused");
+        LogInfo("SimExecutor: Paused");
     }
 }
 
 void MjSimulationExecutor::Resume() {
     if (state_ == SimState::Paused) {
         state_ = SimState::Running;
-        spdlog::info("SimExecutor: Resumed");
+        LogInfo("SimExecutor: Resumed");
     }
 }
 

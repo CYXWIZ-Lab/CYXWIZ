@@ -50,12 +50,13 @@ target_include_directories(mujoco_plugin PRIVATE
     ${Stb_INCLUDE_DIR}
 )
 
-# cyxwiz-plugin-sdk is headers only; this plugin logs, draws and reads JSON,
-# so it links spdlog, ImGui and nlohmann_json itself
+# cyxwiz-plugin-sdk is headers only; this plugin formats its log lines (it
+# logs through its plugin context, mj_log.h), draws and reads JSON, so it
+# links fmt, ImGui and nlohmann_json itself
 # We additionally need glad (OpenGL loader) and glfw (context management)
 target_link_libraries(mujoco_plugin PRIVATE
     cyxwiz-plugin-sdk
-    spdlog::spdlog
+    fmt::fmt
     imgui::imgui
     nlohmann_json::nlohmann_json
     mujoco::mujoco
@@ -131,20 +132,22 @@ add_executable(test_mujoco_viewport
     src/env/mj_model_ref.cpp
     src/mj_env_manager.cpp
     src/mj_env_library.cpp
+    src/mj_log.cpp
 )
 target_include_directories(test_mujoco_viewport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${Stb_INCLUDE_DIR})
 target_link_libraries(test_mujoco_viewport PRIVATE cyxwiz-plugin-sdk mujoco::mujoco nlohmann_json::nlohmann_json
-    spdlog::spdlog)
+    fmt::fmt)
 target_compile_definitions(test_mujoco_viewport PRIVATE CYXWIZ_MUJOCO_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
 add_custom_command(TARGET test_mujoco_viewport POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_RUNTIME}" "$<TARGET_FILE_DIR:test_mujoco_viewport>/"
     COMMENT "Copying the MuJoCo runtime next to test_mujoco_viewport")
 add_test(NAME mujoco_viewport COMMAND test_mujoco_viewport)
 
-# MuJoCo's warnings reach the Engine log once each; no MUJOCO_LOG.TXT
+# MuJoCo's warnings reach the Engine log once each, and the plugin's own
+# lines go through its context; no MUJOCO_LOG.TXT
 add_executable(test_mujoco_log tests/test_mujoco_log.cpp src/mj_log.cpp)
 target_include_directories(test_mujoco_log PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_mujoco_log PRIVATE cyxwiz-plugin-sdk mujoco::mujoco)
+target_link_libraries(test_mujoco_log PRIVATE cyxwiz-plugin-sdk mujoco::mujoco fmt::fmt)
 add_custom_command(TARGET test_mujoco_log POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_RUNTIME}" "$<TARGET_FILE_DIR:test_mujoco_log>/"
     COMMENT "Copying the MuJoCo runtime next to test_mujoco_log")

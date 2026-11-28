@@ -4,7 +4,7 @@
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
 #include <nlohmann/json.hpp>
-#include <spdlog/spdlog.h>
+#include "mj_log.h"
 
 #include <filesystem>
 #include <fstream>
@@ -89,8 +89,8 @@ std::vector<MjMenagerieDownloader::FileEntry> MjMenagerieDownloader::ListGitHubD
     auto res = cli.Get(url, headers);
 
     if (!res || res->status != 200) {
-        spdlog::error("MenagerieDownloader: GitHub API request failed for '{}' (status: {})",
-                      api_path, res ? res->status : 0);
+        LogError("MenagerieDownloader: GitHub API request failed for '{}' (status: {})",
+                 api_path, res ? res->status : 0);
         std::lock_guard lock(status_mutex_);
         error_ = HttpFailure(res, kGitHubApiHost);
         return entries;
@@ -108,7 +108,7 @@ std::vector<MjMenagerieDownloader::FileEntry> MjMenagerieDownloader::ListGitHubD
             entries.push_back(std::move(entry));
         }
     } catch (const std::exception& e) {
-        spdlog::error("MenagerieDownloader: Failed to parse GitHub API response: {}", e.what());
+        LogError("MenagerieDownloader: Failed to parse GitHub API response: {}", e.what());
     }
 
     return entries;
@@ -126,8 +126,8 @@ bool MjMenagerieDownloader::DownloadFile(const std::string& url_path, const std:
 
     auto res = cli.Get(url_path, headers);
     if (!res || res->status != 200) {
-        spdlog::error("MenagerieDownloader: Failed to download '{}' (status: {})",
-                      url_path, res ? res->status : 0);
+        LogError("MenagerieDownloader: Failed to download '{}' (status: {})",
+                 url_path, res ? res->status : 0);
         return false;
     }
 
@@ -137,7 +137,7 @@ bool MjMenagerieDownloader::DownloadFile(const std::string& url_path, const std:
 
     std::ofstream ofs(local_path, std::ios::binary);
     if (!ofs.is_open()) {
-        spdlog::error("MenagerieDownloader: Cannot write to '{}'", local_path);
+        LogError("MenagerieDownloader: Cannot write to '{}'", local_path);
         return false;
     }
 
@@ -219,8 +219,8 @@ bool MjMenagerieDownloader::DownloadModel(const std::string& repo_path, const st
         return false;
     }
 
-    spdlog::info("MenagerieDownloader: Downloading {} files for '{}'",
-                 files_to_download.size(), repo_path);
+    LogInfo("MenagerieDownloader: Downloading {} files for '{}'",
+            files_to_download.size(), repo_path);
 
     // Download each file
     int downloaded = 0;
@@ -274,8 +274,8 @@ bool MjMenagerieDownloader::DownloadModel(const std::string& repo_path, const st
     downloading_ = false;
 
     if (success) {
-        spdlog::info("MenagerieDownloader: Successfully downloaded '{}' at {} ({} files)",
-                     repo_path, ShortCommit(commit), downloaded);
+        LogInfo("MenagerieDownloader: Successfully downloaded '{}' at {} ({} files)",
+                repo_path, ShortCommit(commit), downloaded);
     }
     return success;
 }
@@ -448,7 +448,7 @@ bool MjMenagerieDownloader::DownloadFromUrl(const std::string& url, const std::s
             // Download files
             int total = static_cast<int>(files.size());
             int done = 0;
-            spdlog::info("UrlImport: Downloading {} files from {}/{}", total, full_repo, dir_path);
+            LogInfo("UrlImport: Downloading {} files from {}/{}", total, full_repo, dir_path);
 
             for (const auto& [raw_path, rel_path] : files) {
                 if (cancel_requested_) break;
@@ -561,7 +561,7 @@ bool MjMenagerieDownloader::DownloadFromUrl(const std::string& url, const std::s
         status_text_ = "Complete";
     }
     downloading_ = false;
-    spdlog::info("UrlImport: Downloaded '{}' to '{}'", url, local);
+    LogInfo("UrlImport: Downloaded '{}' to '{}'", url, local);
     return true;
 }
 

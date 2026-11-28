@@ -6,7 +6,7 @@
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
-#include <spdlog/spdlog.h>
+#include "mj_log.h"
 
 #include <algorithm>
 #include <cmath>
@@ -25,11 +25,11 @@ MjRenderer::~MjRenderer() {
 bool MjRenderer::Initialize(const mjModel* model, int width, int height,
                              GLFWwindow* main_window) {
     if (initialized_) {
-        spdlog::warn("[MjRenderer] Already initialized — call Shutdown() first");
+        LogWarn("[MjRenderer] Already initialized — call Shutdown() first");
         return false;
     }
     if (!model) {
-        spdlog::error("[MjRenderer] Cannot initialize with null model");
+        LogError("[MjRenderer] Cannot initialize with null model");
         return false;
     }
 
@@ -68,7 +68,7 @@ bool MjRenderer::Initialize(const mjModel* model, int width, int height,
     mjr_makeContext(model, &con_, mjFONTSCALE_150);
 
     if (con_.currentBuffer == -1) {
-        spdlog::error("[MjRenderer] mjr_makeContext failed — no valid GL context");
+        LogError("[MjRenderer] mjr_makeContext failed — no valid GL context");
         mjv_freeScene(&scn_);
         Shutdown();
         return false;
@@ -81,15 +81,15 @@ bool MjRenderer::Initialize(const mjModel* model, int width, int height,
     // Use the actual offscreen FBO size — may be smaller than requested
     if (con_.offWidth > 0 && con_.offHeight > 0) {
         if (con_.offWidth < width_ || con_.offHeight < height_) {
-            spdlog::warn("[MjRenderer] Offscreen FBO {}x{} smaller than requested {}x{}, clamping",
-                         con_.offWidth, con_.offHeight, width_, height_);
+            LogWarn("[MjRenderer] Offscreen FBO {}x{} smaller than requested {}x{}, clamping",
+                    con_.offWidth, con_.offHeight, width_, height_);
             width_ = con_.offWidth;
             height_ = con_.offHeight;
         }
     }
 
-    spdlog::info("[MjRenderer] MuJoCo rendering context created ({}x{}, offscreen={}x{})",
-                 width_, height_, con_.offWidth, con_.offHeight);
+    LogInfo("[MjRenderer] MuJoCo rendering context created ({}x{}, offscreen={}x{})",
+            width_, height_, con_.offWidth, con_.offHeight);
 
     // Step 3: Switch back to main context and create display texture
     MakeMainContextCurrent();
@@ -98,7 +98,7 @@ bool MjRenderer::Initialize(const mjModel* model, int width, int height,
     // The engine initialized glad for its own copy, but this DLL has
     // a separate static copy that needs initialization.
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
-        spdlog::error("[MjRenderer] Failed to reload glad GL function pointers");
+        LogError("[MjRenderer] Failed to reload glad GL function pointers");
         Shutdown();
         return false;
     }
@@ -112,7 +112,7 @@ bool MjRenderer::Initialize(const mjModel* model, int width, int height,
     pixel_buffer_.resize(width_ * height_ * 3);
 
     initialized_ = true;
-    spdlog::info("[MjRenderer] Initialized — texture_id={}", display_texture_);
+    LogInfo("[MjRenderer] Initialized — texture_id={}", display_texture_);
     return true;
 }
 
@@ -140,7 +140,7 @@ void MjRenderer::Shutdown() {
 
     pixel_buffer_.clear();
     initialized_ = false;
-    spdlog::info("[MjRenderer] Shut down");
+    LogInfo("[MjRenderer] Shut down");
 }
 
 // =============================================================================
@@ -483,7 +483,7 @@ bool MjRenderer::ChangeModel(const mjModel* model) {
         }
         pixel_buffer_.resize(static_cast<size_t>(width_) * height_ * 3);
     } else {
-        spdlog::error("[MjRenderer] mjr_makeContext failed for the changed model");
+        LogError("[MjRenderer] mjr_makeContext failed for the changed model");
     }
     MakeMainContextCurrent();
     if (!made) {
@@ -523,11 +523,11 @@ bool MjRenderer::CreateCompatContext([[maybe_unused]] GLFWwindow* main_window) {
     compat_window_ = glfwCreateWindow(width_, height_, "MuJoCo Renderer",
                                        nullptr, nullptr);
     if (!compat_window_) {
-        spdlog::error("[MjRenderer] Failed to create hidden compatibility GL context");
+        LogError("[MjRenderer] Failed to create hidden compatibility GL context");
         return false;
     }
 
-    spdlog::info("[MjRenderer] Created hidden compatibility GL context for MuJoCo");
+    LogInfo("[MjRenderer] Created hidden compatibility GL context for MuJoCo");
     return true;
 }
 
@@ -546,7 +546,7 @@ void MjRenderer::MakeCompatContextCurrent() {
 bool MjRenderer::AllocateDisplayTexture() {
     glGenTextures(1, &display_texture_);
     if (display_texture_ == 0) {
-        spdlog::error("[MjRenderer] Failed to allocate display texture");
+        LogError("[MjRenderer] Failed to allocate display texture");
         return false;
     }
 

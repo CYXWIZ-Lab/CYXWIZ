@@ -4,7 +4,7 @@ Problems we know about in CyxWiz Studio, mostly in the GPU runtimes it builds on
 which devices are affected, and what to do. Each entry says whether CyxWiz already works around it.
 This file ships with every release package, next to `LICENSE`.
 
-Last updated: 2026-11-27.
+Last updated: 2026-11-28.
 
 ## GPU runtimes
 
@@ -88,18 +88,6 @@ Last updated: 2026-11-27.
   rely on `^` / `$` (for example check the first match's position), or use a Python script
   (`re` without `re.M`).
 - **Status:** open; builds are to move to the newer compiler.
-
-## Add-ons
-
-### Linux: the Simulation (MuJoCo) add-on's own messages are not in the Engine's log
-
-- **Affects:** Linux. Windows is not affected; macOS has not been checked.
-- **What happens:** the add-on's own messages (loading a model, downloading a Menagerie robot,
-  environment steps) print to the terminal the Engine was started from, not to the Console panel or
-  `engine_log.txt`. The Engine's own messages about the add-on (loading it, its nodes, training
-  with it) still appear there.
-- **What to do:** start the Engine from a terminal to see them.
-- **Status:** open; the add-on is to log through the Engine's plugin log.
 
 ## Reporting a new issue
 

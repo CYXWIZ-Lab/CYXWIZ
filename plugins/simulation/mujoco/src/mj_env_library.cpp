@@ -4,7 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <map>
-#include <spdlog/spdlog.h>
+#include "mj_log.h"
 
 namespace fs = std::filesystem;
 
@@ -357,7 +357,7 @@ bool MjEnvLibrary::AddImportedModel(const std::string& dir, const std::string& n
     info.source = source;
     info.custom_asset_path = model.string();
     envs_.push_back(std::move(info));
-    spdlog::info("MjEnvLibrary: Added imported environment '{}'", name);
+    LogInfo("MjEnvLibrary: Added imported environment '{}'", name);
     return true;
 }
 

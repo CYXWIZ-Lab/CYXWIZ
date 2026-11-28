@@ -1,5 +1,5 @@
 #include "mj_mjcf_parser.h"
-#include <spdlog/spdlog.h>
+#include "mj_log.h"
 
 namespace cyxwiz::plugin::mujoco {
 
@@ -143,15 +143,15 @@ MjcfModelInfo ParseMjcfFile(const std::string& mjcf_path) {
 
     if (!m) {
         info.error = error_buf[0] ? error_buf : "Unknown error loading " + mjcf_path;
-        spdlog::error("[MjcfParser] Failed to load '{}': {}", mjcf_path, info.error);
+        LogError("[MjcfParser] Failed to load '{}': {}", mjcf_path, info.error);
         return info;
     }
 
     info = ParseMjcfModel(m);
 
-    spdlog::info("[MjcfParser] Parsed '{}' — {} actuators, {} sensors, {} cameras, nq={}, nv={}",
-                 mjcf_path, info.nu, info.nsensor, static_cast<int>(info.cameras.size()),
-                 info.nq, info.nv);
+    LogInfo("[MjcfParser] Parsed '{}' — {} actuators, {} sensors, {} cameras, nq={}, nv={}",
+            mjcf_path, info.nu, info.nsensor, static_cast<int>(info.cameras.size()),
+            info.nq, info.nv);
 
     mj_deleteModel(m);
     return info;

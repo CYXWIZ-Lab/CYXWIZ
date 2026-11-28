@@ -6,14 +6,17 @@
 //   - IPlugin lifecycle (OnLoad, OnInitialize, OnShutdown, OnUnload)
 //   - ITrainingHook for training metric logging
 //   - Early stopping via ShouldStopEarly()
+//   - Logging through the plugin context, also from training hooks
 //   - CYXWIZ_PLUGIN_ENTRY macro usage
 
+#include <fmt/format.h>
 #include <imgui.h>
 #include "plugin/plugin_types.h"
 #include "plugin/plugin_context.h"
 #include "plugin/interfaces/i_training_hook.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz::plugin::examples {
@@ -48,6 +51,19 @@ public:
     bool ShouldStopEarly(const TrainingContext& ctx) override;
 
 private:
+    // Training hooks get a TrainingContext, not the plugin context: keep the
+    // one OnLoad gives (valid until OnUnload) and log through it, so the lines
+    // reach the Engine's log on every platform.
+    template <typename... Args>
+    void LogInfo(fmt::format_string<Args...> format, Args&&... args) {
+        if (ctx_) ctx_->LogInfo(fmt::format(format, std::forward<Args>(args)...));
+    }
+    template <typename... Args>
+    void LogWarn(fmt::format_string<Args...> format, Args&&... args) {
+        if (ctx_) ctx_->LogWarn(fmt::format(format, std::forward<Args>(args)...));
+    }
+
+    PluginContext* ctx_ = nullptr;
     PluginManifest manifest_;
     PluginState state_ = PluginState::Unloaded;
 

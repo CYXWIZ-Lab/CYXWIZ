@@ -7,8 +7,9 @@ add_library(image_nodes SHARED
     image_nodes_plugin.cpp
 )
 
-# The plugin SDK (headers); this plugin draws and logs, so ImGui and spdlog too
-target_link_libraries(image_nodes PRIVATE cyxwiz-plugin-sdk imgui::imgui spdlog::spdlog)
+# The plugin SDK (headers); this plugin draws, so ImGui too (it logs through
+# its plugin context)
+target_link_libraries(image_nodes PRIVATE cyxwiz-plugin-sdk imgui::imgui)
 
 # Output to bin/ subdirectory
 set_target_properties(image_nodes PROPERTIES

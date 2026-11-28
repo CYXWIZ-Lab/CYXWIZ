@@ -1,6 +1,7 @@
 // MuJoCo's warnings reach the Engine log through the plugin's context: the
 // first of each kind once, repeats counted, no MUJOCO_LOG.TXT in the working
-// folder, and MuJoCo's previous handlers back after removal.
+// folder, and MuJoCo's previous handlers back after removal. The plugin's own
+// lines (LogInfo, LogWarn, LogError) take the same route.
 
 #include "mj_log.h"
 
@@ -90,6 +91,23 @@ int main() {
         mju_warning("after removal");
         Check(previous_calls == 1, "after removal warnings reach the previous handler");
         Check(ctx.warnings.size() == 2, "after removal nothing reaches the plugin's context");
+    }
+    {
+        // The plugin's own lines take the same route, formatted, each at its level.
+        LogContext ctx;
+        InstallMuJoCoLogHandlers(ctx);
+        LogInfo("Loaded model '{}' with {} actuators", "half_cheetah", 6);
+        LogWarn("Policy playback: the model {} did not load", "policy.cyxmodel");
+        LogError("Failed to download '{}' (status: {})", "scene.xml", 404);
+        Check(ctx.infos == std::vector<std::string>{"Loaded model 'half_cheetah' with 6 actuators"},
+              "an info line reaches the plugin's context, formatted");
+        Check(ctx.warnings == std::vector<std::string>{"Policy playback: the model policy.cyxmodel did not load"},
+              "a warning line reaches the plugin's context");
+        Check(ctx.errors == std::vector<std::string>{"Failed to download 'scene.xml' (status: 404)"},
+              "an error line reaches the plugin's context");
+        RemoveMuJoCoLogHandlers();
+        LogInfo("after removal {}", 1);
+        Check(ctx.infos.size() == 1, "after removal the plugin's lines no longer reach its context");
     }
     mju_user_warning = nullptr;
     mju_user_error = nullptr;

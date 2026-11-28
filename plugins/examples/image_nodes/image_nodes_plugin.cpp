@@ -1,7 +1,6 @@
 #include "image_nodes_plugin.h"
 
 #include <imgui.h>
-#include <spdlog/spdlog.h>
 
 namespace cyxwiz::plugin::examples {
 
