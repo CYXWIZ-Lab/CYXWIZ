@@ -42,11 +42,11 @@ struct PluginEnvironmentSetting {
     std::string default_value;  // "5"
     std::string description;    // what it changes
     PluginSettingKind kind = PluginSettingKind::Number;
-    std::vector<PluginSettingOption> options;  // Choice and Choices
-    std::string section;        // drawn under this heading with the others of it; empty: the main list
+    std::vector<PluginSettingOption> options{};  // Choice and Choices
+    std::string section{};      // drawn under this heading with the others of it; empty: the main list
     double min = 0.0;           // Number: the range a typed value is kept in, when min < max
     double max = 0.0;
-    std::string unit;           // Number: shown after the value ("m/s", "%")
+    std::string unit{};         // Number: shown after the value ("m/s", "%")
 };
 
 // A number the batch reports while it runs, shown on the RL Training

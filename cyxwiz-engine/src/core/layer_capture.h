@@ -36,7 +36,7 @@ struct LayerCaptureOptions {
     bool images_batch_first = false;
     // What the model input's channels are (image models; empty otherwise):
     // the debugger draws an input that is neither grey nor RGB as a sheet.
-    ImageChannelLayout input_channels;
+    ImageChannelLayout input_channels{};
 };
 
 // The debugger's image layout [H, W, C, N] from a batch-first [N, H, W, C]

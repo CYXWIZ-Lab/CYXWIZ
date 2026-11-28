@@ -241,8 +241,8 @@ bool DescribedEnvironment(const std::string& key, const std::map<std::string, st
         std::map<std::string, std::string> settings;
         std::chrono::steady_clock::time_point at;
         bool ok = false;
-        cyxwiz::plugin::PluginEnvironmentRegistry::Environment environment;
-        std::string error;
+        cyxwiz::plugin::PluginEnvironmentRegistry::Environment environment{};
+        std::string error{};
     };
     static std::vector<Cached> cache;
     const auto now = std::chrono::steady_clock::now();

@@ -102,7 +102,7 @@ public:
     using DataItemsJob = std::function<DataItems(size_t count, const std::function<bool()>& stop)>;
     struct DataItemsStart {
         DataItemsJob job;
-        std::string loading;  // "Cats and dogs": loading first; empty otherwise
+        std::string loading{};  // "Cats and dogs": loading first; empty otherwise
         bool compiling = false;  // the canvas's compile is not up to date yet (just after a load)
     };
     using DataItemsCallback = std::function<DataItemsStart()>;

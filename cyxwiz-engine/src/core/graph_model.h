@@ -720,10 +720,10 @@ inline const char* PinTypeName(PinType type) {
 
 // Node pin structure
 struct NodePin {
-    int id;
-    PinType type;
-    std::string name;
-    bool is_input;  // true = input pin, false = output pin
+    int id = 0;
+    PinType type = PinType::Tensor;
+    std::string name{};
+    bool is_input = false;  // true = input pin, false = output pin
 
     // Hover tooltip text — what does this pin carry, where does it
     // come from, what should connect to it. Empty string = no extra

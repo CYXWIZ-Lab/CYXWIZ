@@ -2642,16 +2642,18 @@ float MaxAbsDifference(const std::vector<float>& a, const std::vector<float>& b)
     return worst;
 }
 
-const CapturedLayer& CapturedNamed(const LayerCapture& capture, const std::string& name) {
+const CapturedLayer& CapturedNamed(const LayerCapture& capture, std::string_view name) {
     for (const auto& layer : capture.Layers())
         if (layer.node_name == name) return layer;
     std::cerr << "FAIL: no captured layer named " << name << "\n";
     std::exit(1);
 }
 
-const Tensor& CapturedTensorOf(const CapturedLayer& layer, CapturedTensorRole role, const std::string& name = {}) {
+// The name by value: a temporary bound to a const reference read as a
+// dangling one to GCC (-Wdangling-reference) at every call.
+const Tensor& CapturedTensorOf(const CapturedLayer& layer, CapturedTensorRole role, std::string_view name = {}) {
     const CapturedTensor* t = layer.Find(role, name);
-    ExpectTrue(t != nullptr, layer.node_name + " captured its " + CapturedTensorRoleName(role) + " " + name);
+    ExpectTrue(t != nullptr, layer.node_name + " captured its " + CapturedTensorRoleName(role) + " " + std::string(name));
     return t->tensor;
 }
 

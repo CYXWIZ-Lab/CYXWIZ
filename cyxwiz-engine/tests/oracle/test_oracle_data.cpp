@@ -24,6 +24,7 @@
 #include "training_oracle_test.h"
 #include "train_oracle_support.h"
 #include "../../src/core/arrow_dataset.h"
+#include "../../src/core/gcc_diagnostics.h"
 #include "../../src/core/audio_dataset_batcher.h"
 #include "../../src/core/batch_uploads.h"
 #include "../../src/core/data_budget.h"
@@ -669,6 +670,9 @@ void RunTabularReplays(cyxwiz::TrainingConfiguration config, const std::shared_p
 
 // Causal-LM token windows as the Engine writes them (token_ids, the window
 // bounds, the vocabulary in the schema metadata): 12 windows of 4 to 6 tokens.
+// Arrow's builders, inlined here, raise a GCC -Warray-bounds false positive
+// in buffer_builder.h (TOFIX187: scoped, never whole-file).
+CYXWIZ_GCC_IGNORE_BEGIN("-Warray-bounds")
 std::shared_ptr<arrow::Table> TokenWindows() {
     std::vector<std::string> words;
     for (int w = 0; w < 12; ++w) words.push_back("w" + std::to_string(w));
@@ -704,6 +708,7 @@ std::shared_ptr<arrow::Table> TokenWindows() {
                                             metadata),
                               {token_array, start_array, end_array, target_array});
 }
+CYXWIZ_GCC_IGNORE_END
 
 // Sequences: the token windows in memory (SequenceBatcher) and on disk, one
 // window per row group, read through a window of row groups

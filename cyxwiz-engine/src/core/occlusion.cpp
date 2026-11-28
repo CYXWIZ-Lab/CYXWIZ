@@ -134,6 +134,7 @@ Tensor CoveredBatch(const Tensor& sample, const Plan& plan, const std::vector<Pi
     const af::array covered = x * (1.0f - m) + fill * m;  // [S, K], one item per column
 
     std::vector<size_t> shape = plan.sample_shape;
+    if (shape.empty()) throw std::invalid_argument("occlusion: the plan has no sample shape");
     if (plan.kind == InputKind::Image) {
         shape.back() = k;  // [H, W, C, K]: row-major index s * K + k
         return Tensor::FromRowMajorFlatArray(af::flat(af::transpose(covered)), shape);

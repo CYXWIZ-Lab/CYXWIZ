@@ -150,12 +150,12 @@ Header BuildHeader(const RunFacts& facts);
 // loss, 11 entropy weight, 12 mean Q, 13 loss, 14 exploration rate; -1 the
 // info tone).
 struct Card {
-    std::string id, label, value, tooltip;
+    std::string id, label, value, tooltip{};
     int series = -1;
-    std::string change;  // "17.5 since update 111" (the panel adds the arrow)
-    int direction = 0;   // +1 up, -1 down, 0 none
+    std::string change{};  // "17.5 since update 111" (the panel adds the arrow)
+    int direction = 0;     // +1 up, -1 down, 0 none
     Tone change_tone = Tone::Good;
-    std::string line2, line3;
+    std::string line2{}, line3{};
 };
 std::vector<Card> BuildCards(const RunFacts& facts);
 
