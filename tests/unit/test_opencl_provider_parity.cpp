@@ -62,20 +62,105 @@ TEST_CASE("OpenCL provider matches ArrayFire's device by identity, then hardware
     CHECK(match.by == MatchedBy::NotGpu);
     CHECK(match.why.find("not one of the provider's GPU devices") != std::string::npos);
 
-    // Nothing matches (no handle, an unknown name): the provider's own index, as before
+    // Read, and it matches no provider GPU: declined with why, never the GPU at its position
+    match = MatchArrayFireDevice(1, DeviceKind::Gpu, {&other, "Unknown GPU", "Vendor", "", ""}, gpus);
+    CHECK(match.index == -1);
+    CHECK(match.by == MatchedBy::None);
+    CHECK(match.why.find("matches none of the provider's 2 GPU devices") != std::string::npos);
+    // A name that matches but a PCI address that contradicts it is another device
+    match = MatchArrayFireDevice(0, DeviceKind::Gpu, {&other, "NVIDIA GeForce GTX 1050 Ti", "NVIDIA Corporation", "0:2:0.0", ""},
+                                 gpus);
+    CHECK(match.index == -1);
+    CHECK(match.by == MatchedBy::None);
+
+    // ArrayFire could not report the kind (afcl_get_device_type missing) and
+    // the handle could not be read: it may not be a GPU, so no position is taken
     match = MatchArrayFireDevice(1, DeviceKind::Unknown, {nullptr, "", "", "", ""}, gpus);
+    CHECK(match.index == -1);
+    CHECK(match.why.find("may not be a GPU") != std::string::npos);
+    // Unknown kind, read, but no name and vendor match: declined too
+    match = MatchArrayFireDevice(1, DeviceKind::Unknown, {&other, "Intel(R) Core(TM) i7", "Intel(R) Corporation", "", ""},
+                                 gpus);
+    CHECK(match.index == -1);
+    CHECK(match.by == MatchedBy::None);
+    // Unknown kind with a name and vendor match: that GPU
+    match = MatchArrayFireDevice(0, DeviceKind::Unknown, {&other, "Intel(R) UHD Graphics 630", "Intel(R) Corporation", "", ""},
+                                 gpus);
+    CHECK(match.index == 1);
+    CHECK(match.by == MatchedBy::NameAndVendor);
+
+    // A GPU whose handle could not be read: its position, marked uncertain
+    match = MatchArrayFireDevice(1, DeviceKind::Gpu, {nullptr, "", "", "", ""}, gpus);
     CHECK(match.index == 1);
     CHECK(match.by == MatchedBy::Index);
-    // Two identical GPUs: neither name is unique, so the index decides
+    CHECK(match.uncertain.find("could not be read") != std::string::npos);
+    // ... and past the provider's GPUs: none
+    match = MatchArrayFireDevice(5, DeviceKind::Gpu, {nullptr, "", "", "", ""}, gpus);
+    CHECK(match.index == -1);
+
+    // Identical twins with no PCI address or UUID: the position decides, uncertain
     const std::vector<DeviceDescriptor> twins = {{&a, "Same GPU", "Vendor", "", ""}, {&b, "Same GPU", "Vendor", "", ""}};
     match = MatchArrayFireDevice(1, DeviceKind::Gpu, {&other, "Same GPU", "Vendor", "", ""}, twins);
     CHECK(match.index == 1);
     CHECK(match.by == MatchedBy::Index);
-    // Past the provider's GPUs: none, with why
-    match = MatchArrayFireDevice(5, DeviceKind::Gpu, {&other, "Unknown GPU", "Vendor", "", ""}, gpus);
+    CHECK(match.uncertain.find("2 GPUs are named Same GPU") != std::string::npos);
+    const std::string warning = cyxwiz::opencl_match::UncertainMatchWarning(1, match, twins);
+    CHECK(warning.find("GPU 1 (Same GPU) by its position") != std::string::npos);
+    CHECK(warning.find("which physical GPU runs it is uncertain") != std::string::npos);
+    // ... past them: none
+    match = MatchArrayFireDevice(3, DeviceKind::Gpu, {&other, "Same GPU", "Vendor", "", ""}, twins);
     CHECK(match.index == -1);
-    CHECK(match.by == MatchedBy::None);
-    CHECK(match.why.find("matches none of the provider's 2 GPU devices") != std::string::npos);
+    // Twins with distinct PCI addresses are told apart, whatever the positions
+    const std::vector<DeviceDescriptor> pci_twins = {{&a, "Same GPU", "Vendor", "0:3:0.0", ""},
+                                                     {&b, "Same GPU", "Vendor", "0:4:0.0", ""}};
+    match = MatchArrayFireDevice(0, DeviceKind::Gpu, {&other, "Same GPU", "Vendor", "0:4:0.0", ""}, pci_twins);
+    CHECK(match.index == 1);
+    CHECK(match.by == MatchedBy::PciOrUuid);
+    CHECK(match.uncertain.empty());
+    // ... and a twin whose PCI address is neither of theirs is declined
+    match = MatchArrayFireDevice(0, DeviceKind::Gpu, {&other, "Same GPU", "Vendor", "0:5:0.0", ""}, pci_twins);
+    CHECK(match.index == -1);
+}
+
+// The provider's memory of its answers (IdentifiedDevices, what
+// ProbeIndexFor keeps): a device is identified once and then looked up, and an
+// uncertain match is warned about once, by the call that keeps it. No GPU
+// needed: the provider's wiring is this class.
+TEST_CASE("OpenCL provider keeps each device's match and warns once about an uncertain one",
+          "[neural_provider][opencl]") {
+    using cyxwiz::opencl_match::DeviceDescriptor;
+    using cyxwiz::opencl_match::DeviceKind;
+    using cyxwiz::opencl_match::IdentifiedDevices;
+    using cyxwiz::opencl_match::MatchArrayFireDevice;
+    int a = 0, b = 0, other = 0;
+    const std::vector<DeviceDescriptor> twins = {{&a, "Same GPU", "Vendor", "", ""}, {&b, "Same GPU", "Vendor", "", ""}};
+    IdentifiedDevices identified;
+    std::vector<std::string> warnings;
+    const auto warn = [&](const std::string& warning) { warnings.push_back(warning); };
+    CHECK_FALSE(identified.Find(1).has_value());
+
+    const auto uncertain = MatchArrayFireDevice(1, DeviceKind::Gpu, {&other, "Same GPU", "Vendor", "", ""}, twins);
+    auto kept = identified.Keep(1, uncertain, twins, warn);
+    CHECK(kept.index == 1);
+    REQUIRE(warnings.size() == 1);
+    CHECK(warnings[0].find("which physical GPU runs it is uncertain") != std::string::npos);
+    // Another call that identified it meanwhile: the first answer stays, no second warning
+    kept = identified.Keep(1, MatchArrayFireDevice(1, DeviceKind::Gpu, {&a, "", "", "", ""}, twins), twins, warn);
+    CHECK(kept.index == 1);
+    CHECK_FALSE(kept.uncertain.empty());
+    CHECK(warnings.size() == 1);
+    const auto found = identified.Find(1);
+    REQUIRE(found.has_value());
+    CHECK(found->index == 1);
+
+    // A certain match and a decline are kept without a warning
+    CHECK(identified.Keep(0, MatchArrayFireDevice(0, DeviceKind::Gpu, {&a, "", "", "", ""}, twins), twins, warn).index == 0);
+    const auto declined = identified.Keep(2, MatchArrayFireDevice(2, DeviceKind::Unknown, {}, twins), twins, warn);
+    CHECK(declined.index == -1);
+    CHECK_FALSE(declined.why.empty());
+    REQUIRE(identified.Find(2).has_value());
+    CHECK(identified.Find(2)->why == declined.why);
+    CHECK(warnings.size() == 1);
 }
 
 #ifdef CYXWIZ_HAS_OPENCL_DNN_PROVIDER

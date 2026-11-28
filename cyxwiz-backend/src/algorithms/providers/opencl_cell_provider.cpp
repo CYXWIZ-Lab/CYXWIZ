@@ -18,9 +18,10 @@
 // not agree on a machine with GPUs of several vendors. The provider maps
 // ArrayFire's id to its GPU whenever ArrayFire's active device on the calling
 // thread is the target, which it is for every run-time call, and remembers
-// the answer for the process (opencl_device_match.h: declined only when
-// ArrayFire says the device is not a GPU; else by cl_device_id, PCI address
-// or UUID, name and vendor, and last by index, with a warning). Only for a
+// the answer for the process (opencl_device_match.h: by cl_device_id, PCI
+// address or UUID, or name and vendor; by index only when ArrayFire's device
+// handle could not be read or identical twins cannot be told apart, with a
+// warning that the physical GPU is uncertain; else declined with why). Only for a
 // query about a device ArrayFire has not been on in this process (Compile,
 // before any run) does it use its own index without remembering it. After
 // the first call on a device, a query or a call costs one map lookup.
@@ -2002,13 +2003,9 @@ private:
             why = "ArrayFire OpenCL device " + std::to_string(af_id) + " does not exist";
             return -1;
         }
-        {
-            std::lock_guard<std::mutex> lock(identity_mutex_);
-            const auto known = identified_.find(af_id);
-            if (known != identified_.end()) {
-                if (known->second.index < 0) why = known->second.why;
-                return known->second.index;
-            }
+        if (const auto known = identified_.Find(af_id)) {
+            if (known->index < 0) why = known->why;
+            return known->index;
         }
         // Identify it now when ArrayFire is on it on this thread
         bool on_it = false;
@@ -2018,16 +2015,12 @@ private:
             on_it = false;
         }
         if (on_it) {
-            const opencl_match::Match match = IdentifyActiveDevice(af_id);
-            if (match.by == opencl_match::MatchedBy::Index)
-                spdlog::warn("OpenCL provider: ArrayFire OpenCL device {} was not found among the provider's GPUs by "
-                             "identity, PCI address, UUID or name; using the provider's GPU {} ({}) by position",
-                             af_id, match.index, probe_.gpu_devices[static_cast<size_t>(match.index)].name);
-            else if (match.index >= 0)
+            opencl_match::Match match = IdentifyActiveDevice(af_id);
+            if (match.index >= 0 && match.uncertain.empty())
                 spdlog::debug("OpenCL provider: ArrayFire OpenCL device {} is the provider's GPU {} (by {})", af_id,
                               match.index, opencl_match::MatchedByName(match.by));
-            std::lock_guard<std::mutex> lock(identity_mutex_);
-            const auto& kept = identified_.emplace(af_id, Identified{match.index, match.why}).first->second;
+            const opencl_match::Match kept = identified_.Keep(
+                af_id, std::move(match), gpu_descriptors_, [](const std::string& warning) { spdlog::warn("{}", warning); });
             if (kept.index < 0) why = kept.why;
             return kept.index;
         }
@@ -2072,13 +2065,8 @@ private:
     std::vector<opencl_match::DeviceDescriptor> gpu_descriptors_;
     std::vector<std::unique_ptr<OpenclExecutionState>> states_;
     // ArrayFire OpenCL device id -> index in probe_.gpu_devices (-1: none of
-    // them, with why), for the process, the fallback by index included
-    struct Identified {
-        int index = -1;
-        std::string why;
-    };
-    mutable std::mutex identity_mutex_;
-    mutable std::map<int, Identified> identified_;
+    // them, with why), for the process, an uncertain match by position included
+    mutable opencl_match::IdentifiedDevices identified_;
     using GetAfDevice = af_err (*)(void**);
     using GetAfDeviceType = af_err (*)(int*);
     mutable std::once_flag symbols_once_;
