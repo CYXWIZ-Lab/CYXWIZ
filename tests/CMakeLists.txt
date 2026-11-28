@@ -295,6 +295,9 @@ include(CTest)
 # relative path (ORA-10; they failed when ctest ran them from the build folder).
 add_test(NAME CyxWizCoreTests COMMAND cyxwiz-tests "~[oneapi]" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 add_test(NAME ModelBuilderUpsamplingContracts COMMAND test_model_builder_upsampling)
+# The configure's provider table keeps every "why" whole (no row split on | or ;)
+add_test(NAME CMakeProviderTable
+         COMMAND "${CMAKE_COMMAND}" -P "${CMAKE_SOURCE_DIR}/cmake/CyxWizProviderTableTest.cmake")
 
 # ONNX Export Tests (conditional on ONNX export support)
 if(CYXWIZ_HAS_ONNX_EXPORT)
