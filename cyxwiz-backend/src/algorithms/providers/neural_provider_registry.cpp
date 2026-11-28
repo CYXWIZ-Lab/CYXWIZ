@@ -106,8 +106,25 @@ const NvidiaProviderModule& LoadNvidiaProviderModule() {
         if (handle) where = kNvidiaProviderModule;
 #endif
         if (!handle) {
-            spdlog::debug("NVIDIA neural provider module not installed ({}): NVIDIA devices use the portable path",
-                          beside.empty() ? std::string("cyxwiz-nvidia-provider") : beside.filename().string());
+            // Once per process (this is the one load attempt). Info where the
+            // build has an ArrayFire CUDA route, so a CUDA run on ArrayFire
+            // alone is explained in the log; Debug in a build without one,
+            // where no NVIDIA provider could ever be used.
+            const std::string name = beside.empty() ? std::string("cyxwiz-nvidia-provider") : beside.filename().string();
+#ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER
+            const BackendFallbackReason reason = BackendFallbackReason::ProviderNotInstalled;
+#else
+            const BackendFallbackReason reason = BackendFallbackReason::ProviderNotBuilt;
+#endif
+            const NeuralProviderAbsence absence = DescribeNeuralProviderAbsence(reason, DeviceType::CUDA);
+#ifdef CYXWIZ_ENABLE_CUDA
+            spdlog::info("NVIDIA neural provider module not found ({}): NVIDIA devices run on ArrayFire alone "
+                         "(reason={}). {}",
+                         name, BackendFallbackReasonName(reason), absence.fix);
+#else
+            spdlog::debug("NVIDIA neural provider module not found ({}): this build has no CUDA route (reason={})",
+                          name, BackendFallbackReasonName(reason));
+#endif
             return loaded;
         }
         const auto abi = reinterpret_cast<int (*)()>(NvidiaProviderSymbol(handle, "cyxwiz_nvidia_provider_abi"));

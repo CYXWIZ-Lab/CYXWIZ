@@ -118,7 +118,7 @@ void StepOffPolicyOptimizers(const std::vector<OffPolicyUpdate>& updates, bool& 
             return;
         }
         together = false;
-        spdlog::debug("{}: the optimizers step per tensor ({})", learner, why);
+        spdlog::info("{}: the optimizers step per tensor ({})", learner, why);
     }
     // One global norm over every gradient, as one optimizer over all of them clips
     if (max_grad_norm > 0.0f) {
