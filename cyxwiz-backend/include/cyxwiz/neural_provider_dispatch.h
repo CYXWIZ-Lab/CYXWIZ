@@ -227,13 +227,11 @@ CYXWIZ_API bool IsNeuralProviderRouteError(const std::exception& e);
 // false, logged as a warning and reported to the observer as NotServed with
 // reason target_mismatch, once per (layer, op, device family) and scope (with
 // no observer scope, once per op for the process). Outside a run: true.
-// Cost: outside a run, one thread-local read. Inside a run, the thread's
-// ArrayFire device (two ArrayFire queries) is read at the thread's first call
-// in the run scope and remembered until the scope ends; later calls compare
-// the request with the bound device only. A thread is not read again in the
-// middle of a scope, so code that moves a thread's ArrayFire device inside a
-// run opens a ScopedNeuralRunTarget of its own (PolicyDeviceScope does). A
-// mismatch is read again on every call.
+// Cost: outside a run, one thread-local read. Inside a run, every call also
+// reads the thread's ArrayFire backend and device (af::getActiveBackend and
+// af::getDevice, two thread-local queries), so code that moves the thread's
+// device in the middle of a run (a plugin environment's Step calling
+// af::setDevice) is caught as a target mismatch at the next call.
 CYXWIZ_API bool CheckNeuralRunTarget(const NeuralOpRequest& request, const char* layer);
 
 // Runs `execute` on the first provider that serves request.target and

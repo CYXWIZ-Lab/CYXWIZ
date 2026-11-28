@@ -1,6 +1,5 @@
 #include "cyxwiz/neural_provider_dispatch.h"
 
-#include "neural_run_target_internal.h"
 
 #include <spdlog/spdlog.h>
 
@@ -337,15 +336,13 @@ bool CheckNeuralRunTarget(const NeuralOpRequest& request, const char* layer) {
     NeuralDeviceTarget bound;
     if (!BoundNeuralRunTarget(bound)) return true;  // outside a run: the request's own target
     const bool request_on_it = SameNeuralDeviceTarget(request.target, bound);
-    // The thread's ArrayFire device is read once per run scope on a thread,
-    // at its first call: the Engine binds a run's device once, and code that
-    // moves a thread to another device opens a scope of its own
-    if (request_on_it && detail::NeuralRunThreadVerified()) return true;
+    // The thread's ArrayFire device is read on every check: code running on
+    // the run's thread (a plugin environment's Step) may move it with
+    // af::setDevice or af::setBackend at any time
     NeuralDeviceTarget thread;
     std::string error;
     const bool known = QueryArrayFireNeuralTarget(thread, error);
     const bool thread_on_it = known && SameNeuralDeviceTarget(thread, bound);
-    if (thread_on_it) detail::MarkNeuralRunThreadVerified();
     if (thread_on_it && request_on_it) return true;
     if (!FirstInScope(request, layer, NotServedCause::TargetMismatch)) return false;
     // A provider would read tensors that are not where it runs: none is

@@ -19,6 +19,8 @@
 #include <cyxwiz/neural_provider.h>
 #include <cyxwiz/neural_provider_dispatch.h>
 
+#include <arrayfire.h>
+
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -530,6 +532,43 @@ void TestCompileTargetNeverEnumerates() {
     cyxwiz::ClearSavedExecutionDeviceSelection();
 }
 
+// Code on the run's thread (a plugin environment's Step) moves the thread's
+// ArrayFire device after a request was already found on the run's device:
+// the next check reads the thread again and refuses, target_mismatch. Called
+// inside a scope bound to the CPU, where `request` was served. The move is a
+// real backend switch (CUDA, else OpenCL; never oneAPI, which crashes on
+// activation on some machines); a machine with neither cannot move the thread.
+void CheckThreadMovedInsideScope(const cyxwiz::NeuralOpRequest& request) {
+    const int available = af::getAvailableBackends();
+    const af::Backend other = (available & AF_BACKEND_CUDA) ? AF_BACKEND_CUDA
+                              : (available & AF_BACKEND_OPENCL) ? AF_BACKEND_OPENCL
+                                                                : AF_BACKEND_DEFAULT;
+    if (other == AF_BACKEND_DEFAULT) {
+        std::cout << "thread moved inside a run scope: not checked, ArrayFire has no CUDA or OpenCL backend here\n";
+        return;
+    }
+    Check(cyxwiz::CheckNeuralRunTarget(request, "Moved"), "the request is on the run's device before the move");
+    g_events.clear();
+    bool refused = false;
+    try {
+        af::setBackend(other);
+        refused = !cyxwiz::CheckNeuralRunTarget(request, "Moved");
+    } catch (const std::exception& e) {
+        std::cout << "thread moved inside a run scope: not checked, the other backend did not start (" << e.what()
+                  << ")\n";
+        af::setBackend(AF_BACKEND_CPU);
+        return;
+    }
+    af::setBackend(AF_BACKEND_CPU);
+    Check(refused && g_events.size() == 1 &&
+              g_events[0].reason ==
+                  cyxwiz::BackendFallbackReasonName(cyxwiz::BackendFallbackReason::TargetMismatch) &&
+              g_events[0].detail.find("the thread's ArrayFire device is") != std::string::npos,
+          "a thread moved to another backend inside the scope is refused as target_mismatch: " +
+              (g_events.empty() ? std::string("no event") : g_events[0].detail));
+    Check(cyxwiz::CheckNeuralRunTarget(request, "Moved"), "and served again once the thread is back");
+}
+
 // The run's bound device is the provider target (the done68 rule), and a
 // thread or request off it is never served: target_mismatch, once, a trace
 // warning. Compile asks about the selected route; playback and the stress
@@ -584,7 +623,7 @@ void TestRunTarget() {
         Check(cyxwiz::DispatchNeuralProviderOp(request, "LSTM", run) && executions == 1,
               "a request on the run's device is served");
         Check(g_events.size() == 1 && g_events[0].outcome == NeuralDispatchOutcome::Ran, "and reported as ran");
-        // The thread was read once for the scope; a request off the device is still refused
+        // The thread was found on it; a request off the device is still refused
         const auto off_device = cyxwiz::RecurrentProviderRequest(cyxwiz::NeuralOp::LstmForward, cuda, shape);
         Check(!cyxwiz::CheckNeuralRunTarget(off_device, "LSTM"), "a request off the run's device is refused after the "
                                                                "thread was found on it");
@@ -594,6 +633,7 @@ void TestRunTarget() {
             Check(!cyxwiz::CheckNeuralRunTarget(request, "Inner"), "a nested target decides inside its scope");
         }
         Check(cyxwiz::CheckNeuralRunTarget(request, "LSTM"), "and the outer target is back after it");
+        CheckThreadMovedInsideScope(request);
     }
     Check(!cyxwiz::BoundNeuralRunTarget(bound), "the run target ends with its scope");
 

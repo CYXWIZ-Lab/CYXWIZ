@@ -1,7 +1,6 @@
 #include "cyxwiz/neural_provider.h"
 
 #include "neural_provider_absence.h"
-#include "neural_run_target_internal.h"
 
 #include <atomic>
 #include <cstdlib>
@@ -354,29 +353,22 @@ const char* NeuralDevicePlatformName(DeviceType platform) {
 
 namespace {
 
-// The bound target of this thread's run (ScopedNeuralRunTarget), and whether
-// the thread's ArrayFire device was found to be it in the innermost scope
+// The bound target of this thread's run (ScopedNeuralRunTarget)
 thread_local bool g_run_target_bound = false;
 thread_local NeuralDeviceTarget g_run_target;
-thread_local bool g_run_thread_verified = false;
 std::atomic<bool> g_target_query_failure_logged{false};
 
 }  // namespace
-
-bool detail::NeuralRunThreadVerified() { return g_run_thread_verified; }
-void detail::MarkNeuralRunThreadVerified() { g_run_thread_verified = g_run_target_bound; }
 
 ScopedNeuralRunTarget::ScopedNeuralRunTarget(NeuralDeviceTarget target)
     : had_previous_(g_run_target_bound), previous_(g_run_target) {
     g_run_target_bound = true;
     g_run_target = target;
-    g_run_thread_verified = false;
 }
 
 ScopedNeuralRunTarget::~ScopedNeuralRunTarget() {
     g_run_target_bound = had_previous_;
     g_run_target = previous_;
-    g_run_thread_verified = false;  // the scope around it reads the thread again
 }
 
 bool BoundNeuralRunTarget(NeuralDeviceTarget& target) {
