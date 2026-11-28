@@ -8,6 +8,8 @@
 #include <cyxwiz/neural_provider.h>
 #include <cyxwiz/tensor.h>
 
+#include "core/loaded_library.h"
+
 #ifndef NOMINMAX
 #define NOMINMAX  // arrayfire.h pulls windows.h; keep std::max usable
 #endif
@@ -27,8 +29,8 @@ namespace {
 // Which enumerated OpenCL GPU the suite targets. Default 0 (the first GPU,
 // NVIDIA on the dev box); CYXWIZ_OPENCL_TEST_DEVICE=1 runs the same gates
 // on the second GPU (the Intel UHD 630 on the dev box) for the AMD/Intel
-// platform gate. The provider and ArrayFire both enumerate GPUs in
-// platform order, so one index serves both.
+// platform gate. The index is ArrayFire's device id; the provider maps it
+// to its own GPU by identity (on the dev box the two orders agree).
 int OpenclTestDeviceIndex() {
     static const int index = [] {
         const char* value = std::getenv("CYXWIZ_OPENCL_TEST_DEVICE");
@@ -140,6 +142,54 @@ TEST_CASE("OpenCL provider registers as the opencl tenant and serves only opencl
     CHECK_FALSE(no_device.supported);
     CHECK(no_device.reason ==
           cyxwiz::BackendFallbackReason::OpenclProviderUnavailable);
+}
+
+// ArrayFire orders its OpenCL devices itself (GPUs first, CPU devices after,
+// its own ranking among GPUs); the provider lists GPUs in platform order. A
+// request's device id is ArrayFire's, so the provider maps it by identity:
+// every ArrayFire GPU is served, an OpenCL CPU device is declined with why.
+TEST_CASE("OpenCL provider maps ArrayFire's device to its own GPU by identity",
+          "[gpu_execution][neural_provider][opencl]") {
+    auto provider = OpenclProvider();
+    if (!provider) {
+        WARN("no OpenCL GPU device on this machine; opencl provider not registered");
+        return;
+    }
+    const af::Backend backend = af::getActiveBackend();
+    const int device = af::getDevice();
+    try {
+        af::setBackend(AF_BACKEND_OPENCL);
+    } catch (const af::exception&) {
+        WARN("ArrayFire's OpenCL backend does not start here");
+        return;
+    }
+    // Loaded once ArrayFire's OpenCL backend is
+    using GetType = af_err (*)(int*);
+    const auto get_type =
+        reinterpret_cast<GetType>(cyxwiz::detail::FindLoadedSymbol("afopencl", "afcl_get_device_type"));
+    REQUIRE(get_type != nullptr);
+    int gpus = 0;
+    for (int k = 0; k < af::getDeviceCount(); ++k) {
+        af::setDevice(k);
+        int type = 0;
+        REQUIRE(get_type(&type) == AF_SUCCESS);
+        auto request = OpenclRequest(cyxwiz::NeuralOp::LstmForward, 4, 10, 6, 16);
+        request.target = {cyxwiz::DeviceType::OPENCL, k};
+        const auto capability = provider->QueryCapability(request);
+        char name[256] = {}, platform[256] = {}, toolkit[256] = {}, compute[256] = {};
+        af::deviceInfo(name, platform, toolkit, compute);
+        INFO("ArrayFire OpenCL device " << k << ": " << name << " (" << capability.detail << ")");
+        if (type == 4) {  // AFCL_DEVICE_TYPE_GPU
+            ++gpus;
+            CHECK(capability.supported);
+        } else {
+            CHECK_FALSE(capability.supported);
+            CHECK(capability.detail.find("not one of the provider's GPU devices") != std::string::npos);
+        }
+    }
+    CHECK(gpus > 0);
+    af::setBackend(backend);
+    af::setDevice(device);
 }
 
 TEST_CASE("OpenCL provider rnn/lstm/gru forward match the reference layers",

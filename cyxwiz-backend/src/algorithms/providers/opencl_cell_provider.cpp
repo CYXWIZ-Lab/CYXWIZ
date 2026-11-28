@@ -11,11 +11,18 @@
 // tuple, typed failures, explicit host boundary copies (v1), no ArrayFire
 // interop.
 //
-// Device selection follows the request's target.device_id over the
-// enumeration of GPU devices across all OpenCL platforms (platform order,
-// device order) — the same order ArrayFire's OpenCL backend exposes for a
-// single-vendor machine; multi-vendor ordering is best-effort and recorded
-// in Version()/detail strings.
+// Device selection: the request's target.device_id is ArrayFire's OpenCL
+// device id, and the provider keeps its own list of GPUs (platform order,
+// device order). ArrayFire orders its devices itself (GPUs first, CPU
+// devices after them, its own ranking among GPUs), so the two indices need
+// not agree on a machine with GPUs of several vendors. The provider maps
+// ArrayFire's id to its GPU by identity (the cl_device_id ArrayFire reports
+// for the device) whenever ArrayFire's active device on the calling thread
+// is the target, which it is for every run-time call, and remembers the
+// mapping. An ArrayFire device that is none of its GPUs (an OpenCL CPU
+// device, say) is declined with that reason. Only for a query about a
+// device ArrayFire has not been on in this process (Compile, before any
+// run) does it fall back to its own index.
 #ifdef CYXWIZ_HAS_OPENCL_DNN_PROVIDER
 
 #include "cyxwiz/neural_provider.h"
@@ -27,7 +34,13 @@
 #include <clblast.h>
 #endif
 
+#ifndef NOMINMAX
+#define NOMINMAX  // arrayfire.h pulls windows.h; keep std::max usable
+#endif
+#include <arrayfire.h>
 #include <spdlog/spdlog.h>
+
+#include "../../core/loaded_library.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1069,15 +1082,8 @@ public:
             capability.detail.clear();
             return capability;
         }
-        if (request.target.device_id < 0 ||
-            static_cast<size_t>(request.target.device_id) >=
-                probe_.gpu_devices.size()) {
+        if (ProbeIndexFor(request.target, capability.detail) < 0) {
             capability.reason = BackendFallbackReason::OpenclProviderUnavailable;
-            capability.detail =
-                "target OpenCL device index " +
-                std::to_string(request.target.device_id) +
-                " is not an enumerated GPU device (" +
-                std::to_string(probe_.gpu_devices.size()) + " available)";
             return capability;
         }
         const bool is_rnn = request.op == NeuralOp::RnnForward ||
@@ -1401,8 +1407,13 @@ private:
 
     OpenclExecutionState* EnsureState(const NeuralOpRequest& request,
                                       NeuralOpStatus& failure) {
-        const size_t index = static_cast<size_t>(request.target.device_id);
         std::string message;
+        const int mapped = ProbeIndexFor(request.target, message);
+        if (mapped < 0) {
+            failure = Fail(BackendFallbackReason::OpenclProviderUnavailable, message);
+            return nullptr;
+        }
+        const size_t index = static_cast<size_t>(mapped);
         if (!states_[index]->Ensure(probe_.gpu_devices[index], message)) {
             failure = Fail(BackendFallbackReason::OpenclProviderUnavailable, message);
             return nullptr;
@@ -1933,8 +1944,53 @@ private:
         return Ok();
     }
 
+    // The provider's GPU for ArrayFire's OpenCL device `target.device_id`,
+    // by identity (see the file's head); -1 with why when it has none.
+    int ProbeIndexFor(const NeuralDeviceTarget& target, std::string& why) const {
+        const int af_id = target.device_id;
+        if (af_id < 0) {
+            why = "ArrayFire OpenCL device " + std::to_string(af_id) + " does not exist";
+            return -1;
+        }
+        std::lock_guard<std::mutex> lock(identity_mutex_);
+        // Identify it now when ArrayFire is on it on this thread
+        bool on_it = false;
+        try {
+            on_it = af::getActiveBackend() == AF_BACKEND_OPENCL && af::getDevice() == af_id;
+        } catch (...) {
+            on_it = false;
+        }
+        using GetDevice = af_err (*)(void**);
+        const auto get_device =
+            on_it ? reinterpret_cast<GetDevice>(detail::FindLoadedSymbol("afopencl", "afcl_get_device_id")) : nullptr;
+        void* identity = nullptr;
+        if (get_device && get_device(&identity) == AF_SUCCESS && identity) {
+            int index = -1;
+            for (size_t i = 0; i < probe_.gpu_devices.size(); ++i)
+                if (static_cast<void*>(probe_.gpu_devices[i].device) == identity) index = static_cast<int>(i);
+            identified_[af_id] = index;
+        }
+        const auto known = identified_.find(af_id);
+        if (known != identified_.end()) {
+            if (known->second < 0)
+                why = "ArrayFire OpenCL device " + std::to_string(af_id) +
+                      " is not one of the provider's GPU devices (an OpenCL CPU or accelerator device)";
+            return known->second;
+        }
+        // Not identified yet in this process: the provider's own index
+        if (static_cast<size_t>(af_id) >= probe_.gpu_devices.size()) {
+            why = "target OpenCL device index " + std::to_string(af_id) + " is not an enumerated GPU device (" +
+                  std::to_string(probe_.gpu_devices.size()) + " available)";
+            return -1;
+        }
+        return af_id;
+    }
+
     OpenclRuntimeProbe probe_;
     std::vector<std::unique_ptr<OpenclExecutionState>> states_;
+    // ArrayFire OpenCL device id -> index in probe_.gpu_devices (-1: none of them)
+    mutable std::mutex identity_mutex_;
+    mutable std::map<int, int> identified_;
     DeviceResidentProgram device_program_;
 };
 
