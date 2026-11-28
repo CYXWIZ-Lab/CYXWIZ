@@ -456,6 +456,8 @@ if(CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER)
         target_compile_definitions(cyxwiz-backend PUBLIC
             CYXWIZ_HAS_OPENCL_DNN_PROVIDER)
         set(CYXWIZ_HAS_OPENCL_DNN_PROVIDER TRUE)
+        cyxwiz_record_provider("OpenCL (cyxwiz.opencl-cell)" BUILT
+            "OpenCL ${OpenCL_VERSION_STRING}, compiled into cyxwiz-backend")
         # Optional CLBlast GEMMs (vcpkg manifest feature `opencl-clblast`).
         # OFF by default; the provider's built-in tiled kernels remain the
         # fallback at runtime even when CLBlast is linked.
@@ -480,7 +482,12 @@ if(CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER)
             "CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER=ON but no OpenCL SDK was "
             "found - provider disabled")
         set(CYXWIZ_HAS_OPENCL_DNN_PROVIDER FALSE)
+        cyxwiz_record_provider("OpenCL (cyxwiz.opencl-cell)" NOT_BUILT
+            "no OpenCL SDK was found")
     endif()
+else()
+    cyxwiz_record_provider("OpenCL (cyxwiz.opencl-cell)" NOT_BUILT
+        "CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER is OFF; the gpu-dev preset turns it on")
 endif()
 
 # Optional oneAPI (SYCL) neural provider (tofix112 phase 5b, tenant #3):
@@ -562,13 +569,20 @@ if(CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER)
         target_compile_definitions(cyxwiz-backend PUBLIC
             CYXWIZ_HAS_ONEAPI_DNN_PROVIDER)
         set(CYXWIZ_HAS_ONEAPI_DNN_PROVIDER TRUE)
+        cyxwiz_record_provider("oneAPI (cyxwiz.oneapi-sycl-attention)" BUILT
+            "DPC++ at ${CYXWIZ_ONEAPI_COMPILER_ROOT}, kernels in ${_cyxwiz_oneapi_kernels_name}")
     else()
         message(WARNING
             "CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER=ON but the DPC++ compiler was not "
             "found under CYXWIZ_ONEAPI_COMPILER_ROOT='${CYXWIZ_ONEAPI_COMPILER_ROOT}' "
             "- provider disabled")
         set(CYXWIZ_HAS_ONEAPI_DNN_PROVIDER FALSE)
+        cyxwiz_record_provider("oneAPI (cyxwiz.oneapi-sycl-attention)" NOT_BUILT
+            "no DPC++ compiler under CYXWIZ_ONEAPI_COMPILER_ROOT='${CYXWIZ_ONEAPI_COMPILER_ROOT}'")
     endif()
+else()
+    cyxwiz_record_provider("oneAPI (cyxwiz.oneapi-sycl-attention)" NOT_BUILT
+        "CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER is OFF; the gpu-dev preset turns it on")
 endif()
 
 if(CYXWIZ_ENABLE_CUDA)
@@ -621,12 +635,19 @@ if(CYXWIZ_ENABLE_CUDA)
             target_compile_definitions(cyxwiz-backend PUBLIC
                 CYXWIZ_HAS_NVIDIA_DNN_PROVIDER)
             set(CYXWIZ_HAS_NVIDIA_DNN_PROVIDER TRUE)
+            cyxwiz_record_provider("NVIDIA (cyxwiz.nvidia-cublas-cell)" BUILT
+                "CUDA Toolkit ${CUDAToolkit_VERSION}, module cyxwiz-nvidia-provider")
         else()
             message(WARNING
                 "CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER=ON but the CUDA "
                 "Toolkit was not found - provider disabled")
             set(CYXWIZ_HAS_NVIDIA_DNN_PROVIDER FALSE)
+            cyxwiz_record_provider("NVIDIA (cyxwiz.nvidia-cublas-cell)" NOT_BUILT
+                "the CUDA Toolkit was not found")
         endif()
+    else()
+        cyxwiz_record_provider("NVIDIA (cyxwiz.nvidia-cublas-cell)" NOT_BUILT
+            "CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER is OFF; the gpu-dev preset turns it on")
     endif()
 
     # NCCL for distributed GPU training (optional).
@@ -657,6 +678,9 @@ if(CYXWIZ_ENABLE_CUDA)
             set(CYXWIZ_HAS_NCCL FALSE)
         endif()
     endif()
+else()
+    cyxwiz_record_provider("NVIDIA (cyxwiz.nvidia-cublas-cell)" NOT_BUILT
+        "CYXWIZ_ENABLE_CUDA is OFF")
 endif()
 
 if(CYXWIZ_ENABLE_OPENCL)

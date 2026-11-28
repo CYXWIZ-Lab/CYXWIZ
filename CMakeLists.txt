@@ -19,6 +19,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(CyxWizWindowsResources)
 include(CyxWizTestScratchUserFolders)
 include(CyxWizHttplib)
+include(CyxWizProviderTable)
 
 # Build options
 option(CYXWIZ_BUILD_ENGINE "Build CyxWiz Engine (Desktop Client)" ON)
@@ -583,6 +584,8 @@ message(STATUS "  ONNX Runtime: ${CYXWIZ_HAS_ONNX}")
 message(STATUS "  ONNX Export: ${CYXWIZ_HAS_ONNX_EXPORT}")
 message(STATUS "  GGUF/llama.cpp: ${CYXWIZ_HAS_GGUF}")
 message(STATUS "  PyTorch/LibTorch: ${CYXWIZ_HAS_PYTORCH}")
+message(STATUS "")
+cyxwiz_print_provider_table()
 message(STATUS "==========================================")
 message(STATUS "")
 

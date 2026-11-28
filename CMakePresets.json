@@ -103,6 +103,56 @@
         "lhs": "${hostSystemName}",
         "rhs": "Darwin"
       }
+    },
+    {
+      "name": "gpu-providers",
+      "hidden": true,
+      "description": "Asks for every optional neural provider. A provider whose toolkit is missing warns and is left out; the configure prints the provider table.",
+      "cacheVariables": {
+        "CYXWIZ_ENABLE_CUDA": "ON",
+        "CYXWIZ_ENABLE_OPENCL": "ON",
+        "CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER": "ON",
+        "CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER": "ON",
+        "CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER": "ON"
+      }
+    },
+    {
+      "name": "gpu-dev",
+      "inherits": [
+        "default",
+        "gpu-providers"
+      ],
+      "binaryDir": "${sourceDir}/build-gpu-dev",
+      "generator": "Visual Studio 18 2026",
+      "displayName": "GPU developer build (Windows)",
+      "description": "Release build with every neural provider whose toolkit is present (CUDA Toolkit, OpenCL SDK, oneAPI DPC++): the build that matches the GPU packs. Use it for GPU tests, gates and benchmarks.",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "linux-gpu-dev",
+      "inherits": [
+        "default",
+        "gpu-providers"
+      ],
+      "binaryDir": "${sourceDir}/build-gpu-dev",
+      "generator": "Ninja",
+      "displayName": "GPU developer build (Linux)",
+      "description": "Release build with every neural provider whose toolkit is present (CUDA Toolkit, OpenCL SDK, oneAPI DPC++).",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
     }
   ],
   "buildPresets": [
@@ -129,6 +179,15 @@
     {
       "name": "macos-release",
       "configurePreset": "macos-release"
+    },
+    {
+      "name": "gpu-dev",
+      "configurePreset": "gpu-dev",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux-gpu-dev",
+      "configurePreset": "linux-gpu-dev"
     }
   ],
   "testPresets": [
